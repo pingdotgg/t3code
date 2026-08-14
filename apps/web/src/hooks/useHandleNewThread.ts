@@ -25,6 +25,7 @@ import {
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import { readThreadShell, useProjects, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { resolveNewThreadDraftModelSeed } from "../lib/newThreadModelSeed";
 import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -100,10 +101,14 @@ export function useNewThreadHandler() {
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
       // A new thread carries the user's *working mode* from the thread being
-      // viewed: model (including options like reasoning effort and context
-      // window), permission mode, and interaction mode. Branch, worktree, and
-      // env mode never carry implicitly — those come from the configured
-      // defaults unless the caller passes them explicitly.
+      // viewed: permission mode, interaction mode, and — only when the
+      // destination project has no default model — the harness/model
+      // (including options like reasoning effort and context window). A
+      // project default is a pin: it wins over the global sticky pick and
+      // over the viewed thread, including when a draft is moved onto that
+      // project. Branch, worktree, and env mode never carry implicitly —
+      // those come from the configured defaults unless the caller passes
+      // them explicitly.
       const carrySourceShell =
         currentRouteTarget?.kind === "server"
           ? readThreadShell(currentRouteTarget.threadRef)
@@ -161,6 +166,23 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      const modelSeed = resolveNewThreadDraftModelSeed({
+        projectDefaultModelSelection: project?.defaultModelSelection,
+        carryModelSelection,
+      });
+      const applyModelSeed = (draftTarget: DraftId, seedOptions?: { sticky?: boolean }) => {
+        if (seedOptions?.sticky === true && modelSeed.applySticky) {
+          applyStickyState(draftTarget);
+        }
+        if (modelSeed.modelSelection) {
+          // Complete snapshot: absent options mean "no options", not "keep
+          // whatever sticky state or a stale draft already wrote".
+          setModelSelection(draftTarget, modelSeed.modelSelection, {
+            replaceOptions: true,
+            explicit: false,
+          });
+        }
+      };
       // The shared resolver owns the priority order. The t3.json read is
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
@@ -273,14 +295,7 @@ export function useNewThreadHandler() {
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
-            if (carryModelSelection) {
-              // The carried selection is a complete snapshot of the viewed
-              // thread's model state: absent options mean "no options", not
-              // "keep the stale draft's options".
-              setModelSelection(emptyStoredDraftThread.draftId, carryModelSelection, {
-                replaceOptions: true,
-              });
-            }
+            applyModelSeed(emptyStoredDraftThread.draftId);
           }
           // The workspace context must also ride along here: when projectRef
           // targets a different physical member of the logical project,
@@ -408,15 +423,7 @@ export function useNewThreadHandler() {
           runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
-        applyStickyState(draftId);
-        if (carryModelSelection) {
-          // After sticky state so the viewed thread's exact selection
-          // (model + options like effort and context window) wins over the
-          // globally sticky one. replaceOptions: the carried selection is a
-          // complete snapshot — absent options mean "no options", not "keep
-          // whatever sticky state just wrote".
-          setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
-        }
+        applyModelSeed(draftId, { sticky: true });
         carryComposerContentTo(draftId);
 
         await router.navigate({

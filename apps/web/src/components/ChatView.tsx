@@ -206,6 +206,7 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import { shouldHonorProjectDefaultModel } from "../lib/newThreadModelSeed";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -1304,6 +1305,9 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionExplicit = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
+  );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -1711,6 +1715,26 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  const projectDefaultModelKey = activeProject?.defaultModelSelection
+    ? `${activeProject.defaultModelSelection.instanceId}:${activeProject.defaultModelSelection.model}`
+    : null;
+  useEffect(() => {
+    if (!isLocalDraftThread) return;
+    const projectDefault = activeProject?.defaultModelSelection ?? null;
+    if (projectDefault == null) return;
+    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    if (draft?.modelSelectionExplicit === true) return;
+    setComposerDraftModelSelection(composerDraftTarget, projectDefault, {
+      replaceOptions: true,
+      explicit: false,
+    });
+  }, [
+    activeProject?.defaultModelSelection,
+    composerDraftTarget,
+    isLocalDraftThread,
+    projectDefaultModelKey,
+    setComposerDraftModelSelection,
+  ]);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -1988,7 +2012,13 @@ function ChatViewContent(props: ChatViewProps) {
     [openOrReuseProjectDraftThread],
   );
 
-  const selectedProviderByThreadId = composerActiveProvider ?? null;
+  const selectedProviderByThreadId = shouldHonorProjectDefaultModel({
+    isLocalDraftThread,
+    modelSelectionExplicit: composerModelSelectionExplicit,
+    projectDefaultModelSelection: activeProject?.defaultModelSelection,
+  })
+    ? (activeProject?.defaultModelSelection?.instanceId ?? null)
+    : (composerActiveProvider ?? null);
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
@@ -5908,6 +5938,7 @@ function ChatViewContent(props: ChatViewProps) {
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
+        { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();

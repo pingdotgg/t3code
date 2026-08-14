@@ -1668,6 +1668,33 @@ describe("composerDraftStore sticky composer settings", () => {
       },
       activeProvider: "claudeAgent",
     });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(false);
+  });
+
+  it("marks picker writes as explicit and project-default seeds as not", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-model-explicit");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(false);
+
+    store.setModelSelection(threadRef, modelSelection(CURSOR_DRIVER, "grok-4"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      activeProvider: "cursor",
+      modelSelectionExplicit: false,
+    });
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      explicit: true,
+    });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      activeProvider: "claudeAgent",
+      modelSelectionExplicit: true,
+    });
   });
 });
 

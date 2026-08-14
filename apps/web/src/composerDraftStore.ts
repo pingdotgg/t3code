@@ -146,6 +146,12 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   // an entry already encodes "no selection for this instance".
   modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
+  /**
+   * True when the user picked a harness/model on this draft. Absent/false
+   * means the stored `activeProvider` is leftover sticky/carry and a project
+   * default should win.
+   */
+  modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
 });
@@ -274,6 +280,11 @@ export interface ComposerThreadDraftState {
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   /** Routing key of the last picked instance (see `modelSelectionByProvider`). */
   activeProvider: ProviderInstanceId | null;
+  /**
+   * True when the user picked a harness/model on this draft. Sticky carry and
+   * project-default seeds leave this false so a project pin can replace them.
+   */
+  modelSelectionExplicit: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
 }
@@ -440,6 +451,12 @@ interface ComposerDraftStoreState {
        * thread) rather than a model-only change.
        */
       replaceOptions?: boolean;
+      /**
+       * True when this write is the user's picker choice. False when seeding
+       * from a project default (clears a leftover sticky pick). Omitted
+       * leaves the existing flag alone.
+       */
+      explicit?: boolean;
     },
   ) => void;
   /** Replace the model options for one or more providers in the draft. */
@@ -459,6 +476,7 @@ interface ComposerDraftStoreState {
       instanceId?: ProviderInstanceId | null | undefined;
       model?: string | null | undefined;
       persistSticky?: boolean;
+      explicit?: boolean;
     },
   ) => void;
   setRuntimeMode: (
@@ -633,6 +651,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   reviewComments: EMPTY_REVIEW_COMMENTS,
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
   activeProvider: null,
+  modelSelectionExplicit: false,
   runtimeMode: null,
   interactionMode: null,
 });
@@ -655,6 +674,7 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
     reviewComments: [],
     modelSelectionByProvider: {},
     activeProvider: null,
+    modelSelectionExplicit: false,
     runtimeMode: null,
     interactionMode: null,
   };
@@ -1801,6 +1821,9 @@ function normalizePersistedDraftsByThreadId(
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
             activeProvider,
+            ...(draftCandidate.modelSelectionExplicit === true
+              ? { modelSelectionExplicit: true }
+              : {}),
           }
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
@@ -1962,6 +1985,7 @@ function partializeComposerDraftStoreState(
               draft.modelSelectionByProvider,
             ),
             activeProvider: draft.activeProvider,
+            ...(draft.modelSelectionExplicit === true ? { modelSelectionExplicit: true } : {}),
           }
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
@@ -2210,6 +2234,7 @@ function toHydratedThreadDraft(
     reviewComments: persistedDraft.reviewComments?.map((comment) => ({ ...comment })) ?? [],
     modelSelectionByProvider,
     activeProvider,
+    modelSelectionExplicit: persistedDraft.modelSelectionExplicit === true,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
   };
@@ -2741,9 +2766,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               }
             }
             const nextActiveProvider = normalized?.instanceId ?? base.activeProvider;
+            const nextExplicit =
+              opts?.explicit !== undefined ? opts.explicit : base.modelSelectionExplicit;
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              base.activeProvider === nextActiveProvider
+              base.activeProvider === nextActiveProvider &&
+              base.modelSelectionExplicit === nextExplicit
             ) {
               return state;
             }
@@ -2751,6 +2779,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...base,
               modelSelectionByProvider: nextMap,
               activeProvider: nextActiveProvider,
+              modelSelectionExplicit: nextExplicit,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -2865,10 +2894,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 : (base.activeProvider ?? instanceKey);
             }
 
+            const nextExplicit =
+              options?.explicit !== undefined ? options.explicit : base.modelSelectionExplicit;
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
-              state.stickyActiveProvider === nextStickyActiveProvider
+              state.stickyActiveProvider === nextStickyActiveProvider &&
+              (options?.instanceId ? base.activeProvider === instanceKey : true) &&
+              base.modelSelectionExplicit === nextExplicit
             ) {
               return state;
             }
@@ -2877,6 +2910,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...base,
               ...(options?.instanceId ? { activeProvider: instanceKey } : {}),
               modelSelectionByProvider: nextMap,
+              modelSelectionExplicit: nextExplicit,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -3667,9 +3701,17 @@ export function useEffectiveComposerModelState(input: {
   selectedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  /**
+   * When set, used instead of the stored composer draft. Lets an unsent
+   * draft honor a project pin without leftover sticky model entries winning.
+   */
+  draftOverride?: ComposerDraftModelState | null;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
-  const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
+  const storedDraft = useComposerDraftModelState(
+    input.threadRef ?? input.draftId ?? DraftId.make(""),
+  );
+  const draft = input.draftOverride ?? storedDraft;
 
   return useMemo(
     () =>
@@ -3690,6 +3732,7 @@ export function useEffectiveComposerModelState(input: {
       input.selectedInstanceId,
       input.selectedProvider,
       input.threadModelSelection,
+      input.draftOverride,
     ],
   );
 }

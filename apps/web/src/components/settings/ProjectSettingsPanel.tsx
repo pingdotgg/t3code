@@ -816,7 +816,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         <SettingsSection title="New threads">
           <SettingsRow
             title="Model"
-            description="New threads in this project start with this model. Applies to every checkout in this group."
+            description="New threads in this project use this harness and model, including when you move a draft here. Applies to every checkout in this group. Leave unset to keep the last harness you used."
             resetAction={
               storedSelection !== null ? (
                 <SettingResetButton

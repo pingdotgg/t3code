@@ -67,6 +67,7 @@ import { compressImageForStash, compressImageToByteLimit } from "../../lib/image
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { resolveShortcutCommand } from "../../keybindings";
+import { shouldHonorProjectDefaultModel } from "../../lib/newThreadModelSeed";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -726,7 +727,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings],
   );
-  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
+  const honorProjectDefault = shouldHonorProjectDefaultModel({
+    isLocalDraftThread,
+    modelSelectionExplicit: composerDraft.modelSelectionExplicit,
+    projectDefaultModelSelection: activeProjectDefaultModelSelection,
+  });
+  const selectedProviderByThreadId = honorProjectDefault
+    ? (activeProjectDefaultModelSelection?.instanceId ?? null)
+    : (composerDraft.activeProvider ?? null);
   const threadProvider =
     activeThread?.session?.providerInstanceId ??
     activeThreadModelSelection?.instanceId ??
@@ -761,21 +769,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   // Resolve which configured instance the composer is currently targeting.
   // Priority:
-  //   1. The composer draft's `activeProvider` — the user's unsaved pick
+  //   1. Project default, when this is an unsent draft and the user has not
+  //      explicitly picked a model — leftover sticky `activeProvider` must
+  //      not beat a pin.
+  //   2. The composer draft's `activeProvider` — the user's unsaved pick
   //      from the model picker (must win, otherwise the UI appears to
   //      ignore picker selections).
-  //   2. Thread's persisted instance id (server-side saved selection).
-  //   3. Project default's instance id.
-  //   4. First enabled entry matching the current driver kind.
-  //   5. First enabled entry overall / default instance for the kind.
+  //   3. Thread's persisted instance id (server-side saved selection).
+  //   4. Project default's instance id.
+  //   5. First enabled entry matching the current driver kind.
+  //   6. First enabled entry overall / default instance for the kind.
   //
   const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
-    const candidates: Array<string | null | undefined> = [
-      composerDraft.activeProvider,
-      activeThread?.session?.providerInstanceId,
-      activeThreadModelSelection?.instanceId,
-      activeProjectDefaultModelSelection?.instanceId,
-    ];
+    const candidates: Array<string | null | undefined> = honorProjectDefault
+      ? [
+          activeProjectDefaultModelSelection?.instanceId,
+          activeThread?.session?.providerInstanceId,
+          activeThreadModelSelection?.instanceId,
+        ]
+      : [
+          composerDraft.activeProvider,
+          activeThread?.session?.providerInstanceId,
+          activeThreadModelSelection?.instanceId,
+          activeProjectDefaultModelSelection?.instanceId,
+        ];
     for (const candidate of candidates) {
       if (!candidate) continue;
       const match = providerInstanceEntries.find(
@@ -812,6 +829,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread?.session?.providerInstanceId,
     activeThreadModelSelection?.instanceId,
     composerDraft.activeProvider,
+    honorProjectDefault,
     lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
@@ -832,6 +850,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProvider: ProviderDriverKind =
     selectedProviderEntry?.driverKind ?? requestedDriverKind;
 
+  const projectDefaultComposerDraft =
+    honorProjectDefault && activeProjectDefaultModelSelection
+      ? {
+          activeProvider: activeProjectDefaultModelSelection.instanceId,
+          modelSelectionByProvider: {
+            [activeProjectDefaultModelSelection.instanceId]: activeProjectDefaultModelSelection,
+          },
+        }
+      : null;
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
     providers: providerStatuses,
@@ -839,6 +866,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedInstanceId,
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
+    ...(projectDefaultComposerDraft ? { draftOverride: projectDefaultComposerDraft } : {}),
     settings,
   });
   const selectedProviderStatus = useMemo(
