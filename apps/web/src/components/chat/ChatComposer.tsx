@@ -557,6 +557,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  /** Shows a mention chip's file in the right panel; absent when there is no panel to show it in. */
+  onOpenMentionFile?: (path: string) => void;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -643,6 +645,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    onOpenMentionFile,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -3034,6 +3037,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 skills={selectedProviderStatus?.skills ?? []}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
+                {...(onOpenMentionFile ? { onOpenMentionFile } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}

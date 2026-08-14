@@ -128,22 +128,56 @@ type SerializedComposerTerminalContextNode = Spread<
   SerializedLexicalNode
 >;
 
-const ComposerTerminalContextActionsContext = createContext<{
+const ComposerChipActionsContext = createContext<{
   onRemoveTerminalContext: (contextId: string) => void;
+  // Only a host that can show the mentioned file (the chat surface, via its
+  // right panel) supplies this; standalone editors like the appearance preview
+  // leave it null and their mention chips stay inert.
+  onOpenMentionFile: ((path: string) => void) | null;
 }>({
   onRemoveTerminalContext: () => {},
+  onOpenMentionFile: null,
 });
 
 function ComposerMentionDecorator(props: { path: string }) {
   const theme = resolvedThemeFromDocument();
+  const { onOpenMentionFile } = use(ComposerChipActionsContext);
+  const path = props.path;
   const chip = (
     <span
-      className={FILE_TAG_CHIP_CLASS_NAME}
+      className={cn(
+        FILE_TAG_CHIP_CLASS_NAME,
+        onOpenMentionFile && "cursor-pointer transition-colors hover:bg-accent/70",
+      )}
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
+      {...(onOpenMentionFile
+        ? {
+            role: "button",
+            // Focusable so opening a file is not pointer-only; Enter and Space
+            // are stopped before Lexical inserts them into the prompt.
+            tabIndex: 0,
+            // Focus follows a click on a focusable element, which would blur
+            // the editor and leave typing going nowhere.
+            onMouseDown: (event: React.MouseEvent<HTMLSpanElement>) => {
+              event.preventDefault();
+            },
+            onClick: (event: React.MouseEvent<HTMLSpanElement>) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenMentionFile(path);
+            },
+            onKeyDown: (event: React.KeyboardEvent<HTMLSpanElement>) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenMentionFile(path);
+            },
+          }
+        : {})}
     >
-      <FileTagChipContent path={props.path} label={basenameOfPath(props.path)} theme={theme} />
+      <FileTagChipContent path={path} label={basenameOfPath(path)} theme={theme} />
     </span>
   );
 
@@ -151,7 +185,7 @@ function ComposerMentionDecorator(props: { path: string }) {
     <Tooltip>
       <TooltipTrigger render={chip} />
       <TooltipPopup side="top" className="max-w-120 whitespace-normal leading-tight wrap-anywhere">
-        {props.path}
+        {path}
       </TooltipPopup>
     </Tooltip>
   );
@@ -884,6 +918,7 @@ interface ComposerPromptEditorProps {
   disabled: boolean;
   placeholder: string;
   className?: string;
+  onOpenMentionFile?: (path: string) => void;
   onRemoveTerminalContext: (contextId: string) => void;
   onChange: (
     nextValue: string,
@@ -1105,7 +1140,7 @@ function ComposerInlineTokenSelectionNormalizePlugin() {
 
 function ComposerInlineTokenBackspacePlugin() {
   const [editor] = useLexicalComposerContext();
-  const { onRemoveTerminalContext } = use(ComposerTerminalContextActionsContext);
+  const { onRemoveTerminalContext } = use(ComposerChipActionsContext);
 
   useEffect(() => {
     return editor.registerCommand(
@@ -1533,6 +1568,7 @@ function ComposerPromptEditorInner({
   disabled,
   placeholder,
   className,
+  onOpenMentionFile,
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
@@ -1554,9 +1590,9 @@ function ComposerPromptEditorInner({
     terminalContextIds: terminalContexts.map((context) => context.id),
   });
   const isApplyingControlledUpdateRef = useRef(false);
-  const terminalContextActions = useMemo(
-    () => ({ onRemoveTerminalContext }),
-    [onRemoveTerminalContext],
+  const chipActions = useMemo(
+    () => ({ onRemoveTerminalContext, onOpenMentionFile: onOpenMentionFile ?? null }),
+    [onOpenMentionFile, onRemoveTerminalContext],
   );
 
   useEffect(() => {
@@ -1746,7 +1782,7 @@ function ComposerPromptEditorInner({
   }, []);
 
   return (
-    <ComposerTerminalContextActionsContext value={terminalContextActions}>
+    <ComposerChipActionsContext value={chipActions}>
       <div className="composer-editor-surface relative">
         <PlainTextPlugin
           contentEditable={
@@ -1783,7 +1819,7 @@ function ComposerPromptEditorInner({
         <ComposerChipSelectionPlugin />
         <HistoryPlugin />
       </div>
-    </ComposerTerminalContextActionsContext>
+    </ComposerChipActionsContext>
   );
 }
 
@@ -1795,6 +1831,7 @@ export function ComposerPromptEditor({
   disabled,
   placeholder,
   className,
+  onOpenMentionFile,
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
@@ -1836,6 +1873,7 @@ export function ComposerPromptEditor({
         onChange={onChange}
         onPaste={onPaste}
         editorRef={editorRef}
+        {...(onOpenMentionFile ? { onOpenMentionFile } : {})}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(className ? { className } : {})}
       />
