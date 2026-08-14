@@ -20,6 +20,8 @@ let groupId = null;
 /** Tabs we have attached the debugger to, so we detach exactly once. */
 const attached = new Set();
 let port = null;
+/** True after the native host has delivered at least one message this session. */
+let hadLiveSession = false;
 let stateReady = null;
 
 async function persistOwnedState() {
@@ -82,14 +84,22 @@ function connect() {
     port = null;
     return;
   }
-  port.onMessage.addListener(handleCommand);
+  port.onMessage.addListener((msg) => {
+    // A real MCP session is up — only then should disconnect tear down tabs.
+    hadLiveSession = true;
+    handleCommand(msg);
+  });
   port.onDisconnect.addListener(() => {
     // Reading lastError here keeps "Native host has exited" out of the error
     // list while the desktop app simply is not running yet.
     void chrome.runtime.lastError;
     port = null;
-    // The agent is gone, so its tabs and group should not outlive it.
-    if (ownedTabs.size) void closeAllTabs();
+    const wasLive = hadLiveSession;
+    hadLiveSession = false;
+    // connectNative often fails immediately when the MCP pipe is not bound
+    // yet (startup race, SW wake). Do not wipe restored agent tabs in that
+    // case — only when a live session actually ends.
+    if (wasLive && ownedTabs.size) void closeAllTabs();
   });
 }
 
