@@ -20,7 +20,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
 
-import { EnvironmentId } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -33,8 +32,7 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
   ComposerToolbarScroller,
-  ComposerToolbarTrigger,
-} from "../../components/ComposerToolbarTrigger";
+} from "../../components/ComposerToolbar";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -88,9 +86,13 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
-import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
+import { useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
+import {
+  resolveNewTaskBranchLabel,
+  resolveNewTaskWorkspaceLabel,
+} from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-share-model";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -154,7 +156,8 @@ export function NewTaskDraftScreen(props: {
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
-  const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
+  const controlsBottomPadding = Math.max(insets.bottom, 10);
+  const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
@@ -210,6 +213,49 @@ export function NewTaskDraftScreen(props: {
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
   });
+  useEffect(() => {
+    if (Platform.OS !== "ios") {
+      return;
+    }
+
+    navigation.getParent()?.setOptions({ gestureEnabled: !isKeyboardVisible });
+  }, [isKeyboardVisible, navigation]);
+  useEffect(() => {
+    return () => {
+      if (Platform.OS === "ios") {
+        navigation.getParent()?.setOptions({ gestureEnabled: true });
+      }
+    };
+  }, [navigation]);
+  const settingsRoutePresentedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsSheetPresentation.isVisible || settingsRoutePresentedRef.current) {
+      return;
+    }
+
+    settingsRoutePresentedRef.current = true;
+    navigation.dispatch(StackActions.push("ThreadSettings"));
+  }, [navigation, settingsSheetPresentation.isVisible]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!settingsRoutePresentedRef.current) {
+        return;
+      }
+
+      settingsRoutePresentedRef.current = false;
+      settingsSheetPresentation.onDismissed();
+    }, [settingsSheetPresentation.onDismissed]),
+  );
+  useEffect(
+    () =>
+      // UIKit's completion callback for the sheet dismissal, surfaced by the
+      // native-stack patch. This is when the queued keyboard restore runs.
+      (navigation as unknown as NavigationWithFinishTransitioning).addListener(
+        "finishTransitioning",
+        settingsSheetPresentation.onStackTransitionsFinished,
+      ),
+    [navigation, settingsSheetPresentation.onStackTransitionsFinished],
+  );
   const [importingShareKey, setImportingShareKey] = useState<string | null>(null);
   const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
   const [cancelledIncomingShareId, setCancelledIncomingShareId] = useState<string | null>(null);
@@ -467,7 +513,7 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     loadedBranchesProjectKeyRef.current = projectKey;
-    void flow.loadBranches();
+    flow.loadBranches();
   }, [flow.loadBranches, selectedProject]);
 
   useEffect(() => {
@@ -707,121 +753,6 @@ export function NewTaskDraftScreen(props: {
     shareImportAttempt,
   ]);
 
-  useEffect(() => {
-    // Android starts with the collapsed composer pill (like an open thread)
-    // and only expands/focuses when tapped.
-    if (!selectedProject || Platform.OS === "android") {
-      return;
-    }
-
-    let focusFrame: ReturnType<typeof requestAnimationFrame> | null = null;
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      focusFrame = requestAnimationFrame(() => {
-        // The delayed focus can land after the settings sheet opened, which
-        // would pop the keyboard underneath its modal.
-        if (!settingsSheetPresentation.isActiveRef.current) {
-          promptInputRef.current?.focus();
-        } else {
-          settingsSheetPresentation.restoreFocusAfterSave();
-        }
-      });
-    });
-
-    return () => {
-      interaction.cancel();
-      if (focusFrame !== null) {
-        cancelAnimationFrame(focusFrame);
-      }
-    };
-  }, [
-    selectedProject,
-    settingsSheetPresentation.isActiveRef,
-    settingsSheetPresentation.restoreFocusAfterSave,
-  ]);
-
-  const environmentMenuActions = useMemo(
-    () =>
-      flow.environments.map((environment) => ({
-        id: `environment:${environment.environmentId}`,
-        title: environment.environmentLabel,
-        attributes: isIncomingShareTransferPending ? { disabled: true } : undefined,
-        state:
-          flow.selectedEnvironmentId === environment.environmentId ? ("on" as const) : undefined,
-      })),
-    [flow.environments, flow.selectedEnvironmentId, isIncomingShareTransferPending],
-  );
-
-  const providerOptionDescriptors = useMemo(
-    () =>
-      resolveProviderOptionDescriptors({
-        capabilities: flow.selectedModelOption?.capabilities,
-        selections: flow.selectedModel?.options,
-      }),
-    [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
-  );
-
-  const workspaceMenuActions = useMemo(() => {
-    const branchActions =
-      flow.availableBranches.length === 0
-        ? [
-            {
-              id: "workspace:branch:none",
-              title: flow.branchesLoading ? "Loading branches…" : "No branches available",
-              attributes: { disabled: true },
-            },
-          ]
-        : flow.availableBranches.slice(0, 12).map((branch) => {
-            const badge = branchBadgeLabel({
-              branch,
-              project: flow.selectedProject,
-            });
-
-            return {
-              id: `workspace:branch:${branch.name}`,
-              title: branch.name,
-              subtitle: badge ? badge.toUpperCase() : undefined,
-              state: flow.selectedBranchName === branch.name ? ("on" as const) : undefined,
-            };
-          });
-
-    return [
-      {
-        id: "workspace:mode",
-        title: "Mode",
-        subtitle: flow.workspaceMode === "local" ? "Current checkout" : "New worktree",
-        subactions: (["local", "worktree"] as const).map((value) => ({
-          id: `workspace:mode:${value}`,
-          title: value === "local" ? "Current checkout" : "New worktree",
-          state: flow.workspaceMode === value ? ("on" as const) : undefined,
-        })),
-      },
-      {
-        id: "workspace:branch",
-        title: "Branch",
-        subtitle: flow.selectedBranchName ?? "Choose branch",
-        subactions: branchActions,
-      },
-      ...(flow.workspaceMode === "worktree"
-        ? [
-            {
-              id: "workspace:start-from-origin",
-              title: "Start from origin",
-              subtitle: "Base the worktree on the latest origin branch",
-              image: "arrow.triangle.pull",
-              state: flow.startFromOrigin ? ("on" as const) : undefined,
-            },
-          ]
-        : []),
-    ];
-  }, [
-    flow.availableBranches,
-    flow.branchesLoading,
-    flow.selectedBranchName,
-    flow.selectedProject,
-    flow.startFromOrigin,
-    flow.workspaceMode,
-  ]);
-
   const selectedEnvironmentLabel =
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
@@ -830,50 +761,17 @@ export function NewTaskDraftScreen(props: {
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
     null;
-  const settingsSummaryLabel = threadSettingsSummaryLabel({
-    modelLabel: flow.selectedModelOption?.label ?? "Model",
-    optionDescriptors: providerOptionDescriptors,
-    runtimeMode: flow.runtimeMode,
-    interactionMode: flow.interactionMode,
+  const selectedBranchName = flow.selectedBranchName ?? currentBranchName;
+  const selectedBranchLabel = resolveNewTaskBranchLabel({
+    branchName: selectedBranchName,
+    startFromOrigin: flow.startFromOrigin,
+    workspaceMode: flow.workspaceMode,
   });
-  const workspaceLabel = useMemo(
-    () =>
-      formatWorkspaceLabel({
-        currentBranchName,
-        selectedBranchName: flow.selectedBranchName,
-        workspaceMode: flow.workspaceMode,
-      }),
-    [currentBranchName, flow.selectedBranchName, flow.workspaceMode],
-  );
-  function handleEnvironmentMenuAction(event: string) {
-    if (isIncomingShareTransferPending || !event.startsWith("environment:")) {
-      return;
-    }
-    flow.selectEnvironment(EnvironmentId.make(event.slice("environment:".length)));
-  }
-
-  function handleWorkspaceMenuAction(event: string) {
-    if (isIncomingShareTransferPending) {
-      return;
-    }
-    if (event.startsWith("workspace:mode:")) {
-      flow.setWorkspaceMode(
-        event.slice("workspace:mode:".length) as Parameters<typeof flow.setWorkspaceMode>[0],
-      );
-      return;
-    }
-    if (event === "workspace:start-from-origin") {
-      flow.setStartFromOrigin(!flow.startFromOrigin);
-      return;
-    }
-    if (event.startsWith("workspace:branch:")) {
-      const branchName = event.slice("workspace:branch:".length);
-      const branch = flow.availableBranches.find((candidate) => candidate.name === branchName);
-      if (branch) {
-        flow.selectBranch(branch);
-      }
-    }
-  }
+  const workspaceLabel = resolveNewTaskWorkspaceLabel({
+    workspaceMode: flow.workspaceMode,
+    worktreePath: flow.selectedWorktreePath,
+  });
+  const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
   async function handlePickMedia(): Promise<void> {
     if (isComposerInteractionLocked || voiceInput.isBusy) {
@@ -967,7 +865,9 @@ export function NewTaskDraftScreen(props: {
       draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
-    const interactionMode = draft.interactionMode ?? flow.interactionMode;
+    const interactionMode = flow.planModeEnabled
+      ? (draft.interactionMode ?? flow.interactionMode)
+      : "default";
     const initialMessageText = draft.text.trim();
 
     if (
@@ -1040,6 +940,7 @@ export function NewTaskDraftScreen(props: {
     // -only Activity start. If creation fails, the token registration's replay
     // finds no work and ends the card within seconds.
     armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: selectedProject.environmentId,
       threadTitle: deriveThreadTitleSeed({
         text: initialMessageText,
         attachments: draft.attachments,
@@ -1108,7 +1009,7 @@ export function NewTaskDraftScreen(props: {
 
   if (!selectedProject) {
     return (
-      <View className="flex-1 bg-sheet">
+      <View className="flex-1 bg-sheet" collapsable={false}>
         {Platform.OS === "android" ? (
           <>
             <NativeStackScreenOptions options={{ headerShown: false }} />
@@ -1135,15 +1036,13 @@ export function NewTaskDraftScreen(props: {
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
-      // Native autoFocus fires becomeFirstResponder in didMoveToWindow, which
-      // forces the iOS keyboard bring-up during the formSheet present
-      // animation and stalls it. The runAfterInteractions effect above focuses
-      // the editor once the transition settles instead.
+      // The context-first screen intentionally opens with the keyboard closed.
+      // Focusing is a user action, so presenting the form sheet has one motion.
       autoFocus={false}
       editable={!isComposerInteractionLocked}
       readOnly={voiceInput.freezesEditor}
       multiline
-      scrollEnabled={isExpanded}
+      scrollEnabled
       value={flow.prompt}
       skills={flow.selectedProviderStatus?.skills ?? []}
       selection={composerMenu.selection}
@@ -1450,104 +1349,38 @@ export function NewTaskDraftScreen(props: {
   );
 
   if (isAndroid) {
-    // The draft is a thread that doesn't exist yet, so it mirrors the thread
-    // page: in-screen header, empty feed canvas above, and the same floating
-    // composer chrome as ThreadComposer (collapsed pill → expanded card).
-    //
-    // Composer positioning mirrors ThreadDetailScreen's floating overlay
-    // (KeyboardStickyView, absolute bottom overlay) rather than
-    // KeyboardAvoidingView's automaticOffset+padding: automaticOffset
-    // resolves the composer's on-screen frame via a native
-    // viewPositionInWindow measurement, which this app's Android
-    // edge-to-edge setup (KeyboardProvider's native content-view margin
-    // handling neutralizes windowSoftInputMode="adjustResize" while active)
-    // makes unreliable — the composer stayed under the keyboard instead of
-    // translating above it. KeyboardStickyView sticks directly to the
-    // animated keyboard height instead, sidestepping that measurement.
     return (
-      <View className="flex-1 bg-screen">
+      <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
-
-        <View className="flex-1" />
+        <AndroidScreenHeader title="New task" onBack={closeNewTask} />
+        {heroViewport}
 
         <KeyboardStickyView
-          enabled={isKeyboardVisible}
           style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-          offset={{ closed: 0, opened: 0 }}
+          offset={{ closed: 0, opened: keyboardOpenedOffset }}
         >
-          <View
-            className="px-4 pt-2"
-            style={{
-              paddingBottom: controlsBottomPadding,
-              experimental_backgroundImage: isDarkMode
-                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
-            }}
-          >
-            <ComposerSurface
-              isDarkMode={isDarkMode}
-              style={
-                isExpanded
-                  ? {
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }
-                  : {
-                      borderRadius: 999,
-                      overflow: "hidden",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingLeft: 18,
-                      paddingRight: 5,
-                      paddingVertical: 5,
-                    }
-              }
-            >
-              {isExpanded && flow.attachments.length > 0 ? (
-                <View className="pb-2.5">
-                  <ComposerAttachmentStrip
-                    attachments={flow.attachments}
-                    onRemove={
-                      isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
-                    }
-                  />
-                </View>
-              ) : null}
-              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
-              {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
-                />
-              ) : null}
-            </ComposerSurface>
-
-            {isExpanded ? (
-              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-                <ComposerToolbarScroller
-                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
-                >
-                  {toolbarPills}
-                </ComposerToolbarScroller>
-                {startButton}
-              </ComposerToolbarRow>
-            ) : null}
-          </View>
+          {composerDock}
         </KeyboardStickyView>
-        {settingsSheet}
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-sheet">
-      <NativeStackScreenOptions options={{ title: selectedProject.title }} />
+    <View className="flex-1 bg-sheet" collapsable={false}>
+      <NativeStackScreenOptions
+        options={{
+          headerBackVisible: false,
+          headerShadowVisible: false,
+          title: "",
+        }}
+      />
+      <NativeHeaderToolbar placement="left">
+        <NativeHeaderToolbar.Button
+          accessibilityLabel="Cancel new task"
+          label="Cancel"
+          onPress={closeNewTask}
+        />
+      </NativeHeaderToolbar>
 
       {heroViewport}
       <KeyboardStickyView
