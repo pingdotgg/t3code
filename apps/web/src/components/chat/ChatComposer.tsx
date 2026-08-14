@@ -2237,6 +2237,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsStashMenuOpen(false);
   }, [prompt]);
 
+  const stashCommandEnabled =
+    !isComposerApprovalState &&
+    pendingUserInputs.length === 0 &&
+    !projectSelectionRequired &&
+    activePendingProgress === null;
+
+  const runStashCommand = useCallback(() => {
+    if (isCommandPaletteOpen() || !stashCommandEnabled) {
+      return;
+    }
+    void stashCurrentPrompt();
+  }, [stashCommandEnabled, stashCurrentPrompt]);
+
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (!onMenuAction) return;
+    return onMenuAction((action) => {
+      if (action === "composer.stash") runStashCommand();
+    });
+  }, [runStashCommand]);
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
@@ -2251,29 +2272,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // even when the composer is in a state that can't stash.
       event.preventDefault();
       event.stopPropagation();
-      if (
-        isCommandPaletteOpen() ||
-        isComposerApprovalState ||
-        pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
-        activePendingProgress !== null
-      ) {
-        return;
-      }
-      void stashCurrentPrompt();
+      runStashCommand();
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [
-    activePendingProgress,
-    isComposerApprovalState,
-    isComposerModelPickerOpen,
-    keybindings,
-    pendingUserInputs.length,
-    projectSelectionRequired,
-    stashCurrentPrompt,
-    terminalOpen,
-  ]);
+  }, [isComposerModelPickerOpen, keybindings, runStashCommand, terminalOpen]);
 
   // ------------------------------------------------------------------
   // Callbacks: images
@@ -3016,7 +3019,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 </div>
               )}
 
-            <div className="relative">
+            <div className="relative" data-composer-stash={stashCommandEnabled ? "" : undefined}>
               <ComposerPromptEditor
                 editorRef={composerEditorRef}
                 value={

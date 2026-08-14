@@ -64,6 +64,7 @@ function makeFakeBrowserWindow() {
   const webContents = {
     copyImageAt: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
+    getZoomFactor: vi.fn(() => 1),
     isLoadingMainFrame: vi.fn(() => false),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
@@ -107,6 +108,7 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
+    getZoomFactor: webContents.getZoomFactor,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
@@ -186,6 +188,7 @@ function makeTestLayer(input: {
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
+  readonly electronMenu?: ElectronMenu.ElectronMenu["Service"];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -248,7 +251,9 @@ function makeTestLayer(input: {
         desktopAppSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
-        electronMenuLayer,
+        input.electronMenu
+          ? Layer.succeed(ElectronMenu.ElectronMenu, input.electronMenu)
+          : electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
             Effect.sync(() => {
@@ -479,6 +484,80 @@ describe("DesktopWindow", () => {
         prevented = false;
         beforeInput(event, { ...input, meta: false });
         assert.isFalse(prevented);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("adds Stash to the native context menu only for the composer", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const composerPopup = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const otherPopup = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const popups = [composerPopup, otherPopup];
+      let popupIndex = 0;
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        electronMenu: {
+          setApplicationMenu: () => Effect.void,
+          showContextMenu: () => Effect.succeed(Option.none()),
+          popupTemplate: (input) => {
+            const popup = popups[popupIndex++];
+            return popup ? Deferred.succeed(popup, input).pipe(Effect.asVoid) : Effect.void;
+          },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) {
+          return yield* Effect.die("context-menu listener was not registered");
+        }
+
+        const executeJavaScript = vi.fn(() => Promise.resolve(true));
+        fakeWindow.getZoomFactor.mockReturnValue(1.5);
+        const params = {
+          x: 60,
+          y: 90,
+          frame: { executeJavaScript },
+          isEditable: true,
+          misspelledWord: "",
+          dictionarySuggestions: [],
+          linkURL: "",
+          mediaType: "none",
+          editFlags: {
+            canCut: true,
+            canCopy: true,
+            canPaste: true,
+            canSelectAll: true,
+          },
+        };
+        contextMenu({ preventDefault: vi.fn() }, params);
+
+        const { template } = yield* Deferred.await(composerPopup);
+        assert.deepEqual(executeJavaScript.mock.calls, [
+          ['Boolean(document.elementFromPoint(40, 60)?.closest("[data-composer-stash]"))'],
+        ]);
+        assert.deepEqual(
+          template.slice(0, 4).map((item) => item.role),
+          ["cut", "copy", "paste", "selectAll"],
+        );
+        const stash = template.find((item) => item.label === "Stash");
+        assert.isDefined(stash);
+        assert.equal(stash.accelerator, "CmdOrCtrl+S");
+        stash.click?.({} as Electron.MenuItem, fakeWindow.window, {} as Electron.KeyboardEvent);
+        assert.deepEqual(fakeWindow.send.mock.calls, [[MENU_ACTION_CHANNEL, "composer.stash"]]);
+
+        executeJavaScript.mockResolvedValueOnce(false);
+        contextMenu({ preventDefault: vi.fn() }, params);
+        const otherTemplate = (yield* Deferred.await(otherPopup)).template;
+        assert.isUndefined(otherTemplate.find((item) => item.label === "Stash"));
       }).pipe(Effect.provide(layer));
     }),
   );

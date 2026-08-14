@@ -504,7 +504,38 @@ export const make = Effect.gen(function* () {
         { role: "selectAll", enabled: params.editFlags.canSelectAll },
       );
 
-      void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+      const showContextMenu = (includeComposerStash: boolean) => {
+        if (includeComposerStash) {
+          menuTemplate.push(
+            { type: "separator" },
+            {
+              label: "Stash",
+              accelerator: "CmdOrCtrl+S",
+              click: () => window.webContents.send(MENU_ACTION_CHANNEL, "composer.stash"),
+            },
+          );
+        }
+
+        void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+      };
+
+      if (!params.isEditable || !params.frame) {
+        showContextMenu(false);
+        return;
+      }
+
+      // Electron reports window coordinates; DOM hit-testing expects zoom-adjusted CSS pixels.
+      const zoomFactor = window.webContents.getZoomFactor();
+      const x = Math.trunc(params.x / zoomFactor);
+      const y = Math.trunc(params.y / zoomFactor);
+      void params.frame
+        .executeJavaScript(
+          `Boolean(document.elementFromPoint(${x}, ${y})?.closest("[data-composer-stash]"))`,
+        )
+        .then(
+          (isComposerTarget) => showContextMenu(isComposerTarget === true),
+          () => showContextMenu(false),
+        );
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
