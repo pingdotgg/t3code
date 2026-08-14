@@ -207,7 +207,7 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.USERPROFILE).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\.local\\bin`, `${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
+      onSome: (value) => [`${value}\\.local\\bin`, `${value}\\.bun\\bin`, `${value}\\scoop\\shims`, `${value}\\.cargo\\bin`],
     }),
   ),
 ];
@@ -387,28 +387,57 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
       readEnvPath(config.env),
     ]);
 
-    let nodeFound = false;
-    let fnmFound = false;
-    if (Option.isSome(staticPaths)) {
+    const checkNodeStatically = Effect.gen(function* () {
+      if (Option.isNone(staticPaths)) return false;
       for (const dir of staticPaths.value.split(";")) {
         const cleanDir = dir.trim().replace(/^"+|"+$/g, "");
-        if (!nodeFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/node.exe`), () => false))) {
-          nodeFound = true;
-        }
-        if (!fnmFound && (
-          (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.exe`), () => false)) ||
-          (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.cmd`), () => false)) ||
-          (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.ps1`), () => false))
-        )) {
-          fnmFound = true;
-        }
-        if (nodeFound && fnmFound) break;
+        if (cleanDir.length === 0) continue;
+        const hasNode = yield* fileSystem.exists(`${cleanDir}\\node.exe`).pipe(
+          Effect.catchAll(() => Effect.succeed(false))
+        );
+        if (hasNode) return true;
       }
-    }
+      return false;
+    }).pipe(
+      Effect.timeoutOption(Duration.millis(250)),
+      Effect.map(Option.getOrElse(() => false))
+    );
 
-    const skipProfile = nodeFound && !fnmFound;
+    const checkProfileMentionsFnm = Effect.gen(function* () {
+      const userProfile = config.env.USERPROFILE;
+      if (!userProfile) return true; // unsafe to skip if we can't find the profile
+      const profilePaths = [
+        `${userProfile}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`,
+        `${userProfile}\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1`,
+        `${userProfile}\\Documents\\WindowsPowerShell\\profile.ps1`,
+        `${userProfile}\\Documents\\PowerShell\\profile.ps1`,
+      ];
+      for (const p of profilePaths) {
+        const content = yield* fileSystem.readFileString(p).pipe(
+          Effect.catchIf(
+            (err) => err._tag === "SystemError" && err.reason === "NotFound",
+            () => Effect.succeed("")
+          )
+        );
+        if (content.toLowerCase().includes("fnm")) {
+          return true;
+        }
+      }
+      return false;
+    }).pipe(
+      Effect.catchAll(() => Effect.succeed(true)), // On permission or other errors, assume unsafe to skip
+      Effect.timeoutOption(Duration.millis(250)),
+      Effect.map(Option.getOrElse(() => true))
+    );
 
-    // If node is found statically and no fnm wrappers exist, we can skip BOTH PowerShell probes entirely!
+    const [nodeFound, profileMentionsFnm] = yield* Effect.all([
+      checkNodeStatically,
+      checkProfileMentionsFnm
+    ], { concurrency: 2 });
+
+    const skipProfile = nodeFound && !profileMentionsFnm;
+
+    // If node is found statically and no fnm profile refs exist, we can skip BOTH PowerShell probes entirely!
     if (skipProfile) {
       if (Option.isSome(staticPaths)) {
         config.env.PATH = staticPaths.value;
