@@ -45,6 +45,11 @@ const permissionOptionIds = {
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
   rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
 };
+const omitAllowAlways = process.env.T3_ACP_OMIT_ALLOW_ALWAYS === "1";
+const permissionRequestCount = Math.max(
+  1,
+  Number(process.env.T3_ACP_PERMISSION_REQUEST_COUNT ?? "1") || 1,
+);
 const sessionId = "mock-session-1";
 
 let currentModeId = "ask";
@@ -656,37 +661,49 @@ const program = Effect.gen(function* () {
           },
         });
 
-        const permission = yield* agent.client.requestPermission({
-          sessionId: requestedSessionId,
-          toolCall: {
-            toolCallId,
-            title: "`cat server/package.json`",
-            kind: "execute",
-            status: "pending",
-            content: [
-              {
-                type: "content",
-                content: {
-                  type: "text",
-                  text: "Not in allowlist: cat server/package.json",
+        const permissionOptions: Array<AcpSchema.PermissionOption> = [
+          { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+          ...(omitAllowAlways
+            ? []
+            : [
+                {
+                  optionId: permissionOptionIds.allowAlways,
+                  name: "Allow always",
+                  kind: "allow_always" as const,
                 },
-              },
-            ],
-          },
-          options: [
-            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
-            {
-              optionId: permissionOptionIds.allowAlways,
-              name: "Allow always",
-              kind: "allow_always",
-            },
-            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
-          ],
-        });
+              ]),
+          { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+        ];
 
-        const cancelled =
-          cancelledSessions.delete(requestedSessionId) ||
-          permission.outcome.outcome === "cancelled";
+        let cancelled = cancelledSessions.delete(requestedSessionId);
+        for (let index = 0; index < permissionRequestCount; index++) {
+          const permission = yield* agent.client.requestPermission({
+            sessionId: requestedSessionId,
+            toolCall: {
+              toolCallId: index === 0 ? toolCallId : `${toolCallId}-${index + 1}`,
+              title: "`cat server/package.json`",
+              kind: "execute",
+              status: "pending",
+              content: [
+                {
+                  type: "content",
+                  content: {
+                    type: "text",
+                    text: "Not in allowlist: cat server/package.json",
+                  },
+                },
+              ],
+            },
+            options: permissionOptions,
+          });
+          cancelled =
+            cancelled ||
+            cancelledSessions.delete(requestedSessionId) ||
+            permission.outcome.outcome === "cancelled";
+          if (cancelled) {
+            break;
+          }
+        }
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
