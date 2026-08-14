@@ -821,7 +821,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const finalizeRun = Effect.fn("desktop.backendInstance.finalizeRun")(function* (
           reason: string,
         ) {
-          yield* Effect.yieldNow();
+          yield* Effect.yieldNow;
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
               const { isCurrentRun, nextState, pid, exitObserved, stopRequested, wasReady } =
@@ -900,7 +900,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 // *consecutive* never-ready exits. When the cap fires, invoke
                 // onPreflightFailed so the UI falls back to Windows instead of
                 // looping forever. fd3 (Windows-native) keeps uncapped restarts.
-                if (!wasReady && config.value.bootstrapDelivery === "stdin" && Option.isSome(pid)) {
+                if (!wasReady && config.value.bootstrapDelivery === "stdin" && Option.isSome(pid) && exitObserved && !stopRequested) {
                   const attempt = yield* Ref.modify(state, (s) => {
                     const next = s.neverReadyAttempt + 1;
                     return [next, { ...s, neverReadyAttempt: next }] as const;
@@ -958,7 +958,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
             const isCurrentRun = yield* Ref.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
-              if (activeRun?.id !== runId) {
+              if (activeRun?.id !== runId || activeRun.exitObserved || activeRun.stopRequested) {
                 return [false, latest] as const;
               }
 

@@ -1054,6 +1054,19 @@ describe("DesktopBackendManager", () => {
   it.effect("restarts an unexpectedly exited backend with the Effect clock", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const waitForNextSpawn = Effect.gen(function* () {
+          const sc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+          while (true) {
+            const state = yield* instance.snapshot;
+            if (!state.desiredRunning) break;
+            const currentSc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+            if (currentSc > sc) break;
+            if (state.ready) break;
+            if (state.restartFiber && state.restartFiber._tag === "Some") break;
+            yield* Effect.yieldNow;
+          }
+        });
+
         const starts = yield* Queue.unbounded<number>();
         const failures = yield* Queue.unbounded<string>();
         let startCount = 0;
@@ -1401,6 +1414,19 @@ describe("DesktopBackendManager", () => {
   it.effect("never-ready cap invokes onPreflightFailed exactly once and stops when false", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const waitForNextSpawn = Effect.gen(function* () {
+          const sc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+          while (true) {
+            const state = yield* instance.snapshot;
+            if (!state.desiredRunning) break;
+            const currentSc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+            if (currentSc > sc) break;
+            if (state.ready) break;
+            if (state.restartFiber && state.restartFiber._tag === "Some") break;
+            yield* Effect.yieldNow;
+          }
+        });
+
         let spawnCount = 0;
         let preflightFailedCount = 0;
         let lastPreflightFailure: DesktopBackendManager.PreflightFailure | undefined;
@@ -1435,8 +1461,8 @@ describe("DesktopBackendManager", () => {
         });
 
         yield* instance.start;
-        yield* TestClock.adjust(Duration.millis(500));
-        yield* TestClock.adjust(Duration.seconds(1));
+        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.millis(500));
+        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.seconds(1));
         yield* TestClock.adjust(Duration.seconds(2));
         yield* TestClock.adjust(Duration.seconds(4));
         yield* Deferred.await(preflightFailed);
@@ -1457,6 +1483,19 @@ describe("DesktopBackendManager", () => {
   it.effect("readiness resets the never-ready cap for stdin-delivery backends", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const waitForNextSpawn = Effect.gen(function* () {
+          const sc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+          while (true) {
+            const state = yield* instance.snapshot;
+            if (!state.desiredRunning) break;
+            const currentSc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+            if (currentSc > sc) break;
+            if (state.ready) break;
+            if (state.restartFiber && state.restartFiber._tag === "Some") break;
+            yield* Effect.yieldNow;
+          }
+        });
+
         let spawnCount = 0;
         let preflightFailedCount = 0;
         const preflightFailed = yield* Deferred.make<void>();
@@ -1504,8 +1543,8 @@ describe("DesktopBackendManager", () => {
         });
 
         yield* instance.start;
-        yield* TestClock.adjust(Duration.millis(500));
-        yield* TestClock.adjust(Duration.seconds(1));
+        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.millis(500));
+        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.seconds(1));
         yield* TestClock.adjust(Duration.seconds(2));
         yield* TestClock.adjust(Duration.seconds(4));
         // Wait for the 5th spawn to become ready
@@ -1518,8 +1557,8 @@ describe("DesktopBackendManager", () => {
         yield* Deferred.succeed(closeReadyProcess, void 0);
 
         // Now advance time for the next 4 failures before readiness
-        yield* TestClock.adjust(Duration.millis(500));
-        yield* TestClock.adjust(Duration.seconds(1));
+        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.millis(500));
+        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.seconds(1));
         yield* TestClock.adjust(Duration.seconds(2));
         yield* TestClock.adjust(Duration.seconds(4));
 
