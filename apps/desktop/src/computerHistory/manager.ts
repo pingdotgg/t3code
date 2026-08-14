@@ -25,7 +25,10 @@ import {
 import { resolveDesktopMcpBinaryPathSync } from "./resolveBinary.ts";
 
 let daemon: ChildProcess | null = null;
+/** Generation counter so a late `exit` from an old child cannot clear a newer daemon. */
+let daemonGeneration = 0;
 let rootPath: string | null = null;
+let stopping: Promise<void> | null = null;
 
 process.on("exit", () => {
   if (daemon && !daemon.killed) {
@@ -67,8 +70,12 @@ export async function ensureDaemon(
   rootPath = root;
 
   if (!settings.enabled) {
-    stopDaemon();
+    await stopDaemon();
     return;
+  }
+
+  if (stopping) {
+    await stopping;
   }
 
   if (daemon && !daemon.killed) {
@@ -81,26 +88,69 @@ export async function ensureDaemon(
     return;
   }
 
-  daemon = spawn(binary, ["computer-history", "--root", root], {
+  const generation = ++daemonGeneration;
+  const child = spawn(binary, ["computer-history", "--root", root], {
     stdio: ["ignore", "ignore", "pipe"],
     detached: false,
   });
-  daemon.stderr?.on("data", (chunk: Buffer) => {
+  daemon = child;
+  child.stderr?.on("data", (chunk: Buffer) => {
     process.stderr.write(chunk);
   });
-  daemon.on("exit", () => {
-    daemon = null;
+  child.on("error", (error) => {
+    if (daemon === child && daemonGeneration === generation) {
+      daemon = null;
+    }
+    void writeUnavailableStatus(root, `failed to start computer-history daemon: ${error.message}`);
+  });
+  child.on("exit", () => {
+    // Only clear the slot if this child is still the current generation —
+    // otherwise a stop/restart race would drop the replacement handle.
+    if (daemon === child && daemonGeneration === generation) {
+      daemon = null;
+    }
   });
 }
 
-export function stopDaemon(): void {
-  if (!daemon) return;
-  try {
-    daemon.kill("SIGTERM");
-  } catch {
-    // ignore
+export async function stopDaemon(): Promise<void> {
+  if (stopping) {
+    await stopping;
+    return;
   }
-  daemon = null;
+  const child = daemon;
+  if (!child) return;
+
+  stopping = new Promise<void>((resolve) => {
+    const finish = () => {
+      if (daemon === child) {
+        daemon = null;
+      }
+      stopping = null;
+      resolve();
+    };
+
+    const onExit = () => {
+      clearTimeout(timer);
+      finish();
+    };
+    child.once("exit", onExit);
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      finish();
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      finish();
+    }, 2_000);
+  });
+
+  await stopping;
 }
 
 async function writeUnavailableStatus(root: string, lastError: string): Promise<void> {

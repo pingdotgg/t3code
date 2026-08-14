@@ -116,6 +116,8 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  /** Absolute T3 state dir used to load Computer History context for turns. */
+  readonly stateDir?: string;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -395,18 +397,21 @@ function buildCodexCollaborationMode(input: {
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly computerHistoryContext?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
-  if (input.interactionMode === undefined) {
+  // Mode-less turns still need Computer History when present — otherwise ordinary
+  // sendTurn calls silently drop the loaded context.
+  if (input.interactionMode === undefined && !input.computerHistoryContext) {
     return undefined;
   }
+  const interactionMode = input.interactionMode ?? "default";
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   const reasoningEffort = input.effort ?? "medium";
   return {
-    mode: input.interactionMode,
+    mode: interactionMode,
     settings: {
       model,
       reasoning_effort: reasoningEffort,
       developer_instructions: buildCodexDeveloperInstructions(
-        input.interactionMode,
+        interactionMode,
         {
           model,
           reasoningEffort,
@@ -2000,20 +2005,21 @@ export const makeCodexSessionRuntime = (
           );
           const computerHistoryContext = yield* Effect.tryPromise({
             try: async () => {
-              const { loadRecentContextMarkdown, resolveComputerHistoryRoot } =
-                await import("@t3tools/shared/computerHistory");
-              const stateDir =
-                process.env.T3CODE_STATE_DIR ?? process.env.T3_STATE_DIR ?? undefined;
-              if (!stateDir) return undefined;
-              return loadRecentContextMarkdown(resolveComputerHistoryRoot(stateDir));
+              if (!options.stateDir) return undefined;
+              const {
+                buildComputerHistoryContextBlock,
+                loadRecentContextMarkdown,
+                readControlFile,
+                resolveComputerHistoryRoot,
+              } = await import("@t3tools/shared/computerHistory");
+              const root = resolveComputerHistoryRoot(options.stateDir);
+              const control = await readControlFile(root);
+              if (!control?.enabled || control.paused) return undefined;
+              const markdown = await loadRecentContextMarkdown(root);
+              return markdown ? buildComputerHistoryContextBlock(markdown) : undefined;
             },
             catch: () => undefined,
-          }).pipe(
-            Effect.orElseSucceed(() => undefined),
-            Effect.map((markdown) =>
-              markdown ? `<computer_history>\n${markdown}\n</computer_history>` : undefined,
-            ),
-          );
+          }).pipe(Effect.orElseSucceed(() => undefined));
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,

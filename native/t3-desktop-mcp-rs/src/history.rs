@@ -146,7 +146,8 @@ pub fn run(root: PathBuf) -> Result<(), String> {
 
         match sample_frontmost(&mut *desktop) {
             Ok(sample) => {
-                let allowed = app_allowed(&sample.app_id, &sample.app_name, &control);
+                let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
+                    && website_allowed(sample.window_title.as_deref(), &control);
                 if !allowed {
                     suppressed += 1;
                 } else if sample.key != last_sample_key {
@@ -274,7 +275,10 @@ fn parse_app_line(line: &str) -> Option<(String, String)> {
 
 fn app_allowed(app_id: &str, app_name: &str, control: &Control) -> bool {
     let needles: Vec<String> = control.apps.iter().map(|s| s.to_lowercase()).collect();
-    let hay = [app_id.to_lowercase(), app_name.to_lowercase()];
+    let hay: Vec<String> = [app_id.to_lowercase(), app_name.to_lowercase()]
+        .into_iter()
+        .filter(|h| !h.is_empty())
+        .collect();
     let hit = needles.iter().any(|needle| {
         hay.iter()
             .any(|h| h.contains(needle) || needle.contains(h.as_str()))
@@ -283,6 +287,32 @@ fn app_allowed(app_id: &str, app_name: &str, control: &Control) -> bool {
         return control.app_filter_mode == "exclude";
     }
     if control.app_filter_mode == "exclude" {
+        !hit
+    } else {
+        hit
+    }
+}
+
+fn website_allowed(url_or_title: Option<&str>, control: &Control) -> bool {
+    let Some(raw) = url_or_title else {
+        return true;
+    };
+    let lowered = raw.to_lowercase();
+    if lowered.contains("chrome://newtab")
+        || lowered.contains("about:privatebrowsing")
+        || lowered.contains("edge://newtab")
+        || lowered.contains("(private)")
+        || lowered.contains("incognito")
+        || lowered.contains("inprivate")
+    {
+        return false;
+    }
+    let needles: Vec<String> = control.websites.iter().map(|s| s.to_lowercase()).collect();
+    if needles.is_empty() {
+        return control.website_filter_mode == "exclude";
+    }
+    let hit = needles.iter().any(|needle| lowered.contains(needle));
+    if control.website_filter_mode == "exclude" {
         !hit
     } else {
         hit
