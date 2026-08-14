@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { agentBrowserCursorLabel, agentBrowserCursorOpacity } from "./agentBrowserCursorLogic";
+import {
+  agentBrowserCursorLabel,
+  agentBrowserCursorOpacity,
+  easeOutCubic,
+  lerp,
+} from "./agentBrowserCursorLogic";
 
 describe("agentBrowserCursorOpacity", () => {
   it("keeps active movement fully visible", () => {
@@ -23,5 +28,14 @@ describe("agentBrowserCursorLabel", () => {
     expect(agentBrowserCursorLabel("move", true)).toBe("Agent");
     expect(agentBrowserCursorLabel("click", true)).toBe("Click");
     expect(agentBrowserCursorLabel("click", false)).toBeNull();
+  });
+});
+
+describe("cursor follow easing", () => {
+  it("lerps and eases out without overshooting", () => {
+    expect(lerp(0, 100, 0.25)).toBe(25);
+    expect(easeOutCubic(0)).toBe(0);
+    expect(easeOutCubic(1)).toBe(1);
+    expect(easeOutCubic(0.5)).toBeGreaterThan(0.5);
   });
 });

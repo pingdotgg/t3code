@@ -8,6 +8,7 @@ import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 
 import {
+  AGENT_CURSOR_FOLLOW_MS,
   agentBrowserCursorLabel,
   agentBrowserCursorOpacity,
   type BrowserController,
@@ -57,9 +58,11 @@ function AgentBrowserCursorMark(props: {
 
   useEffect(() => {
     setActive(true);
-    setTrail((previous) =>
-      [...previous, { x: event.x, y: event.y, sequence: event.sequence }].slice(-3),
-    );
+    setTrail((previous) => {
+      const last = previous.at(-1);
+      if (last?.sequence === event.sequence) return previous;
+      return [...previous, { x: event.x, y: event.y, sequence: event.sequence }].slice(-3);
+    });
     const timeout = window.setTimeout(() => setActive(false), CURSOR_ACTIVE_MS);
     return () => window.clearTimeout(timeout);
   }, [event.sequence, event.x, event.y]);
@@ -83,15 +86,15 @@ function AgentBrowserCursorMark(props: {
           style={{
             opacity: 0.12 + index * 0.08,
             transform: `${place(point.x, point.y)} translate(2px, 2px)`,
-            transition: "transform 200ms ease-out, opacity 200ms ease-out",
           }}
         />
       ))}
       <div
-        className="absolute top-0 left-0 transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none"
+        className="absolute top-0 left-0 transition-[transform,opacity] ease-out motion-reduce:transition-none"
         style={{
           opacity: agentBrowserCursorOpacity(active, controller),
           transform: place(event.x, event.y),
+          transitionDuration: `${AGENT_CURSOR_FOLLOW_MS}ms`,
         }}
         data-agent-browser-cursor
       >

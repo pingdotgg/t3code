@@ -15,6 +15,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
+import { harvestBoxes, summarizeHarvestLabels } from "./annotationHarvest.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -430,12 +431,12 @@ function startAnnotation(): void {
   const editor = document.createElement("div");
   editor.setAttribute(OVERLAY_ATTRIBUTE, "");
   editor.className =
-    "pointer-events-auto fixed hidden max-h-[calc(100vh-16px)] w-[min(360px,calc(100vw-16px))] flex-col overflow-hidden rounded-xl border border-border bg-popover/96 text-popover-foreground shadow-2xl backdrop-blur-xl";
+    "pointer-events-auto fixed hidden max-h-[calc(100vh-16px)] w-[min(560px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-border bg-popover/96 text-popover-foreground shadow-2xl backdrop-blur-xl";
   editor.style.zIndex = String(CHROME_LAYER_Z_INDEX);
   root.appendChild(editor);
 
   const composerRow = document.createElement("div");
-  composerRow.className = "flex items-start gap-2 p-2";
+  composerRow.className = "flex items-start gap-2 p-2.5";
 
   const adjust = createButton("", "Expand annotation editor");
   adjust.setAttribute("aria-label", "Expand annotation editor");
@@ -446,12 +447,28 @@ function startAnnotation(): void {
     '<svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12M7 3v4M13 8v4M9 13v4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
   composerRow.appendChild(adjust);
 
+  const composerCopy = document.createElement("div");
+  composerCopy.className = "flex min-w-0 flex-1 flex-col gap-0.5";
+  const composeHead = document.createElement("div");
+  composeHead.className = "flex min-w-0 items-center gap-2";
+  const targetName = document.createElement("div");
+  targetName.className =
+    "hidden min-w-0 flex-1 truncate font-sans text-[11px] font-semibold text-muted-foreground";
+  const editorClose = createButton("", "Cancel annotation");
+  editorClose.setAttribute("aria-label", "Cancel annotation");
+  editorClose.className +=
+    " h-7 w-7 shrink-0 p-0 text-muted-foreground hover:bg-accent hover:text-accent-foreground";
+  editorClose.innerHTML =
+    '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  composeHead.append(targetName, editorClose);
+  composerCopy.appendChild(composeHead);
   const comment = document.createElement("textarea");
   comment.placeholder = "What should change?";
   comment.rows = 1;
   comment.className =
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
-  composerRow.appendChild(comment);
+  composerCopy.appendChild(comment);
+  composerRow.appendChild(composerCopy);
 
   const dragHandle = document.createElement("button");
   dragHandle.type = "button";
@@ -474,6 +491,7 @@ function startAnnotation(): void {
 
   const selected = new Map<Element, SelectedElement>();
   const regions: PreviewAnnotationRegionTarget[] = [];
+  const regionHarvest = new Map<string, Element[]>();
   const strokes: PreviewAnnotationStrokeTarget[] = [];
   const styleChanges = new Map<string, PreviewAnnotationStyleChange>();
   const toolButtons = new Map<AnnotationTool, HTMLButtonElement>();
@@ -495,10 +513,35 @@ function startAnnotation(): void {
     comment.style.overflowY = comment.scrollHeight > maxHeight ? "auto" : "hidden";
     queueEditorLayout();
   };
-  comment.addEventListener("input", resizeComment);
+  comment.addEventListener("input", () => {
+    comment.removeAttribute("data-needs-text");
+    comment.placeholder = "What should change?";
+    resizeComment();
+    updateStatus();
+  });
 
   const updateStatus = (): void => {
     const hasTargets = selected.size > 0 || regions.length > 0 || strokes.length > 0;
+    if (selected.size > 0) {
+      const names = Array.from(selected.values(), (target) => {
+        return accessibleName(target.element) ?? describeRawElement(target.element);
+      });
+      targetName.textContent = summarizeHarvestLabels(names, "Selected");
+      targetName.classList.remove("hidden");
+    } else if (regions.length > 0 && strokes.length === 0) {
+      targetName.textContent =
+        regions.length === 1 ? "This area" : `${regions.length} marked regions`;
+      targetName.classList.remove("hidden");
+    } else if (strokes.length > 0 && regions.length === 0) {
+      targetName.textContent = strokes.length === 1 ? "Drawing" : `${strokes.length} drawings`;
+      targetName.classList.remove("hidden");
+    } else if (hasTargets) {
+      targetName.textContent = `${selected.size + regions.length + strokes.length} marks`;
+      targetName.classList.remove("hidden");
+    } else {
+      targetName.textContent = "";
+      targetName.classList.add("hidden");
+    }
     editor.style.display = hasTargets ? "flex" : "none";
     hint.style.display = hasTargets ? "none" : "block";
     submit.disabled = !hasTargets;
@@ -523,10 +566,10 @@ function startAnnotation(): void {
     if (tool !== "marquee") marqueeBox.style.display = "none";
     document.documentElement.setAttribute("data-t3code-annotation-tool", tool);
     const hints = {
-      select: "Click an element. Type what should change. Enter adds it to chat.",
-      marquee: "Drag a box around a region, or around several elements.",
-      draw: "Draw on the page. Enter adds the mark to chat.",
-      erase: "Click a mark to remove it.",
+      select: "Click a control. Type what should change. X or Escape cancels.",
+      marquee: "Drag a box. We keep the area and any controls inside it.",
+      draw: "Draw on the page. Type what should change, then Add to chat.",
+      erase: "Click a mark to remove it. X on a box also removes it.",
     } as const;
     hint.textContent = hints[tool];
   };
@@ -840,6 +883,12 @@ function startAnnotation(): void {
     toolButtons.set(candidate, button);
     toolbar.appendChild(button);
   }
+  const toolbarClose = createButton("", "Cancel annotation");
+  toolbarClose.setAttribute("aria-label", "Cancel annotation");
+  toolbarClose.className += " h-8 w-8 p-0 text-muted-foreground";
+  toolbarClose.innerHTML =
+    '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  toolbar.appendChild(toolbarClose);
 
   const clampEditorPosition = (left: number, top: number): { left: number; top: number } => {
     const margin = 8;
@@ -858,6 +907,7 @@ function startAnnotation(): void {
 
   const applyEditorPosition = (position: { left: number; top: number }): void => {
     const clamped = clampEditorPosition(position.left, position.top);
+    editor.style.transform = "none";
     editor.style.left = `${clamped.left}px`;
     editor.style.top = `${clamped.top}px`;
     editor.style.right = "auto";
@@ -877,32 +927,12 @@ function startAnnotation(): void {
       0,
     );
 
-  const positionCompactEditor = (): void => {
-    const bounds = getAnnotationBounds();
-    if (!bounds) return;
-    const editorRect = editor.getBoundingClientRect();
-    const gap = 8;
-    const candidates = [
-      { left: bounds.x + bounds.width + gap, top: bounds.y },
-      { left: bounds.x - editorRect.width - gap, top: bounds.y },
-      {
-        left: bounds.x + bounds.width - editorRect.width,
-        top: bounds.y + bounds.height + gap,
-      },
-      {
-        left: bounds.x + bounds.width - editorRect.width,
-        top: bounds.y - editorRect.height - gap,
-      },
-    ];
-    const overflow = (position: { left: number; top: number }): number =>
-      Math.max(0, -position.left) +
-      Math.max(0, -position.top) +
-      Math.max(0, position.left + editorRect.width - window.innerWidth) +
-      Math.max(0, position.top + editorRect.height - window.innerHeight);
-    const best = candidates.reduce((current, candidate) =>
-      overflow(candidate) < overflow(current) ? candidate : current,
-    );
-    applyEditorPosition(best);
+  const pinDockEditor = (): void => {
+    editor.style.left = "50%";
+    editor.style.right = "auto";
+    editor.style.top = "auto";
+    editor.style.bottom = "16px";
+    editor.style.transform = "translateX(-50%)";
   };
 
   function queueEditorLayout(): void {
@@ -911,7 +941,7 @@ function startAnnotation(): void {
       editorLayoutFrame = null;
       if (editor.style.display === "none") return;
       if (editorExpanded && editorPosition) applyEditorPosition(editorPosition);
-      else positionCompactEditor();
+      else pinDockEditor();
     });
   }
 
@@ -1226,7 +1256,11 @@ function startAnnotation(): void {
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
-    if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
+    if (
+      pendingCapture ||
+      (selected.size === 0 && regions.length === 0 && strokes.length === 0) ||
+      comment.value.trim().length === 0
+    )
       return;
     pendingCapture = true;
     submit.disabled = true;
