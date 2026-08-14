@@ -630,10 +630,11 @@ const make = Effect.gen(function* () {
 
       const projectCheckoutExists = yield* fileSystem.exists(project.workspaceRoot).pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new ProviderAdapterRequestError({
               provider: providerErrorLabel(String(desiredInstanceId)),
               method: "thread.turn.start",
+              cause,
               detail: input.deletedWorktreePath
                 ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and T3 Code could not check its project checkout '${project.workspaceRoot}'.`
                 : `T3 Code could not check project checkout '${project.workspaceRoot}' for thread '${threadId}'.`,
@@ -654,10 +655,11 @@ const make = Effect.gen(function* () {
         .refreshLocalStatus(project.workspaceRoot)
         .pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new ProviderAdapterRequestError({
                 provider: providerErrorLabel(String(desiredInstanceId)),
                 method: "thread.turn.start",
+                cause,
                 detail: input.deletedWorktreePath
                   ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and T3 Code could not verify the branch in project checkout '${project.workspaceRoot}'.`
                   : `T3 Code could not verify project checkout '${project.workspaceRoot}' for thread '${threadId}' on branch '${expectedBranch}'.`,
@@ -691,10 +693,11 @@ const make = Effect.gen(function* () {
 
       const worktreeExists = yield* fileSystem.exists(thread.worktreePath).pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new ProviderAdapterRequestError({
               provider: providerErrorLabel(String(desiredInstanceId)),
               method: "thread.turn.start",
+              cause,
               detail: `T3 Code could not check whether thread '${threadId}' worktree '${thread.worktreePath}' still exists.`,
             }),
         ),
