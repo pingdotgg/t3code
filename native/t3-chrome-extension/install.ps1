@@ -38,7 +38,14 @@ $manifest = [ordered]@{
   type            = 'stdio'
   allowed_origins = @("chrome-extension://$ExtensionId/")
 }
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -Path $manifestPath -Encoding UTF8
+# Chrome rejects native-host manifests with a UTF-8 BOM (PowerShell's UTF8
+# encoding inserts one). Write UTF-8 without BOM explicitly.
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText(
+  $manifestPath,
+  ($manifest | ConvertTo-Json -Depth 4),
+  $utf8NoBom
+)
 
 # Chrome and Chromium read separate registry trees; register wherever the
 # browser is actually installed.

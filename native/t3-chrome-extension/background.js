@@ -104,6 +104,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
+// Connect as soon as the service worker evaluates. onStartup/onInstalled alone
+// can miss unpacked loads; content-script pings also wake us via onMessage.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "t3-wake") connect();
+});
+connect();
 
 function reply(id, result) {
   if (port) port.postMessage({ id, ok: true, result });
