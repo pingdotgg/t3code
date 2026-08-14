@@ -440,7 +440,6 @@ export function TerminalViewport({
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
-        onCopy: (text) => handleCopy(text),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
       };
@@ -668,17 +667,6 @@ export function TerminalViewport({
         })();
       }
 
-      function handleCopy(text: string): void {
-        void writeTextToClipboard(text, "terminal selection").catch((error: unknown) => {
-          const activeTerminal = terminalRef.current;
-          if (!activeTerminal) return;
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : "Unable to copy terminal selection",
-          );
-        });
-      }
-
       function handleData(data: string): void {
         void (async () => {
           const result = await writeTerminal(data);
@@ -696,6 +684,12 @@ export function TerminalViewport({
           return;
         }
         clearSelectionAction();
+        // A copy shortcut that clears the selection (Ctrl+C) must also close
+        // the context menu that appears with the selection, but a clear that
+        // never opened a menu must not dismiss an unrelated one.
+        if (selectionActionMenuOpenRef.current) {
+          void localApi?.contextMenu.close();
+        }
       }
 
       const handleMouseUp = (event: MouseEvent) => {
