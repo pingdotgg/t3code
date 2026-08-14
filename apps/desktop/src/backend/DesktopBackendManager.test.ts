@@ -1054,19 +1054,6 @@ describe("DesktopBackendManager", () => {
   it.effect("restarts an unexpectedly exited backend with the Effect clock", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const waitForNextSpawn = Effect.gen(function* () {
-          const sc = typeof startCount !== 'undefined' ? startCount : spawnCount;
-          while (true) {
-            const state = yield* instance.snapshot;
-            if (!state.desiredRunning) break;
-            const currentSc = typeof startCount !== 'undefined' ? startCount : spawnCount;
-            if (currentSc > sc) break;
-            if (state.ready) break;
-            if (state.restartFiber && state.restartFiber._tag === "Some") break;
-            yield* Effect.yieldNow;
-          }
-        });
-
         const starts = yield* Queue.unbounded<number>();
         const failures = yield* Queue.unbounded<string>();
         let startCount = 0;
@@ -1415,14 +1402,13 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const waitForNextSpawn = Effect.gen(function* () {
-          const sc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+          const sc = spawnCount;
           while (true) {
             const state = yield* instance.snapshot;
             if (!state.desiredRunning) break;
-            const currentSc = typeof startCount !== 'undefined' ? startCount : spawnCount;
-            if (currentSc > sc) break;
+            if (spawnCount > sc) break;
             if (state.ready) break;
-            if (state.restartFiber && state.restartFiber._tag === "Some") break;
+            if (state.restartScheduled) break;
             yield* Effect.yieldNow;
           }
         });
@@ -1484,14 +1470,13 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const waitForNextSpawn = Effect.gen(function* () {
-          const sc = typeof startCount !== 'undefined' ? startCount : spawnCount;
+          const sc = spawnCount;
           while (true) {
             const state = yield* instance.snapshot;
             if (!state.desiredRunning) break;
-            const currentSc = typeof startCount !== 'undefined' ? startCount : spawnCount;
-            if (currentSc > sc) break;
+            if (spawnCount > sc) break;
             if (state.ready) break;
-            if (state.restartFiber && state.restartFiber._tag === "Some") break;
+            if (state.restartScheduled) break;
             yield* Effect.yieldNow;
           }
         });

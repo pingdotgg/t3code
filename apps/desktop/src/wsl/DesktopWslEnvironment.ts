@@ -330,13 +330,13 @@ export const parseNodePath = (stdout: string): string | null => {
 // or empty, which the caller treats as a version-check failure when a range
 // is required.
 export const parseNodeVersion = (stdout: string): string | null => {
-  const line = stdout
+  const version = stdout
     .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.startsWith("nodeVersion:"));
-  if (line === undefined) return null;
-  const version = line.slice("nodeVersion:".length).trim();
-  return version.length > 0 ? version : null;
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("nodeVersion:"))
+    .map((line) => line.slice("nodeVersion:".length).trim())
+    .find((value) => value.length > 0);
+  return version ?? null;
 };
 
 // Captures the login-shell PATH after the shared resolver has loaded version
