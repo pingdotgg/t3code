@@ -59,6 +59,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./PriorityCoalescingWorker": {
+      "types": "./src/PriorityCoalescingWorker.ts",
+      "import": "./src/PriorityCoalescingWorker.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"

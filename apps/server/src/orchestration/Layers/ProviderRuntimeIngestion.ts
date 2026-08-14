@@ -27,7 +27,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makePriorityCoalescingWorker } from "@t3tools/shared/PriorityCoalescingWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -113,6 +113,72 @@ type RuntimeIngestionInput =
       source: "domain";
       event: TurnStartRequestedDomainEvent;
     };
+
+type RuntimeIngestionBatch = ReadonlyArray<RuntimeIngestionInput>;
+
+const TASK_LIFECYCLE_ORDER = [
+  "task.started",
+  "task.progress",
+  "task.updated",
+  "task.completed",
+] as const;
+
+function isTaskLifecycleInput(input: RuntimeIngestionInput): input is Extract<
+  RuntimeIngestionInput,
+  { source: "runtime" }
+> & {
+  readonly event: Extract<ProviderRuntimeEvent, { type: (typeof TASK_LIFECYCLE_ORDER)[number] }>;
+} {
+  return (
+    input.source === "runtime" &&
+    TASK_LIFECYCLE_ORDER.some((eventType) => eventType === input.event.type)
+  );
+}
+
+function mergeBackgroundIngestion(
+  current: RuntimeIngestionBatch,
+  next: RuntimeIngestionBatch,
+): RuntimeIngestionBatch {
+  const combined = [...current, ...next];
+  if (!combined.every(isTaskLifecycleInput)) {
+    return next;
+  }
+
+  const latestByType = new Map<(typeof TASK_LIFECYCLE_ORDER)[number], RuntimeIngestionInput>();
+  for (const input of combined) {
+    latestByType.set(input.event.type, input);
+  }
+  return TASK_LIFECYCLE_ORDER.flatMap((eventType) => {
+    const input = latestByType.get(eventType);
+    return input === undefined ? [] : [input];
+  });
+}
+
+function backgroundIngestionKey(input: RuntimeIngestionInput): string | undefined {
+  if (input.source !== "runtime") {
+    return undefined;
+  }
+
+  const event = input.event;
+  switch (event.type) {
+    // These are latest-state telemetry streams. A large agent fleet can emit
+    // hundreds of ticks while one database write is in flight, so keeping
+    // every queued intermediate value only delays user-visible replies.
+    case "task.started":
+    case "task.progress":
+    case "task.updated":
+    case "task.completed":
+      return `task:${event.threadId}:${event.payload.taskId}`;
+    case "tool.progress":
+      return event.payload.taskId === undefined
+        ? undefined
+        : `tool-progress:${event.threadId}:${event.payload.taskId}`;
+    case "thread.token-usage.updated":
+      return `thread-token-usage:${event.threadId}`;
+    default:
+      return undefined;
+  }
+}
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
@@ -2040,13 +2106,24 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processInputSafely);
+  const worker = yield* makePriorityCoalescingWorker({
+    mergeBackground: mergeBackgroundIngestion,
+    process: (batch) =>
+      Effect.forEach(batch, processInputSafely, { concurrency: 1 }).pipe(Effect.asVoid),
+  });
+
+  const enqueueInput = (input: RuntimeIngestionInput) => {
+    const backgroundKey = backgroundIngestionKey(input);
+    return backgroundKey === undefined
+      ? worker.enqueueRealtime([input])
+      : worker.enqueueBackground(backgroundKey, [input]);
+  };
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* forkParked(
         Stream.runForEach(providerService.streamEvents, (event) =>
-          worker.enqueue({ source: "runtime", event }),
+          enqueueInput({ source: "runtime", event }),
         ),
       );
       yield* forkParked(
@@ -2054,7 +2131,7 @@ const make = Effect.gen(function* () {
           if (event.type !== "thread.turn-start-requested") {
             return Effect.void;
           }
-          return worker.enqueue({ source: "domain", event });
+          return enqueueInput({ source: "domain", event });
         }),
       );
     });
