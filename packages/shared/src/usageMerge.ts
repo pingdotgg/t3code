@@ -136,20 +136,22 @@ function ownedContribution(
   environment: EnvironmentUsage,
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
 ): { readonly buckets: readonly UsageBucket[]; readonly sessions: number } {
-  const ownedProviders = new Set<UsageProviderKind>();
+  const ownedSourceIndexes = new Set<number>();
   let sessions = 0;
-  for (const source of environment.summary.sources) {
+  for (const [sourceIndex, source] of environment.summary.sources.entries()) {
     if (source.status === "missing") continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
-      ownedProviders.add(source.fingerprint.provider);
+      ownedSourceIndexes.add(sourceIndex);
       // Distinct within a directory. Summing per-bucket session counts instead
       // would count a session once per day and model it spans.
       sessions += source.distinctSessions;
     }
   }
   return {
-    buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
+    buckets: environment.summary.buckets.filter((bucket) =>
+      ownedSourceIndexes.has(bucket.sourceIndex),
+    ),
     sessions,
   };
 }

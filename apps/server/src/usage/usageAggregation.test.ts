@@ -49,6 +49,7 @@ function aggregate(
         }
       : {};
   const aggregator = new UsageAggregator({
+    sourceIndex: 0,
     timeZone,
     sinceDay: "2026-08-01",
     untilDay: "2026-08-31",
@@ -65,6 +66,7 @@ describe("UsageAggregator", () => {
     expect(
       () =>
         new UsageAggregator({
+          sourceIndex: 0,
           timeZone: "UTC",
           sinceDay: "2026-08-01",
           untilDay: "2026-08-31",
@@ -83,6 +85,7 @@ describe("UsageAggregator", () => {
 
     expect(result.duplicatesDropped).toBe(2);
     expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0]?.sourceIndex).toBe(0);
     expect(result.buckets[0]?.records).toBe(1);
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
@@ -181,6 +184,7 @@ describe("UsageAggregator", () => {
 
   it("reports whether a record contributed", () => {
     const aggregator = new UsageAggregator({
+      sourceIndex: 0,
       timeZone: "UTC",
       sinceDay: "2026-08-01",
       untilDay: "2026-08-31",

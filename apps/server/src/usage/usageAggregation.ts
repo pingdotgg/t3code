@@ -57,6 +57,7 @@ interface MutableBucket {
 }
 
 export interface AggregateOptions {
+  readonly sourceIndex: number;
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
@@ -182,6 +183,7 @@ export class UsageAggregator {
     for (const [key, bucket] of this.#buckets) {
       const [day = "", hourStart = "", provider = "", model = ""] = key.split("\u0000");
       buckets.push({
+        sourceIndex: this.#options.sourceIndex,
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
         provider: provider as UsageBucket["provider"],
