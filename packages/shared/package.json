@@ -171,6 +171,10 @@
       "types": "./src/composerInlineTokens.ts",
       "import": "./src/composerInlineTokens.ts"
     },
+    "./taskReferenceSearch": {
+      "types": "./src/taskReferenceSearch.ts",
+      "import": "./src/taskReferenceSearch.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"

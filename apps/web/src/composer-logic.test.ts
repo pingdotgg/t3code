@@ -27,14 +27,26 @@ describe("shouldSubmitComposerOnEnter", () => {
 });
 
 describe("detectComposerTrigger", () => {
-  it("detects @path trigger at cursor", () => {
-    const text = "Please check @src/com";
+  it("detects #path trigger at cursor", () => {
+    const text = "Please check #src/com";
     const trigger = detectComposerTrigger(text, text.length);
 
     expect(trigger).toEqual({
       kind: "path",
       query: "src/com",
       rangeStart: "Please check ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects @task trigger at cursor", () => {
+    const text = "Continue @authentication";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "thread",
+      query: "authentication",
+      rangeStart: "Continue ".length,
       rangeEnd: text.length,
     });
   });
@@ -106,24 +118,24 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("detects @path trigger in the middle of existing text", () => {
-    // User typed @ between "inspect " and "in this sentence"
-    const text = "Please inspect @in this sentence";
-    const cursorAfterAt = "Please inspect @".length;
+  it("detects #path trigger in the middle of existing text", () => {
+    // User typed # between "inspect " and "in this sentence"
+    const text = "Please inspect #in this sentence";
+    const cursorAfterHash = "Please inspect #".length;
 
-    const trigger = detectComposerTrigger(text, cursorAfterAt);
+    const trigger = detectComposerTrigger(text, cursorAfterHash);
     expect(trigger).toEqual({
       kind: "path",
       query: "",
       rangeStart: "Please inspect ".length,
-      rangeEnd: cursorAfterAt,
+      rangeEnd: cursorAfterHash,
     });
   });
 
-  it("detects @path trigger with query typed mid-text", () => {
-    // User typed @sr between "inspect " and "in this sentence"
-    const text = "Please inspect @srin this sentence";
-    const cursorAfterQuery = "Please inspect @sr".length;
+  it("detects #path trigger with query typed mid-text", () => {
+    // User typed #sr between "inspect " and "in this sentence"
+    const text = "Please inspect #srin this sentence";
+    const cursorAfterQuery = "Please inspect #sr".length;
 
     const trigger = detectComposerTrigger(text, cursorAfterQuery);
     expect(trigger).toEqual({
@@ -135,12 +147,12 @@ describe("detectComposerTrigger", () => {
   });
 
   it("detects trigger with true cursor even when regex-based mention detection would false-match", () => {
-    // MENTION_TOKEN_REGEX can false-match plain text like "@in" as a mention.
+    // MENTION_TOKEN_REGEX can false-match plain text like "#in" as a mention.
     // The fix bypasses it by computing the expanded cursor from the Lexical node tree.
-    const text = "Please inspect @in this sentence";
-    const cursorAfterAt = "Please inspect @".length;
+    const text = "Please inspect #in this sentence";
+    const cursorAfterHash = "Please inspect #".length;
 
-    const trigger = detectComposerTrigger(text, cursorAfterAt);
+    const trigger = detectComposerTrigger(text, cursorAfterHash);
     expect(trigger).not.toBeNull();
     expect(trigger?.kind).toBe("path");
     expect(trigger?.query).toBe("");
@@ -149,7 +161,7 @@ describe("detectComposerTrigger", () => {
 
 describe("replaceTextRange", () => {
   it("replaces a text range and returns new cursor", () => {
-    const replaced = replaceTextRange("hello @src", 6, 10, "");
+    const replaced = replaceTextRange("hello #src", 6, 10, "");
     expect(replaced).toEqual({
       text: "hello ",
       cursor: 6,
@@ -163,9 +175,9 @@ describe("expandCollapsedComposerCursor", () => {
   });
 
   it("maps collapsed mention cursor to expanded text cursor", () => {
-    const text = "what's in my @AGENTS.md fsfdas";
+    const text = "what's in my #AGENTS.md fsfdas";
     const collapsedCursorAfterMention = "what's in my ".length + 2;
-    const expandedCursorAfterMention = "what's in my @AGENTS.md ".length;
+    const expandedCursorAfterMention = "what's in my #AGENTS.md ".length;
 
     expect(expandCollapsedComposerCursor(text, collapsedCursorAfterMention)).toBe(
       expandedCursorAfterMention,
@@ -173,9 +185,9 @@ describe("expandCollapsedComposerCursor", () => {
   });
 
   it("maps collapsed quoted mention cursor to expanded text cursor", () => {
-    const text = 'what is in @"My File.md" please';
+    const text = 'what is in #"My File.md" please';
     const collapsedCursorAfterMention = "what is in ".length + 2;
-    const expandedCursorAfterMention = 'what is in @"My File.md" '.length;
+    const expandedCursorAfterMention = 'what is in #"My File.md" '.length;
 
     expect(expandCollapsedComposerCursor(text, collapsedCursorAfterMention)).toBe(
       expandedCursorAfterMention,
@@ -192,8 +204,21 @@ describe("expandCollapsedComposerCursor", () => {
     );
   });
 
+  it("maps collapsed task chips to their expanded source offsets", () => {
+    const text = "Use [Old task](t3-thread:///environment-1/thread-2) please";
+    const collapsedCursorAfterTask = "Use ".length + 2;
+    const expandedCursorAfterTask = "Use [Old task](t3-thread:///environment-1/thread-2) ".length;
+
+    expect(expandCollapsedComposerCursor(text, collapsedCursorAfterTask)).toBe(
+      expandedCursorAfterTask,
+    );
+    expect(collapseExpandedComposerCursor(text, expandedCursorAfterTask)).toBe(
+      collapsedCursorAfterTask,
+    );
+  });
+
   it("allows path trigger detection to close after selecting a mention", () => {
-    const text = "what's in my @AGENTS.md ";
+    const text = "what's in my #AGENTS.md ";
     const collapsedCursorAfterMention = "what's in my ".length + 2;
     const expandedCursor = expandCollapsedComposerCursor(text, collapsedCursorAfterMention);
 
@@ -217,9 +242,9 @@ describe("collapseExpandedComposerCursor", () => {
   });
 
   it("maps expanded mention cursor back to collapsed cursor", () => {
-    const text = "what's in my @AGENTS.md fsfdas";
+    const text = "what's in my #AGENTS.md fsfdas";
     const collapsedCursorAfterMention = "what's in my ".length + 2;
-    const expandedCursorAfterMention = "what's in my @AGENTS.md ".length;
+    const expandedCursorAfterMention = "what's in my #AGENTS.md ".length;
 
     expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
       collapsedCursorAfterMention,
@@ -227,9 +252,9 @@ describe("collapseExpandedComposerCursor", () => {
   });
 
   it("maps expanded quoted mention cursor back to collapsed cursor", () => {
-    const text = 'what is in @"My File.md" please';
+    const text = 'what is in #"My File.md" please';
     const collapsedCursorAfterMention = "what is in ".length + 2;
-    const expandedCursorAfterMention = 'what is in @"My File.md" '.length;
+    const expandedCursorAfterMention = 'what is in #"My File.md" '.length;
 
     expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
       collapsedCursorAfterMention,
@@ -247,7 +272,7 @@ describe("collapseExpandedComposerCursor", () => {
   });
 
   it("keeps package-like text expanded when another mention already exists earlier", () => {
-    const text = "open @AGENTS.md then @src/index.ts ";
+    const text = "open #AGENTS.md then @src/index.ts ";
     const expandedCursor = text.length;
     const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
 
@@ -256,7 +281,7 @@ describe("collapseExpandedComposerCursor", () => {
   });
 
   it("collapses only genuine mentions when package-like text exists earlier", () => {
-    const text = "install @scope/pkg then @README.md ";
+    const text = "install @scope/pkg then #README.md ";
     const expandedCursor = text.length;
     const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
 
@@ -277,7 +302,7 @@ describe("collapseExpandedComposerCursor", () => {
 
 describe("clampCollapsedComposerCursor", () => {
   it("clamps to collapsed prompt length when mentions are present", () => {
-    const text = "open @AGENTS.md then ";
+    const text = "open #AGENTS.md then ";
 
     expect(clampCollapsedComposerCursor(text, text.length)).toBe(
       "open ".length + 1 + " then ".length,
@@ -290,21 +315,21 @@ describe("clampCollapsedComposerCursor", () => {
 
 describe("replaceTextRange trailing space consumption", () => {
   it("double space after insertion when replacement ends with space", () => {
-    // Simulates: "and then |@AG| summarize" where | marks replacement range
-    // The replacement is "@AGENTS.md " (with trailing space)
+    // Simulates: "and then |#AG| summarize" where | marks replacement range
+    // The replacement is "#AGENTS.md " (with trailing space)
     // But if we don't extend rangeEnd, the existing space stays
-    const text = "and then @AG summarize";
+    const text = "and then #AG summarize";
     const rangeStart = "and then ".length;
-    const rangeEnd = "and then @AG".length;
+    const rangeEnd = "and then #AG".length;
 
     // Without consuming trailing space: double space
-    const withoutConsume = replaceTextRange(text, rangeStart, rangeEnd, "@AGENTS.md ");
-    expect(withoutConsume.text).toBe("and then @AGENTS.md  summarize");
+    const withoutConsume = replaceTextRange(text, rangeStart, rangeEnd, "#AGENTS.md ");
+    expect(withoutConsume.text).toBe("and then #AGENTS.md  summarize");
 
     // With consuming trailing space: single space
     const extendedEnd = text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-    const withConsume = replaceTextRange(text, rangeStart, extendedEnd, "@AGENTS.md ");
-    expect(withConsume.text).toBe("and then @AGENTS.md summarize");
+    const withConsume = replaceTextRange(text, rangeStart, extendedEnd, "#AGENTS.md ");
+    expect(withConsume.text).toBe("and then #AGENTS.md summarize");
   });
 });
 
@@ -314,14 +339,14 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
     expect(isCollapsedCursorAdjacentToInlineToken("plain text", 6, "right")).toBe(false);
   });
 
-  it("keeps @query typing non-adjacent while no mention pill exists", () => {
-    const text = "hello @pac";
+  it("keeps #query typing non-adjacent while no mention pill exists", () => {
+    const text = "hello #pac";
     expect(isCollapsedCursorAdjacentToInlineToken(text, text.length, "left")).toBe(false);
     expect(isCollapsedCursorAdjacentToInlineToken(text, text.length, "right")).toBe(false);
   });
 
   it("detects left adjacency only when cursor is directly after a mention", () => {
-    const text = "open @AGENTS.md next";
+    const text = "open #AGENTS.md next";
     const mentionStart = "open ".length;
     const mentionEnd = mentionStart + 1;
 
@@ -331,7 +356,7 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
   });
 
   it("detects right adjacency only when cursor is directly before a mention", () => {
-    const text = "open @AGENTS.md next";
+    const text = "open #AGENTS.md next";
     const mentionStart = "open ".length;
     const mentionEnd = mentionStart + 1;
 

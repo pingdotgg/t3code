@@ -3,6 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("preserves T3 task references for in-app navigation", () => {
+    expect(resolveMarkdownLinkPresentation("t3-thread:///environment-1/thread-2")).toEqual({
+      kind: "link",
+      href: "t3-thread:///environment-1/thread-2",
+    });
+  });
+
   it("extracts external link hosts", () => {
     expect(resolveMarkdownLinkPresentation("https://example.com/docs?q=1")).toEqual({
       kind: "external",

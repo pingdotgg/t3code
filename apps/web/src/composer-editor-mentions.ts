@@ -22,6 +22,13 @@ export type ComposerPromptSegment =
       name: string;
     }
   | {
+      type: "thread";
+      environmentId: string;
+      threadId: string;
+      title: string;
+      source: string;
+    }
+  | {
       type: "terminal-context";
       context: TerminalContextDraft | null;
     };
@@ -145,6 +152,14 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
       segments.push({
         type: "mention",
         path: match.value,
+        source: match.source,
+      });
+    } else if (match.type === "thread") {
+      segments.push({
+        type: "thread",
+        environmentId: match.environmentId,
+        threadId: match.threadId,
+        title: match.title,
         source: match.source,
       });
     } else {

@@ -4,7 +4,7 @@ import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
-    const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please";
+    const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with #AGENTS.md please";
 
     expect(collectComposerInlineTokens(text)).toEqual([
       {
@@ -24,7 +24,7 @@ describe("collectComposerInlineTokens", () => {
       {
         type: "mention",
         value: "AGENTS.md",
-        source: "@AGENTS.md",
+        source: "#AGENTS.md",
         start: 50,
         end: 60,
       },
@@ -33,7 +33,7 @@ describe("collectComposerInlineTokens", () => {
 
   it("does not convert incomplete trailing tokens", () => {
     expect(collectComposerInlineTokens("Use $ui")).toEqual([]);
-    expect(collectComposerInlineTokens("Inspect @AGENTS.md")).toEqual([]);
+    expect(collectComposerInlineTokens("Inspect #AGENTS.md")).toEqual([]);
   });
 
   it("keeps the delimiter after a token outside its source range", () => {
@@ -82,6 +82,23 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens("Read [docs](https://example.com) first")).toEqual([]);
   });
 
+  it("collects task references without treating them as file mentions", () => {
+    const text =
+      "Continue [Authentication work](t3-thread:///environment-1/thread-2), then verify it.";
+    expect(collectComposerInlineTokens(text)).toEqual([
+      {
+        type: "thread",
+        environmentId: "environment-1",
+        threadId: "thread-2",
+        title: "Authentication work",
+        value: "Authentication work",
+        source: "[Authentication work](t3-thread:///environment-1/thread-2)",
+        start: 9,
+        end: 67,
+      },
+    ]);
+  });
+
   it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
     "keeps scoped package reference %s as plain text",
     (reference) => {
@@ -94,12 +111,16 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens("入力 @expo/ui　を追加")).toEqual([]);
   });
 
-  it("keeps bare non-scoped file paths as mentions", () => {
-    expect(collectComposerInlineTokens("Inspect @README.md next")).toEqual([
+  it("does not treat task tags as file mentions", () => {
+    expect(collectComposerInlineTokens("Continue @Authentication next")).toEqual([]);
+  });
+
+  it("keeps hash-prefixed file paths as mentions", () => {
+    expect(collectComposerInlineTokens("Inspect #README.md next")).toEqual([
       {
         type: "mention",
         value: "README.md",
-        source: "@README.md",
+        source: "#README.md",
         start: 8,
         end: 18,
       },
@@ -118,12 +139,12 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
-  it("allows ambiguous scoped paths through explicit quoted mentions", () => {
-    expect(collectComposerInlineTokens('Inspect @"expo/ui" next')).toEqual([
+  it("allows paths through explicit quoted file tags", () => {
+    expect(collectComposerInlineTokens('Inspect #"expo/ui" next')).toEqual([
       {
         type: "mention",
         value: "expo/ui",
-        source: '@"expo/ui"',
+        source: '#"expo/ui"',
         start: 8,
         end: 18,
       },

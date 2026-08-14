@@ -394,6 +394,6 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
 
   return {
     kind: "link",
-    href: /^(?:mailto|tel):/i.test(normalized) ? normalized : null,
+    href: /^(?:mailto|tel|t3-thread):/i.test(normalized) ? normalized : null,
   };
 }

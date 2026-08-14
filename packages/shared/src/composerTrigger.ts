@@ -1,4 +1,4 @@
-export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
+export type ComposerTriggerKind = "path" | "thread" | "slash-command" | "slash-model" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -8,7 +8,15 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SIMPLE_MENTION_PATH_REGEX = /^[^\s@"\\]+$/;
+export interface ComposerThreadReference {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly title: string;
+}
+
+export const COMPOSER_THREAD_REFERENCE_SCHEME = "t3-thread:";
+
+const SIMPLE_MENTION_PATH_REGEX = /^[^\s#"\\]+$/;
 
 export function serializeComposerMentionPath(path: string): string {
   if (SIMPLE_MENTION_PATH_REGEX.test(path)) {
@@ -35,6 +43,32 @@ function encodeMarkdownLinkDestination(path: string): string {
     .replaceAll("\\", "%5C");
 }
 
+export function parseComposerThreadLink(
+  destination: string,
+): Pick<ComposerThreadReference, "environmentId" | "threadId"> | null {
+  const prefix = `${COMPOSER_THREAD_REFERENCE_SCHEME}///`;
+  if (!destination.startsWith(prefix)) return null;
+  try {
+    // Split before decoding so encoded slashes stay inside an identifier. Avoid URL.pathname:
+    // URL normalization silently collapses valid identifiers such as "." and "..".
+    const segments = destination.slice(prefix.length).split("/").map(decodeURIComponent);
+    const [environmentId, threadId] = segments;
+    if (!environmentId || !threadId || segments.length !== 2) {
+      return null;
+    }
+    return { environmentId, threadId };
+  } catch {
+    return null;
+  }
+}
+
+export function serializeComposerThreadLink(reference: ComposerThreadReference): string {
+  const label = escapeMarkdownLinkLabel(reference.title);
+  const environmentId = encodeURIComponent(reference.environmentId);
+  const threadId = encodeURIComponent(reference.threadId);
+  return `[${label}](${COMPOSER_THREAD_REFERENCE_SCHEME}///${environmentId}/${threadId})`;
+}
+
 export function serializeComposerFileLink(path: string): string {
   const label = escapeMarkdownLinkLabel(composerFileLinkBasename(path));
   return `[${label}](${encodeMarkdownLinkDestination(path)})`;
@@ -50,7 +84,7 @@ function isWhitespace(char: string): boolean {
 }
 
 /**
- * Detect an active trigger (@path, $skill, /command) at the cursor position.
+ * Detect an active trigger (#path, @task, $skill, /command) at the cursor position.
  *
  * Accepts an optional `isWhitespaceChar` override so callers with inline
  * placeholder characters (e.g. terminal context chips on web) can treat
@@ -112,16 +146,22 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  if (!token.startsWith("@")) {
-    return null;
+  if (token.startsWith("@")) {
+    return {
+      kind: "thread",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
   }
-
-  return {
-    kind: "path",
-    query: token.slice(1),
-    rangeStart: tokenStart,
-    rangeEnd: cursor,
-  };
+  return token.startsWith("#")
+    ? {
+        kind: "path",
+        query: token.slice(1),
+        rangeStart: tokenStart,
+        rangeEnd: cursor,
+      }
+    : null;
 }
 
 export function parseStandaloneComposerSlashCommand(

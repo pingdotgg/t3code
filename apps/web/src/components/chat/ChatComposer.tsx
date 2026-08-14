@@ -18,8 +18,15 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  serializeComposerFileLink,
+  serializeComposerThreadLink,
+} from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  buildTaskReferenceSearchIndex,
+  searchTaskReferences,
+} from "@t3tools/shared/taskReferenceSearch";
 import {
   memo,
   type ReactNode,
@@ -106,6 +113,7 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+import { useThreadShells } from "../../state/entities";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -679,6 +687,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
+  const threadShells = useThreadShells();
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -1023,17 +1032,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
+  const taskReferenceIndex = useMemo(
+    () =>
+      buildTaskReferenceSearchIndex(
+        threadShells.filter(
+          (thread) =>
+            thread.environmentId === environmentId && thread.id !== routeThreadRef.threadId,
+        ),
+      ),
+    [environmentId, routeThreadRef.threadId, threadShells],
+  );
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return workspaceEntries.entries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
+        type: "path" as const,
         path: entry.path,
         pathKind: entry.kind,
         label: basenameOfPath(entry.path),
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+      }));
+    }
+    if (composerTrigger.kind === "thread") {
+      return searchTaskReferences(taskReferenceIndex, composerTrigger.query).map((thread) => ({
+        id: `thread:${thread.environmentId}:${thread.id}`,
+        type: "thread" as const,
+        environmentId: thread.environmentId,
+        threadId: thread.id,
+        title: thread.title,
+        label: thread.title,
+        description: thread.branch ?? `Task ${thread.id}`,
       }));
     }
     if (composerTrigger.kind === "slash-command") {
@@ -1102,6 +1132,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeUiEnabled,
     selectedProvider,
     selectedProviderStatus,
+    taskReferenceIndex,
     workspaceEntries.entries,
   ]);
 
@@ -1172,9 +1203,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
-    return composerTriggerKind === "path"
-      ? "No matching files or folders."
-      : "No matching command.";
+    if (composerTriggerKind === "path") return "No matching files or folders.";
+    if (composerTriggerKind === "thread") return "No matching tasks.";
+    return "No matching command.";
   }, [composerTriggerKind]);
 
   // ------------------------------------------------------------------
@@ -1660,6 +1691,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!trigger) return;
       if (item.type === "path") {
         const replacement = `${serializeComposerFileLink(item.path)} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "thread") {
+        const replacement = `${serializeComposerThreadLink({
+          environmentId: item.environmentId,
+          threadId: item.threadId,
+          title: item.title,
+        })} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,

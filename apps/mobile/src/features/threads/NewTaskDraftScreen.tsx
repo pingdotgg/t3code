@@ -17,7 +17,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  ComposerEditor,
+  type ComposerEditorHandle,
+  type ComposerEditorSelection,
+} from "../../components/ComposerEditor";
 import {
   ComposerToolbarButton,
   ComposerToolbarRow,
@@ -29,6 +33,7 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
+import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
@@ -43,7 +48,19 @@ import {
   restoreComposerDraftSnapshot,
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
-import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
+import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../state/entities";
+import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import {
+  detectComposerTrigger,
+  replaceTextRange,
+  serializeComposerFileLink,
+  serializeComposerThreadLink,
+  type ComposerTrigger,
+} from "@t3tools/shared/composerTrigger";
+import {
+  buildTaskReferenceSearchIndex,
+  searchTaskReferences,
+} from "@t3tools/shared/taskReferenceSearch";
 import { resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -77,6 +94,7 @@ export function NewTaskDraftScreen(props: {
   readonly incomingShareId?: string;
 }) {
   const projects = useProjects();
+  const threadShells = useThreadShells();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
@@ -104,6 +122,10 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [composerSelection, setComposerSelection] = useState(() => ({
+    start: flow.prompt.length,
+    end: flow.prompt.length,
+  }));
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
@@ -133,6 +155,86 @@ export function NewTaskDraftScreen(props: {
         project.environmentId === props.initialProjectRef?.environmentId &&
         project.id === props.initialProjectRef?.projectId,
     ),
+  );
+
+  useEffect(() => {
+    setComposerSelection((selection) => {
+      const start = Math.min(selection.start, flow.prompt.length);
+      const end = Math.min(selection.end, flow.prompt.length);
+      return start === selection.start && end === selection.end ? selection : { start, end };
+    });
+  }, [flow.prompt.length]);
+
+  const composerTrigger = useMemo<ComposerTrigger | null>(() => {
+    if (!selectedProject || composerSelection.start !== composerSelection.end) return null;
+    return detectComposerTrigger(flow.prompt, composerSelection.end);
+  }, [composerSelection, flow.prompt, selectedProject]);
+  const pathSearch = useComposerPathSearch({
+    environmentId: selectedProject?.environmentId ?? null,
+    cwd: composerTrigger?.kind === "path" ? (selectedProject?.workspaceRoot ?? null) : null,
+    query: composerTrigger?.kind === "path" ? composerTrigger.query : null,
+  });
+  const taskReferenceIndex = useMemo(
+    () =>
+      buildTaskReferenceSearchIndex(
+        selectedProject
+          ? threadShells.filter((thread) => thread.environmentId === selectedProject.environmentId)
+          : [],
+      ),
+    [selectedProject, threadShells],
+  );
+  const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
+    if (composerTrigger?.kind === "path") {
+      return pathSearch.entries.map((entry) => {
+        const parts = entry.path.split("/");
+        return {
+          id: `path:${entry.path}`,
+          type: "path" as const,
+          path: entry.path,
+          kind: entry.kind,
+          label: parts[parts.length - 1] ?? entry.path,
+          description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+        };
+      });
+    }
+    if (composerTrigger?.kind !== "thread") return [];
+    return searchTaskReferences(taskReferenceIndex, composerTrigger.query).map((thread) => ({
+      id: `thread:${thread.environmentId}:${thread.id}`,
+      type: "thread" as const,
+      environmentId: thread.environmentId,
+      threadId: thread.id,
+      title: thread.title,
+      label: thread.title,
+      description: thread.branch ?? `Task ${thread.id}`,
+    }));
+  }, [composerTrigger, pathSearch.entries, taskReferenceIndex]);
+  const handleComposerSelectionChange = useCallback((selection: ComposerEditorSelection) => {
+    setComposerSelection(selection);
+  }, []);
+  const handleComposerItemSelect = useCallback(
+    (item: ComposerCommandItem) => {
+      if (composerTrigger?.kind !== "path" && composerTrigger?.kind !== "thread") return;
+      const replacement =
+        item.type === "path"
+          ? `${serializeComposerFileLink(item.path)} `
+          : item.type === "thread"
+            ? `${serializeComposerThreadLink({
+                environmentId: item.environmentId,
+                threadId: item.threadId,
+                title: item.title,
+              })} `
+            : null;
+      if (!replacement) return;
+      const result = replaceTextRange(
+        flow.prompt,
+        composerTrigger.rangeStart,
+        composerTrigger.rangeEnd,
+        replacement,
+      );
+      setComposerSelection({ start: result.cursor, end: result.cursor });
+      flow.setPrompt(result.text);
+    },
+    [composerTrigger, flow],
   );
   const isProjectPickerReturnActive =
     isReturningToProjectPicker && !requestedInitialProjectAvailable;
@@ -891,8 +993,10 @@ export function NewTaskDraftScreen(props: {
       multiline
       scrollEnabled={isExpanded}
       value={flow.prompt}
+      selection={composerSelection}
       skills={flow.selectedProviderSkills}
       onChangeText={flow.setPrompt}
+      onSelectionChange={handleComposerSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
@@ -915,6 +1019,17 @@ export function NewTaskDraftScreen(props: {
       }
     />
   );
+  const composerSuggestions =
+    isComposerFocused &&
+    (composerTrigger?.kind === "path" || composerTrigger?.kind === "thread") &&
+    (composerMenuItems.length > 0 || (composerTrigger.kind === "path" && pathSearch.isPending)) ? (
+      <ComposerCommandPopover
+        items={composerMenuItems}
+        triggerKind={composerTrigger.kind}
+        isLoading={composerTrigger.kind === "path" && pathSearch.isPending}
+        onSelect={handleComposerItemSelect}
+      />
+    ) : null;
 
   const toolbarPills = (
     <>
@@ -1021,6 +1136,11 @@ export function NewTaskDraftScreen(props: {
                 : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
             }}
           >
+            {composerSuggestions ? (
+              <View className="absolute inset-x-4 bottom-full z-10 mb-2">
+                {composerSuggestions}
+              </View>
+            ) : null}
             <ComposerSurface
               isDarkMode={isDarkMode}
               style={
@@ -1086,7 +1206,12 @@ export function NewTaskDraftScreen(props: {
       <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-        <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
+        <View className="relative min-h-0 flex-1 px-5 pt-2">
+          {promptEditor}
+          {composerSuggestions ? (
+            <View className="absolute inset-x-5 bottom-2 z-10">{composerSuggestions}</View>
+          ) : null}
+        </View>
 
         <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
           {flow.attachments.length > 0 ? (

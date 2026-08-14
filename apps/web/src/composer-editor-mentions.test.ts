@@ -8,42 +8,42 @@ import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 describe("splitPromptIntoComposerSegments", () => {
   it("splits mention tokens followed by whitespace into mention segments", () => {
-    expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md please")).toEqual([
+    expect(splitPromptIntoComposerSegments("Inspect #AGENTS.md please")).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "#AGENTS.md" },
       { type: "text", text: " please" },
     ]);
   });
 
   it("does not convert an incomplete trailing mention token", () => {
-    expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md")).toEqual([
-      { type: "text", text: "Inspect @AGENTS.md" },
+    expect(splitPromptIntoComposerSegments("Inspect #AGENTS.md")).toEqual([
+      { type: "text", text: "Inspect #AGENTS.md" },
     ]);
   });
 
   it("keeps newlines around mention tokens", () => {
-    expect(splitPromptIntoComposerSegments("one\n@AGENTS.md \ntwo")).toEqual([
+    expect(splitPromptIntoComposerSegments("one\n#AGENTS.md \ntwo")).toEqual([
       { type: "text", text: "one\n" },
-      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "#AGENTS.md" },
       { type: "text", text: " \ntwo" },
     ]);
   });
 
   it("splits quoted mention tokens containing whitespace", () => {
-    expect(splitPromptIntoComposerSegments('Inspect @"My File.md" please')).toEqual([
+    expect(splitPromptIntoComposerSegments('Inspect #"My File.md" please')).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "mention", path: "My File.md", source: '@"My File.md"' },
+      { type: "mention", path: "My File.md", source: '#"My File.md"' },
       { type: "text", text: " please" },
     ]);
   });
 
   it("unescapes quoted mention token content", () => {
-    expect(splitPromptIntoComposerSegments('Inspect @"docs/My \\"File\\".md" please')).toEqual([
+    expect(splitPromptIntoComposerSegments('Inspect #"docs/My \\"File\\".md" please')).toEqual([
       { type: "text", text: "Inspect " },
       {
         type: "mention",
         path: 'docs/My "File".md',
-        source: '@"docs/My \\"File\\".md"',
+        source: '#"docs/My \\"File\\".md"',
       },
       { type: "text", text: " please" },
     ]);
@@ -69,6 +69,24 @@ describe("splitPromptIntoComposerSegments", () => {
     expect(
       splitPromptIntoComposerSegments("Read [the docs](https://example.com/docs) first"),
     ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
+  });
+
+  it("splits generated task links into task segments", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        "Continue [Authentication work](t3-thread:///environment-1/thread-2) please",
+      ),
+    ).toEqual([
+      { type: "text", text: "Continue " },
+      {
+        type: "thread",
+        environmentId: "environment-1",
+        threadId: "thread-2",
+        title: "Authentication work",
+        source: "[Authentication work](t3-thread:///environment-1/thread-2)",
+      },
+      { type: "text", text: " please" },
+    ]);
   });
 
   it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
@@ -129,12 +147,12 @@ describe("splitPromptIntoComposerSegments", () => {
   it("keeps inline terminal context placeholders at their prompt positions", () => {
     expect(
       splitPromptIntoComposerSegments(
-        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md please`,
+        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}#AGENTS.md please`,
       ),
     ).toEqual([
       { type: "text", text: "Inspect " },
       { type: "terminal-context", context: null },
-      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "#AGENTS.md" },
       { type: "text", text: " please" },
     ]);
   });
@@ -154,14 +172,14 @@ describe("splitPromptIntoComposerSegments", () => {
   it("keeps skill parsing alongside mentions and terminal placeholders", () => {
     expect(
       splitPromptIntoComposerSegments(
-        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}$review-follow-up after @AGENTS.md `,
+        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}$review-follow-up after #AGENTS.md `,
       ),
     ).toEqual([
       { type: "text", text: "Inspect " },
       { type: "terminal-context", context: null },
       { type: "skill", name: "review-follow-up" },
       { type: "text", text: " after " },
-      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "#AGENTS.md" },
       { type: "text", text: " " },
     ]);
   });
@@ -171,9 +189,9 @@ describe("selectionTouchesMentionBoundary", () => {
   it("returns true when selection includes the whitespace after a mention", () => {
     expect(
       selectionTouchesMentionBoundary(
-        "hi @package.json there",
-        "hi @package.json".length,
-        "hi @package.json there".length,
+        "hi #package.json there",
+        "hi #package.json".length,
+        "hi #package.json there".length,
       ),
     ).toBe(true);
   });
@@ -181,7 +199,7 @@ describe("selectionTouchesMentionBoundary", () => {
   it("returns true when selection includes the whitespace before a mention", () => {
     expect(
       selectionTouchesMentionBoundary(
-        "hi there @package.json later",
+        "hi there #package.json later",
         "hi there".length,
         "hi there ".length,
       ),
@@ -191,19 +209,19 @@ describe("selectionTouchesMentionBoundary", () => {
   it("returns false when selection starts after the mention boundary whitespace", () => {
     expect(
       selectionTouchesMentionBoundary(
-        "hi @package.json there",
-        "hi @package.json ".length,
-        "hi @package.json there".length,
+        "hi #package.json there",
+        "hi #package.json ".length,
+        "hi #package.json there".length,
       ),
     ).toBe(false);
   });
 
   it("returns true when selection includes whitespace after a mention following a terminal placeholder", () => {
-    const prompt = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md there`;
+    const prompt = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}#AGENTS.md there`;
     expect(
       selectionTouchesMentionBoundary(
         prompt,
-        `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md`.length,
+        `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}#AGENTS.md`.length,
         prompt.length,
       ),
     ).toBe(true);
@@ -212,9 +230,9 @@ describe("selectionTouchesMentionBoundary", () => {
   it("returns true when selection includes whitespace after a quoted mention", () => {
     expect(
       selectionTouchesMentionBoundary(
-        'hi @"My File.md" there',
-        'hi @"My File.md"'.length,
-        'hi @"My File.md" there'.length,
+        'hi #"My File.md" there',
+        'hi #"My File.md"'.length,
+        'hi #"My File.md" there'.length,
       ),
     ).toBe(true);
   });

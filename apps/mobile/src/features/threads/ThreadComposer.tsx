@@ -12,6 +12,7 @@ import {
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
+  serializeComposerThreadLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import * as Haptics from "expo-haptics";
@@ -64,6 +65,10 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
+  buildTaskReferenceSearchIndex,
+  searchTaskReferences,
+} from "@t3tools/shared/taskReferenceSearch";
+import {
   applyProviderOptionSelection,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
@@ -72,6 +77,7 @@ import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerComm
 import { buildThreadSettingsMenu } from "./thread-settings-menu";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
+import { useThreadShells } from "../../state/entities";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -283,6 +289,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   });
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
+  const threadShells = useThreadShells();
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
@@ -384,6 +391,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     cwd: composerTrigger?.kind === "path" ? props.projectCwd : null,
     query: composerTrigger?.kind === "path" ? composerTrigger.query : null,
   });
+  const taskReferenceIndex = useMemo(
+    () =>
+      buildTaskReferenceSearchIndex(
+        threadShells.filter(
+          (thread) =>
+            thread.environmentId === props.environmentId && thread.id !== props.selectedThread.id,
+        ),
+      ),
+    [props.environmentId, props.selectedThread.id, threadShells],
+  );
 
   const composerMenuItems: ComposerCommandItem[] = useMemo(() => {
     if (!composerTrigger) return [];
@@ -527,8 +544,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       });
     }
 
+    if (composerTrigger.kind === "thread") {
+      return searchTaskReferences(taskReferenceIndex, composerTrigger.query).map((thread) => ({
+        id: `thread:${thread.environmentId}:${thread.id}`,
+        type: "thread" as const,
+        environmentId: thread.environmentId,
+        threadId: thread.id,
+        title: thread.title,
+        label: thread.title,
+        description: thread.branch ?? `Task ${thread.id}`,
+      }));
+    }
+
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, selectedProviderStatus, taskReferenceIndex]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -580,6 +609,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       let replacement = "";
       if (item.type === "path") {
         replacement = `${serializeComposerFileLink(item.path)} `;
+      } else if (item.type === "thread") {
+        replacement = `${serializeComposerThreadLink({
+          environmentId: item.environmentId,
+          threadId: item.threadId,
+          title: item.title,
+        })} `;
       } else if (item.type === "skill") {
         replacement = `$${item.skill.name} `;
       } else if (item.type === "slash-command") {

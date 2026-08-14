@@ -84,6 +84,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
+import { parseComposerThreadLink } from "@t3tools/shared/composerTrigger";
 import {
   deriveThreadFeedPresentation,
   type ThreadFeedEntry,
@@ -609,13 +610,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         return (
           <NativeText
             className="underline"
-            onPress={
-              linkHref
-                ? () => {
-                    void Linking.openURL(linkHref);
-                  }
-                : undefined
-            }
+            onPress={linkHref ? () => onLinkPress(linkHref) : undefined}
             style={{ color: markdownLinkColor }}
           >
             {children}
@@ -1416,6 +1411,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleColor = useThemeColor("--color-user-bubble");
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
+      const threadReference = parseComposerThreadLink(href);
+      if (threadReference) {
+        void Haptics.selectionAsync();
+        navigation.navigate("Thread", {
+          environmentId: threadReference.environmentId,
+          threadId: threadReference.threadId,
+        });
+        return;
+      }
       const presentation = resolveMarkdownLinkPresentation(href);
       if (presentation.kind === "file") {
         const relativePath = resolveWorkspaceRelativeFilePath(

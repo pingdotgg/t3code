@@ -1,3 +1,5 @@
+import { parseComposerThreadLink } from "./composerTrigger.ts";
+
 export type ComposerInlineToken =
   | {
       readonly type: "mention";
@@ -12,6 +14,16 @@ export type ComposerInlineToken =
       readonly source: string;
       readonly start: number;
       readonly end: number;
+    }
+  | {
+      readonly type: "thread";
+      readonly environmentId: string;
+      readonly threadId: string;
+      readonly title: string;
+      readonly value: string;
+      readonly source: string;
+      readonly start: number;
+      readonly end: number;
     };
 
 export interface CollectComposerInlineTokensOptions {
@@ -19,7 +31,7 @@ export interface CollectComposerInlineTokensOptions {
 }
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
-const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
+const MENTION_TOKEN_REGEX = /(^|\s)#(?:"((?:\\.|[^"\\])*)"|([^\s#"]+))(?=\s)/g;
 /**
  * The label body is bounded rather than `*`. Unbounded, every whitespace in
  * the composer is a candidate start: the engine scans the rest of the text for
@@ -35,11 +47,43 @@ const FILE_LINK_TOKEN_REGEX = new RegExp(
   `(^|\\s)\\[((?:\\\\.|[^\\]\\\\]){0,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\(([^)\\s]+)\\)(?=\\s)`,
   "g",
 );
+const THREAD_LINK_TOKEN_REGEX = new RegExp(
+  `(^|\\s)\\[((?:\\\\.|[^\\]\\\\]){1,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\((t3-thread:\\/\\/\\/[^)\\s]+)\\)`,
+  "g",
+);
 const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
-// Autocomplete emits canonical file links, so ambiguous bare @scope/package text stays a package.
-const SCOPED_PACKAGE_REFERENCE_REGEX =
-  /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
+
+type ComposerThreadInlineToken = Extract<ComposerInlineToken, { type: "thread" }>;
+
+export function collectComposerThreadReferences(
+  text: string,
+): ReadonlyArray<ComposerThreadInlineToken> {
+  const matches: ComposerThreadInlineToken[] = [];
+
+  for (const match of text.matchAll(THREAD_LINK_TOKEN_REGEX)) {
+    const fullMatch = match[0];
+    const prefix = match[1] ?? "";
+    const title = (match[2] ?? "").replace(/\\(.)/g, "$1");
+    const destination = match[3] ?? "";
+    const reference = parseComposerThreadLink(destination);
+    if (!reference || !title) continue;
+    const start = (match.index ?? 0) + prefix.length;
+    const end = start + fullMatch.length - prefix.length;
+    matches.push({
+      type: "thread",
+      environmentId: reference.environmentId,
+      threadId: reference.threadId,
+      title,
+      value: title,
+      source: text.slice(start, end),
+      start,
+      end,
+    });
+  }
+
+  return matches;
+}
 
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
@@ -77,7 +121,7 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const prefix = match[1] ?? "";
     const quotedPath = match[2];
     const path = quotedPath !== undefined ? quotedPath.replace(/\\(.)/g, "$1") : (match[3] ?? "");
-    if (!path || (quotedPath === undefined && SCOPED_PACKAGE_REFERENCE_REGEX.test(path))) {
+    if (!path) {
       continue;
     }
     const start = (match.index ?? 0) + prefix.length;
@@ -98,7 +142,7 @@ export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
-  const matches = collectMentionTokens(text);
+  const matches = [...collectMentionTokens(text), ...collectComposerThreadReferences(text)];
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];

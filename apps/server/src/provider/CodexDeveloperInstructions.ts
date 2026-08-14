@@ -14,6 +14,13 @@ Do not switch to global browser skills, Chrome, Node REPL browser automation, st
 ${OPERATOR_PROVIDER_INSTRUCTIONS}
 `;
 
+const T3_CODE_THREAD_REFERENCE_INSTRUCTIONS = `
+
+## T3 Code task references
+
+The user may reference another T3 Code task with a \`t3-thread\` link. Do not treat it as a web URL and do not guess what the old task contains. Use the read-only \`t3_thread_read\` tool from the \`t3-code\` MCP server. Pass the final thread id or the complete link. Read only the context needed for the current request, and follow \`nextCursor\` when more transcript context is necessary.
+`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -143,6 +150,7 @@ Only produce at most one \`<proposed_plan>\` block per turn, and only when you a
 
 If the user stays in Plan mode and asks for revisions after a prior \`<proposed_plan>\`, any new \`<proposed_plan>\` must be a complete replacement. If the user indicates that the prior plan is not acceptable but does not provide enough information to produce a complete replacement, address the concern and continue planning without producing a \`<proposed_plan>\` block. If the follow-up neither requires changes nor calls the plan into question (e.g. clarifying question), answer it before the block, then reproduce the prior \`<proposed_plan>\` unchanged.
 ${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+${T3_CODE_THREAD_REFERENCE_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
@@ -157,6 +165,7 @@ Use the \`request_user_input\` tool only when it is listed in the available tool
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
 ${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+${T3_CODE_THREAD_REFERENCE_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {

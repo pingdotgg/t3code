@@ -1,5 +1,10 @@
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
-import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
+  ThreadId,
+} from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
 import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
@@ -34,6 +39,15 @@ export type ComposerCommandItem =
       readonly id: string;
       readonly type: "skill";
       readonly skill: ServerProviderSkill;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "thread";
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+      readonly title: string;
       readonly label: string;
       readonly description: string;
     };
@@ -74,6 +88,8 @@ function itemIcon(item: ComposerCommandItem) {
       return "terminal" as const;
     case "skill":
       return "cube" as const;
+    case "thread":
+      return "text.bubble" as const;
     case "path":
       return null;
   }
@@ -87,6 +103,8 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
       return "Skills";
     case "path":
       return "Files";
+    case "thread":
+      return "Tasks";
     default:
       return null;
   }
@@ -99,6 +117,8 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
   switch (triggerKind) {
     case "path":
       return "No matching files or folders.";
+    case "thread":
+      return "No matching tasks.";
     case "skill":
       return "No skills found.";
     case "slash-command":

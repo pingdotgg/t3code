@@ -8,6 +8,7 @@
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Notifications](./user/notifications.md)
 - [Organizing threads](./user/thread-sidebar.md)
+- [Referencing another task](./user/task-references.md)
 - [Automatic continuation after usage limits](./user/automatic-usage-limit-resume.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
