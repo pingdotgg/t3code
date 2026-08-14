@@ -12,6 +12,8 @@ use std::fmt;
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(windows)]
+pub mod agent_cursor;
+#[cfg(windows)]
 pub mod windows;
 
 /// A tool failure that is worth showing the model verbatim.
