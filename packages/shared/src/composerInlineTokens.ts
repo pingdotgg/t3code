@@ -42,6 +42,36 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 
+function withoutMarkdownContainerPrefix(line: string): string {
+  let remainder = line;
+  while (true) {
+    const blockQuote = remainder.match(/^ {0,3}>[ \t]?/);
+    if (blockQuote) {
+      remainder = remainder.slice(blockQuote[0].length);
+      continue;
+    }
+    const listItem = remainder.match(/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/);
+    if (listItem) {
+      remainder = remainder.slice(listItem[0].length);
+      continue;
+    }
+    return remainder;
+  }
+}
+
+function fenceStart(line: string): { readonly marker: "`" | "~"; readonly length: number } | null {
+  const fence = withoutMarkdownContainerPrefix(line).match(/^ {0,3}(`{3,}|~{3,})/);
+  const value = fence?.[1];
+  if (!value) return null;
+  return { marker: value[0] as "`" | "~", length: value.length };
+}
+
+function isFenceClose(line: string, marker: "`" | "~", minimumLength: number): boolean {
+  const fence = withoutMarkdownContainerPrefix(line).match(/^ {0,3}(`+|~+)[ \t]*(?:\r?\n)?$/);
+  const value = fence?.[1];
+  return value !== undefined && value[0] === marker && value.length >= minimumLength;
+}
+
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
 
@@ -150,18 +180,21 @@ export function collectSubmittedSkillNames(text: string): ReadonlyArray<string> 
   let offset = 0;
 
   for (const line of text.split(/(?<=\n)/)) {
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    const marker = fence?.[1]?.[0] as "`" | "~" | undefined;
-    const length = fence?.[1]?.length ?? 0;
-    const closesFence = fencedMarker !== null && marker === fencedMarker && length >= fencedLength;
-    if (fencedMarker !== null || marker !== undefined) {
+    const content = withoutMarkdownContainerPrefix(line);
+    if (fencedMarker !== null) {
       searchable.fill(" ", offset, offset + line.length);
-      if (closesFence) {
+      if (isFenceClose(line, fencedMarker, fencedLength)) {
         fencedMarker = null;
         fencedLength = 0;
-      } else if (fencedMarker === null && marker !== undefined) {
-        fencedMarker = marker;
-        fencedLength = length;
+      }
+    } else {
+      const opener = fenceStart(line);
+      if (opener) {
+        searchable.fill(" ", offset, offset + line.length);
+        fencedMarker = opener.marker;
+        fencedLength = opener.length;
+      } else if (/^(?: {4}|\t)/.test(content)) {
+        searchable.fill(" ", offset, offset + line.length);
       }
     }
     offset += line.length;
@@ -172,8 +205,17 @@ export function collectSubmittedSkillNames(text: string): ReadonlyArray<string> 
     if (withoutFences[index] !== "`") continue;
     let runLength = 1;
     while (withoutFences[index + runLength] === "`") runLength += 1;
-    const marker = "`".repeat(runLength);
-    const closingIndex = withoutFences.indexOf(marker, index + runLength);
+    let closingIndex = -1;
+    for (let candidate = index + runLength; candidate < withoutFences.length; candidate += 1) {
+      if (withoutFences[candidate] !== "`") continue;
+      let candidateLength = 1;
+      while (withoutFences[candidate + candidateLength] === "`") candidateLength += 1;
+      if (candidateLength === runLength) {
+        closingIndex = candidate;
+        break;
+      }
+      candidate += candidateLength - 1;
+    }
     if (closingIndex === -1) {
       index += runLength - 1;
       continue;

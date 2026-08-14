@@ -171,4 +171,25 @@ describe("collectSubmittedSkillNames", () => {
   it("keeps code masking aligned after astral characters", () => {
     expect(collectSubmittedSkillNames("😀 `$inside` then $outside")).toEqual(["outside"]);
   });
+
+  it("requires exact inline delimiters", () => {
+    expect(collectSubmittedSkillNames("`` $visible ``` then $outside")).toEqual([
+      "visible",
+      "outside",
+    ]);
+  });
+
+  it("masks container and indented code blocks", () => {
+    expect(
+      collectSubmittedSkillNames(
+        "`` $inline ``\n> ```\n> $quoted\n> ```\n- ```\n  $listed\n  ```\n    $indented\n\t$tabbed\n$outside",
+      ),
+    ).toEqual(["outside"]);
+  });
+
+  it("keeps fenced code masked until a valid closing line", () => {
+    expect(
+      collectSubmittedSkillNames("```\n$inside\n``` not-a-close\n$still-inside\n```\n$outside"),
+    ).toEqual(["outside"]);
+  });
 });
