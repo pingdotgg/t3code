@@ -816,6 +816,15 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        // Header item factories are stabilized by source, so the native header
+        // is only re-applied when this version changes. Without it, disabled
+        // states and menu contents freeze at their first-applied values.
+        optionsVersion={[
+          splitLeftHeaderItems,
+          compactHomeHeaderItems,
+          threadCenterHeaderItems,
+          compactRightHeaderItems,
+        ]}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
