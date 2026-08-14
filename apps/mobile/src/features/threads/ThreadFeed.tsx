@@ -47,6 +47,7 @@ import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -103,6 +104,10 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+
+const WIDE_MARKDOWN_BLOCK_OPTIONS = {
+  includeOrderedLists: Platform.OS === "android",
+} as const;
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -888,7 +893,7 @@ function renderFeedEntry(
     // children during the unclamped pass and never moves them once the width
     // is clamped, so the paragraphs around the block end up drawn on top of
     // each other. Pinning the width removes that pass.
-    const hasWideBlock = hasWideMarkdownBlock(message.text);
+    const hasWideBlock = hasWideMarkdownBlock(message.text, WIDE_MARKDOWN_BLOCK_OPTIONS);
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
@@ -1392,7 +1397,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleMaxWidth = contentWidth * 0.85;
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
-  const topContentInset = props.contentTopInset ?? insets.top + 44;
+  const topContentInset = props.contentTopInset ?? insets.top + IOS_NAV_BAR_HEIGHT;
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
@@ -1405,7 +1410,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // header-providing screen) and fall back to the standard iOS bar height.
   const navigationHeaderHeight = useContext(HeaderHeightContext);
   const anchorTopInset = usesNativeAutomaticInsets
-    ? navigationHeaderHeight || insets.top + 44
+    ? navigationHeaderHeight || insets.top + IOS_NAV_BAR_HEIGHT
     : topContentInset;
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");

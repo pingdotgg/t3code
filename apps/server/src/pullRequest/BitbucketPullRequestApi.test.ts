@@ -510,6 +510,74 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("rewrites a title alone, without touching anything else", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateChangeRequest({ repository: "acme/web", number: 7, title: "A new title" });
+
+      const call = callAt(0);
+      expect(call.method).toBe("PUT");
+      expect(call.url).toBe("/repositories/acme/web/pullrequests/7");
+      // Bitbucket's PUT is a partial update, so a field left out of the body is left as it was.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(call.body ?? "")).toEqual({ title: "A new title" });
+    }),
+  );
+
+  it.effect("leaves out the half of the pull request it was not asked about", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateChangeRequest({ repository: "acme/web", number: 7, body: "New body." });
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(callAt(0).body ?? "")).toEqual({ description: "New body." });
+    }),
+  );
+
+  it.effect("writes both fields when both were rewritten", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateChangeRequest({
+        repository: "acme/web",
+        number: 7,
+        title: "A new title",
+        body: "New body.",
+      });
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(callAt(0).body ?? "")).toEqual({
+        title: "A new title",
+        description: "New body.",
+      });
+    }),
+  );
+
+  it.effect("rewrites a comment where it stands, whichever kind it is", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateComment({
+        repository: "acme/web",
+        number: 7,
+        commentId: "10",
+        body: "Edited.",
+      });
+
+      expect(callAt(0)).toMatchObject({
+        method: "PUT",
+        url: "/repositories/acme/web/pullrequests/7/comments/10",
+        body: '{"content":{"raw":"Edited."}}',
+      });
+    }),
+  );
+
   it.effect("fails the read when Bitbucket answers with something unreadable", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
