@@ -152,11 +152,11 @@ impl LinuxDesktop {
             };
         }
 
-        // Append at the caret rather than the start, so repeated calls read the
-        // way a person typing would expect. Propagate caret errors so callers
-        // (type_text) can fall back to focused keystrokes instead of inserting
-        // at offset 0.
-        let caret = self.caret_offset(element)?;
+        // Append at the caret when AT-SPI exposes it. If caret_offset fails,
+        // insert at 0 rather than aborting the AT-SPI write — failing here
+        // would push type_text into coordinate/XTEST fallbacks that mis-click
+        // on Wayland (window-relative bounds).
+        let caret = self.caret_offset(element).unwrap_or(0);
         match block_on(editable.insert_text(caret, text, text.chars().count() as i32)) {
             Ok(true) => Ok(()),
             Ok(false) => Err(DesktopError::new("the element refused the text")),
@@ -272,7 +272,19 @@ impl LinuxDesktop {
     fn point_coordinates(&self, target: Point) -> Result<(f64, f64)> {
         match target {
             Point::Screen(x, y) => Ok((x, y)),
-            Point::Element(id) => self.center(&self.element(id)?),
+            Point::Element(id) => {
+                // Native Wayland clients report window-relative geometry; XTEST
+                // would treat those as absolute screen coords. Refuse for every
+                // coordinate path (click, right-click, drag), not only singles.
+                if crate::capture::on_wayland() {
+                    return Err(DesktopError::new(format!(
+                        "e{id} cannot be targeted via coordinates on Wayland — AT-SPI bounds \
+                         are window-relative. Use screenshot + absolute screen coordinates, \
+                         invoke a single-click action, or activate an X11/XWayland client"
+                    )));
+                }
+                self.center(&self.element(id)?)
+            }
         }
     }
 
