@@ -1074,7 +1074,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("emits the actual response model on turn completion", () =>
+  it.effect("enriches turn completion when the response model arrives after idle", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-opencode-actual-model");
@@ -1088,6 +1088,13 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           properties: {
             sessionID: "http://127.0.0.1:9999/session",
             info: { id: "msg-actual-model", role: "assistant" },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
           },
         },
         {
@@ -1106,18 +1113,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
             },
           },
         },
-        {
-          type: "session.status",
-          properties: {
-            sessionID: "http://127.0.0.1:9999/session",
-            status: { type: "idle" },
-          },
-        },
       ];
 
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId),
-        Stream.take(4),
+        Stream.take(5),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1135,11 +1135,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       releaseEvents?.();
 
       const events = Array.from(yield* Fiber.join(eventsFiber));
-      const completed = events.find((event) => event.type === "turn.completed");
-      NodeAssert.equal(completed?.type, "turn.completed");
-      if (completed?.type === "turn.completed") {
-        NodeAssert.equal(completed.payload.actualModel, "gpt-5.6-luna");
-      }
+      const completions = events.filter((event) => event.type === "turn.completed");
+      NodeAssert.equal(completions.length, 2);
+      NodeAssert.equal(completions[0]?.payload.actualModel, undefined);
+      NodeAssert.equal(completions[1]?.payload.actualModel, "gpt-5.6-luna");
     }),
   );
 
