@@ -1142,6 +1142,74 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("captures a stored response model when message metadata arrives after idle", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-stored-actual-model");
+      let releaseEvents: (() => void) | undefined;
+      runtimeMock.state.subscribedEventGate = new Promise<void>((resolve) => {
+        releaseEvents = resolve;
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-stored-step-finish",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-stored-actual-model",
+              type: "step-finish",
+              reason: "stop",
+              modelID: "gpt-5.6-luna",
+              cost: 0,
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: { id: "msg-stored-actual-model", role: "assistant" },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "identify the stored model",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "kedvai/auto"),
+      });
+      releaseEvents?.();
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completions = events.filter((event) => event.type === "turn.completed");
+      NodeAssert.equal(completions.length, 2);
+      NodeAssert.equal(completions[0]?.payload.actualModel, undefined);
+      NodeAssert.equal(completions[1]?.payload.actualModel, "gpt-5.6-luna");
+    }),
+  );
+
   it.effect("does not strip coincidental prefix overlap from OpenCode part deltas", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

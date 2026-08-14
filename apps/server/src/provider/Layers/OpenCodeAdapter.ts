@@ -221,16 +221,14 @@ interface OpenCodeSessionContext {
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
-  readonly assistantTurnIdByMessageId: Map<string, TurnId>;
+  readonly turnIdByMessageId: Map<string, TurnId>;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
   activeActualModel: string | undefined;
-  completedTurnWithoutModel:
-    | { readonly turnId: TurnId; readonly state: "completed" | "failed" }
-    | undefined;
+  readonly completedTurnsWithoutModel: Map<TurnId, "completed" | "failed">;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
@@ -795,6 +793,39 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    const captureActualModel = Effect.fn("captureActualModel")(function* (
+      context: OpenCodeSessionContext,
+      part: Part,
+      raw: unknown,
+    ) {
+      const actualModel = actualModelFromPart(part);
+      const partTurnId = context.turnIdByMessageId.get(part.messageID);
+      if (!actualModel || !partTurnId) {
+        return;
+      }
+      if (context.activeTurnId === partTurnId) {
+        context.activeActualModel = actualModel;
+        return;
+      }
+      const completedState = context.completedTurnsWithoutModel.get(partTurnId);
+      if (!completedState) {
+        return;
+      }
+      context.completedTurnsWithoutModel.delete(partTurnId);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: partTurnId,
+          raw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: completedState,
+          actualModel,
+        },
+      });
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -842,12 +873,13 @@ export function makeOpenCodeAdapter(
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "assistant") {
             if (turnId) {
-              context.assistantTurnIdByMessageId.set(event.properties.info.id, turnId);
+              context.turnIdByMessageId.set(event.properties.info.id, turnId);
             }
             for (const part of context.partById.values()) {
               if (part.messageID !== event.properties.info.id) {
                 continue;
               }
+              yield* captureActualModel(context, part, event);
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
           }
@@ -856,7 +888,7 @@ export function makeOpenCodeAdapter(
 
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
-          context.assistantTurnIdByMessageId.delete(event.properties.messageID);
+          context.turnIdByMessageId.delete(event.properties.messageID);
           break;
         }
 
@@ -908,29 +940,13 @@ export function makeOpenCodeAdapter(
         case "message.part.updated": {
           const part = event.properties.part;
           context.partById.set(part.id, part);
+          if (turnId && !context.turnIdByMessageId.has(part.messageID)) {
+            context.turnIdByMessageId.set(part.messageID, turnId);
+          }
           const messageRole = messageRoleForPart(context, part);
 
-          const actualModel = actualModelFromPart(part);
-          const partTurnId = context.assistantTurnIdByMessageId.get(part.messageID);
-          if (messageRole === "assistant" && partTurnId && actualModel) {
-            if (context.activeTurnId === partTurnId) {
-              context.activeActualModel = actualModel;
-            } else if (context.completedTurnWithoutModel?.turnId === partTurnId) {
-              const completedTurn = context.completedTurnWithoutModel;
-              context.completedTurnWithoutModel = undefined;
-              yield* emit({
-                ...(yield* buildEventBase({
-                  threadId: context.session.threadId,
-                  turnId: completedTurn.turnId,
-                  raw: event,
-                })),
-                type: "turn.completed",
-                payload: {
-                  state: completedTurn.state,
-                  actualModel,
-                },
-              });
-            }
+          if (messageRole === "assistant") {
+            yield* captureActualModel(context, part, event);
           }
 
           if (messageRole === "assistant") {
@@ -1100,9 +1116,11 @@ export function makeOpenCodeAdapter(
             const actualModel = context.activeActualModel;
             context.activeTurnId = undefined;
             context.activeActualModel = undefined;
-            context.completedTurnWithoutModel = actualModel
-              ? undefined
-              : { turnId, state: "completed" };
+            if (actualModel) {
+              context.completedTurnsWithoutModel.delete(turnId);
+            } else {
+              context.completedTurnsWithoutModel.set(turnId, "completed");
+            }
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -1126,8 +1144,13 @@ export function makeOpenCodeAdapter(
           const actualModel = context.activeActualModel;
           context.activeTurnId = undefined;
           context.activeActualModel = undefined;
-          context.completedTurnWithoutModel =
-            activeTurnId && !actualModel ? { turnId: activeTurnId, state: "failed" } : undefined;
+          if (activeTurnId) {
+            if (actualModel) {
+              context.completedTurnsWithoutModel.delete(activeTurnId);
+            } else {
+              context.completedTurnsWithoutModel.set(activeTurnId, "failed");
+            }
+          }
           yield* updateProviderSession(
             context,
             {
@@ -1430,12 +1453,12 @@ export function makeOpenCodeAdapter(
           partById: new Map(),
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
-          assistantTurnIdByMessageId: new Map(),
+          turnIdByMessageId: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
           activeActualModel: undefined,
-          completedTurnWithoutModel: undefined,
+          completedTurnsWithoutModel: new Map(),
           activeAgent: undefined,
           activeVariant: undefined,
           stopped: yield* Ref.make(false),
