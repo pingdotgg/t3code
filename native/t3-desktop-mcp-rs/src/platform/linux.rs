@@ -153,10 +153,13 @@ impl LinuxDesktop {
         }
 
         // Append at the caret when AT-SPI exposes it. If caret_offset fails,
-        // insert at 0 rather than aborting the AT-SPI write — failing here
-        // would push type_text into coordinate/XTEST fallbacks that mis-click
-        // on Wayland (window-relative bounds).
-        let caret = self.caret_offset(element).unwrap_or(0);
+        // append at the end (character_count) rather than silently prepending
+        // at 0. If that also fails, propagate the error so type_text can use
+        // the focus+keystroke path (which refuses unsafe Wayland clicks).
+        let caret = match self.caret_offset(element) {
+            Ok(offset) => offset,
+            Err(_) => self.character_count(element)?,
+        };
         match block_on(editable.insert_text(caret, text, text.chars().count() as i32)) {
             Ok(true) => Ok(()),
             Ok(false) => Err(DesktopError::new("the element refused the text")),
@@ -182,6 +185,12 @@ impl LinuxDesktop {
         let text = self.text_proxy(element)?;
         block_on(text.caret_offset())
             .map_err(|error| DesktopError::new(format!("could not read the caret: {error}")))
+    }
+
+    fn character_count(&self, element: &ElementRef) -> Result<i32> {
+        let text = self.text_proxy(element)?;
+        block_on(text.character_count())
+            .map_err(|error| DesktopError::new(format!("could not read character count: {error}")))
     }
 
     /// Ask the toolkit to focus an element, which also raises its window on most
@@ -1051,7 +1060,9 @@ impl Desktop for LinuxDesktop {
         element: Option<u32>,
     ) -> Result<String> {
         if let Some(id) = element {
-            let (x, y) = self.center(&self.element(id)?)?;
+            // Route through point_coordinates so Wayland refuses window-relative
+            // AT-SPI bounds the same way click / right_click / drag do.
+            let (x, y) = self.point_coordinates(Point::Element(id))?;
             self.move_pointer(x, y)?;
         }
         let button = match direction {
