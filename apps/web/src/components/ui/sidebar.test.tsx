@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+
+import { removeLocalStorageItem } from "~/hooks/useLocalStorage";
 
 import {
   SidebarMenuAction,
@@ -8,7 +10,12 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "./sidebar";
-import { resolveSidebarState } from "./sidebarState";
+import {
+  readPersistedSidebarOpen,
+  resolveSidebarState,
+  SIDEBAR_OPEN_STORAGE_KEY,
+  writePersistedSidebarOpen,
+} from "./sidebarState";
 
 function renderSidebarButton(className?: string) {
   return renderToStaticMarkup(
@@ -19,6 +26,10 @@ function renderSidebarButton(className?: string) {
 }
 
 describe("sidebar interactive cursors", () => {
+  afterEach(() => {
+    removeLocalStorageItem(SIDEBAR_OPEN_STORAGE_KEY);
+  });
+
   it("uses mobile sheet visibility for the shared responsive state", () => {
     expect(resolveSidebarState({ isMobile: true, open: true, openMobile: false })).toBe(
       "collapsed",
@@ -27,6 +38,18 @@ describe("sidebar interactive cursors", () => {
     expect(resolveSidebarState({ isMobile: false, open: true, openMobile: false })).toBe(
       "expanded",
     );
+  });
+
+  it("persists and restores desktop open state", () => {
+    writePersistedSidebarOpen(false);
+    expect(readPersistedSidebarOpen()).toBe(false);
+
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <div />
+      </SidebarProvider>,
+    );
+    expect(html).toContain('data-sidebar-state="collapsed"');
   });
 
   it("exposes collapsed state for shared titlebar inset styling", () => {
