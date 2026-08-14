@@ -108,7 +108,8 @@ function ImportThemeSheet(props: {
         <View className="flex-1 gap-3 p-4">
           <Text className="text-sm leading-normal text-foreground-secondary">
             Paste a T3 Code ThemeFile v1 JSON object. Mobile colors support hex, named colors,
-            rgb()/rgba(), hsl()/hsla(), and oklch().
+            rgb()/rgba(), hsl()/hsla(), hwb(), lab(), lch(), oklab(), oklch(), and color(display-p3
+            ...)/color(srgb ...).
           </Text>
           <TextInput
             multiline
