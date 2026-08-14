@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   resolveNewThreadDraftModelSeed,
   shouldHonorProjectDefaultModel,
+  shouldRestoreStickyAfterProjectPinClear,
 } from "./newThreadModelSeed";
 
 const CLAUDE_DEFAULT: ModelSelection = {
@@ -92,6 +93,30 @@ describe("shouldHonorProjectDefaultModel", () => {
         isLocalDraftThread: false,
         modelSelectionExplicit: undefined,
         projectDefaultModelSelection: CLAUDE_DEFAULT,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldRestoreStickyAfterProjectPinClear", () => {
+  it("restores sticky when the same draft's pin is cleared", () => {
+    expect(
+      shouldRestoreStickyAfterProjectPinClear({
+        previousDraftKey: "draft-a",
+        previousModelKey: "claudeAgent:claude-opus-4-6",
+        draftKey: "draft-a",
+        projectDefaultModelKey: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat navigating onto an unpinned draft as a pin clear", () => {
+    expect(
+      shouldRestoreStickyAfterProjectPinClear({
+        previousDraftKey: "draft-a",
+        previousModelKey: "claudeAgent:claude-opus-4-6",
+        draftKey: "draft-b",
+        projectDefaultModelKey: null,
       }),
     ).toBe(false);
   });

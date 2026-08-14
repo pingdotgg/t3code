@@ -206,7 +206,10 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
-import { shouldHonorProjectDefaultModel } from "../lib/newThreadModelSeed";
+import {
+  shouldHonorProjectDefaultModel,
+  shouldRestoreStickyAfterProjectPinClear,
+} from "../lib/newThreadModelSeed";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -1719,20 +1722,36 @@ function ChatViewContent(props: ChatViewProps) {
   const projectDefaultModelKey = activeProject?.defaultModelSelection
     ? `${activeProject.defaultModelSelection.instanceId}:${activeProject.defaultModelSelection.model}`
     : null;
-  const previousProjectDefaultModelKeyRef = useRef<string | null>(null);
+  const previousProjectDefaultByDraftRef = useRef<{
+    draftKey: string;
+    modelKey: string | null;
+  } | null>(null);
   useEffect(() => {
+    const composerDraftKey =
+      typeof composerDraftTarget === "string"
+        ? composerDraftTarget
+        : scopedThreadKey(composerDraftTarget);
     if (!isLocalDraftThread) {
-      previousProjectDefaultModelKeyRef.current = projectDefaultModelKey;
+      previousProjectDefaultByDraftRef.current = {
+        draftKey: composerDraftKey,
+        modelKey: projectDefaultModelKey,
+      };
       return;
     }
     const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     if (draft?.modelSelectionExplicit === true) {
-      previousProjectDefaultModelKeyRef.current = projectDefaultModelKey;
+      previousProjectDefaultByDraftRef.current = {
+        draftKey: composerDraftKey,
+        modelKey: projectDefaultModelKey,
+      };
       return;
     }
     const projectDefault = activeProject?.defaultModelSelection ?? null;
-    const previousProjectDefaultModelKey = previousProjectDefaultModelKeyRef.current;
-    previousProjectDefaultModelKeyRef.current = projectDefaultModelKey;
+    const previous = previousProjectDefaultByDraftRef.current;
+    previousProjectDefaultByDraftRef.current = {
+      draftKey: composerDraftKey,
+      modelKey: projectDefaultModelKey,
+    };
     if (projectDefault != null) {
       setComposerDraftModelSelection(composerDraftTarget, projectDefault, {
         replaceOptions: true,
@@ -1741,9 +1760,17 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     // Resetting the pin should restore sticky/carry, not leave the last seeded
-    // pin stuck on this unsent draft.
-    if (previousProjectDefaultModelKey != null) {
-      applyStickyComposerState(composerDraftTarget);
+    // pin stuck on this unsent draft. Only the same draft counts: ChatView
+    // stays mounted across draft routes.
+    if (
+      shouldRestoreStickyAfterProjectPinClear({
+        previousDraftKey: previous?.draftKey ?? null,
+        previousModelKey: previous?.modelKey ?? null,
+        draftKey: composerDraftKey,
+        projectDefaultModelKey,
+      })
+    ) {
+      applyStickyComposerState(composerDraftTarget, { replaceExisting: true });
     }
   }, [
     activeProject?.defaultModelSelection,

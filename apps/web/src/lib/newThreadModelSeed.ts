@@ -47,3 +47,21 @@ export function shouldHonorProjectDefaultModel(input: {
     input.projectDefaultModelSelection != null
   );
 }
+
+/**
+ * Pin-clear restore is per draft. ChatView stays mounted across draft
+ * navigations, so a leftover pin key from the previous draft must not look
+ * like this draft's pin was reset.
+ */
+export function shouldRestoreStickyAfterProjectPinClear(input: {
+  previousDraftKey: string | null;
+  previousModelKey: string | null;
+  draftKey: string;
+  projectDefaultModelKey: string | null;
+}): boolean {
+  return (
+    input.previousDraftKey === input.draftKey &&
+    input.previousModelKey != null &&
+    input.projectDefaultModelKey == null
+  );
+}

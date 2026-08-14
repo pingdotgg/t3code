@@ -467,7 +467,16 @@ interface ComposerDraftStoreState {
       | null
       | undefined,
   ) => void;
-  applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  applyStickyState: (
+    threadRef: ComposerThreadTarget,
+    options?: {
+      /**
+       * Overwrite models already on the draft. Pin-clear restore needs this;
+       * the default keeps a draft's existing per-instance model.
+       */
+      replaceExisting?: boolean;
+    },
+  ) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
     provider: ProviderDriverKind,
@@ -2643,11 +2652,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
-        applyStickyState: (threadRef) => {
+        applyStickyState: (threadRef, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
           }
+          const replaceExisting = options?.replaceExisting === true;
           set((state) => {
             const stickyMap = state.stickyModelSelectionByProvider;
             const stickyActiveProvider = state.stickyActiveProvider;
@@ -2663,16 +2673,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 // so coerce the string back to `ProviderInstanceId` for
                 // the typed lookup.
                 const instanceKey = provider as ProviderInstanceId;
-                const current = nextMap[instanceKey];
-                nextMap[instanceKey] = {
-                  ...selection,
-                  model: current?.model ?? selection.model,
-                };
+                if (replaceExisting) {
+                  nextMap[instanceKey] = selection;
+                } else {
+                  const current = nextMap[instanceKey];
+                  nextMap[instanceKey] = {
+                    ...selection,
+                    model: current?.model ?? selection.model,
+                  };
+                }
               }
             }
+            const nextExplicit = replaceExisting ? false : base.modelSelectionExplicit;
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              base.activeProvider === stickyActiveProvider
+              base.activeProvider === stickyActiveProvider &&
+              base.modelSelectionExplicit === nextExplicit
             ) {
               return state;
             }
@@ -2680,6 +2696,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...base,
               modelSelectionByProvider: nextMap,
               activeProvider: stickyActiveProvider,
+              modelSelectionExplicit: nextExplicit,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
