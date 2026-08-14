@@ -61,6 +61,10 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
     return "This install is using the correct architecture.";
   }
 
+  if (state.status === "downloading") {
+    return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. T3 Code is downloading the native Apple Silicon build. Restart when the download finishes to install it.";
+  }
+
   const action = resolveDesktopUpdateButtonAction(state);
   if (action === "download") {
     return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";

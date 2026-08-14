@@ -226,6 +226,21 @@ describe("desktop update UI helpers", () => {
     expect(getArm64IntelBuildWarningDescription(state)).toContain("Download the available update");
   });
 
+  it("keeps the warning copy download-oriented while the native build downloads", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      hostArch: "arm64",
+      appArch: "x64",
+      runningUnderArm64Translation: true,
+      status: "downloading",
+      availableVersion: "1.1.0",
+      downloadPercent: 42.5,
+    };
+
+    expect(getArm64IntelBuildWarningDescription(state)).toContain("downloading");
+    expect(getArm64IntelBuildWarningDescription(state)).not.toContain("next app update");
+  });
+
   it("includes the downloaded version in the install confirmation copy", () => {
     expect(
       getDesktopUpdateInstallConfirmationMessage({
