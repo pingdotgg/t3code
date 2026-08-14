@@ -24,6 +24,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -950,6 +951,125 @@ it.layer(
         Effect.sync(() => checks > 0),
         "1200 millis",
       );
+    }),
+  );
+
+  it.effect("derives subprocess activity for every terminal from one shared process snapshot", () =>
+    Effect.gen(function* () {
+      const runCalls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      // FakePtyAdapter assigns pids starting at 9000, so the two terminals
+      // opened below run as pids 9000 and 9001.
+      const psStdout = ["  100  9000 vim", "  101   100 git", "  200  9001 /usr/bin/python3"].join(
+        "\n",
+      );
+      const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+        run: (input) =>
+          Effect.sync(() => {
+            runCalls.push({ command: input.command, args: input.args });
+            return {
+              stdout: psStdout,
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      };
+
+      const { manager, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 20,
+      }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provide(withHostPlatform("linux")),
+      );
+
+      yield* manager.open(openInput());
+      yield* manager.open(openInput({ threadId: "thread-2" }));
+
+      yield* waitFor(
+        Effect.map(
+          getEvents,
+          (events) =>
+            events.some(
+              (event) =>
+                event.type === "activity" &&
+                event.hasRunningSubprocess === true &&
+                event.label === "vim",
+            ) &&
+            events.some(
+              (event) =>
+                event.type === "activity" &&
+                event.hasRunningSubprocess === true &&
+                event.label === "python3",
+            ),
+        ),
+        "1200 millis",
+      );
+      yield* waitFor(
+        Effect.sync(() => runCalls.length >= 3),
+        "1200 millis",
+      );
+
+      // Every spawn is the shared table snapshot — no per-terminal `pgrep`
+      // or per-child `ps -p` invocations.
+      expect(runCalls.every((call) => call.args.join(" ") === "-eo pid=,ppid=,comm=")).toBe(true);
+    }),
+  );
+
+  it.effect("keeps last known subprocess state when the process snapshot fails", () =>
+    Effect.gen(function* () {
+      let failSnapshots = false;
+      let failedCalls = 0;
+      const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+        run: () =>
+          Effect.sync(() => {
+            if (failSnapshots) failedCalls += 1;
+            return {
+              stdout: failSnapshots ? "" : "  100  9000 vim",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(failSnapshots ? 1 : 0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      };
+
+      const { manager, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 20,
+      }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provide(withHostPlatform("linux")),
+      );
+
+      yield* manager.open(openInput());
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) =>
+              event.type === "activity" &&
+              event.hasRunningSubprocess === true &&
+              event.label === "vim",
+          ),
+        ),
+        "1200 millis",
+      );
+
+      failSnapshots = true;
+      yield* waitFor(
+        Effect.sync(() => failedCalls >= 3),
+        "1200 millis",
+      );
+
+      // A failed snapshot is not authoritative: no terminal flips to idle.
+      const activityEvents = (yield* getEvents).filter((event) => event.type === "activity");
+      expect(activityEvents.length).toBeGreaterThan(0);
+      expect(activityEvents.every((event) => event.hasRunningSubprocess === true)).toBe(true);
     }),
   );
 
