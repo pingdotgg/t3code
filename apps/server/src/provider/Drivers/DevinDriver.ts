@@ -154,7 +154,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Devin snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build the Devin provider snapshot.",
               cause,
             }),
         ),
