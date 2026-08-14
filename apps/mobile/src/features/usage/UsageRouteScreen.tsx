@@ -119,7 +119,7 @@ export function UsageRouteScreen() {
 
         {isPending ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
-            Scanning provider transcripts…
+            Scanning provider usage…
           </Text>
         ) : environments.length === 0 ? (
           <Text className="py-16 text-center text-base text-foreground-muted">

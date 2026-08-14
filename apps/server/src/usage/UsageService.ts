@@ -39,6 +39,7 @@ import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
+import { readOpenCodeUsage, resolveOpenCodeDatabasePaths } from "./usageOpenCode.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -218,10 +219,49 @@ export const make = Effect.gen(function* () {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const openCodeDataDir = path.join(
+      process.env.XDG_DATA_HOME?.trim() || path.join(NodeOS.homedir(), ".local", "share"),
+      "opencode",
+    );
+    const openCodeDatabaseOverride = process.env.OPENCODE_DB?.trim() || undefined;
+    const disableOpenCodeChannelDatabase = process.env.OPENCODE_DISABLE_CHANNEL_DB?.trim();
+    const shouldDiscoverOpenCodeDatabases =
+      !openCodeDatabaseOverride &&
+      !["1", "true"].includes(disableOpenCodeChannelDatabase?.toLowerCase() ?? "");
+    const openCodeDirectoryEntries = shouldDiscoverOpenCodeDatabases
+      ? yield* fileSystem
+          .readDirectory(openCodeDataDir)
+          .pipe(Effect.catchCause(() => Effect.succeed([] as string[])))
+      : [];
+    const openCodeDatabasePaths = resolveOpenCodeDatabasePaths({
+      dataDir: openCodeDataDir,
+      databaseOverride: openCodeDatabaseOverride,
+      disableChannelDatabase: disableOpenCodeChannelDatabase,
+      directoryEntries: openCodeDirectoryEntries,
+      path,
+    });
+    const openCodeResolvedHomePath =
+      openCodeDatabaseOverride !== undefined
+        ? (openCodeDatabasePaths[0] ?? ":memory:")
+        : openCodeDataDir;
+    const openCodeVolumeDir = openCodeDatabasePaths[0]
+      ? path.dirname(openCodeDatabasePaths[0])
+      : openCodeDataDir;
 
     return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "claude" as const, dir: claudeDir, kind: "jsonl" as const },
+      {
+        provider: "codex" as const,
+        dir: path.join(codexLayout.sharedHomePath, "sessions"),
+        kind: "jsonl" as const,
+      },
+      {
+        provider: "opencode" as const,
+        dir: openCodeVolumeDir,
+        databasePaths: openCodeDatabasePaths,
+        kind: "opencodeSqlite" as const,
+        resolvedHomePath: openCodeResolvedHomePath,
+      },
     ];
   });
 
@@ -353,21 +393,86 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir } of dirs) {
+    for (const source of dirs) {
+      const { provider, dir } = source;
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      const resolvedHomePath = source.kind === "jsonl" ? source.dir : source.resolvedHomePath;
+      const existingOpenCodeDatabasePaths: string[] = [];
+      if (source.kind === "opencodeSqlite") {
+        for (const databasePath of source.databasePaths) {
+          const databaseExists = yield* fileSystem
+            .exists(databasePath)
+            .pipe(Effect.catchCause(() => Effect.succeed(false)));
+          if (databaseExists) existingOpenCodeDatabasePaths.push(databasePath);
+        }
+      }
+      const exists =
+        source.kind === "jsonl"
+          ? yield* fileSystem.exists(dir).pipe(Effect.catchCause(() => Effect.succeed(false)))
+          : existingOpenCodeDatabasePaths.length > 0;
 
       if (!exists) {
         sources.push({
-          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+          fingerprint: { hostId, provider, resolvedHomePath, volumeId },
           status: "missing",
           scannedFiles: 0,
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+          message:
+            source.kind === "jsonl"
+              ? "No transcript directory on this environment."
+              : "OpenCode usage database was not found.",
+        });
+        continue;
+      }
+
+      if (source.kind === "opencodeSqlite") {
+        const sessionIds = new Set<string>();
+        let scannedFiles = 0;
+        let skippedFiles = 0;
+        let malformedRecords = 0;
+        for (const databasePath of existingOpenCodeDatabasePaths) {
+          const result = yield* Effect.promise(() =>
+            readOpenCodeUsage(databasePath, windowStartMs),
+          );
+          if (result === null) {
+            skippedFiles += 1;
+            continue;
+          }
+
+          scannedFiles += 1;
+          malformedRecords += result.malformedRecords;
+          for (const record of result.records) {
+            if (aggregator.add(record) && record.sessionId.length > 0) {
+              sessionIds.add(record.sessionId);
+            }
+          }
+        }
+        const status =
+          scannedFiles === 0
+            ? "failed"
+            : skippedFiles > 0 || malformedRecords > 0
+              ? "partial"
+              : "ok";
+        const message =
+          scannedFiles === 0
+            ? "OpenCode usage database could not be read."
+            : skippedFiles > 0 && malformedRecords > 0
+              ? "Some OpenCode usage databases and records could not be read."
+              : skippedFiles > 0
+                ? "Some OpenCode usage databases could not be read."
+                : malformedRecords > 0
+                  ? "Some OpenCode usage records could not be parsed."
+                  : null;
+        sources.push({
+          fingerprint: { hostId, provider, resolvedHomePath, volumeId },
+          status,
+          scannedFiles,
+          skippedFiles,
+          malformedRecords,
+          distinctSessions: sessionIds.size,
+          message,
         });
         continue;
       }
@@ -398,7 +503,7 @@ export const make = Effect.gen(function* () {
       }
 
       sources.push({
-        fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+        fingerprint: { hostId, provider, resolvedHomePath, volumeId },
         status: "ok",
         scannedFiles,
         skippedFiles,
