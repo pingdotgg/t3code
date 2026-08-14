@@ -1124,13 +1124,19 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums">
             {row.message.actualModel ? (
-              <p
-                data-assistant-actual-model
-                className="max-w-[22rem] truncate text-muted-foreground"
-                title={`Actual model: ${row.message.actualModel}`}
-              >
-                Model: {row.message.actualModel}
-              </p>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <p
+                      data-assistant-actual-model
+                      className="max-w-[22rem] truncate text-muted-foreground"
+                    />
+                  }
+                >
+                  Model: {row.message.actualModel}
+                </TooltipTrigger>
+                <TooltipPopup>Actual model: {row.message.actualModel}</TooltipPopup>
+              </Tooltip>
             ) : null}
             <div className="flex items-center gap-2 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
               <AssistantCopyButton row={row} />

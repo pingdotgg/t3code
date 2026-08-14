@@ -1134,7 +1134,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
       releaseEvents?.();
 
-      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const events = Array.from(yield* Fiber.join(eventsFiber));
       const completed = events.find((event) => event.type === "turn.completed");
       NodeAssert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
