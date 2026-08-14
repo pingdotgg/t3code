@@ -33,7 +33,7 @@ function makeStubInstance(
     id,
     label: Effect.succeed(label),
     start: Effect.void,
-    stop: () => Effect.void,
+    stop: () => Effect.succeed(true),
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(snapshot),
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),

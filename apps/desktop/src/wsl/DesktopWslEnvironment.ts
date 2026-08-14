@@ -23,6 +23,10 @@ const PROBE_TIMEOUT = Duration.seconds(10);
 const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
+const WSLINFO_TIMEOUT = Duration.seconds(5);
+// TERM grace (6 × 0.5s) + KILL grace (4 × 0.5s) + /proc scans + wslpath;
+// generous so a slow 9p mount can't turn a genuine release into "unknown".
+const PATH_RELEASE_TIMEOUT = Duration.seconds(30);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
@@ -53,6 +57,40 @@ export class DesktopWslDistroListError extends Schema.TaggedErrorClass<DesktopWs
   }
 }
 
+// Authoritative WSL networking mode as reported by `wslinfo
+// --networking-mode` (ships with WSL on both 2.6.x and 2.7.x). "unknown"
+// covers older WSL builds without wslinfo, non-standard distros, and
+// transport failures — callers must treat it as "don't trust any single
+// enumerated address" rather than assuming NAT.
+export type WslNetworkingMode = "mirrored" | "nat" | "unknown";
+
+// Subset of the server's PersistedServerRuntimeState (apps/server/src/
+// serverRuntimeState.ts) the desktop needs to recover a reachable origin.
+// Deliberately lenient: extra fields are ignored and the schema is local so
+// the desktop does not import server internals across the app boundary.
+const WslServerRuntimeState = Schema.Struct({
+  port: Schema.Int,
+  host: Schema.optional(Schema.String),
+  origin: Schema.String,
+});
+export type WslServerRuntimeState = typeof WslServerRuntimeState.Type;
+const decodeWslServerRuntimeState = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(WslServerRuntimeState),
+);
+
+// Outcome of ensureWindowsPathReleased. "released" — no Linux-side process
+// holds anything under the path. "busy" — processes survived SIGTERM +
+// SIGKILL and still hold the path; replacing files under it from Windows
+// WILL fail. "unknown" — the check could not verify (spawn failure, path
+// translation failure, timeout, unparsable output). The caller only asks
+// about a distro that was hosting a backend moments ago, so "unknown"
+// means the distro may well be alive and holding handles: callers that
+// need the path free must treat it as a failure, not a pass. (A machine
+// whose WSL layer is genuinely broken recovers on the next app launch —
+// preflight falls back to Windows, no WSL config enters the pool, and no
+// release check runs.)
+export type WslPathReleaseResult = "released" | "busy" | "unknown";
+
 const isDesktopWslDistroListError = Schema.is(DesktopWslDistroListError);
 
 export class DesktopWslEnvironment extends Context.Service<
@@ -72,13 +110,32 @@ export class DesktopWslEnvironment extends Context.Service<
     // Resolves the user's Linux home dir inside the chosen distro (e.g.
     // "/home/josh"). Used by the folder picker to expand `~` correctly.
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
-    // Resolves the WSL distro's IPv4 address on the WSL vEthernet adapter
-    // (e.g. "172.x.x.x"). The orchestrator uses this for the WSL backend's
-    // httpBaseUrl so the renderer can reach it without relying on wslhost's
-    // localhost→WSL automatic forwarding, which is flaky in practice
-    // (the backend can be listening for 30+ seconds before wslhost starts
-    // forwarding 127.0.0.1:port to WSL-side localhost).
-    readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
+    // Resolves every IPv4 address the distro has bound (from `hostname -I`),
+    // in reported order. Callers must NOT treat position as meaning — the
+    // ordering shifts whenever Tailscale/Docker/VPN adapters appear inside
+    // the distro. Used to build the WSL backend's readiness-probe candidate
+    // set next to loopback; the first candidate that answers wins.
+    readonly getDistroIps: (distro: string | null) => Effect.Effect<ReadonlyArray<string>>;
+    // Authoritative networking mode via `wslinfo --networking-mode`.
+    readonly getNetworkingMode: (distro: string | null) => Effect.Effect<WslNetworkingMode>;
+    // Reads the backend's persisted runtime state (server-runtime.json)
+    // from inside the distro. Used as a readiness fallback: when every
+    // probe candidate times out, the file's origin recovers the URL the
+    // server actually advertises.
+    readonly readServerRuntimeState: (
+      distro: string | null,
+      stateDir: WslServerStateDir,
+    ) => Effect.Effect<Option.Option<WslServerRuntimeState>>;
+    // Terminates any Linux-side process still holding files (cwd, exe, open
+    // fd, or mapped file) under the given Windows path via /mnt, then
+    // verifies release. Called before an update install as a defensive
+    // guarantee that nothing WSL-side outlives teardown: whether 9p/DrvFs
+    // handles block Windows-side replacement varies by WSL version, but a
+    // surviving backend can interfere with an install either way.
+    readonly ensureWindowsPathReleased: (input: {
+      readonly distro: string | null;
+      readonly windowsPath: string;
+    }) => Effect.Effect<WslPathReleaseResult>;
     readonly ensureNodePty: (
       distro: string | null,
       windowsRepoRoot: string,
@@ -686,16 +743,18 @@ const windowsToWslPathImpl = (
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
-const getDistroIpImpl = (
+export const getDistroIpsImpl = (
   distro: string | null,
-): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+): Effect.Effect<ReadonlyArray<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // `hostname -I` prints a space-separated list of all non-loopback
-      // IPs the distro has bound. The first entry on the WSL2 default
-      // network is always the eth0 vEthernet address Windows can reach
-      // directly (no wslhost forwarding required).
+      // `hostname -I` prints a space-separated list of all non-loopback IPs
+      // the distro has bound. The ordering is NOT a contract: Tailscale,
+      // docker0, WireGuard and friends inject addresses at arbitrary
+      // positions (a WSL-side tailscaled puts a CGNAT 100.64/10 address
+      // first). Return every IPv4 and let the caller probe candidates
+      // instead of trusting position.
       const command = ChildProcess.make(
         "wsl.exe",
         [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
@@ -710,16 +769,205 @@ const getDistroIpImpl = (
       const handle = yield* spawner.spawn(command);
       const stdoutBytes = yield* Stream.runCollect(handle.stdout);
       const exitCode = yield* handle.exitCode;
-      if ((exitCode as unknown as number) !== 0) return Option.none<string>();
+      if ((exitCode as unknown as number) !== 0) return [] as ReadonlyArray<string>;
       const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = raw.split(/\s+/).find((part) => IPV4_PATTERN.test(part));
-      return candidate ? Option.some(candidate) : Option.none<string>();
+      return raw.split(/\s+/).filter((part) => IPV4_PATTERN.test(part));
     }),
   ).pipe(
     Effect.timeoutOption(USER_HOME_TIMEOUT),
-    Effect.map(Option.flatten),
-    Effect.orElseSucceed(() => Option.none<string>()),
+    Effect.map(Option.getOrElse((): ReadonlyArray<string> => [])),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
+
+export const getNetworkingModeImpl = (
+  distro: string | null,
+): Effect.Effect<WslNetworkingMode, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // wslinfo ships with WSL (verified on 2.6.3.0 and 2.7.3.0) and is the
+      // first-party answer for the networking mode; parsing `hostname -I`
+      // ordering to infer mirrored networking is what broke Tailscale-in-WSL
+      // hosts. A missing wslinfo (older WSL) lands in the "unknown" branch.
+      const command = ChildProcess.make(
+        "wsl.exe",
+        [...buildDistroArgs(distro), "--", "wslinfo", "--networking-mode"],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        },
+      );
+      const handle = yield* spawner.spawn(command);
+      const stdoutBytes = yield* Stream.runCollect(handle.stdout);
+      const exitCode = yield* handle.exitCode;
+      if ((exitCode as unknown as number) !== 0) return "unknown" as WslNetworkingMode;
+      const raw = decodeUtf8(concatChunks(stdoutBytes)).trim().toLowerCase();
+      if (raw === "mirrored") return "mirrored" as WslNetworkingMode;
+      if (raw === "nat") return "nat" as WslNetworkingMode;
+      return "unknown" as WslNetworkingMode;
+    }),
+  ).pipe(
+    Effect.timeoutOption(WSLINFO_TIMEOUT),
+    Effect.map(Option.getOrElse((): WslNetworkingMode => "unknown")),
+    Effect.orElseSucceed((): WslNetworkingMode => "unknown"),
+  );
+
+// State-dir flavor mirroring the server's deriveServerPaths: backends
+// launched with --dev-url resolve state under ~/.t3/dev, packaged ones
+// under ~/.t3/userdata. The caller says which one the backend it spawned
+// uses — reading "whichever exists" would return a stale packaged file on
+// machines that have run both.
+export type WslServerStateDir = "userdata" | "dev";
+
+// The backend runs with the distro user's own $HOME (the bootstrap omits
+// t3Home so Linux state never lands on /mnt/c).
+const readServerRuntimeStateScript = (stateDir: WslServerStateDir): string =>
+  `cat "$HOME/.t3/${stateDir}/server-runtime.json" 2>/dev/null || true`;
+
+export const readServerRuntimeStateImpl = (
+  distro: string | null,
+  stateDir: WslServerStateDir,
+): Effect.Effect<
+  Option.Option<WslServerRuntimeState>,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const command = ChildProcess.make(
+        "wsl.exe",
+        [...buildDistroArgs(distro), "--", "sh", "-c", readServerRuntimeStateScript(stateDir)],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        },
+      );
+      const handle = yield* spawner.spawn(command);
+      const stdoutBytes = yield* Stream.runCollect(handle.stdout);
+      yield* handle.exitCode;
+      const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
+      if (raw.length === 0) return Option.none<WslServerRuntimeState>();
+      return yield* decodeWslServerRuntimeState(raw).pipe(
+        Effect.map(Option.some),
+        Effect.orElseSucceed(() => Option.none<WslServerRuntimeState>()),
+      );
+    }),
+  ).pipe(
+    Effect.timeoutOption(WSLINFO_TIMEOUT),
+    Effect.map(Option.flatten),
+    Effect.orElseSucceed(() => Option.none<WslServerRuntimeState>()),
+  );
+
+// Finds every Linux process holding the target directory via cwd, exe, an
+// open fd, or a mapped file; SIGTERMs, then SIGKILLs stragglers, then
+// reports. `cd /` first so the probe shell itself (spawned with the
+// desktop's install-dir cwd mapped through /mnt) never counts as a holder.
+// Matching is anchored: descendants must match "$dir/" and the directory
+// itself must match as an exact readlink line — a bare substring match
+// would classify /mnt/c/application as a holder of /mnt/c/app and kill
+// unrelated processes.
+export const buildEnsurePathReleasedScript = (quotedLinuxPath: string): string => `cd /
+dir=${quotedLinuxPath}
+self=$$
+find_holders() {
+  for p in /proc/[0-9]*; do
+    pid=\${p#/proc/}
+    [ "$pid" = "$self" ] && continue
+    [ "$pid" = "1" ] && continue
+    if { readlink "$p/cwd" "$p/exe" "$p"/fd/* 2>/dev/null; cat "$p/maps" 2>/dev/null; } 2>/dev/null | grep -qF "$dir/" ||
+      readlink "$p/cwd" "$p/exe" "$p"/fd/* 2>/dev/null | grep -qxF "$dir"; then
+      printf '%s ' "$pid"
+    fi
+  done
+}
+holders=$(find_holders)
+[ -z "$holders" ] && { echo RELEASED; exit 0; }
+kill $holders 2>/dev/null
+for i in 1 2 3 4 5 6; do
+  sleep 0.5
+  holders=$(find_holders)
+  [ -z "$holders" ] && { echo RELEASED; exit 0; }
+done
+kill -9 $holders 2>/dev/null
+for i in 1 2 3 4; do
+  sleep 0.5
+  holders=$(find_holders)
+  [ -z "$holders" ] && { echo RELEASED; exit 0; }
+done
+echo "BUSY $holders"
+exit 1
+`;
+
+export const ensureWindowsPathReleasedImpl = (input: {
+  readonly distro: string | null;
+  readonly windowsPath: string;
+}): Effect.Effect<WslPathReleaseResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    // The caller only asks about a distro that was running a backend moments
+    // ago, so a failed path translation means "distro reachable but the
+    // check can't run" — unverifiable ("unknown"), not "no VM" — and the
+    // caller must not treat it as a pass.
+    const linuxPath = yield* windowsToWslPathImpl(input.distro, input.windowsPath);
+    if (Option.isNone(linuxPath)) {
+      return "unknown" as WslPathReleaseResult;
+    }
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Run the probe as root (-u root; WSL grants this with no password,
+        // gated by the Windows host). find_holders reads /proc/<pid>/{cwd,exe,
+        // fd,maps}, which the kernel exposes only to the process owner and
+        // root: as the unprivileged distro user the scan gets EACCES for any
+        // process it does not own, so a root- or other-user-owned holder of
+        // the install dir is invisible and the check wrongly reports RELEASED.
+        // Running as root lets the scan SEE every holder and lets its kills
+        // land on holders it does not own. find_holders is already scoped to
+        // processes that actually reference the install dir, so this cannot
+        // reach unrelated processes.
+        // Script goes via stdin: wsl.exe re-escapes command-line args on the
+        // way into Linux, which mangles quoted paths with spaces.
+        const command = ChildProcess.make(
+          "wsl.exe",
+          [...buildDistroArgs(input.distro), "-u", "root", "--", "sh"],
+          {
+            stdin: Stream.encodeText(
+              Stream.make(buildEnsurePathReleasedScript(shellQuote(linuxPath.value))),
+            ),
+            stdout: "pipe",
+            stderr: "ignore",
+            killSignal: "SIGTERM",
+            forceKillAfter: PROCESS_TERMINATE_GRACE,
+          },
+        );
+        // A spawn failure here is NOT evidence that WSL is gone: wslpath just
+        // succeeded against this distro, so the VM was reachable moments
+        // ago. Fall through to "unknown" (via the catch below) and let the
+        // caller abort.
+        const handle = yield* spawner.spawn(command);
+        const stdoutBytes = yield* Stream.runCollect(handle.stdout);
+        const exitCode = yield* handle.exitCode;
+        const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
+        if ((exitCode as unknown as number) === 0 && raw.includes("RELEASED")) {
+          return "released" as WslPathReleaseResult;
+        }
+        if (raw.includes("BUSY")) {
+          return "busy" as WslPathReleaseResult;
+        }
+        return "unknown" as WslPathReleaseResult;
+      }),
+    ).pipe(
+      Effect.timeoutOption(PATH_RELEASE_TIMEOUT),
+      Effect.map(Option.getOrElse((): WslPathReleaseResult => "unknown")),
+      Effect.orElseSucceed((): WslPathReleaseResult => "unknown"),
+    );
+  });
 
 const getUserHomeImpl = (
   distro: string | null,
@@ -777,7 +1025,16 @@ export interface DesktopWslEnvironmentTestStub {
   readonly distroListError?: DesktopWslDistroListError;
   readonly windowsToWslPath?: (distro: string | null, windowsPath: string) => Option.Option<string>;
   readonly getUserHome?: (distro: string | null) => Option.Option<string>;
-  readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
+  readonly getDistroIps?: (distro: string | null) => ReadonlyArray<string>;
+  readonly getNetworkingMode?: (distro: string | null) => WslNetworkingMode;
+  readonly readServerRuntimeState?: (
+    distro: string | null,
+    stateDir: WslServerStateDir,
+  ) => Option.Option<WslServerRuntimeState>;
+  readonly ensureWindowsPathReleased?: (input: {
+    readonly distro: string | null;
+    readonly windowsPath: string;
+  }) => WslPathReleaseResult;
   readonly ensureNodePty?: (
     distro: string | null,
     windowsRepoRoot: string,
@@ -799,7 +1056,12 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       windowsToWslPath: (distro, windowsPath) =>
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
-      getDistroIp: (distro) => Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>()),
+      getDistroIps: (distro) => Effect.succeed(stub.getDistroIps?.(distro) ?? []),
+      getNetworkingMode: (distro) => Effect.succeed(stub.getNetworkingMode?.(distro) ?? "unknown"),
+      readServerRuntimeState: (distro, stateDir) =>
+        Effect.succeed(stub.readServerRuntimeState?.(distro, stateDir) ?? Option.none()),
+      ensureWindowsPathReleased: (input) =>
+        Effect.succeed(stub.ensureWindowsPathReleased?.(input) ?? "unknown"),
       ensureNodePty: (distro, windowsRepoRoot, options) =>
         Effect.succeed(
           stub.ensureNodePty?.(distro, windowsRepoRoot, options) ?? {
@@ -863,8 +1125,26 @@ export const layer = Layer.effect(
         return resolved;
       }).pipe(Effect.withSpan("desktop.wsl.getUserHome"));
 
-    const getDistroIp = (distro: string | null) =>
-      provideSpawner(getDistroIpImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIp"));
+    const getDistroIps = (distro: string | null) =>
+      provideSpawner(getDistroIpsImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIps"));
+
+    const getNetworkingMode = (distro: string | null) =>
+      provideSpawner(getNetworkingModeImpl(distro)).pipe(
+        Effect.withSpan("desktop.wsl.getNetworkingMode"),
+      );
+
+    const readServerRuntimeState = (distro: string | null, stateDir: WslServerStateDir) =>
+      provideSpawner(readServerRuntimeStateImpl(distro, stateDir)).pipe(
+        Effect.withSpan("desktop.wsl.readServerRuntimeState"),
+      );
+
+    const ensureWindowsPathReleased = (input: {
+      readonly distro: string | null;
+      readonly windowsPath: string;
+    }) =>
+      provideSpawner(ensureWindowsPathReleasedImpl(input)).pipe(
+        Effect.withSpan("desktop.wsl.ensureWindowsPathReleased"),
+      );
 
     const probeDistros = provideSpawner(probeWslDistros).pipe(
       Effect.withSpan("desktop.wsl.probeDistros"),
@@ -881,7 +1161,10 @@ export const layer = Layer.effect(
         provideSpawner(preWarmImpl(distro)).pipe(Effect.withSpan("desktop.wsl.preWarm")),
       windowsToWslPath,
       getUserHome,
-      getDistroIp,
+      getDistroIps,
+      getNetworkingMode,
+      readServerRuntimeState,
+      ensureWindowsPathReleased,
       ensureNodePty: (distro, windowsRepoRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, windowsRepoRoot, windowsToWslPath, options)).pipe(
           Effect.withSpan("desktop.wsl.ensureNodePty"),

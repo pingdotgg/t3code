@@ -16,6 +16,7 @@ import serverPackageJson from "../../../server/package.json" with { type: "json"
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
@@ -330,6 +331,29 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   } as const;
 });
 
+const { logInfo: logBackendConfigurationInfo } = DesktopObservability.makeComponentLogger(
+  "desktop-backend-configuration",
+);
+
+// CGNAT range 100.64.0.0/10 — Tailscale hands these out; a WSL-side
+// tailscaled surfaces one in `hostname -I`, and Windows either cannot route
+// it or routes it through the Tailscale interface instead of the WSL
+// vEthernet. Never advertise one as the renderer host.
+const isCgnatIpv4 = (ip: string): boolean => {
+  const octets = ip.split(".");
+  if (octets.length !== 4 || octets[0] !== "100") return false;
+  const second = Number(octets[1]);
+  return Number.isInteger(second) && second >= 64 && second <= 127;
+};
+
+const parseUrlOrNull = (raw: string): URL | null => {
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+};
+
 // True when the given IPv4 belongs to a Windows-side network
 // interface. In WSL2 mirrored mode the distro's eth0 IP equals the
 // host's, which is the signature we use to detect that mode and
@@ -496,18 +520,67 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  // Resolve the selected distro's IPv4 address. In mirrored mode the distro
-  // reports a host interface, so use loopback instead; a failed probe also
-  // falls back to loopback and preserves the previous behavior.
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
-  const usesSharedNetworkStack = Option.match(distroIp, {
-    onNone: () => false,
-    onSome: (ip) => isLocalHostIpv4(ip),
-  });
-  const rendererHost = usesSharedNetworkStack
-    ? "127.0.0.1"
-    : Option.getOrElse(distroIp, () => "127.0.0.1");
+  // Networking-mode detection, in priority order:
+  //   1. `wslinfo --networking-mode` — the first-party, authoritative answer.
+  //   2. Heuristic fallback for WSL builds without wslinfo: mirrored mode
+  //      mirrors host interfaces into the distro, so ANY distro IPv4 matching
+  //      a Windows-side interface address indicates mirrored networking. The
+  //      previous first-address-only check broke whenever tailscaled or
+  //      docker0 inside the distro reordered `hostname -I` (a CGNAT
+  //      100.64/10 Tailscale address in first position made a mirrored host
+  //      look NAT'd and pointed the renderer at an unroutable IP).
+  // In mirrored mode loopback is shared with Windows and demonstrably works,
+  // so it is the advertised URL. Whatever gets advertised, readiness races
+  // loopback AND every enumerated distro address (readinessProbeUrls below);
+  // the first candidate to answer becomes the advertised URL, so a wrong
+  // guess here degrades startup by nothing worse than a probe race.
+  const distroIps = yield* wslEnvironment.getDistroIps(distroForConfig);
+  const networkingMode = yield* wslEnvironment.getNetworkingMode(distroForConfig);
+  const usesSharedNetworkStack =
+    networkingMode === "mirrored" ||
+    (networkingMode === "unknown" && distroIps.some((ip) => isLocalHostIpv4(ip)));
+  const preferredDistroIp = distroIps.find((ip) => !isCgnatIpv4(ip) && !isLocalHostIpv4(ip));
+  const rendererHost = usesSharedNetworkStack ? "127.0.0.1" : (preferredDistroIp ?? "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+  const readinessProbeUrls = [
+    new URL(`http://127.0.0.1:${input.port}`),
+    ...distroIps.map((ip) => new URL(`http://${ip}:${input.port}`)),
+  ].filter((url) => url.href !== httpBaseUrl.href);
+  // Last-resort readiness fallback: the backend persists its actual origin
+  // (server-runtime.json) once its HTTP listener is up. Read the state-dir
+  // flavor this spawn actually uses (--dev-url runs persist under dev/,
+  // packaged under userdata/), and only trust the file when it names the
+  // port this instance was told to bind — the file is per-distro-home, so
+  // another backend instance may own it.
+  const wslServerStateDir: DesktopWslEnvironment.WslServerStateDir = Option.isSome(
+    environment.devServerUrl,
+  )
+    ? "dev"
+    : "userdata";
+  const resolveReadinessFallbackUrls = wslEnvironment
+    .readServerRuntimeState(distroForConfig, wslServerStateDir)
+    .pipe(
+    Effect.map(
+      Option.match({
+        onNone: () => [] as ReadonlyArray<URL>,
+        onSome: (runtimeState) => {
+          if (runtimeState.port !== input.port) return [] as ReadonlyArray<URL>;
+          const origin = parseUrlOrNull(runtimeState.origin);
+          return [
+            ...(origin === null ? [] : [origin]),
+            new URL(`http://127.0.0.1:${runtimeState.port}`),
+          ] as ReadonlyArray<URL>;
+        },
+      }),
+    ),
+  );
+  yield* logBackendConfigurationInfo("resolved WSL backend endpoint candidates", {
+    distro: distroForConfig,
+    networkingMode,
+    distroIps: distroIps.join(" "),
+    advertisedUrl: httpBaseUrl.href,
+    probeUrls: readinessProbeUrls.map((url) => url.href).join(" "),
+  });
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = {};
@@ -548,6 +621,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     bootstrap,
     bootstrapDelivery: "stdin" as const,
     httpBaseUrl,
+    readinessProbeUrls,
+    resolveReadinessFallbackUrls,
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
   };

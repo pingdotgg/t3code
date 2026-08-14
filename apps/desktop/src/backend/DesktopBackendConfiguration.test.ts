@@ -201,9 +201,9 @@ describe("DesktopBackendConfiguration", () => {
                   observedDistros.push(distro);
                   return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
                 },
-                getDistroIp: (distro) => {
+                getDistroIps: (distro: string | null) => {
                   observedDistros.push(distro);
-                  return Option.some("172.27.0.99");
+                  return ["172.27.0.99"];
                 },
               }),
             ),
@@ -256,7 +256,7 @@ describe("DesktopBackendConfiguration", () => {
                   distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                   windowsToWslPath: () => Option.some(linuxEntryPath),
                   ensureNodePty: () => ({ ok: true, nodePath, resolvedPath }),
-                  getDistroIp: () => Option.some("172.27.0.99"),
+                  getDistroIps: () => ["172.27.0.99"],
                 }),
               ),
               Layer.provideMerge(
@@ -290,6 +290,111 @@ describe("DesktopBackendConfiguration", () => {
         assert.notInclude(config.args, "/bin/sh");
         assert.notInclude(config.args, "-c");
         assert.isTrue(Option.isNone(config.preflightFailure));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "resolveWsl advertises loopback in mirrored mode and races every candidate instead of trusting hostname -I ordering",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
+        const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+        yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+        yield* fileSystem.writeFileString(entryPath, "");
+
+        const resolveWith = (stub: {
+          readonly mode: DesktopWslEnvironment.WslNetworkingMode;
+          readonly ips: ReadonlyArray<string>;
+          readonly runtimeStatePort?: number;
+        }) =>
+          Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+          }).pipe(
+            Effect.provide(
+              DesktopBackendConfiguration.layer.pipe(
+                Layer.provideMerge(serverExposureLayer),
+                Layer.provideMerge(DesktopAppSettings.layerTest()),
+                Layer.provideMerge(
+                  DesktopWslEnvironment.layerTest({
+                    isAvailable: true,
+                    distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                    windowsToWslPath: () => Option.some("/tmp/entry.mjs"),
+                    ensureNodePty: () => ({
+                      ok: true,
+                      nodePath: "/usr/bin/node",
+                      resolvedPath: "/usr/bin:/bin",
+                    }),
+                    getDistroIps: () => stub.ips,
+                    getNetworkingMode: () => stub.mode,
+                    readServerRuntimeState: () =>
+                      Option.some({
+                        port: stub.runtimeStatePort ?? 5000,
+                        host: "0.0.0.0",
+                        origin: "http://127.0.0.1:5000",
+                      }),
+                  }),
+                ),
+                Layer.provideMerge(
+                  makeEnvironmentLayer(baseDir, {
+                    appPath: baseDir,
+                    isPackaged: true,
+                    platform: "win32",
+                    resourcesPath: baseDir,
+                  }),
+                ),
+              ),
+            ),
+          );
+
+        // Tailscale-in-WSL regression: mirrored networking, but a CGNAT
+        // address is FIRST in hostname -I. Loopback must be advertised and
+        // every enumerated address still probed as a candidate.
+        const mirrored = yield* resolveWith({
+          mode: "mirrored",
+          ips: ["100.108.4.21", "192.168.127.5"],
+        });
+        assert.equal(mirrored.httpBaseUrl.href, "http://127.0.0.1:5000/");
+        assert.deepEqual(
+          (mirrored.readinessProbeUrls ?? []).map((url) => url.href),
+          ["http://100.108.4.21:5000/", "http://192.168.127.5:5000/"],
+        );
+
+        // NAT mode with a CGNAT address first: the advertised host must be
+        // the first non-CGNAT address, never position one.
+        const nat = yield* resolveWith({
+          mode: "nat",
+          ips: ["100.108.4.21", "172.27.0.99"],
+        });
+        assert.equal(nat.httpBaseUrl.href, "http://172.27.0.99:5000/");
+        assert.deepEqual(
+          (nat.readinessProbeUrls ?? []).map((url) => url.href),
+          ["http://127.0.0.1:5000/", "http://100.108.4.21:5000/"],
+        );
+
+        // No addresses at all: loopback is the only sane advertisement.
+        const bare = yield* resolveWith({ mode: "unknown", ips: [] });
+        assert.equal(bare.httpBaseUrl.href, "http://127.0.0.1:5000/");
+
+        // The runtime-state fallback trusts the persisted origin only when
+        // it names the port this instance owns.
+        const fallbackUrls = yield* mirrored.resolveReadinessFallbackUrls ?? Effect.succeed([]);
+        assert.deepEqual(
+          fallbackUrls.map((url) => url.href),
+          ["http://127.0.0.1:5000/", "http://127.0.0.1:5000/"],
+        );
+        const mismatched = yield* resolveWith({
+          mode: "mirrored",
+          ips: [],
+          runtimeStatePort: 9999,
+        });
+        const mismatchedUrls = yield* mismatched.resolveReadinessFallbackUrls ??
+          Effect.succeed([]);
+        assert.lengthOf(mismatchedUrls, 0);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -490,7 +595,7 @@ describe("DesktopBackendConfiguration", () => {
                 DesktopWslEnvironment.layerTest({
                   isAvailable: true,
                   windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
-                  getDistroIp: () => Option.some("172.27.0.99"),
+                  getDistroIps: () => ["172.27.0.99"],
                 }),
               ),
               Layer.provideMerge(makeEnvironmentLayer(baseDir, { platform: "win32" })),

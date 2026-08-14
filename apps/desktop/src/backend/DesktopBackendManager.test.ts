@@ -119,6 +119,7 @@ interface MakeInstanceInput {
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLogShape>;
   readonly onReady?: Effect.Effect<void>;
+  readonly onReadyBaseUrl?: (readyBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: Effect.Effect<void>;
   readonly onPreflightFailed?: (
     failure: DesktopBackendManager.PreflightFailure,
@@ -173,7 +174,11 @@ function makeTestInstance(input: MakeInstanceInput) {
     id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
     label: Effect.succeed("Windows"),
     configResolve: input.configResolve ?? Effect.succeed(input.config ?? baseConfig),
-    ...(input.onReady ? { onReady: () => input.onReady! } : {}),
+    ...(input.onReadyBaseUrl
+      ? { onReady: input.onReadyBaseUrl }
+      : input.onReady
+        ? { onReady: () => input.onReady! }
+        : {}),
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
   });
@@ -1394,6 +1399,372 @@ describe("DesktopBackendManager", () => {
 
         assert.equal(yield* Queue.size(starts), 0);
         assert.equal((yield* instance.snapshot).desiredRunning, false);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("races readiness probe candidates and rebinds the advertised base URL to the winner", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Regression for the Tailscale-in-WSL hang: the advertised host is a
+        // CGNAT address that never answers, while loopback (a fallback
+        // candidate) works the whole time. Readiness must succeed via the
+        // candidate and the config must advertise the URL that answered.
+        const ready = yield* Deferred.make<URL>();
+        const exit = yield* Deferred.make<void>();
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                exitCode: Deferred.await(exit).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              }),
+            ),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          config: {
+            ...baseConfig,
+            httpBaseUrl: new URL("http://100.108.0.5:3773"),
+            readinessProbeUrls: [new URL("http://127.0.0.1:3773")],
+          },
+          httpClientLayer: httpClientLayer((request) =>
+            Effect.succeed(
+              responseForRequest(request, request.url.includes("127.0.0.1") ? 200 : 503),
+            ),
+          ),
+          onReadyBaseUrl: (readyBaseUrl) =>
+            Deferred.succeed(ready, readyBaseUrl).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        const readyBaseUrl = yield* Deferred.await(ready);
+        assert.equal(readyBaseUrl.href, "http://127.0.0.1:3773/");
+
+        const rebound = yield* instance.currentConfig;
+        assert.isTrue(Option.isSome(rebound));
+        if (Option.isSome(rebound)) {
+          assert.equal(rebound.value.httpBaseUrl.href, "http://127.0.0.1:3773/");
+        }
+        assert.isTrue((yield* instance.snapshot).ready);
+
+        yield* Deferred.succeed(exit, void 0);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("recovers readiness from runtime-state fallback URLs after static candidates time out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<URL>();
+        const exit = yield* Deferred.make<void>();
+        let fallbackResolves = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                exitCode: Deferred.await(exit).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              }),
+            ),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          config: {
+            ...baseConfig,
+            httpBaseUrl: new URL("http://100.108.0.5:3773"),
+            resolveReadinessFallbackUrls: Effect.sync(() => {
+              fallbackResolves += 1;
+              return [new URL("http://127.0.0.1:3773")];
+            }),
+          },
+          httpClientLayer: httpClientLayer((request) =>
+            Effect.succeed(
+              responseForRequest(request, request.url.includes("127.0.0.1") ? 200 : 503),
+            ),
+          ),
+          onReadyBaseUrl: (readyBaseUrl) =>
+            Deferred.succeed(ready, readyBaseUrl).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        assert.equal(fallbackResolves, 0);
+
+        // Static candidate (the CGNAT address) times out after a minute;
+        // only then is the persisted runtime state consulted.
+        yield* TestClock.adjust(Duration.minutes(1));
+
+        const readyBaseUrl = yield* Deferred.await(ready);
+        assert.equal(readyBaseUrl.href, "http://127.0.0.1:3773/");
+        assert.equal(fallbackResolves, 1);
+        assert.isTrue((yield* instance.snapshot).ready);
+
+        yield* Deferred.succeed(exit, void 0);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("terminates unreachable runs, retries, and surfaces after the readiness failure cap", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const failures = yield* Queue.unbounded<string>();
+        const preflightFailures: Array<DesktopBackendManager.PreflightFailure> = [];
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              startCount += 1;
+              const killed = yield* Deferred.make<void>();
+              // Emulate the real spawner: closing the run scope kills the
+              // child, which resolves its exit code.
+              yield* Scope.addFinalizer(scope, Deferred.succeed(killed, void 0).pipe(Effect.asVoid));
+              yield* Queue.offer(starts, startCount);
+              return makeProcess({
+                exitCode: Deferred.await(killed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          config: {
+            ...baseConfig,
+            httpBaseUrl: new URL("http://100.108.0.5:3773"),
+          },
+          httpClientLayer: httpClientLayer((request) =>
+            Effect.succeed(responseForRequest(request, 503)),
+          ),
+          onPreflightFailed: (failure) =>
+            Effect.sync(() => {
+              preflightFailures.push(failure);
+              return false;
+            }),
+          backendOutputLog: {
+            // Readiness terminations are deliberate (stopRequested), so the
+            // finalize path discards the session (the failure snapshot was
+            // already persisted from onReadinessFailure).
+            discardSession: Queue.offer(failures, "finalized").pipe(Effect.asVoid),
+          },
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        // Attempt 1: readiness times out, the limbo run is terminated and a
+        // restart is scheduled instead of hanging forever.
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Queue.take(failures);
+        assert.lengthOf(preflightFailures, 0);
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.equal(yield* Queue.take(starts), 2);
+
+        // Attempt 2.
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Queue.take(failures);
+        assert.lengthOf(preflightFailures, 0);
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.equal(yield* Queue.take(starts), 3);
+
+        // Attempt 3 hits the cap: the failure is surfaced with the probed
+        // URL, and (onPreflightFailed returned false) the instance stops.
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Queue.take(failures);
+        assert.lengthOf(preflightFailures, 1);
+        assert.include(preflightFailures[0]!.reason, "100.108.0.5");
+        assert.isFalse(preflightFailures[0]!.fatal);
+
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.equal(yield* Queue.size(starts), 0);
+        const snapshot = yield* instance.snapshot;
+        assert.isFalse(snapshot.desiredRunning);
+        assert.isFalse(snapshot.restartScheduled);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("readiness terminations do not count toward the never-ready exit cap", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const finalized = yield* Queue.unbounded<void>();
+        const preflightFailures: Array<DesktopBackendManager.PreflightFailure> = [];
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              startCount += 1;
+              const killed = yield* Deferred.make<void>();
+              yield* Scope.addFinalizer(
+                scope,
+                Deferred.succeed(killed, void 0).pipe(Effect.asVoid),
+              );
+              yield* Queue.offer(starts, startCount);
+              return makeProcess({
+                exitCode: Deferred.await(killed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          config: {
+            ...baseConfig,
+            httpBaseUrl: new URL("http://100.108.0.5:3773"),
+          },
+          httpClientLayer: httpClientLayer((request) =>
+            Effect.succeed(responseForRequest(request, 503)),
+          ),
+          // Always retry, like the primary's Windows-fallback path — so the
+          // instance keeps cycling readiness timeouts past the exit cap's
+          // threshold.
+          onPreflightFailed: (failure) =>
+            Effect.sync(() => {
+              preflightFailures.push(failure);
+              return true;
+            }),
+          backendOutputLog: {
+            discardSession: Queue.offer(finalized, void 0).pipe(Effect.asVoid),
+          },
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        // Five readiness-timeout cycles: each kill is a deliberate
+        // termination and must NOT feed the never-ready exit streak — with
+        // double counting, cycle 5 would fire a second, misleading
+        // "exited N times" surfacing.
+        for (let cycle = 1; cycle <= 5; cycle += 1) {
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* Queue.take(finalized);
+          if (cycle < 5) {
+            yield* TestClock.adjust(Duration.seconds(15));
+            assert.equal(yield* Queue.take(starts), cycle + 1);
+          }
+        }
+
+        // Only the readiness cap (cycle 3) surfaced; every reason names the
+        // probed URL, and none claims the backend "exited".
+        assert.lengthOf(preflightFailures, 1);
+        assert.include(preflightFailures[0]!.reason, "readiness");
+        for (const failure of preflightFailures) {
+          assert.notInclude(failure.reason, "exited");
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("caps runs that keep exiting before ready and surfaces via onPreflightFailed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const failures = yield* Queue.unbounded<string>();
+        const preflightFailures: Array<DesktopBackendManager.PreflightFailure> = [];
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.sync(() => {
+              startCount += 1;
+              return makeProcess({
+                exitCode: Queue.offer(starts, startCount).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(1)),
+                ),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+          onPreflightFailed: (failure) =>
+            Effect.sync(() => {
+              preflightFailures.push(failure);
+              return false;
+            }),
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+        yield* Queue.take(failures);
+
+        // Four more spawn-then-exit-before-ready cycles exhaust the cap.
+        for (let attempt = 2; attempt <= 5; attempt += 1) {
+          yield* TestClock.adjust(Duration.seconds(15));
+          assert.equal(yield* Queue.take(starts), attempt);
+          yield* Queue.take(failures);
+        }
+
+        // The fifth never-ready exit surfaces instead of scheduling another
+        // silent restart; onPreflightFailed returned false, so the instance
+        // stops.
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.lengthOf(preflightFailures, 1);
+        assert.include(preflightFailures[0]!.reason, "5 times");
+        assert.isFalse(preflightFailures[0]!.fatal);
+        assert.equal(yield* Queue.size(starts), 0);
+        const snapshot = yield* instance.snapshot;
+        assert.isFalse(snapshot.desiredRunning);
+        assert.isFalse(snapshot.restartScheduled);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("stop reports whether the child fully finalized within the timeout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const neverExits = yield* Deferred.make<void>();
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                // The child ignores the kill: exitCode never resolves, so a
+                // bounded stop cannot verify termination and must say so.
+                exitCode: Deferred.await(neverExits).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+              }),
+            ),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+        });
+
+        yield* instance.start;
+        const stopFiber = yield* instance
+          .stop({ timeout: Duration.seconds(5) })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust(Duration.seconds(5));
+        assert.isFalse(yield* Fiber.join(stopFiber));
+
+        // Once the child actually exits, a subsequent stop verifies cleanly.
+        yield* Deferred.succeed(neverExits, void 0);
+        assert.isTrue(yield* instance.stop({ timeout: Duration.seconds(5) }));
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

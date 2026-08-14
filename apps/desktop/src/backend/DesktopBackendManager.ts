@@ -60,7 +60,21 @@ const MAX_RESTART_DELAY = Duration.seconds(10);
 // failures may instead provide their own larger retryLimit when they should
 // self-heal for a while but must not leave the app connecting forever.
 const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
+// After this many consecutive readiness timeouts (server process alive but no
+// candidate URL answering), stop silently cycling and surface the reason via
+// onPreflightFailed — a live-but-unreachable backend must not present as an
+// indefinite "connecting" state.
+const MAX_READINESS_FAILURE_ATTEMPTS = 3;
+// After this many consecutive runs that spawned but exited without ever
+// becoming ready, surface via onPreflightFailed instead of restarting
+// forever. Scoped strictly to post-spawn exits: pre-spawn preflight retries
+// (WSL cold-start) have their own counter, and a crash AFTER the backend was
+// ready resets the streak — that's a different failure than "never comes up".
+const MAX_EXIT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
+// Budget for probing URLs recovered from the backend's persisted runtime
+// state (server-runtime.json) after every static candidate timed out.
+const READINESS_FALLBACK_PROBE_TIMEOUT = Duration.seconds(15);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
@@ -99,6 +113,16 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // Present for a WSL run after the configured/default distro has been
   // resolved to the concrete distro passed to wsl.exe.
   readonly runningDistro?: string;
+  // Additional base URLs probed for readiness alongside httpBaseUrl. The
+  // first candidate to answer wins and becomes the advertised base URL.
+  // The WSL path uses this to probe 127.0.0.1 (wslhost forwarding) next to
+  // the distro-IP heuristic, since either transport can be broken on a
+  // given Windows host while the other works.
+  readonly readinessProbeUrls?: ReadonlyArray<URL>;
+  // Consulted once after every static candidate timed out. Lets the WSL
+  // path recover the true origin from the backend's persisted runtime
+  // state (server-runtime.json) before the run is declared unreachable.
+  readonly resolveReadinessFallbackUrls?: Effect.Effect<ReadonlyArray<URL>>;
 }
 
 // A preflight failure records whether it is fatal. Transient failures (WSL
@@ -130,11 +154,13 @@ export class BackendReadinessTimeoutError extends Schema.TaggedErrorClass<Backen
     ...backendProcessContextSchema,
     readinessUrl: Schema.URL,
     timeoutMs: Schema.Number,
+    probedUrls: Schema.optional(Schema.Array(Schema.URL)),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Timed out after ${this.timeoutMs}ms waiting for desktop backend readiness at ${this.readinessUrl.href}.`;
+    const probed = this.probedUrls?.map((url) => url.href) ?? [this.readinessUrl.href];
+    return `Timed out after ${this.timeoutMs}ms waiting for desktop backend readiness at ${probed.join(", ")}.`;
   }
 }
 
@@ -224,7 +250,10 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly outputDrainTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
-  readonly onReady?: () => Effect.Effect<void>;
+  // Receives the candidate base URL that actually answered the readiness
+  // probe — not necessarily config.httpBaseUrl when readinessProbeUrls or
+  // the runtime-state fallback produced the winner.
+  readonly onReady?: (readyBaseUrl: URL) => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
@@ -260,7 +289,12 @@ export interface DesktopBackendInstance {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly start: Effect.Effect<void>;
-  readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
+  // Resolves true when the active run fully finalized (child process exit
+  // observed) before the timeout, false when the timeout elapsed first —
+  // in that case the child may still be alive and still holding file
+  // handles. Callers that need the process gone (update install) must
+  // treat false as a failure instead of assuming the stop worked.
+  readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<boolean>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   // Polls desiredRunning + the instance's own ready flag until the
@@ -314,6 +348,14 @@ interface BackendManagerState {
   // Consecutive bounded/fatal preflight failures, reset on a clean or
   // unbounded-transient preflight. restartAttempt counts all restarts.
   readonly preflightFailureAttempt: number;
+  // Consecutive readiness timeouts (process alive, no candidate URL
+  // answering), reset when a run reaches ready or an external stop() runs.
+  readonly readinessFailureAttempt: number;
+  // Consecutive runs that spawned but exited before ever becoming ready.
+  // Reset when a run reaches ready, on external stop(), and on a fresh
+  // manual start — so the cap firing once doesn't permanently remove the
+  // retry budget.
+  readonly exitFailureAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -325,6 +367,8 @@ const initialState: BackendManagerState = {
   active: Option.none(),
   restartAttempt: 0,
   preflightFailureAttempt: 0,
+  readinessFailureAttempt: 0,
+  exitFailureAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -563,14 +607,64 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       ).pipe(Effect.forkScoped),
     );
   }
-  yield* waitForHttpReady({
+  const processContext: BackendProcessContext = {
     executablePath: options.executablePath,
     entryPath: options.entryPath,
     cwd: options.cwd,
     httpBaseUrl: options.httpBaseUrl,
-    timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-  }).pipe(
-    Effect.tap(() => options.onReady?.() ?? Effect.void),
+  };
+  const dedupeUrls = (urls: ReadonlyArray<URL>): ReadonlyArray<URL> =>
+    urls.filter((url, index) => urls.findIndex((other) => other.href === url.href) === index);
+  const probeCandidates = (urls: ReadonlyArray<URL>, timeout: Duration.Duration) =>
+    Effect.raceAll(
+      urls.map((url) =>
+        waitForHttpReady({ ...processContext, httpBaseUrl: url, timeout }).pipe(Effect.as(url)),
+      ),
+    );
+  const staticCandidates = dedupeUrls([
+    options.httpBaseUrl,
+    ...(options.readinessProbeUrls ?? []),
+  ]);
+  const readinessTimeout = options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT;
+  yield* probeCandidates(staticCandidates, readinessTimeout).pipe(
+    // Every static candidate timed out. Before declaring the run
+    // unreachable, recover candidate origins from the backend's persisted
+    // runtime state (when the config wired a resolver) and probe those —
+    // a ready server on a reachable port must not present as a dead one
+    // just because the advertised host heuristic was wrong.
+    Effect.catchTags({
+      BackendReadinessTimeoutError: (error) => {
+        const failWithProbed = (probedUrls: ReadonlyArray<URL>) =>
+          Effect.fail(
+            new BackendReadinessTimeoutError({
+              ...processContext,
+              readinessUrl: error.readinessUrl,
+              timeoutMs: error.timeoutMs,
+              probedUrls,
+              cause: error.cause,
+            }),
+          );
+        return (
+          options.resolveReadinessFallbackUrls ?? Effect.succeed<ReadonlyArray<URL>>([])
+        ).pipe(
+          Effect.flatMap((fallbackUrls) => {
+            const fresh = dedupeUrls(fallbackUrls).filter(
+              (url) => !staticCandidates.some((candidate) => candidate.href === url.href),
+            );
+            if (fresh.length === 0) {
+              return failWithProbed(staticCandidates);
+            }
+            return probeCandidates(fresh, READINESS_FALLBACK_PROBE_TIMEOUT).pipe(
+              Effect.catchTags({
+                BackendReadinessTimeoutError: () =>
+                  failWithProbed([...staticCandidates, ...fresh]),
+              }),
+            );
+          }),
+        );
+      },
+    }),
+    Effect.tap((readyBaseUrl) => options.onReady?.(readyBaseUrl) ?? Effect.void),
     Effect.catchTags({
       BackendReadinessTimeoutError: (error) => options.onReadinessFailure?.(error) ?? Effect.void,
     }),
@@ -717,6 +811,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          // A fresh manual start gets a fresh never-ready exit budget; a
+          // restart-loop start (desiredRunning already set) keeps the streak.
+          exitFailureAttempt: current.desiredRunning ? latest.exitFailureAttempt : 0,
         }));
 
         const preflightFailure = config.value.preflightFailure;
@@ -813,55 +910,80 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         ) {
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
-              const { isCurrentRun, nextState, pid, exitObserved, stopRequested, wasReady } =
-                yield* Ref.modify(
-                  state,
-                  (
-                    latest,
-                  ): readonly [
-                    {
-                      readonly isCurrentRun: boolean;
-                      readonly nextState: BackendManagerState;
-                      readonly pid: Option.Option<number>;
-                      readonly exitObserved: boolean;
-                      readonly stopRequested: boolean;
-                      readonly wasReady: boolean;
-                    },
-                    BackendManagerState,
-                  ] => {
-                    const currentRun = Option.getOrUndefined(latest.active);
-                    if (currentRun?.id !== runId) {
-                      return [
-                        {
-                          isCurrentRun: false,
-                          nextState: latest,
-                          pid: Option.none<number>(),
-                          exitObserved: false,
-                          stopRequested: false,
-                          wasReady: false,
-                        },
-                        latest,
-                      ] as const;
-                    }
-
-                    const next = {
-                      ...latest,
-                      active: Option.none<ActiveBackendRun>(),
-                      ready: false,
-                    };
+              const {
+                isCurrentRun,
+                nextState,
+                pid,
+                exitObserved,
+                stopRequested,
+                wasReady,
+                exitFailureAttempt,
+              } = yield* Ref.modify(
+                state,
+                (
+                  latest,
+                ): readonly [
+                  {
+                    readonly isCurrentRun: boolean;
+                    readonly nextState: BackendManagerState;
+                    readonly pid: Option.Option<number>;
+                    readonly exitObserved: boolean;
+                    readonly stopRequested: boolean;
+                    readonly wasReady: boolean;
+                    // Some(n) when this exit counted toward the
+                    // never-became-ready streak.
+                    readonly exitFailureAttempt: Option.Option<number>;
+                  },
+                  BackendManagerState,
+                ] => {
+                  const currentRun = Option.getOrUndefined(latest.active);
+                  if (currentRun?.id !== runId) {
                     return [
                       {
-                        isCurrentRun: true,
-                        nextState: next,
-                        pid: currentRun.pid,
-                        exitObserved: currentRun.exitObserved,
-                        stopRequested: currentRun.stopRequested,
-                        wasReady: latest.ready,
+                        isCurrentRun: false,
+                        nextState: latest,
+                        pid: Option.none<number>(),
+                        exitObserved: false,
+                        stopRequested: false,
+                        wasReady: false,
+                        exitFailureAttempt: Option.none<number>(),
                       },
-                      next,
+                      latest,
                     ] as const;
-                  },
-                );
+                  }
+
+                  const countsTowardExitCap =
+                    currentRun.exitObserved &&
+                    !currentRun.stopRequested &&
+                    !latest.ready &&
+                    latest.desiredRunning;
+                  const nextExitFailureAttempt = latest.ready
+                    ? 0
+                    : countsTowardExitCap
+                      ? latest.exitFailureAttempt + 1
+                      : latest.exitFailureAttempt;
+                  const next = {
+                    ...latest,
+                    active: Option.none<ActiveBackendRun>(),
+                    ready: false,
+                    exitFailureAttempt: nextExitFailureAttempt,
+                  };
+                  return [
+                    {
+                      isCurrentRun: true,
+                      nextState: next,
+                      pid: currentRun.pid,
+                      exitObserved: currentRun.exitObserved,
+                      stopRequested: currentRun.stopRequested,
+                      wasReady: latest.ready,
+                      exitFailureAttempt: countsTowardExitCap
+                        ? Option.some(nextExitFailureAttempt)
+                        : Option.none<number>(),
+                    },
+                    next,
+                  ] as const;
+                },
+              );
 
               if (isCurrentRun) {
                 yield* desktopTelemetryPublisher.removeControlSource(spec.id);
@@ -880,6 +1002,36 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
+                if (
+                  Option.isSome(exitFailureAttempt) &&
+                  exitFailureAttempt.value >= MAX_EXIT_FAILURE_ATTEMPTS
+                ) {
+                  // The backend spawns fine but keeps dying before it ever
+                  // answers a readiness probe. Silent restarts can't fix
+                  // that — surface it exactly like an exhausted preflight
+                  // (dialog + Windows fallback on the primary, inline error
+                  // on the WSL secondary) instead of looping forever.
+                  yield* logInstanceError(
+                    "backend keeps exiting before becoming ready; surfacing",
+                    { reason, attempt: exitFailureAttempt.value },
+                  );
+                  const shouldRestart = yield* (
+                    spec.onPreflightFailed?.({
+                      reason: `The backend exited ${exitFailureAttempt.value} times in a row before becoming ready (last exit: ${reason}).`,
+                      fatal: false,
+                      retryLimit: MAX_EXIT_FAILURE_ATTEMPTS,
+                    }) ?? Effect.succeed(false)
+                  );
+                  yield* Ref.update(state, (latest) => ({
+                    ...latest,
+                    exitFailureAttempt: 0,
+                    ...(shouldRestart ? {} : { desiredRunning: false }),
+                  }));
+                  if (shouldRestart) {
+                    yield* scheduleRestart(reason);
+                  }
+                  return;
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -905,7 +1057,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...run,
               exitObserved: true,
             })),
-          onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
+          onReady: Effect.fn("desktop.backendInstance.onReady")(function* (readyBaseUrl) {
             const isCurrentRun = yield* Ref.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
               if (activeRun?.id !== runId) {
@@ -917,7 +1069,18 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 {
                   ...latest,
                   restartAttempt: 0,
+                  readinessFailureAttempt: 0,
+                  exitFailureAttempt: 0,
                   ready: true,
+                  // Rebind the advertised base URL to the candidate that
+                  // actually answered, so consumers that read currentConfig
+                  // (renderer bootstrap, window load) reach the backend on
+                  // the transport that demonstrably works.
+                  config: Option.map(latest.config, (current) =>
+                    current.httpBaseUrl.href === readyBaseUrl.href
+                      ? current
+                      : { ...current, httpBaseUrl: readyBaseUrl },
+                  ),
                 },
               ] as const;
             });
@@ -925,7 +1088,16 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
-            yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
+            if (readyBaseUrl.href !== config.value.httpBaseUrl.href) {
+              yield* logInstanceWarning(
+                "backend became ready on a fallback URL; advertised base URL rebound",
+                {
+                  advertisedUrl: config.value.httpBaseUrl.href,
+                  readyUrl: readyBaseUrl.href,
+                },
+              );
+            }
+            yield* spec.onReady?.(readyBaseUrl) ?? Effect.void;
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {
@@ -935,6 +1107,62 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* backendOutputLog.persistFailureSnapshot({
                 details: error.message,
               });
+              const attempt = yield* Ref.modify(state, (latest) => {
+                const isCurrentRun = Option.getOrUndefined(latest.active)?.id === runId;
+                if (!isCurrentRun) {
+                  return [Option.none<number>(), latest] as const;
+                }
+                const next = latest.readinessFailureAttempt + 1;
+                return [
+                  Option.some(next),
+                  { ...latest, readinessFailureAttempt: next },
+                ] as const;
+              });
+              if (Option.isNone(attempt)) {
+                return;
+              }
+
+              if (attempt.value >= MAX_READINESS_FAILURE_ATTEMPTS) {
+                // A process that spawns fine but never answers any probe URL
+                // is not going to heal by silently cycling — surface the
+                // reason (dialog + Windows fallback on the primary, inline
+                // error on the WSL secondary) exactly like an exhausted
+                // preflight failure.
+                yield* logInstanceError(
+                  "backend never became reachable; surfacing readiness failure",
+                  { reason: error.message, attempt: attempt.value },
+                );
+                const shouldRestart = yield* (
+                  spec.onPreflightFailed?.({
+                    reason: error.message,
+                    fatal: false,
+                    retryLimit: MAX_READINESS_FAILURE_ATTEMPTS,
+                  }) ?? Effect.succeed(false)
+                );
+                yield* Ref.update(state, (latest) => ({
+                  ...latest,
+                  readinessFailureAttempt: 0,
+                  ...(shouldRestart ? {} : { desiredRunning: false }),
+                }));
+              }
+              // Terminate this run instead of leaving it in limbo (alive,
+              // never ready, never restarted). Closing the run scope kills
+              // the child; finalizeRun then schedules a restart when
+              // desiredRunning is still set. The close is forked into the
+              // parent scope because this fiber lives inside the run scope
+              // being closed. Mark the run stopRequested first: this exit is
+              // a deliberate termination, not a crash, so it must not count
+              // toward the never-ready exit cap (readiness timeouts have
+              // their own counter) — and the failure log was already
+              // captured above via persistFailureSnapshot.
+              yield* updateActiveRun(runId, (run) => ({
+                ...run,
+                stopRequested: true,
+              }));
+              yield* Effect.forkIn(
+                Scope.close(runScope, Exit.void).pipe(Effect.ignore),
+                parentScope,
+              );
             },
           ),
           onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
@@ -1037,6 +1265,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...latest,
               desiredRunning: false,
               ready: false,
+              readinessFailureAttempt: 0,
+              exitFailureAttempt: 0,
               active,
               restartFiber: Option.none<Fiber.Fiber<void, never>>(),
             },
@@ -1053,13 +1283,17 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       onNone: () => Effect.void,
       onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
     });
-    yield* Option.match(active, {
-      onNone: () => Effect.void,
+    return yield* Option.match(active, {
+      onNone: () => Effect.succeed(true),
       onSome: (run) =>
         Effect.gen(function* () {
           const closed = yield* closeRun(run, parentScope, options);
           if (!closed) {
-            return;
+            yield* logInstanceWarning(
+              "backend stop timed out before the child process finalized; process may still be running",
+              { pid: Option.getOrNull(run.pid) },
+            );
+            return false;
           }
           const cleanup = yield* mutex.withPermits(1)(
             Ref.modify(
@@ -1106,6 +1340,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           if (cleanup.shouldStart) {
             yield* start;
           }
+          return true;
         }),
     });
   });
@@ -1127,7 +1362,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       Effect.map(Option.getOrElse(() => false)),
     );
 
-  yield* Effect.addFinalizer(() => stop());
+  yield* Effect.addFinalizer(() => stop().pipe(Effect.asVoid));
 
   return {
     id: spec.id,

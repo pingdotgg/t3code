@@ -13,6 +13,7 @@ import * as References from "effect/References";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -21,6 +22,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 interface UpdatesHarnessOptions {
   readonly checkForUpdates?: Effect.Effect<
@@ -29,7 +31,10 @@ interface UpdatesHarnessOptions {
   >;
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
-  readonly stopBackend?: Effect.Effect<void>;
+  readonly stopBackend?: Effect.Effect<boolean>;
+  readonly backendConfig?: Option.Option<DesktopBackendManager.DesktopBackendStartConfig>;
+  readonly wslReleaseResult?: DesktopWslEnvironment.WslPathReleaseResult;
+  readonly platform?: NodeJS.Platform;
   readonly env?: Record<string, string | undefined>;
 }
 
@@ -37,6 +42,9 @@ const flushCallbacks = Effect.yieldNow;
 
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
+  let quitAndInstallCount = 0;
+  let backendStartCount = 0;
+  const wslReleaseCalls: Array<{ distro: string | null; windowsPath: string }> = [];
   let allowDowngrade = false;
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
@@ -83,7 +91,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       checkCount += 1;
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.void,
-    quitAndInstall: () => Effect.void,
+    quitAndInstall: () =>
+      Effect.sync(() => {
+        quitAndInstallCount += 1;
+      }),
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -115,13 +126,15 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
     label: Effect.succeed("Windows"),
-    start: Effect.void,
-    stop: () => options.stopBackend ?? Effect.void,
-    currentConfig: Effect.succeed(Option.none()),
+    start: Effect.sync(() => {
+      backendStartCount += 1;
+    }),
+    stop: () => options.stopBackend ?? Effect.succeed(true),
+    currentConfig: Effect.succeed(options.backendConfig ?? Option.none()),
     snapshot: Effect.succeed({
-      desiredRunning: false,
-      ready: false,
-      activePid: Option.none(),
+      desiredRunning: true,
+      ready: true,
+      activePid: Option.some(123),
       restartAttempt: 0,
       restartScheduled: false,
     }),
@@ -132,7 +145,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
-    platform: "darwin",
+    platform: options.platform ?? "darwin",
     processArch: "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
@@ -171,6 +184,14 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     : DesktopAppSettings.layer;
 
   const layer = DesktopUpdates.layer.pipe(
+    Layer.provideMerge(
+      DesktopWslEnvironment.layerTest({
+        ensureWindowsPathReleased: (input) => {
+          wslReleaseCalls.push(input);
+          return options.wslReleaseResult ?? "released";
+        },
+      }),
+    ),
     Layer.provideMerge(updaterLayer),
     Layer.provideMerge(windowLayer),
     Layer.provideMerge(backendLayer),
@@ -191,6 +212,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   return {
     layer,
     checkCount: () => checkCount,
+    quitAndInstallCount: () => quitAndInstallCount,
+    backendStartCount: () => backendStartCount,
+    wslReleaseCalls,
     feedUrls: () => feedUrls,
     fullChangelog: () => fullChangelog,
     listenerCount: () =>
@@ -206,6 +230,29 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     },
   };
 }
+
+const makeWslBackendConfig = (): DesktopBackendManager.DesktopBackendStartConfig => ({
+  executablePath: "wsl.exe",
+  args: [],
+  entryPath: "C:\\install\\resources\\app.asar.unpacked\\apps\\server\\dist\\bin.mjs",
+  cwd: "C:\\install",
+  env: {},
+  extendEnv: false,
+  bootstrap: {
+    mode: "desktop",
+    noBrowser: true,
+    port: 3774,
+    host: "0.0.0.0",
+    desktopBootstrapToken: "token",
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+  },
+  bootstrapDelivery: "stdin",
+  httpBaseUrl: new URL("http://127.0.0.1:3774"),
+  captureOutput: true,
+  preflightFailure: Option.none(),
+  runningDistro: "Ubuntu",
+});
 
 describe("DesktopUpdates", () => {
   it("preserves complete causes for update poller and event failures", () => {
@@ -604,6 +651,118 @@ describe("DesktopUpdates", () => {
         assert.strictEqual(error.cause.cause, diskFailure);
         assert.equal(error.message, "Failed to persist the nightly desktop update channel.");
         assert.notInclude(error.message, diskFailure.message);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("aborts the install when a backend cannot be verified stopped", () => {
+    const harness = makeHarness({
+      stopBackend: Effect.succeed(false),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+
+        // The installer must never run against an install dir that a live
+        // backend still holds open.
+        assert.equal(harness.quitAndInstallCount(), 0);
+        // The app stays usable: the stopped backend is restarted and the
+        // quitting latch is released so a retry is possible.
+        assert.isAtLeast(harness.backendStartCount(), 1);
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+
+        const failedState = yield* updates.getState;
+        assert.equal(failedState.errorContext, "install");
+        assert.include(failedState.message ?? "", "did not shut down");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("aborts the install when WSL still holds files under the install directory", () => {
+    const harness = makeHarness({
+      platform: "win32",
+      backendConfig: Option.some(makeWslBackendConfig()),
+      wslReleaseResult: "busy",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+
+        assert.equal(harness.quitAndInstallCount(), 0);
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.deepEqual(harness.wslReleaseCalls, [
+          { distro: "Ubuntu", windowsPath: "/missing" },
+        ]);
+
+        const failedState = yield* updates.getState;
+        assert.equal(failedState.errorContext, "install");
+        assert.include(failedState.message ?? "", "WSL");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("aborts the install when the WSL release check cannot verify (unknown)", () => {
+    const harness = makeHarness({
+      platform: "win32",
+      backendConfig: Option.some(makeWslBackendConfig()),
+      wslReleaseResult: "unknown",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.equal(harness.quitAndInstallCount(), 0);
+
+        const failedState = yield* updates.getState;
+        assert.equal(failedState.errorContext, "install");
+        assert.include(failedState.message ?? "", "could not verify");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("hands off to the installer after a verified stop and WSL release", () => {
+    const harness = makeHarness({
+      platform: "win32",
+      backendConfig: Option.some(makeWslBackendConfig()),
+      wslReleaseResult: "released",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.equal(harness.quitAndInstallCount(), 1);
+        assert.lengthOf(harness.wslReleaseCalls, 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

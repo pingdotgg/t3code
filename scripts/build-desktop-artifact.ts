@@ -2233,6 +2233,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  // Build stamp for the desktop's startup install-integrity check. It lives
+  // inside apps/server/dist so the Windows asarUnpack globs place it under
+  // app.asar.unpacked; comparing its version against the asar's own version
+  // detects a half-applied update (locked files silently skipped by the
+  // silent NSIS installer). See apps/desktop/src/app/DesktopInstallIntegrity.ts.
+  yield* fs.writeFileString(
+    path.join(stageAppDir, "apps/server/dist/desktop-build-manifest.json"),
+    `${JSON.stringify({ version: appVersion })}\n`,
+  );
   yield* stageResourceMonitor({
     repoRoot,
     stageResourcesDir,

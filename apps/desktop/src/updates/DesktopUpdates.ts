@@ -20,6 +20,7 @@ import * as Scope from "effect/Scope";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
@@ -44,6 +45,14 @@ import {
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
+// Per-backend budget for a verified stop before an install. Unlike the
+// generic shutdown path, the install path must KNOW the child is gone: a
+// surviving Windows backend child runs AS the app executable and reads
+// through app.asar (real Windows file locks that make the NSIS apply
+// half-fail), and a surviving WSL backend can interfere with the install
+// from its side — so a timeout here aborts the install instead of
+// proceeding.
+const INSTALL_BACKEND_STOP_TIMEOUT = Duration.seconds(10);
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
@@ -247,6 +256,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -451,6 +461,29 @@ export const make = Effect.gen(function* () {
     { discard: true },
   );
 
+  // The install cannot proceed: a backend process (or a Linux-side process
+  // holding /mnt handles into the install directory) survived teardown, so
+  // running the installer now would half-apply the update and corrupt the
+  // install. Restart the backends that were running before the attempt (and
+  // only those — an instance that was already stopped stays stopped),
+  // surface the failure through the update state machine, and leave the
+  // downloaded update in place so the user can retry.
+  const abortInstall = (
+    instancesToRestart: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>,
+    message: string,
+  ) =>
+    Effect.gen(function* () {
+      yield* logUpdaterError(message, { stage: "pre-install-teardown" });
+      yield* Effect.forEach(
+        instancesToRestart,
+        (instance) => instance.start.pipe(Effect.ignore),
+        { concurrency: "unbounded" },
+      );
+      yield* resetInstallAction;
+      yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+      return { accepted: true, completed: false };
+    });
+
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
     if (
@@ -470,14 +503,86 @@ export const make = Effect.gen(function* () {
       // means quitAndInstall's app.quit() exits before the pool's
       // scope cascade has a chance to run its stop finalizer, so the
       // WSL child gets hard-killed by the OS instead of receiving
-      // SIGTERM + grace. Stops run concurrently with the same 5s
-      // budget the primary had on its own.
+      // SIGTERM + grace. Stops run concurrently, and each stop must
+      // report the child fully finalized — the installer replaces files
+      // the children hold open, so "probably stopped" is not enough.
       const instances = yield* pool.list;
-      yield* Effect.forEach(
+      const stopResults = yield* Effect.forEach(
         instances,
-        (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+        (instance) =>
+          Effect.gen(function* () {
+            // Capture config and run-state before stop: the WSL release
+            // check below needs the distro, and the abort path must only
+            // restart instances that were actually running — a backend that
+            // was already stopped (e.g. after a preflight failure) must not
+            // be resurrected by a failed install attempt.
+            const instanceConfig = yield* instance.currentConfig;
+            const beforeStop = yield* instance.snapshot;
+            const wasRunning = beforeStop.desiredRunning || Option.isSome(beforeStop.activePid);
+            const finalized = yield* instance.stop({ timeout: INSTALL_BACKEND_STOP_TIMEOUT });
+            return { instance, instanceConfig, wasRunning, finalized };
+          }),
         { concurrency: "unbounded" },
       );
+      const previouslyRunning = stopResults
+        .filter((result) => result.wasRunning)
+        .map((result) => result.instance);
+
+      const unstopped = stopResults.filter((result) => result.wasRunning && !result.finalized);
+      if (unstopped.length > 0) {
+        return yield* abortInstall(
+          previouslyRunning,
+          `Update install aborted: backend ${unstopped
+            .map((result) => `"${result.instance.id}"`)
+            .join(", ")} did not shut down in time. Try the update again.`,
+        );
+      }
+
+      // A stopped wsl.exe relay does not guarantee the Linux-side server
+      // (or helpers it spawned, e.g. cloudflared) exited with it. Whether a
+      // lingering Linux holder blocks Windows-side file replacement depends
+      // on the WSL/DrvFs version (on WSL 2.7 mirrored, plain fds and mmaps
+      // measurably do NOT block it) — but a backend that is still alive can
+      // also rewrite state mid-install, so verify release defensively
+      // instead of assuming the relay kill was enough.
+      if (environment.isPackaged && environment.platform === "win32") {
+        const installDir = environment.path.dirname(environment.resourcesPath);
+        for (const result of stopResults) {
+          const instanceConfig = Option.getOrUndefined(result.instanceConfig);
+          if (instanceConfig?.executablePath !== "wsl.exe") {
+            continue;
+          }
+          const released = yield* wslEnvironment.ensureWindowsPathReleased({
+            distro: instanceConfig.runningDistro ?? null,
+            windowsPath: installDir,
+          });
+          if (released === "busy") {
+            return yield* abortInstall(
+              previouslyRunning,
+              `Update install aborted: processes inside WSL (${result.instance.id}) still hold files under ${installDir}. Close them (or run "wsl --shutdown") and try the update again.`,
+            );
+          }
+          if (released === "unknown") {
+            // The check ran against a distro that was hosting this backend
+            // moments ago but could not verify release (spawn failure,
+            // timeout, path translation failure). Handles may well still be
+            // open — abort rather than risk the half-applied install this
+            // guard exists to prevent. A machine whose WSL layer is truly
+            // broken recovers on the next launch: preflight falls back to
+            // Windows and no WSL config enters the pool.
+            return yield* abortInstall(
+              previouslyRunning,
+              `Update install aborted: could not verify that WSL (${result.instance.id}) released the files under ${installDir}. Run "wsl --shutdown" and try the update again.`,
+            );
+          }
+          yield* logUpdaterInfo("verified WSL released the install directory", {
+            instanceId: result.instance.id,
+            installDir,
+          });
+        }
+      }
+
+      yield* logUpdaterInfo("backends stopped and verified; handing off to installer");
       yield* electronWindow.destroyAll;
       yield* electronUpdater.quitAndInstall({
         isSilent: true,
