@@ -1568,16 +1568,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.serverGetUsageSummary,
             Effect.gen(function* () {
-              const workspaceCwds = yield* resolveUsageWorkspaceCwds(
-                config.cwd,
-                Effect.all(
-                  [
-                    projectionSnapshotQuery.getShellSnapshot(),
-                    projectionSnapshotQuery.getArchivedShellSnapshot(),
-                  ],
-                  { concurrency: "unbounded" },
-                ),
-              );
+              const workspaceCwds = yield* resolveUsageWorkspaceCwds(config.cwd, [
+                projectionSnapshotQuery.getShellSnapshot(),
+                projectionSnapshotQuery.getArchivedShellSnapshot(),
+              ]);
               return yield* usage.readSummary(input, workspaceCwds);
             }),
             { "rpc.aggregate": "server" },

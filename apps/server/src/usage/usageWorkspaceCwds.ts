@@ -12,17 +12,23 @@ interface UsageWorkspaceSnapshot {
  */
 export const resolveUsageWorkspaceCwds = Effect.fn("resolveUsageWorkspaceCwds")(function* <E, R>(
   serverCwd: string,
-  loadSnapshots: Effect.Effect<readonly UsageWorkspaceSnapshot[], E, R>,
+  loadSnapshots: readonly Effect.Effect<UsageWorkspaceSnapshot, E, R>[],
 ) {
-  const snapshots = yield* loadSnapshots.pipe(
-    Effect.catch((error) =>
-      Effect.logWarning("Failed to read project workspaces for usage", { error }).pipe(
-        Effect.as([] as readonly UsageWorkspaceSnapshot[]),
+  const snapshots = yield* Effect.all(
+    loadSnapshots.map((loadSnapshot) =>
+      loadSnapshot.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Failed to read project workspaces for usage", { error }).pipe(
+            Effect.as(null as UsageWorkspaceSnapshot | null),
+          ),
+        ),
       ),
     ),
+    { concurrency: "unbounded" },
   );
   const workspaceCwds = new Set([serverCwd]);
   for (const snapshot of snapshots) {
+    if (snapshot === null) continue;
     for (const project of snapshot.projects) workspaceCwds.add(project.workspaceRoot);
     for (const thread of snapshot.threads) {
       if (thread.worktreePath !== null) workspaceCwds.add(thread.worktreePath);
