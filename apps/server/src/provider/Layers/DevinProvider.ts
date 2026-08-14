@@ -617,8 +617,8 @@ const discoverDevinModelsViaModelsList = (
       return yield* new ProviderProbeError({
         provider: "devin",
         stage: "models-list",
+        failureKind: "exit-code-failure",
         exitCode: result.code,
-        detail: `Devin models list failed with exit code ${result.code}.`,
       });
     }
     const stdoutModels = parseDevinModelsList(result.stdout);
@@ -627,8 +627,7 @@ const discoverDevinModelsViaModelsList = (
       return yield* new ProviderProbeError({
         provider: "devin",
         stage: "models-list",
-        exitCode: result.code,
-        detail: "Devin models list returned no parseable models.",
+        failureKind: "unparseable-output",
       });
     }
     return models;
