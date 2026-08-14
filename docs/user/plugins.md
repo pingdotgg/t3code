@@ -57,6 +57,15 @@ Rollup).
 A module script fails quietly: the page renders, the network shows the file fetched successfully,
 and nothing else happens, because the browser discards the response instead of executing it.
 
+### Keep a command on one document
+
+The host trusts the frame only while it still holds the document that was loaded for the command.
+If the page navigates the frame elsewhere — `location.href = ...`, or a link that replaces the
+current document — the host bridge shuts down for that frame: `showToast`, `openExternal`, and
+`invoke` stop working, and a reply to an invocation that was already in flight is dropped rather
+than delivered to the new document. Keep a command's UI on its own page and use `invoke` to fetch
+what it needs; use **Reload** to get a fresh frame.
+
 Plugins that need environment-local code can declare a JavaScript backend:
 
 ```json

@@ -673,13 +673,39 @@ const runGit = Effect.fn("PluginRegistry.runGit")(function* (args: ReadonlyArray
   });
 });
 
-function gitFailure(action: string, result: ProcessRunner.ProcessRunOutput): PluginRegistryError {
-  const detail = result.stderr.trim().slice(0, GIT_DETAIL_LIMIT);
-  return new PluginRegistryError({
-    message: detail
-      ? `git ${action} failed (exit ${result.code ?? "unknown"}): ${detail}`
-      : `git ${action} failed (exit ${result.code ?? "unknown"}).`,
-  });
+/**
+ * Drops `user:token@` userinfo from anything that quotes a remote. git echoes the
+ * URL it was given in most failure output, and a remote pasted as
+ * `https://user:token@host/repo.git` would otherwise carry the credential into the
+ * log with it.
+ */
+function redactUrlCredentials(text: string): string {
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi, "$1");
+}
+
+/**
+ * git stderr routinely quotes the remote (credentials included) and local paths, so
+ * it stays server-side: the caller gets the action and exit code, the environment
+ * log keeps the detail.
+ */
+function gitFailure(
+  action: "clone" | "pull",
+  result: ProcessRunner.ProcessRunOutput,
+): Effect.Effect<never, PluginRegistryError> {
+  const detail = redactUrlCredentials(result.stderr.trim()).slice(0, GIT_DETAIL_LIMIT);
+  return Effect.logWarning("A plugin source git command failed.", {
+    action,
+    exitCode: result.code,
+    ...(detail ? { detail } : {}),
+  }).pipe(
+    Effect.andThen(
+      Effect.fail(
+        new PluginRegistryError({
+          message: `git ${action} failed (exit ${result.code ?? "unknown"}). See the environment log for details.`,
+        }),
+      ),
+    ),
+  );
 }
 
 const nextAvailableSourceId = Effect.fn("PluginRegistry.nextAvailableSourceId")(function* (
@@ -747,14 +773,17 @@ export const addSource = (input: PluginAddSourceInput) =>
       !GIT_URL_PATTERN.test(gitUrl) ||
       hasControlCharacter(gitUrl)
     ) {
+      // The URL itself never goes into the message: a remote can carry credentials in
+      // its userinfo, and the message is returned over RPC and rendered in the UI.
       return yield* new PluginRegistryError({
-        message: `Unsupported git URL "${gitUrl}". Use an https://, ssh:// or git@ remote.`,
+        message: "Unsupported git URL. Use an https://, ssh:// or git@ remote.",
       });
     }
     const slug = deriveSourceSlug(gitUrl);
     if (!slug) {
       return yield* new PluginRegistryError({
-        message: `Could not derive a plugin source id from "${gitUrl}".`,
+        message:
+          "Could not derive a plugin source id from that git URL. Use a remote whose repository name contains letters or numbers.",
       });
     }
     const sourcesRoot = path.join(config.pluginsDir, SOURCES_DIR_NAME);
@@ -787,9 +816,7 @@ export const addSource = (input: PluginAddSourceInput) =>
       gitUrl,
       temporary,
     ]).pipe(
-      Effect.flatMap((result) =>
-        result.code === 0 ? Effect.void : Effect.fail(gitFailure("clone", result)),
-      ),
+      Effect.flatMap((result) => (result.code === 0 ? Effect.void : gitFailure("clone", result))),
       Effect.andThen(fileSystem.rename(temporary, target)),
       Effect.onError(() =>
         fileSystem.remove(temporary, { recursive: true, force: true }).pipe(Effect.ignore),
@@ -816,9 +843,7 @@ export const updateSource = (input: PluginUpdateSourceInput) =>
   Effect.gen(function* () {
     const source = yield* resolveSourceDirectory(input.sourceId);
     yield* runGit(["-C", source.directory, "pull", "--ff-only"]).pipe(
-      Effect.flatMap((result) =>
-        result.code === 0 ? Effect.void : Effect.fail(gitFailure("pull", result)),
-      ),
+      Effect.flatMap((result) => (result.code === 0 ? Effect.void : gitFailure("pull", result))),
     );
     return yield* listPlugins();
   }).pipe(

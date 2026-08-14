@@ -82,20 +82,16 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   // connections by the network schemes the client supports instead of by host.
   const connectSources = ["'self'", "http:", "https:", "ws:", "wss:"];
 
-  // Framing is far narrower than connecting: the trusted renderer only embeds the
-  // Cloudflare Turnstile challenge and the plugin-asset iframe served from the
-  // environment backend. Scope frame-src to those specific origins (plus loopback
-  // for locally hosted environments) so the renderer cannot be coaxed into
-  // embedding an arbitrary http/https origin (phishing / UI redress).
-  const frameSources = Array.from(
-    new Set([
-      "'self'",
-      "https://challenges.cloudflare.com",
-      input.backendOrigin.origin,
-      "http://127.0.0.1:*",
-      "http://localhost:*",
-    ]),
-  );
+  // The renderer only embeds the Cloudflare Turnstile challenge and plugin-asset
+  // iframes. Plugin assets are served by whichever environment is selected — a
+  // bearer-URL host, a relay endpoint handed out at connect time, or a local tunnel —
+  // so their origin is no more knowable here than the connect-src ones are, and an
+  // origin allowlist built now would silently break plugin pages on every remote
+  // environment. Restrict by scheme instead, and rely on the layers that can see the
+  // actual origin: view URLs are short-lived and signed, the plugin server answers
+  // with its own frame-ancestors allowlist, and the frame is sandboxed with
+  // allow-scripts only (opaque origin, no same-origin access to the app).
+  const frameSources = ["'self'", "https://challenges.cloudflare.com", "http:", "https:"];
 
   return [
     "default-src 'self'",

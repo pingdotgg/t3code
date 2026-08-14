@@ -496,6 +496,9 @@ describe("PluginRegistry", () => {
       }).pipe(Effect.flip);
       expect(failure.operation).toBe("add-source");
       expect(failure.message).toContain("Unsupported git URL");
+      // The remote never appears in a caller-visible message: it can carry
+      // credentials in its userinfo.
+      expect(failure.message).not.toContain("file:///etc/passwd");
       expect(yield* fileSystem.exists(path.join(config.pluginsDir, SOURCES_DIR_NAME))).toBe(false);
     }).pipe(Effect.provide(testLayer)),
   );

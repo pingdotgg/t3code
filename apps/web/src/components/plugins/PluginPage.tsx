@@ -131,8 +131,21 @@ function LoadedPluginPage({
   // promise to retain) and regenerated whenever the frame is deliberately reloaded.
   const nonceRef = useRef("");
 
+  // The frame is only ever trusted while it still holds the document the host loaded.
+  // A sandboxed frame can navigate itself away and carry the nonce along in the new
+  // URL's fragment, and its contentWindow survives that navigation, so neither the
+  // nonce nor event.source distinguishes the two documents afterwards. The element's
+  // load event does: it fires once per document the frame loads, so anything past the
+  // first one means the authenticated document is gone. From then on inbound messages
+  // are ignored and pending invoke results are dropped rather than posted — responses
+  // must use targetOrigin "*" (the frame's origin is opaque), so an unguarded reply
+  // would hand backend output to whatever document now occupies the frame.
+  const frameDocumentsRef = useRef(0);
+  const frameReplacedRef = useRef(false);
+
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
+      if (frameReplacedRef.current) return;
       const frameWindow = frameRef.current?.contentWindow;
       if (!frameWindow || event.source !== frameWindow) return;
       if (!event.data || typeof event.data !== "object") return;
@@ -182,6 +195,9 @@ function LoadedPluginPage({
       ) {
         const requestId = message.requestId;
         const respond = (result: Record<string, unknown>) => {
+          // Re-check at delivery time: an invocation can outlive the document that
+          // asked for it.
+          if (frameReplacedRef.current || frameRef.current?.contentWindow !== frameWindow) return;
           frameWindow.postMessage(
             { source: "t3-host", type: "invoke-result", requestId, ...result },
             "*",
@@ -247,6 +263,8 @@ function LoadedPluginPage({
       // checks can never drift from the value the frame was handed.
       const nonce = randomUUID();
       nonceRef.current = nonce;
+      frameDocumentsRef.current = 0;
+      frameReplacedRef.current = false;
       setFrame({ generation: frameGeneration, src: `${resolvedUrl}#t3-nonce=${nonce}` });
     }
   }, [resolvedUrl, frameGeneration, frame]);
@@ -289,6 +307,14 @@ function LoadedPluginPage({
           referrerPolicy="no-referrer"
           sandbox="allow-scripts"
           src={frameUrl}
+          onLoad={() => {
+            frameDocumentsRef.current += 1;
+            if (frameDocumentsRef.current > 1) {
+              // The frame navigated itself; the host bridge dies with the document it
+              // was minted for. Reload (or navigate away and back) to get a new one.
+              frameReplacedRef.current = true;
+            }
+          }}
           title={`${page.plugin.name}: ${page.command.title}`}
         />
       </div>
@@ -349,11 +375,14 @@ export function PluginPage({
       />
     );
   }
-  // Keyed by plugin+command so navigating between plugin pages mounts a fresh frame,
-  // nonce, and snapshot instead of reusing the previous plugin's iframe.
+  // Keyed by environment+plugin+command so navigating between plugin pages — or
+  // switching the primary environment underneath the same route — mounts a fresh
+  // frame, nonce, and snapshot instead of reusing the previous plugin's iframe. The
+  // snapshot below ignores later URL changes, so without the environment in the key a
+  // switch would leave the frame pointed at the old environment until a manual reload.
   return (
     <LoadedPluginPage
-      key={`${page.plugin.id}:${page.command.name}`}
+      key={`${environmentId}:${page.plugin.id}:${page.command.name}`}
       environmentId={environmentId}
       page={page}
     />

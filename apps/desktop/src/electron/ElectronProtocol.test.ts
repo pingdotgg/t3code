@@ -72,18 +72,9 @@ describe("ElectronProtocol", () => {
             "font-src 'self' t3code-dev: data:",
           );
           const policy = response.headers.get("content-security-policy") ?? "";
-          assert.include(
-            policy,
-            "frame-src 'self' https://challenges.cloudflare.com http://127.0.0.1:3774 http://127.0.0.1:* http://localhost:*",
-          );
-          const frameSources =
-            policy
-              .split("; ")
-              .find((directive) => directive.startsWith("frame-src "))
-              ?.slice("frame-src ".length)
-              .split(" ") ?? [];
-          assert.notInclude(frameSources, "http:");
-          assert.notInclude(frameSources, "https:");
+          // Plugin frames are served by the selected environment, whose origin is not
+          // known here, so frame-src is scheme-scoped like connect-src.
+          assert.include(policy, "frame-src 'self' https://challenges.cloudflare.com http: https:");
         }),
       );
 
@@ -239,14 +230,17 @@ describe("ElectronProtocol", () => {
       "https:",
     ]);
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
+    // Remote environments serve plugin assets from origins that are unknown when this
+    // policy is built, so framing is scoped by scheme; embedding is constrained by the
+    // plugin server's own frame-ancestors and by the sandboxed, opaque-origin frame.
     assert.deepEqual(directives["frame-src"], [
       "'self'",
       "https://challenges.cloudflare.com",
-      "http://127.0.0.1:3773",
-      "http://127.0.0.1:*",
-      "http://localhost:*",
+      "http:",
+      "https:",
     ]);
-    assert.notInclude(directives["frame-src"], "http:");
-    assert.notInclude(directives["frame-src"], "https:");
+    // Framing stays narrower than connecting: no ws/wss, no data:/blob: documents.
+    assert.notInclude(directives["frame-src"], "data:");
+    assert.notInclude(directives["frame-src"], "blob:");
   });
 });
