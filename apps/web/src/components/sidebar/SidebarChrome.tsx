@@ -9,7 +9,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironments } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -91,7 +91,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       <T3Wordmark />
       <span
         className={cn(
-          "truncate text-sm font-medium tracking-tight",
+          "-translate-y-px truncate text-sm font-medium tracking-tight",
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
@@ -128,9 +128,12 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
           ? "pull-requests"
           : null,
   });
-  const primaryEnvironment = usePrimaryEnvironment();
-  const pullRequestsSupported =
-    primaryEnvironment?.serverConfig?.environment.capabilities.pullRequests === true;
+  const { environments } = useEnvironments();
+  // The page reads every connected server, so one of them offering pull requests is enough for
+  // the link to lead somewhere.
+  const pullRequestsSupported = environments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+  );
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
