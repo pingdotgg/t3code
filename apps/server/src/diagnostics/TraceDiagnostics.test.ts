@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeZlib from "node:zlib";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -237,7 +238,11 @@ describe("TraceDiagnostics", () => {
         kind: "trace-file-read-failed",
         message: `Failed to read local trace file '${traceFilePath}.1'.`,
       });
-      assert.deepStrictEqual(diagnostics.scannedFilePaths, [`${traceFilePath}.1`, traceFilePath]);
+      assert.deepStrictEqual(diagnostics.scannedFilePaths, [
+        `${traceFilePath}.1.gz`,
+        `${traceFilePath}.1`,
+        traceFilePath,
+      ]);
 
       const failureLog = logAnnotations.find(
         (annotations) => annotations.traceFilePath === `${traceFilePath}.1`,
@@ -248,6 +253,65 @@ describe("TraceDiagnostics", () => {
         errorTag: "TraceFileReadError",
         causeTag: "PermissionDenied",
       });
+    }),
+  );
+
+  it.effect("reads gzip-compressed rotated backups", () =>
+    Effect.gen(function* () {
+      const traceFilePath = "/tmp/server.trace.ndjson";
+      const notFound = (method: string, path: string) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "FileSystem",
+            method,
+            description: "missing",
+            pathOrDescriptor: path,
+          }),
+        );
+      const fileSystemLayer = FileSystem.layerNoop({
+        readFile: (path) =>
+          path === `${traceFilePath}.1.gz`
+            ? Effect.succeed(
+                new Uint8Array(
+                  NodeZlib.gzipSync(
+                    record({
+                      name: "backup.span",
+                      traceId: "trace-gz",
+                      spanId: "span-gz",
+                      startMs: 1_000,
+                      durationMs: 10,
+                    }),
+                  ),
+                ),
+              )
+            : notFound("readFile", path),
+        readFileString: (path) =>
+          path === traceFilePath
+            ? Effect.succeed(
+                record({
+                  name: "current.span",
+                  traceId: "trace-live",
+                  spanId: "span-live",
+                  startMs: 2_000,
+                  durationMs: 10,
+                }),
+              )
+            : notFound("readFileString", path),
+      });
+
+      const diagnostics = yield* TraceDiagnostics.readTraceDiagnostics({
+        traceFilePath,
+        maxFiles: 1,
+        readAt: DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"),
+      }).pipe(Effect.provide(TraceDiagnostics.layer.pipe(Layer.provide(fileSystemLayer))));
+
+      assert.equal(diagnostics.recordCount, 2);
+      assert.equal(Option.isNone(diagnostics.error), true);
+      assert.deepStrictEqual(diagnostics.topSpansByCount.map((span) => span.name).toSorted(), [
+        "backup.span",
+        "current.span",
+      ]);
     }),
   );
 

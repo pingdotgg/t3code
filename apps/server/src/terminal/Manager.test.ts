@@ -1764,3 +1764,26 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
+
+it("inspectSubprocessFromSnapshot resolves child command and descendants from one table", () => {
+  const snapshot = TerminalManager.processTableFromRows([
+    [100, 1, "zsh"],
+    [200, 100, "node"],
+    [201, 200, "esbuild"],
+    [202, 200, "tmux: server"],
+    [900, 1, "unrelated"],
+  ]);
+
+  const inspected = TerminalManager.inspectSubprocessFromSnapshot(100, snapshot, "linux");
+  assert.equal(inspected.hasRunningSubprocess, true);
+  assert.equal(inspected.childCommand, "node");
+  assert.deepStrictEqual([...inspected.processIds].toSorted(), [100, 200, 201, 202]);
+
+  const idle = TerminalManager.inspectSubprocessFromSnapshot(900, snapshot, "linux");
+  assert.equal(idle.hasRunningSubprocess, false);
+  assert.equal(idle.childCommand, null);
+  assert.deepStrictEqual(idle.processIds, []);
+
+  const missing = TerminalManager.inspectSubprocessFromSnapshot(555, snapshot, "linux");
+  assert.equal(missing.hasRunningSubprocess, false);
+});

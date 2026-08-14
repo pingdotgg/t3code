@@ -7,6 +7,7 @@ import type {
   ServerTraceDiagnosticsSpanOccurrence,
   ServerTraceDiagnosticsSpanSummary,
 } from "@t3tools/contracts";
+import * as NodeZlib from "node:zlib";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -81,11 +82,12 @@ interface TraceDiagnosticsErrorSummary {
 const DEFAULT_SLOW_SPAN_THRESHOLD_MS = 1_000;
 const TOP_LIMIT = 10;
 const RECENT_LIMIT = 20;
+// Backups rotate as `.N.gz` since compressBackups, but plain `.N` files from
+// before the change age along the chain untouched, so both are candidates.
 function toRotatedTracePaths(traceFilePath: string, maxFiles: number): ReadonlyArray<string> {
   const backupCount = Math.max(0, Math.floor(maxFiles));
-  const backups = Array.from(
-    { length: backupCount },
-    (_, index) => `${traceFilePath}.${backupCount - index}`,
+  const backups = Array.from({ length: backupCount }, (_, index) => backupCount - index).flatMap(
+    (suffix) => [`${traceFilePath}.${suffix}.gz`, `${traceFilePath}.${suffix}`],
   );
   return [...backups, traceFilePath];
 }
@@ -186,26 +188,10 @@ function insertBoundedSlowestSpan(
   }
 }
 
-export function aggregateTraceDiagnostics(
-  input: TraceDiagnosticsInput,
-): ServerTraceDiagnosticsResult {
-  const readAt = input.readAt;
-  const slowSpanThresholdMs = input.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
-  const scannedFilePaths = input.scannedFilePaths ?? input.files.map((file) => file.path);
-  if (input.files.length === 0) {
-    return makeEmptyDiagnostics({
-      traceFilePath: input.traceFilePath,
-      scannedFilePaths,
-      readAt,
-      slowSpanThresholdMs,
-      error: input.error ?? {
-        kind: "trace-file-not-found",
-        message: "No local trace files were found.",
-      },
-      ...(input.partialFailure ? { partialFailure: true } : {}),
-    });
-  }
-
+// Incremental aggregation lets the reader feed one decoded file at a time and
+// drop its text before touching the next, so peak memory stays one file wide
+// no matter how many rotated backups exist.
+export function createTraceDiagnosticsAggregator(slowSpanThresholdMs: number) {
   let parseErrorCount = 0;
   let recordCount = 0;
   let failureCount = 0;
@@ -224,8 +210,8 @@ export function aggregateTraceDiagnostics(
   const latestWarningAndErrorLogs: ServerTraceDiagnosticsLogEvent[] = [];
   const logLevelCounts: Record<string, number> = {};
 
-  for (const file of input.files) {
-    const lines = file.text.split(/\r?\n/);
+  const addFileText = (text: string) => {
+    const lines = text.split(/\r?\n/);
     for (const line of lines) {
       if (line.trim().length === 0) continue;
 
@@ -334,56 +320,102 @@ export function aggregateTraceDiagnostics(
         }
       }
     }
+  };
+
+  const finish = (input: {
+    readonly traceFilePath: string;
+    readonly scannedFilePaths: ReadonlyArray<string>;
+    readonly readAt: DateTime.Utc;
+    readonly error?: TraceDiagnosticsErrorSummary;
+    readonly partialFailure?: boolean;
+  }): ServerTraceDiagnosticsResult => {
+    const topSpansByCount: ServerTraceDiagnosticsSpanSummary[] = [...spansByName.entries()]
+      .map(([name, span]) => ({
+        name,
+        count: span.count,
+        failureCount: span.failureCount,
+        totalDurationMs: span.totalDurationMs,
+        averageDurationMs: span.count > 0 ? span.totalDurationMs / span.count : 0,
+        maxDurationMs: span.maxDurationMs,
+      }))
+      .toSorted(
+        (left, right) => right.count - left.count || right.maxDurationMs - left.maxDurationMs,
+      )
+      .slice(0, TOP_LIMIT);
+
+    return {
+      traceFilePath: input.traceFilePath,
+      scannedFilePaths: [...input.scannedFilePaths],
+      readAt: input.readAt,
+      recordCount,
+      parseErrorCount,
+      firstSpanAt: Option.fromNullishOr(firstSpanAt),
+      lastSpanAt: Option.fromNullishOr(lastSpanAt),
+      failureCount,
+      interruptionCount,
+      slowSpanThresholdMs,
+      slowSpanCount,
+      logLevelCounts,
+      topSpansByCount,
+      slowestSpans,
+      commonFailures: [...failuresByKey.values()]
+        .toSorted(
+          (left, right) =>
+            right.count - left.count ||
+            DateTime.toEpochMillis(right.lastSeenAt) - DateTime.toEpochMillis(left.lastSeenAt),
+        )
+        .slice(0, TOP_LIMIT),
+      latestFailures: latestFailures
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.endedAt) - DateTime.toEpochMillis(left.endedAt),
+        )
+        .slice(0, RECENT_LIMIT),
+      latestWarningAndErrorLogs: latestWarningAndErrorLogs
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.seenAt) - DateTime.toEpochMillis(left.seenAt),
+        )
+        .slice(0, RECENT_LIMIT),
+      partialFailure: input.partialFailure ? Option.some(true) : Option.none(),
+      error: Option.fromNullishOr(input.error),
+    };
+  };
+
+  return { addFileText, finish };
+}
+
+export function aggregateTraceDiagnostics(
+  input: TraceDiagnosticsInput,
+): ServerTraceDiagnosticsResult {
+  const readAt = input.readAt;
+  const slowSpanThresholdMs = input.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
+  const scannedFilePaths = input.scannedFilePaths ?? input.files.map((file) => file.path);
+  if (input.files.length === 0) {
+    return makeEmptyDiagnostics({
+      traceFilePath: input.traceFilePath,
+      scannedFilePaths,
+      readAt,
+      slowSpanThresholdMs,
+      error: input.error ?? {
+        kind: "trace-file-not-found",
+        message: "No local trace files were found.",
+      },
+      ...(input.partialFailure ? { partialFailure: true } : {}),
+    });
   }
 
-  const topSpansByCount: ServerTraceDiagnosticsSpanSummary[] = [...spansByName.entries()]
-    .map(([name, span]) => ({
-      name,
-      count: span.count,
-      failureCount: span.failureCount,
-      totalDurationMs: span.totalDurationMs,
-      averageDurationMs: span.count > 0 ? span.totalDurationMs / span.count : 0,
-      maxDurationMs: span.maxDurationMs,
-    }))
-    .toSorted((left, right) => right.count - left.count || right.maxDurationMs - left.maxDurationMs)
-    .slice(0, TOP_LIMIT);
-
-  return {
+  const aggregator = createTraceDiagnosticsAggregator(slowSpanThresholdMs);
+  for (const file of input.files) {
+    aggregator.addFileText(file.text);
+  }
+  return aggregator.finish({
     traceFilePath: input.traceFilePath,
     scannedFilePaths,
     readAt,
-    recordCount,
-    parseErrorCount,
-    firstSpanAt: Option.fromNullishOr(firstSpanAt),
-    lastSpanAt: Option.fromNullishOr(lastSpanAt),
-    failureCount,
-    interruptionCount,
-    slowSpanThresholdMs,
-    slowSpanCount,
-    logLevelCounts,
-    topSpansByCount,
-    slowestSpans,
-    commonFailures: [...failuresByKey.values()]
-      .toSorted(
-        (left, right) =>
-          right.count - left.count ||
-          DateTime.toEpochMillis(right.lastSeenAt) - DateTime.toEpochMillis(left.lastSeenAt),
-      )
-      .slice(0, TOP_LIMIT),
-    latestFailures: latestFailures
-      .toSorted(
-        (left, right) =>
-          DateTime.toEpochMillis(right.endedAt) - DateTime.toEpochMillis(left.endedAt),
-      )
-      .slice(0, RECENT_LIMIT),
-    latestWarningAndErrorLogs: latestWarningAndErrorLogs
-      .toSorted(
-        (left, right) => DateTime.toEpochMillis(right.seenAt) - DateTime.toEpochMillis(left.seenAt),
-      )
-      .slice(0, RECENT_LIMIT),
-    partialFailure: input.partialFailure ? Option.some(true) : Option.none(),
-    error: Option.fromNullishOr(input.error),
-  };
+    ...(input.error ? { error: input.error } : {}),
+    ...(input.partialFailure ? { partialFailure: true } : {}),
+  });
 }
 
 type TraceFileReadResult =
@@ -394,7 +426,22 @@ function readTraceFile(
   fileSystem: FileSystem.FileSystem,
   path: string,
 ): Effect.Effect<TraceFileReadResult, TraceFileReadError> {
-  return fileSystem.readFileString(path).pipe(
+  const decoded = path.endsWith(".gz")
+    ? fileSystem.readFile(path).pipe(
+        Effect.flatMap((bytes) =>
+          Effect.try({
+            try: () => NodeZlib.gunzipSync(bytes).toString("utf8"),
+            catch: (cause) =>
+              new TraceFileReadError({
+                traceFilePath: path,
+                causeTag: "GzipDecode",
+                cause,
+              }),
+          }),
+        ),
+      )
+    : fileSystem.readFileString(path);
+  return decoded.pipe(
     Effect.map((text): TraceFileReadResult => ({ _tag: "Loaded", path, text })),
     Effect.catchTags({
       PlatformError: (cause) =>
@@ -419,39 +466,46 @@ export const make = Effect.gen(function* () {
       const readAt = options.readAt ?? (yield* DateTime.now);
       const slowSpanThresholdMs = options.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
       const paths = toRotatedTracePaths(options.traceFilePath, options.maxFiles);
-      const results = yield* Effect.all(
-        paths.map((path) =>
-          readTraceFile(fileSystem, path).pipe(
-            Effect.tapError((cause) =>
-              Effect.logWarning("Failed to read local trace file.").pipe(
-                Effect.annotateLogs({
-                  traceFilePath: cause.traceFilePath,
-                  errorTag: cause._tag,
-                  causeTag: cause.causeTag,
-                }),
-              ),
+      // One file at a time: each decoded text is aggregated and released
+      // before the next read, so a large maxFiles never loads the whole
+      // rotation window into memory at once.
+      const aggregator = createTraceDiagnosticsAggregator(slowSpanThresholdMs);
+      let loadedFileCount = 0;
+      let readFailureError: TraceDiagnosticsErrorSummary | undefined;
+      const loadedPaths = new Set<string>();
+      for (const path of paths) {
+        // A plain backup next to its own .gz copy is a crash leftover with
+        // identical content — counting both would double every span in it.
+        if (!path.endsWith(".gz") && loadedPaths.has(`${path}.gz`)) {
+          continue;
+        }
+        const result = yield* readTraceFile(fileSystem, path).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("Failed to read local trace file.").pipe(
+              Effect.annotateLogs({
+                traceFilePath: cause.traceFilePath,
+                errorTag: cause._tag,
+                causeTag: cause.causeTag,
+              }),
             ),
-            Effect.result,
           ),
-        ),
-        {
-          concurrency: 1,
-        },
-      );
-      const files = results.flatMap((result) =>
-        Result.isSuccess(result) && result.success._tag === "Loaded"
-          ? [{ path: result.success.path, text: result.success.text }]
-          : [],
-      );
-      const readFailure = results.find(Result.isFailure);
-      const readFailureError = readFailure
-        ? ({
+          Effect.result,
+        );
+        if (Result.isFailure(result)) {
+          readFailureError ??= {
             kind: "trace-file-read-failed",
-            message: readFailure.failure.message,
-          } satisfies TraceDiagnosticsErrorSummary)
-        : undefined;
+            message: result.failure.message,
+          } satisfies TraceDiagnosticsErrorSummary;
+          continue;
+        }
+        if (result.success._tag === "Loaded") {
+          loadedFileCount += 1;
+          loadedPaths.add(path);
+          aggregator.addFileText(result.success.text);
+        }
+      }
 
-      if (files.length === 0) {
+      if (loadedFileCount === 0) {
         return makeEmptyDiagnostics({
           traceFilePath: options.traceFilePath,
           scannedFilePaths: paths,
@@ -466,12 +520,10 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      return aggregateTraceDiagnostics({
+      return aggregator.finish({
         traceFilePath: options.traceFilePath,
-        files,
         scannedFilePaths: paths,
         readAt,
-        slowSpanThresholdMs,
         ...(readFailureError ? { partialFailure: true, error: readFailureError } : {}),
       });
     },

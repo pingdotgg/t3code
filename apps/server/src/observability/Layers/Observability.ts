@@ -34,6 +34,7 @@ export const ObservabilityLive = Layer.unwrap(
           maxBytes: config.traceMaxBytes,
           maxFiles: config.traceMaxFiles,
           batchWindowMs: config.traceBatchWindowMs,
+          compressBackups: true,
           onFlush: (stats) =>
             attribution.record({
               component: "server-trace",
@@ -65,6 +66,9 @@ export const ObservabilityLive = Layer.unwrap(
           batchWindowMs: config.traceBatchWindowMs,
           sink,
           ...(delegate ? { delegate } : {}),
+          // Tail policy applies to the local file only; the OTLP delegate
+          // still receives every sampled span.
+          ...(config.traceKeepAllSpans ? {} : { tailPolicy: {} }),
         });
 
         return Layer.mergeAll(

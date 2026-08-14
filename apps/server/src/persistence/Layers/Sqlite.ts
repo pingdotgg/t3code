@@ -46,16 +46,9 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
-  return Layer.provideMerge(
-    setup,
-    makeRuntimeSqliteLayer({
-      filename: dbPath,
-      spanAttributes: {
-        "db.name": path.basename(dbPath),
-        "service.name": "t3-server",
-      },
-    }),
-  );
+  // No per-span attributes: sql.execute fires ~76/s under load and constant
+  // attributes on every span were a measurable share of local trace volume.
+  return Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: dbPath }));
 }, Layer.unwrap);
 
 export const SqlitePersistenceMemory = Layer.provideMerge(

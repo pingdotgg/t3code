@@ -458,4 +458,48 @@ describe("observability", () => {
       ),
     );
   });
+
+  // it.live: the slow span needs real Clock time to cross the tail-policy
+  // duration threshold.
+  it.live("tail policy keeps failures and slow spans while rate-limiting fast successes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
+        const tracerLayer = Layer.effect(
+          Tracer.Tracer,
+          makeLocalFileTracer({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            tailPolicy: {
+              slowSpanThresholdMs: 40,
+              fastSuccessLimitPerWindow: 2,
+              fastSuccessWindowMs: 60_000,
+            },
+          }),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            for (let index = 0; index < 5; index += 1) {
+              yield* Effect.void.pipe(Effect.withSpan("hot-success"));
+            }
+            yield* Effect.exit(Effect.fail("boom" as const).pipe(Effect.withSpan("failing-span")));
+            yield* Effect.sleep("80 millis").pipe(Effect.withSpan("slow-span"));
+          }).pipe(Effect.provide(tracerLayer)),
+        );
+
+        const records = yield* readTraceRecords(tracePath);
+        const names = records.map((record) => record.name);
+
+        assert.equal(names.filter((name) => name === "hot-success").length, 2);
+        assert.equal(names.filter((name) => name === "failing-span").length, 1);
+        assert.equal(names.filter((name) => name === "slow-span").length, 1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
 });

@@ -111,6 +111,8 @@ export interface TraceSinkOptions {
   readonly maxFiles: number;
   readonly batchWindowMs: number;
   readonly onFlush?: (stats: TraceSinkFlushStats) => Effect.Effect<void>;
+  /** Gzip rotated backups (see RotatingFileSinkOptions.compressBackups). */
+  readonly compressBackups?: boolean;
 }
 
 export interface TraceSinkFlushStats {
@@ -129,6 +131,72 @@ export interface TraceSink {
 export interface LocalFileTracerOptions extends TraceSinkOptions {
   readonly delegate?: Tracer.Tracer;
   readonly sink?: TraceSink;
+  /**
+   * Tail policy for what reaches the local file. Failures, interruptions,
+   * spans carrying events, and slow spans always persist; fast successes are
+   * rate-limited per span name. Omit to persist every sampled span.
+   */
+  readonly tailPolicy?: TraceTailPolicyOptions;
+}
+
+export interface TraceTailPolicyOptions {
+  /** Spans at least this slow always persist. */
+  readonly slowSpanThresholdMs?: number;
+  /** Fast successful spans persisted per name inside each sampling window. */
+  readonly fastSuccessLimitPerWindow?: number;
+  readonly fastSuccessWindowMs?: number;
+}
+
+const DEFAULT_TAIL_POLICY = {
+  slowSpanThresholdMs: 25,
+  fastSuccessLimitPerWindow: 50,
+  fastSuccessWindowMs: 30_000,
+} as const;
+
+// Local trace files exist for incident audits, and steady-state span volume
+// decides how far back they reach. Hot always-success spans (sql.execute, the
+// projection pipeline) used to fill the whole rotation window in minutes; a
+// bounded per-name sample keeps their rate observable without the flood.
+function makeTraceTailFilter(
+  options: TraceTailPolicyOptions,
+): (span: LocalFileSpan, endTime: bigint) => boolean {
+  const slowSpanThresholdNanos = BigInt(
+    Math.round(
+      (options.slowSpanThresholdMs ?? DEFAULT_TAIL_POLICY.slowSpanThresholdMs) * 1_000_000,
+    ),
+  );
+  const fastSuccessLimitPerWindow =
+    options.fastSuccessLimitPerWindow ?? DEFAULT_TAIL_POLICY.fastSuccessLimitPerWindow;
+  const fastSuccessWindowMs =
+    options.fastSuccessWindowMs ?? DEFAULT_TAIL_POLICY.fastSuccessWindowMs;
+  let windowStartedAt = -fastSuccessWindowMs;
+  let fastSuccessCountsByName = new Map<string, number>();
+
+  return (span, endTime) => {
+    if (span.status._tag !== "Ended") {
+      return true;
+    }
+    if (!ExitRuntime.isSuccess(span.status.exit)) {
+      return true;
+    }
+    if (span.events.length > 0) {
+      return true;
+    }
+    if (endTime - span.status.startTime >= slowSpanThresholdNanos) {
+      return true;
+    }
+    const now = performance.now();
+    if (now - windowStartedAt >= fastSuccessWindowMs) {
+      windowStartedAt = now;
+      fastSuccessCountsByName = new Map();
+    }
+    const count = fastSuccessCountsByName.get(span.name) ?? 0;
+    if (count >= fastSuccessLimitPerWindow) {
+      return false;
+    }
+    fastSuccessCountsByName.set(span.name, count + 1);
+    return true;
+  };
 }
 
 type OtlpSpan = OtlpTracer.ScopeSpan["spans"][number];
@@ -341,6 +409,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     maxBytes: options.maxBytes,
     maxFiles: options.maxFiles,
     throwOnError: true,
+    ...(options.compressBackups !== undefined ? { compressBackups: options.compressBackups } : {}),
   });
 
   let buffer: Array<string> = [];
@@ -446,14 +515,17 @@ class LocalFileSpan implements Tracer.Span {
   events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
   private readonly delegate: Tracer.Span;
   private readonly push: (record: EffectTraceRecord) => void;
+  private readonly shouldPersist: (span: LocalFileSpan, endTime: bigint) => boolean;
 
   constructor(
     options: Parameters<Tracer.Tracer["span"]>[0],
     delegate: Tracer.Span,
     push: (record: EffectTraceRecord) => void,
+    shouldPersist: (span: LocalFileSpan, endTime: bigint) => boolean = () => true,
   ) {
     this.delegate = delegate;
     this.push = push;
+    this.shouldPersist = shouldPersist;
     this.name = delegate.name;
     this.spanId = delegate.spanId;
     this.traceId = delegate.traceId;
@@ -479,7 +551,7 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, exit);
 
-    if (this.sampled) {
+    if (this.sampled && this.shouldPersist(this, endTime)) {
       this.push(spanToTraceRecord(this));
     }
   }
@@ -512,6 +584,9 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
       maxFiles: options.maxFiles,
       batchWindowMs: options.batchWindowMs,
       ...(options.onFlush ? { onFlush: options.onFlush } : {}),
+      ...(options.compressBackups !== undefined
+        ? { compressBackups: options.compressBackups }
+        : {}),
     }));
 
   const delegate =
@@ -520,9 +595,11 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
       span: (spanOptions) => new Tracer.NativeSpan(spanOptions),
     });
 
+  const shouldPersist = options.tailPolicy ? makeTraceTailFilter(options.tailPolicy) : undefined;
+
   return Tracer.make({
     span(spanOptions) {
-      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push);
+      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push, shouldPersist);
     },
     ...(delegate.context ? { context: delegate.context } : {}),
   });

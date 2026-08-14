@@ -84,8 +84,13 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   traceMaxBytes: Config.int("T3CODE_TRACE_MAX_BYTES").pipe(Config.withDefault(10 * 1024 * 1024)),
-  traceMaxFiles: Config.int("T3CODE_TRACE_MAX_FILES").pipe(Config.withDefault(10)),
+  // Rotated backups are gzip-compressed (~12x on span NDJSON), so a larger
+  // file count buys hours of incident history for tens of megabytes.
+  traceMaxFiles: Config.int("T3CODE_TRACE_MAX_FILES").pipe(Config.withDefault(30)),
   traceBatchWindowMs: Config.int("T3CODE_TRACE_BATCH_WINDOW_MS").pipe(Config.withDefault(1_000)),
+  // Escape hatch: persist every sampled span (no tail filtering) when full
+  // fidelity matters more than the retention window.
+  traceKeepAllSpans: Config.boolean("T3CODE_TRACE_KEEP_ALL_SPANS").pipe(Config.withDefault(false)),
   otlpTracesUrl: Config.string("T3CODE_OTLP_TRACES_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -356,6 +361,7 @@ export const resolveServerConfig = (
       traceBatchWindowMs: env.traceBatchWindowMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
+      traceKeepAllSpans: env.traceKeepAllSpans,
       otlpTracesUrl:
         env.otlpTracesUrl ??
         bootstrap?.otlpTracesUrl ??
