@@ -18,5 +18,7 @@ describe("ThreadStatusLabel", () => {
 
     expect(html).toContain("animate-status-pulse");
     expect(html).toContain("data-thread-status-pulse");
+    expect(html).toContain("font-size:var(--app-sidebar-font-size)");
+    expect(html).toContain("size-[0.583em]");
   });
 });
