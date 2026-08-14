@@ -87,7 +87,7 @@ fn encode_png(image: RgbaImage, max_width: u32) -> Result<Vec<u8>> {
 }
 
 /// Whether the session is Wayland, matching how `xcap` decides.
-fn on_wayland() -> bool {
+pub(crate) fn on_wayland() -> bool {
     cfg!(target_os = "linux")
         && (std::env::var("XDG_SESSION_TYPE").is_ok_and(|value| value == "wayland")
             || std::env::var("WAYLAND_DISPLAY").is_ok_and(|value| value.contains("wayland")))
