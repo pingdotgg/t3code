@@ -22,6 +22,14 @@ const attached = new Set();
 let port = null;
 /** True after the native host has delivered at least one message this session. */
 let hadLiveSession = false;
+/** When the current native-host port was opened (ms). */
+let connectedAt = 0;
+/**
+ * A host that stays connected this long is treated as a live desktop session,
+ * even if it has not sent a command yet (idle reconnect while MCP is up).
+ * Shorter disconnects are the usual "MCP not listening yet" race.
+ */
+const LIVE_SESSION_DWELL_MS = 2000;
 let stateReady = null;
 
 async function persistOwnedState() {
@@ -84,8 +92,10 @@ function connect() {
     port = null;
     return;
   }
+  connectedAt = Date.now();
+  hadLiveSession = false;
   port.onMessage.addListener((msg) => {
-    // A real MCP session is up — only then should disconnect tear down tabs.
+    // A command proves the MCP bridge is up.
     hadLiveSession = true;
     handleCommand(msg);
   });
@@ -93,12 +103,14 @@ function connect() {
     // Reading lastError here keeps "Native host has exited" out of the error
     // list while the desktop app simply is not running yet.
     void chrome.runtime.lastError;
+    const livedMs = connectedAt ? Date.now() - connectedAt : 0;
+    // Tear down tabs when a real session ends: either we saw traffic, or the
+    // host stayed up long enough that this was not a connectNative race.
+    // Immediate disconnects (MCP pipe not bound yet) keep restored tabs.
+    const wasLive = hadLiveSession || livedMs >= LIVE_SESSION_DWELL_MS;
     port = null;
-    const wasLive = hadLiveSession;
     hadLiveSession = false;
-    // connectNative often fails immediately when the MCP pipe is not bound
-    // yet (startup race, SW wake). Do not wipe restored agent tabs in that
-    // case — only when a live session actually ends.
+    connectedAt = 0;
     if (wasLive && ownedTabs.size) void closeAllTabs();
   });
 }

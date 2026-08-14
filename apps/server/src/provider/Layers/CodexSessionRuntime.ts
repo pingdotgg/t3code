@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberRef from "effect/FiberRef";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -1669,12 +1670,17 @@ export const makeCodexSessionRuntime = (
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("mcp-approval-request"));
         const turnId = payload.turnId ? TurnId.make(payload.turnId) : undefined;
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
+        // Concurrent elicitations share a serverName; correlate by the JSON-RPC
+        // request id (fiber-local) so serverRequest/resolved cannot collide.
+        const incomingRequestId = yield* FiberRef.get(CodexClient.CurrentServerRequestId);
+        const correlationKey =
+          incomingRequestId !== undefined ? String(incomingRequestId) : String(requestId);
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
           const next = new Map(current);
           next.set(requestId, {
             requestId,
-            jsonRpcId: payload.serverName,
+            jsonRpcId: correlationKey,
             requestKind,
             turnId,
             itemId: undefined,
@@ -1684,7 +1690,7 @@ export const makeCodexSessionRuntime = (
         });
         yield* Ref.update(approvalCorrelationsRef, (current) => {
           const next = new Map(current);
-          next.set(payload.serverName, {
+          next.set(correlationKey, {
             requestId,
             requestKind,
             turnId,
