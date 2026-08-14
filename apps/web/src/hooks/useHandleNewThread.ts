@@ -176,7 +176,9 @@ export function useNewThreadHandler() {
         }
         if (modelSeed.modelSelection) {
           // Complete snapshot: absent options mean "no options", not "keep
-          // whatever sticky state or a stale draft already wrote".
+          // whatever sticky state or a stale draft already wrote". New-thread
+          // reuse of an empty draft is a fresh start, so this also replaces a
+          // picker-only choice (`modelSelectionExplicit`) with the pin.
           setModelSelection(draftTarget, modelSeed.modelSelection, {
             replaceOptions: true,
             explicit: false,
