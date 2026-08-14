@@ -48,6 +48,7 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+const MAX_THREAD_ACTIVITIES = 500;
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "speculative" | "error") {
   if (status === "error") return "error" as const;
@@ -945,12 +946,37 @@ export function projectEvent(
             return nextBase;
           }
 
-          const activities = [
-            ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-            payload.activity,
-          ]
-            .toSorted(compareThreadActivities)
-            .slice(-500);
+          const tailActivity = thread.activities.at(-1);
+          let canAppendInOrder =
+            tailActivity === undefined ||
+            compareThreadActivities(tailActivity, payload.activity) <= 0;
+          if (canAppendInOrder) {
+            let previousActivity: OrchestrationThread["activities"][number] | undefined;
+            for (const activity of thread.activities) {
+              if (
+                activity.id === payload.activity.id ||
+                (previousActivity !== undefined &&
+                  compareThreadActivities(previousActivity, activity) > 0)
+              ) {
+                canAppendInOrder = false;
+                break;
+              }
+              previousActivity = activity;
+            }
+          }
+
+          let activities: Array<OrchestrationThread["activities"][number]>;
+          if (canAppendInOrder) {
+            activities = thread.activities.slice(1 - MAX_THREAD_ACTIVITIES);
+            activities.push(payload.activity);
+          } else {
+            activities = [
+              ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
+              payload.activity,
+            ]
+              .toSorted(compareThreadActivities)
+              .slice(-MAX_THREAD_ACTIVITIES);
+          }
 
           return {
             ...nextBase,

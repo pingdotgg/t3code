@@ -38,6 +38,67 @@ function makeEvent(input: {
   } as OrchestrationEvent;
 }
 
+function makeActivityEvent(input: {
+  eventSequence: number;
+  threadId: string;
+  activityId: string;
+  activitySequence?: number;
+  createdAt: string;
+  summary?: string;
+}): OrchestrationEvent {
+  return makeEvent({
+    sequence: input.eventSequence,
+    type: "thread.activity-appended",
+    aggregateKind: "thread",
+    aggregateId: input.threadId,
+    occurredAt: input.createdAt,
+    commandId: `cmd-${input.activityId}-${input.eventSequence}`,
+    payload: {
+      threadId: input.threadId,
+      activity: {
+        id: input.activityId,
+        tone: "info",
+        kind: "test.activity",
+        summary: input.summary ?? input.activityId,
+        payload: {},
+        turnId: null,
+        ...(input.activitySequence === undefined ? {} : { sequence: input.activitySequence }),
+        createdAt: input.createdAt,
+      },
+    },
+  });
+}
+
+async function createThreadModel(threadId: string, createdAt: string) {
+  return Effect.runPromise(
+    projectEvent(
+      createEmptyReadModel(createdAt),
+      makeEvent({
+        sequence: 1,
+        type: "thread.created",
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: `cmd-${threadId}`,
+        payload: {
+          threadId,
+          projectId: "project-1",
+          title: threadId,
+          modelSelection: {
+            provider: ProviderDriverKind.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      }),
+    ),
+  );
+}
+
 describe("orchestration projector", () => {
   it("applies thread.created events", async () => {
     const now = new Date().toISOString();
@@ -256,6 +317,191 @@ describe("orchestration projector", () => {
       headBranch: "feature/pr-146",
       state: null,
     });
+  });
+
+  it("fast-appends ordered activities while preserving the 500-item cap", async () => {
+    const createdAt = "2026-08-14T12:00:00.000Z";
+    const threadId = "thread-activity-fast-append";
+    const created = await createThreadModel(threadId, createdAt);
+    const events = Array.from({ length: 501 }, (_, index) => {
+      const activityNumber = index + 1;
+      return makeActivityEvent({
+        eventSequence: activityNumber + 1,
+        threadId,
+        activityId: `activity-${String(activityNumber).padStart(3, "0")}`,
+        activitySequence: activityNumber,
+        createdAt: `2026-08-14T12:${String(Math.floor(activityNumber / 60)).padStart(
+          2,
+          "0",
+        )}:${String(activityNumber % 60).padStart(2, "0")}.000Z`,
+      });
+    });
+    const projected = await events.reduce<Promise<typeof created>>(
+      (statePromise, event) =>
+        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
+      Promise.resolve(created),
+    );
+
+    const activities = projected.threads[0]?.activities;
+    expect(activities).toHaveLength(500);
+    expect(activities?.[0]?.id).toBe("activity-002");
+    expect(activities?.at(-1)?.id).toBe("activity-501");
+  });
+
+  it("replaces duplicate activity IDs before reordering updates", async () => {
+    const createdAt = "2026-08-14T13:00:00.000Z";
+    const threadId = "thread-activity-duplicate";
+    const created = await createThreadModel(threadId, createdAt);
+    const initialEvents = [
+      makeActivityEvent({
+        eventSequence: 2,
+        threadId,
+        activityId: "activity-update",
+        activitySequence: 1,
+        createdAt: "2026-08-14T13:00:01.000Z",
+        summary: "before",
+      }),
+      makeActivityEvent({
+        eventSequence: 3,
+        threadId,
+        activityId: "activity-tail",
+        activitySequence: 2,
+        createdAt: "2026-08-14T13:00:02.000Z",
+      }),
+    ];
+    const beforeUpdate = await initialEvents.reduce<Promise<typeof created>>(
+      (statePromise, event) =>
+        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
+      Promise.resolve(created),
+    );
+
+    const afterUpdate = await Effect.runPromise(
+      projectEvent(
+        beforeUpdate,
+        makeActivityEvent({
+          eventSequence: 4,
+          threadId,
+          activityId: "activity-update",
+          activitySequence: 3,
+          createdAt: "2026-08-14T13:00:03.000Z",
+          summary: "after",
+        }),
+      ),
+    );
+
+    expect(
+      afterUpdate.threads[0]?.activities.map((activity) => ({
+        id: activity.id,
+        sequence: activity.sequence,
+        summary: activity.summary,
+      })),
+    ).toEqual([
+      { id: "activity-tail", sequence: 2, summary: "activity-tail" },
+      { id: "activity-update", sequence: 3, summary: "after" },
+    ]);
+  });
+
+  it("falls back to full ordering for out-of-order activities without sequences", async () => {
+    const createdAt = "2026-08-14T14:00:00.000Z";
+    const threadId = "thread-activity-out-of-order";
+    const created = await createThreadModel(threadId, createdAt);
+    const orderedEvents = [
+      makeActivityEvent({
+        eventSequence: 2,
+        threadId,
+        activityId: "activity-a",
+        createdAt: "2026-08-14T14:00:01.000Z",
+      }),
+      makeActivityEvent({
+        eventSequence: 3,
+        threadId,
+        activityId: "activity-c",
+        createdAt: "2026-08-14T14:00:01.000Z",
+      }),
+      makeActivityEvent({
+        eventSequence: 4,
+        threadId,
+        activityId: "activity-sequenced",
+        activitySequence: 1,
+        createdAt: "2026-08-14T14:00:00.000Z",
+      }),
+    ];
+    const beforeOutOfOrder = await orderedEvents.reduce<Promise<typeof created>>(
+      (statePromise, event) =>
+        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
+      Promise.resolve(created),
+    );
+
+    const afterOutOfOrder = await Effect.runPromise(
+      projectEvent(
+        beforeOutOfOrder,
+        makeActivityEvent({
+          eventSequence: 5,
+          threadId,
+          activityId: "activity-b",
+          createdAt: "2026-08-14T14:00:01.000Z",
+        }),
+      ),
+    );
+
+    expect(afterOutOfOrder.threads[0]?.activities.map((activity) => activity.id)).toEqual([
+      "activity-a",
+      "activity-b",
+      "activity-c",
+      "activity-sequenced",
+    ]);
+  });
+
+  it("falls back when restart-loaded activities are not comparator-sorted", async () => {
+    const createdAt = "2026-08-14T15:00:00.000Z";
+    const threadId = "thread-activity-restart-order";
+    const created = await createThreadModel(threadId, createdAt);
+    const initialEvents = [
+      makeActivityEvent({
+        eventSequence: 2,
+        threadId,
+        activityId: "activity-unsequenced",
+        createdAt: "2026-08-14T15:00:01.000Z",
+      }),
+      makeActivityEvent({
+        eventSequence: 3,
+        threadId,
+        activityId: "activity-sequence-1",
+        activitySequence: 1,
+        createdAt: "2026-08-14T15:00:00.000Z",
+      }),
+    ];
+    const projected = await initialEvents.reduce<Promise<typeof created>>(
+      (statePromise, event) =>
+        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
+      Promise.resolve(created),
+    );
+    const restarted = {
+      ...projected,
+      threads: projected.threads.map((thread) => ({
+        ...thread,
+        activities: thread.activities.toReversed(),
+      })),
+    };
+
+    const afterAppend = await Effect.runPromise(
+      projectEvent(
+        restarted,
+        makeActivityEvent({
+          eventSequence: 4,
+          threadId,
+          activityId: "activity-sequence-2",
+          activitySequence: 2,
+          createdAt: "2026-08-14T15:00:02.000Z",
+        }),
+      ),
+    );
+
+    expect(afterAppend.threads[0]?.activities.map((activity) => activity.id)).toEqual([
+      "activity-unsequenced",
+      "activity-sequence-1",
+      "activity-sequence-2",
+    ]);
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
