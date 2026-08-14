@@ -450,21 +450,26 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       config.env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
     }
 
-    for (const name of POSIX_LOCALE_ENV_NAMES) {
-      const shellValue = trimNonEmpty(shellEnvironment[name]);
-      if (Option.isNone(trimNonEmpty(config.env[name])) && Option.isSome(shellValue)) {
-        config.env[name] = shellValue.value;
+    // Locale variables outrank each other (LC_ALL over LC_CTYPE over LANG), so
+    // they are taken as one set from a single source. Hydrating them per key
+    // would let the login shell's LC_ALL silently outrank a LANG the launch
+    // environment already chose, building a locale that exists in neither.
+    const hasLocale = () =>
+      POSIX_LOCALE_ENV_NAMES.some((name) => Option.isSome(trimNonEmpty(config.env[name])));
+    if (!hasLocale()) {
+      for (const name of POSIX_LOCALE_ENV_NAMES) {
+        const shellValue = trimNonEmpty(shellEnvironment[name]);
+        if (Option.isSome(shellValue)) {
+          config.env[name] = shellValue.value;
+        }
       }
-    }
-    const hasCharacterLocale = [config.env.LC_ALL, config.env.LC_CTYPE, config.env.LANG].some(
-      (value) => Option.isSome(trimNonEmpty(value)),
-    );
-    if (config.platform === "darwin" && !hasCharacterLocale) {
-      // Finder-launched apps commonly inherit no locale. macOS then defaults
-      // terminal shells to US-ASCII, so zsh edits UTF-8 input byte-by-byte.
-      // The platform-native UTF-8 ctype fixes character handling without
-      // forcing the user's language, collation, or message locale.
-      config.env.LC_CTYPE = DARWIN_UTF8_CTYPE;
+      if (config.platform === "darwin" && !hasLocale()) {
+        // Finder-launched apps commonly inherit no locale. macOS then defaults
+        // terminal shells to US-ASCII, so zsh edits UTF-8 input byte-by-byte.
+        // The platform-native UTF-8 ctype fixes character handling without
+        // forcing the user's language, collation, or message locale.
+        config.env.LC_CTYPE = DARWIN_UTF8_CTYPE;
+      }
     }
 
     const shellPreferredEnvNames = [

@@ -169,6 +169,28 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("does not let the login shell's LC_ALL outrank an inherited LANG", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "ru_RU.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => envOutput({ PATH: "/usr/bin", LC_ALL: "C" }),
+      });
+
+      // LC_ALL outranks LANG, so hydrating it here would silently downgrade
+      // the inherited ru_RU.UTF-8 to US-ASCII.
+      assert.equal(env.LANG, "ru_RU.UTF-8");
+      assert.equal(env.LC_ALL, undefined);
+      assert.equal(env.LC_CTYPE, undefined);
+    }),
+  );
+
   it.effect("preserves inherited POSIX values when present", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
