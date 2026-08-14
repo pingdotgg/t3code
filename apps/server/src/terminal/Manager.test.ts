@@ -203,6 +203,7 @@ const multiTerminalHistoryLogPath = (
 
 interface CreateManagerOptions {
   shellResolver?: () => string;
+  terminalShellResolver?: () => Effect.Effect<"system" | "zsh" | "bash" | "fish">;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
     readonly hasRunningSubprocess: boolean;
@@ -243,6 +244,9 @@ const createManager = (
         historyLineLimit,
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
+        ...(options.terminalShellResolver !== undefined
+          ? { terminalShellResolver: options.terminalShellResolver }
+          : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
@@ -1487,6 +1491,40 @@ it.layer(
       if (!spawnInput) return;
 
       expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
+    }),
+  );
+
+  it.effect("uses the configured shell for each new terminal", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      let terminalShell: "bash" | "fish" = "bash";
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { SHELL: "/bin/zsh" },
+        terminalShellResolver: () => Effect.succeed(terminalShell),
+      });
+
+      yield* manager.open(openInput({ terminalId: "term-1" }));
+      terminalShell = "fish";
+      yield* manager.open(openInput({ terminalId: "term-2" }));
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["bash", "fish"]);
+    }),
+  );
+
+  it.effect("discovers only installed selectable shells", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-shells-" });
+      for (const shell of ["bash", "fish"] as const) {
+        const executable = path.join(binDir, shell);
+        yield* writeFileString(executable, "#!/bin/sh\n");
+        yield* chmod(executable, 0o755);
+      }
+      const { manager } = yield* createManager(5, { env: { PATH: binDir } });
+
+      expect(yield* manager.resolveAvailableShells()).toEqual(["bash", "fish"]);
     }),
   );
 

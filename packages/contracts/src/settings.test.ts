@@ -189,6 +189,27 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings terminal shell", () => {
+  it("preserves the host shell for legacy configs", () => {
+    expect(decodeServerSettings({}).terminalShell).toBe("system");
+  });
+
+  it.each(["system", "zsh", "bash", "fish"] as const)(
+    "accepts the supported terminal shell: %s",
+    (terminalShell) => {
+      expect(decodeServerSettingsPatch({ terminalShell }).terminalShell).toBe(terminalShell);
+    },
+  );
+
+  it("falls back to the system shell when decoding a future server value", () => {
+    expect(decodeServerSettings({ terminalShell: "nu" }).terminalShell).toBe("system");
+  });
+
+  it("rejects unsupported terminal shells", () => {
+    expect(() => decodeServerSettingsPatch({ terminalShell: "nu" })).toThrow();
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});

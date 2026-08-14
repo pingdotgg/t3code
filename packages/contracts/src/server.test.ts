@@ -12,6 +12,9 @@ const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
 const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
 const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
+const decodeAvailableTerminalShells = Schema.decodeUnknownSync(
+  ServerConfig.fields.availableTerminalShells,
+);
 
 const baseProviderSnapshot = {
   instanceId: "codex",
@@ -153,5 +156,10 @@ describe("server config forward compatibility", () => {
     ]);
 
     expect(parsed).toEqual([decodedBase]);
+  });
+
+  it("defaults and forward-filters available terminal shells", () => {
+    expect(decodeAvailableTerminalShells(undefined)).toEqual([]);
+    expect(decodeAvailableTerminalShells(["zsh", "nu", "fish"])).toEqual(["zsh", "fish"]);
   });
 });

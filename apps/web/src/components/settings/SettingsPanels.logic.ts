@@ -1,11 +1,13 @@
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
+  InstalledTerminalShell,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
   ServerSettings,
   SidebarProjectGroupingMode,
+  TerminalShell,
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -28,6 +30,23 @@ export function projectGroupingModeFromToggle(
 ): SidebarProjectGroupingMode {
   if (!enabled) return "separate";
   return lastEnabledMode === "repository_path" ? "repository_path" : "repository";
+}
+
+const TERMINAL_SHELL_ORDER = [
+  "system",
+  "zsh",
+  "bash",
+  "fish",
+] as const satisfies ReadonlyArray<TerminalShell>;
+
+export function resolveTerminalShellOptions(input: {
+  readonly installed: ReadonlyArray<InstalledTerminalShell>;
+  readonly selected: TerminalShell;
+}): ReadonlyArray<{ readonly value: TerminalShell; readonly installed: boolean }> {
+  const installed = new Set<TerminalShell>(["system", ...input.installed]);
+  return TERMINAL_SHELL_ORDER.filter(
+    (value) => installed.has(value) || value === input.selected,
+  ).map((value) => ({ value, installed: installed.has(value) }));
 }
 
 const LAST_ENABLED_PROJECT_GROUPING_MODE_KEY = "t3code:last-enabled-project-grouping-mode";

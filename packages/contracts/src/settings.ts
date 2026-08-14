@@ -212,6 +212,23 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 // import cycle; re-exported here for compatibility with deep imports.
 export { ThreadEnvMode } from "./environment.ts";
 
+export const INSTALLED_TERMINAL_SHELLS = ["zsh", "bash", "fish"] as const;
+export const InstalledTerminalShell = Schema.Literals(INSTALLED_TERMINAL_SHELLS);
+export type InstalledTerminalShell = typeof InstalledTerminalShell.Type;
+export const TerminalShell = Schema.Literals(["system", ...INSTALLED_TERMINAL_SHELLS]);
+export type TerminalShell = typeof TerminalShell.Type;
+export const DEFAULT_TERMINAL_SHELL: TerminalShell = "system";
+const isTerminalShell = Schema.is(TerminalShell);
+const ForwardCompatibleTerminalShell = Schema.String.pipe(
+  Schema.decodeTo(
+    TerminalShell,
+    SchemaTransformation.transform({
+      decode: (value) => (isTerminalShell(value) ? value : DEFAULT_TERMINAL_SHELL),
+      encode: (value) => value,
+    }),
+  ),
+);
+
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
@@ -565,6 +582,9 @@ export const ServerSettings = Schema.Struct({
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
+  terminalShell: ForwardCompatibleTerminalShell.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_SHELL)),
+  ),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -721,6 +741,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  terminalShell: Schema.optionalKey(TerminalShell),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),

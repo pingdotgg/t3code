@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  type TerminalShell,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -76,7 +77,11 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
-import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
+import {
+  primaryServerConfigAtom,
+  primaryServerObservabilityAtom,
+  primaryServerProvidersAtom,
+} from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -131,6 +136,7 @@ import {
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
+  resolveTerminalShellOptions,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -154,6 +160,13 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const TERMINAL_SHELL_LABELS: Record<TerminalShell, string> = {
+  system: "System default",
+  zsh: "Zsh",
+  bash: "Bash",
+  fish: "Fish",
+};
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -513,6 +526,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
+      ...(settings.terminalShell !== DEFAULT_UNIFIED_SETTINGS.terminalShell
+        ? ["Terminal shell"]
+        : []),
       ...(settings.newWorktreesStartFromOrigin !==
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
@@ -535,6 +551,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
+      settings.terminalShell,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
@@ -640,6 +657,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+      terminalShell: DEFAULT_UNIFIED_SETTINGS.terminalShell,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
@@ -1750,6 +1768,11 @@ export function GeneralSettingsPanel() {
   );
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const terminalShellOptions = resolveTerminalShellOptions({
+    installed: serverConfig?.availableTerminalShells ?? [],
+    selected: settings.terminalShell,
+  });
   const diagnosticsDescription = formatDiagnosticsDescription({
     localTracingEnabled: observability?.localTracingEnabled ?? false,
     otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
@@ -1938,6 +1961,55 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("terminal-shell")}
+          description="Shell used by new and restarted terminals on this environment. System default uses the environment's configured shell."
+          resetAction={
+            settings.terminalShell !== DEFAULT_UNIFIED_SETTINGS.terminalShell ? (
+              <SettingResetButton
+                label="terminal shell"
+                onClick={() =>
+                  updateSettings({ terminalShell: DEFAULT_UNIFIED_SETTINGS.terminalShell })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.terminalShell}
+              onValueChange={(value) => {
+                if (value === "system" || value === "zsh" || value === "bash" || value === "fish") {
+                  updateSettings({ terminalShell: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Terminal shell">
+                <SelectValue>
+                  {TERMINAL_SHELL_LABELS[settings.terminalShell]}
+                  {terminalShellOptions.some(
+                    (option) => option.value === settings.terminalShell && !option.installed,
+                  )
+                    ? " (not installed)"
+                    : ""}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {terminalShellOptions.map((option) => (
+                  <SelectItem
+                    disabled={!option.installed}
+                    hideIndicator
+                    key={option.value}
+                    value={option.value}
+                  >
+                    {TERMINAL_SHELL_LABELS[option.value]}
+                    {!option.installed ? " (not installed)" : ""}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }
