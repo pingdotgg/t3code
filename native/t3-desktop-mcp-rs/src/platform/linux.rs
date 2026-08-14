@@ -356,20 +356,29 @@ impl LinuxDesktop {
     }
 
     fn tap_keycode(&self, keycode: Keycode, shift: bool) -> Result<()> {
-        let shift_code = self
-            .keycode_for(0xffe1 /* Shift_L */)?
-            .map(|(code, _)| code);
-        let shift_held = if shift && let Some(code) = shift_code {
-            match self.key(code, true) {
-                Ok(()) => true,
-                Err(error) => return Err(error),
-            }
+        let shift_code = if shift {
+            // Prefer Shift_L, then Shift_R — never send an unshifted key when
+            // the caller asked for Shift (that types the wrong character).
+            Some(
+                self.keycode_for(0xffe1 /* Shift_L */)?
+                    .or(self.keycode_for(0xffe2 /* Shift_R */)?)
+                    .map(|(code, _)| code)
+                    .ok_or_else(|| {
+                        DesktopError::new(
+                            "Shift is required for this character but no Shift key is available \
+                             on the current keyboard layout",
+                        )
+                    })?,
+            )
         } else {
-            false
+            None
         };
+        if let Some(code) = shift_code {
+            self.key(code, true)?;
+        }
         let tapped = self.key(keycode, true).and_then(|()| self.key(keycode, false));
         // Always release Shift if we pressed it, even when the key tap fails.
-        if shift_held && let Some(code) = shift_code {
+        if let Some(code) = shift_code {
             let _ = self.key(code, false);
         }
         tapped
@@ -1022,7 +1031,16 @@ impl Desktop for LinuxDesktop {
             })?;
             held.push(code);
         }
-        if needs_shift && let Some((shift, _)) = self.keycode_for(0xffe1)? {
+        if needs_shift {
+            let (shift, _) = self
+                .keycode_for(0xffe1 /* Shift_L */)?
+                .or(self.keycode_for(0xffe2 /* Shift_R */)?)
+                .ok_or_else(|| {
+                    DesktopError::new(
+                        "Shift is required for this key but no Shift key is available \
+                         on the current keyboard layout",
+                    )
+                })?;
             held.push(shift);
         }
 
