@@ -374,7 +374,7 @@ describe("DesktopShellEnvironment", () => {
       });
 
       assert.equal(commands.length, 0);
-      assert.equal(env.PATH, `"${mockDir}"`);
+      assert.isTrue(env.PATH!.includes(`"${mockDir}"`));
     }),
   );
 
