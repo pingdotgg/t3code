@@ -57,6 +57,9 @@ pub fn run(root: PathBuf) -> Result<(), String> {
     let mut suppressed: u64 = 0;
     let mut last_sample_key = String::new();
     let mut events_file = open_segment(&root, &segment_id, &session_id, platform, segment_started)?;
+    // Retain the last successfully parsed control so a truncated mid-write
+    // control.json cannot reopen capture with default (enabled, no filters).
+    let mut last_good_control: Option<Control> = None;
 
     write_status(
         &root,
@@ -96,7 +99,17 @@ pub fn run(root: PathBuf) -> Result<(), String> {
     );
 
     loop {
-        let control = read_control(&root);
+        let control = match try_read_control(&root) {
+            Ok(next) => {
+                last_good_control = Some(next.clone());
+                next
+            }
+            Err(_) => last_good_control.clone().unwrap_or_else(|| Control {
+                // Fail closed when we have never seen a valid control file.
+                enabled: false,
+                ..Control::default()
+            }),
+        };
         if !control.enabled {
             write_status(
                 &root,
@@ -334,15 +347,14 @@ fn website_allowed(url_or_title: Option<&str>, app_name: &str, control: &Control
     }
 }
 
-fn read_control(root: &Path) -> Control {
+fn try_read_control(root: &Path) -> Result<Control, ()> {
     let path = root.join("control.json");
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Control::default();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
-        return Control::default();
-    };
-    Control {
+    let raw = fs::read_to_string(path).map_err(|_| ())?;
+    if raw.trim().is_empty() {
+        return Err(());
+    }
+    let value = serde_json::from_str::<Value>(&raw).map_err(|_| ())?;
+    Ok(Control {
         enabled: value
             .get("enabled")
             .and_then(Value::as_bool)
@@ -381,7 +393,7 @@ fn read_control(root: &Path) -> Control {
                     .collect()
             })
             .unwrap_or_default(),
-    }
+    })
 }
 
 fn open_segment(
