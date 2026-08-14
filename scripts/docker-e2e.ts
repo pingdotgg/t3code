@@ -172,14 +172,20 @@ async function main(): Promise<void> {
       ...options,
       env: composeEnvironment,
     });
+  let ownsBuildContextCanary = false;
 
   console.log(`Docker E2E project: ${projectName}`);
   try {
     try {
-      await readFile(buildContextCanaryRoot);
-      throw new Error(`Refusing to replace existing path: ${buildContextCanaryRoot}`);
+      await mkdir(buildContextCanaryRoot);
+      ownsBuildContextCanary = true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new Error(`Refusing to replace existing path: ${buildContextCanaryRoot}`, {
+          cause: error,
+        });
+      }
+      throw error;
     }
     for (const path of buildContextCanaries) {
       await mkdir(dirname(path), { recursive: true });
@@ -322,8 +328,10 @@ async function main(): Promise<void> {
     }
     await compose(["down", "--volumes", "--remove-orphans"], { tolerateFailure: true });
     await run("docker", ["image", "rm", imageName], { tolerateFailure: true });
-    assertSafeBuildCanaryPath(buildContextCanaryRoot);
-    await rm(buildContextCanaryRoot, { recursive: true, force: true });
+    if (ownsBuildContextCanary) {
+      assertSafeBuildCanaryPath(buildContextCanaryRoot);
+      await rm(buildContextCanaryRoot, { recursive: true, force: true });
+    }
     assertSafeCleanupPath(tempRoot);
     await rm(tempRoot, { recursive: true, force: true });
   }
