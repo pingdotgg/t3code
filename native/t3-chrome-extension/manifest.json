@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "T3 Code Desktop Control",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Lets T3 Code agents work in their own tab group, in your signed-in browser, without touching your tabs.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlKKDWohdbduAaQO52AeI5OdBddEOMr4t2bu/jMeefnDjKLvmPNfjiOUUAKO10LkZNAyQL/IYJRizD2Ps1DqMIHADTdl/ihLQe5GPxOsswNo75oqpVcvpcfKsVRk0g5c3bAnedTaHe8zu37cyLIovKjdlrlcvtavKngJmG9JJfKKPmjZUqriGNA6mRqcUYo75+xppeKg7UJGyVSDvJOyx7SQHebbSN5bxWtT7cdvaNHq1MyqcIML/5LlQxh9vznZlKie7tQQAeDQENPrWzJ51X0YvoJUZWjhog967Wbasi7zVgsrFfcVe0VZBi6Ccsxg2K6DUCa6ZcAI5S/lAZ7uC8QIDAQAB",
   "minimum_chrome_version": "116",
