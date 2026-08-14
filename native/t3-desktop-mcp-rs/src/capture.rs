@@ -37,10 +37,12 @@ fn guarded<T>(what: &str, call: impl FnOnce() -> Result<T>) -> Result<T> {
 /// panics outright on compositors whose protocol version it does not know —
 /// WSLg among them — while the X11 path works fine there through XWayland.
 /// Restores the variable afterwards so nothing else sees the change.
-struct PreferX11(Option<std::ffi::OsString>);
+/// Public so window enumeration used by activate/raise can share the same X11
+/// preference as screenshots (WSLg / hybrid sessions).
+pub(crate) struct PreferX11(Option<std::ffi::OsString>);
 
 impl PreferX11 {
-    fn engage() -> Option<Self> {
+    pub(crate) fn engage() -> Option<Self> {
         if !cfg!(target_os = "linux") {
             return None;
         }

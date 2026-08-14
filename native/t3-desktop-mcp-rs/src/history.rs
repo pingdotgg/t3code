@@ -147,7 +147,11 @@ pub fn run(root: PathBuf) -> Result<(), String> {
         match sample_frontmost(&mut *desktop) {
             Ok(sample) => {
                 let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
-                    && website_allowed(sample.window_title.as_deref(), &control);
+                    && website_allowed(
+                        sample.window_title.as_deref(),
+                        &sample.app_name,
+                        &control,
+                    );
                 if !allowed {
                     suppressed += 1;
                 } else if sample.key != last_sample_key {
@@ -288,19 +292,35 @@ fn app_allowed(app_id: &str, app_name: &str, control: &Control) -> bool {
     }
 }
 
-fn website_allowed(url_or_title: Option<&str>, control: &Control) -> bool {
+fn website_allowed(url_or_title: Option<&str>, app_name: &str, control: &Control) -> bool {
     let Some(raw) = url_or_title else {
         return true;
     };
     let lowered = raw.to_lowercase();
-    if lowered.contains("chrome://newtab")
-        || lowered.contains("about:privatebrowsing")
-        || lowered.contains("edge://newtab")
-        || lowered.contains("(private)")
-        || lowered.contains("incognito")
-        || lowered.contains("inprivate")
+    let app = app_name.to_lowercase();
+    let is_browser = ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera"]
+        .iter()
+        .any(|needle| app.contains(needle));
+    let looks_url = lowered.contains("://")
+        || lowered.starts_with("about:")
+        || lowered.starts_with("chrome:")
+        || lowered.starts_with("edge:")
+        || lowered.starts_with("brave:");
+    // Private-browsing markers only apply to browser contexts — never to every
+    // desktop window title that happens to contain "private".
+    if is_browser
+        && (lowered.contains("chrome://newtab")
+            || lowered.contains("about:privatebrowsing")
+            || lowered.contains("edge://newtab")
+            || lowered.contains("(private)")
+            || lowered.contains("incognito")
+            || lowered.contains("inprivate"))
     {
         return false;
+    }
+    // Site include/exclude lists only apply to URL-like haystacks.
+    if !looks_url {
+        return true;
     }
     let needles: Vec<String> = control.websites.iter().map(|s| s.to_lowercase()).collect();
     if needles.is_empty() {

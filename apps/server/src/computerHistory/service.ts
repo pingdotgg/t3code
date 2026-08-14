@@ -88,6 +88,3 @@ export const layer = Layer.effectDiscard(
     ).pipe(Effect.forkScoped);
   }),
 );
-
-/** @deprecated Prefer {@link layer}. */
-export const ComputerHistoryRuntimeLive = layer;
