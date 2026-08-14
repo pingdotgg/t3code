@@ -52,7 +52,12 @@ const VSCODE_DARK = {
     "list.hoverBackground": "#1f3e5e59",
     "list.activeSelectionBackground": "#1f3e5e99",
   },
-  tokenColors: [],
+  tokenColors: [
+    {
+      scope: "comment",
+      settings: { foreground: "#6a737d" },
+    },
+  ],
 };
 
 describe("VS Code theme import", () => {
@@ -80,6 +85,23 @@ describe("VS Code theme import", () => {
     expect(asHex(theme.colors.accent)).toBe("#69b1ff");
     expect(asHex(theme.colors.sidebar)).toBe("#101010");
     expect(asHex(theme.colors.terminalBackground)).toBe("#101010");
+  });
+
+  it("keeps tokenColors on the imported theme", () => {
+    const theme = parseVsCodeThemeFile(VSCODE_DARK);
+    expect(theme.syntax?.dark).toEqual({
+      tokenColors: [
+        {
+          scope: "comment",
+          settings: { foreground: "#6a737d" },
+        },
+      ],
+      colors: {
+        "editor.foreground": "#d4d4d4",
+        "editor.background": "#171717",
+      },
+    });
+    expect(asHex(theme.colors.canvas)).toBe("#171717");
   });
 
   it("flattens alpha overlays onto the surface they sit on", () => {
@@ -202,6 +224,29 @@ describe("VS Code theme import", () => {
     expect(asHex(github.colors.canvas)).toBe("#fdfdfd");
     // The unpaired dimmed variant stays a single dark theme.
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
+  });
+
+  it("pairs light and dark tokenColors onto one theme", () => {
+    const make = (name: string, type: "light" | "dark", color: string) =>
+      parseVsCodeThemeFile({
+        name,
+        type,
+        colors: {
+          "editor.background": type === "dark" ? "#101014" : "#fdfdfd",
+          "editor.foreground": type === "dark" ? "#e6e6e6" : "#1f1f1f",
+        },
+        tokenColors: [{ scope: "comment", settings: { foreground: color } }],
+      });
+    const [theme] = pairVsCodeThemes([
+      make("nord-dark", "dark", "#616e88"),
+      make("nord-light", "light", "#4c566a"),
+    ]);
+    expect(theme?.syntax?.light?.tokenColors).toEqual([
+      { scope: "comment", settings: { foreground: "#4c566a" } },
+    ]);
+    expect(theme?.syntax?.dark?.tokenColors).toEqual([
+      { scope: "comment", settings: { foreground: "#616e88" } },
+    ]);
   });
 
   it("does not guess when a family is ambiguous", () => {

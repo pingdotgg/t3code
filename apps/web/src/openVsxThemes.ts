@@ -328,6 +328,26 @@ function parseJsoncObject(source: string, description: string): Record<string, u
   return value;
 }
 
+function sanitizeTokenColors(value: unknown): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tokenColors: unknown[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    tokenColors.push(entry);
+    if (tokenColors.length >= 4_000) break;
+  }
+  return tokenColors.length > 0 ? tokenColors : undefined;
+}
+
+function sanitizeSemanticTokenColors(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const semanticTokenColors: Record<string, unknown> = {};
+  for (const [key, color] of Object.entries(value)) {
+    if (key.length > 0 && key.length <= 128) semanticTokenColors[key] = color;
+  }
+  return Object.keys(semanticTokenColors).length > 0 ? semanticTokenColors : undefined;
+}
+
 function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unknown> {
   const colors: Record<string, string> = {};
   if (isRecord(value.colors)) {
@@ -341,9 +361,13 @@ function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unk
       }
     }
   }
+  const tokenColors = sanitizeTokenColors(value.tokenColors);
+  const semanticTokenColors = sanitizeSemanticTokenColors(value.semanticTokenColors);
   return {
     ...(typeof value.include === "string" ? { include: value.include } : {}),
     colors,
+    ...(tokenColors ? { tokenColors } : {}),
+    ...(semanticTokenColors ? { semanticTokenColors } : {}),
   };
 }
 
@@ -559,7 +583,7 @@ async function loadThemeObject(
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(path);
   const base = await loadThemeObject(zip, includePath, cache, budget, nextAncestors, signal);
-  const resolved = {
+  const resolved: Record<string, unknown> = {
     ...base,
     ...value,
     colors: {
@@ -567,6 +591,18 @@ async function loadThemeObject(
       ...(isRecord(value.colors) ? value.colors : {}),
     },
   };
+  const tokenColors = [
+    ...(Array.isArray(base.tokenColors) ? base.tokenColors : []),
+    ...(Array.isArray(value.tokenColors) ? value.tokenColors : []),
+  ];
+  const semanticTokenColors = {
+    ...(isRecord(base.semanticTokenColors) ? base.semanticTokenColors : {}),
+    ...(isRecord(value.semanticTokenColors) ? value.semanticTokenColors : {}),
+  };
+  if (tokenColors.length > 0) resolved.tokenColors = tokenColors;
+  if (Object.keys(semanticTokenColors).length > 0) {
+    resolved.semanticTokenColors = semanticTokenColors;
+  }
   cache.set(path, resolved);
   return resolved;
 }

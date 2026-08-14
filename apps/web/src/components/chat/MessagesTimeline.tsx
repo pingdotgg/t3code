@@ -39,11 +39,7 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
-import {
-  getRenderablePatch,
-  resolveDiffThemeName,
-  resolveFileDiffPath,
-} from "../../lib/diffRendering";
+import { getRenderablePatch, resolveFileDiffPath } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
@@ -106,6 +102,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
+import { useDiffThemeName } from "../../hooks/useDiffTheme";
 
 import {
   buildInlineTerminalContextText,
@@ -1831,6 +1828,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 
 function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
   const ctx = use(TimelineRowCtx);
+  const diffThemeName = useDiffThemeName();
   const fenceLanguage = comment.fenceLanguage ?? "diff";
   const renderablePatch = getRenderablePatch(
     buildReviewCommentRenderablePatch(comment),
@@ -1869,7 +1867,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
             options={{
               collapsed: false,
               diffStyle: "unified",
-              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              theme: diffThemeName,
             }}
           />
         ))}

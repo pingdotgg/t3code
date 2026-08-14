@@ -301,6 +301,12 @@ describe("Open VSX themes", () => {
           "editor.foreground": "#eeeeee",
           "focusBorder": "#8b5cf6",
         },
+        "tokenColors": [
+          {
+            "scope": "comment",
+            "settings": { "foreground": "#6a737d" }
+          }
+        ]
       }`,
     );
     zip.file(
@@ -405,6 +411,12 @@ describe("Open VSX themes", () => {
     expect(themeColorToHex(paired.colors.canvas)).toBe("#fafafa");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.canvas)).toBe("#111111");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.text)).toBe("#eeeeee");
+    expect(paired.syntax?.dark?.tokenColors).toEqual([
+      {
+        scope: "comment",
+        settings: { foreground: "#6a737d" },
+      },
+    ]);
 
     packagedManifest.contributes.themes[0]!.label = "Renamed Dark";
     packagedManifest.contributes.themes[1]!.label = "Renamed Light";

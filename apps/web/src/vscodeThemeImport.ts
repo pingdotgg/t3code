@@ -8,6 +8,7 @@ import {
   type ThemeColorRole,
   type ThemeDefinition,
 } from "./themePalette";
+import { extractVsCodeSyntax, mergeThemeSyntax, type ThemeSyntax } from "./themeSyntax";
 
 /**
  * Best-effort import of a VS Code color theme (`*-color-theme.json`).
@@ -321,11 +322,16 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
 
   // Reuse the theme-file parser so ids, names, and color values go through the
   // same validation as a hand-written file.
+  const syntaxSnippet = extractVsCodeSyntax(value);
+  const syntax: ThemeSyntax | undefined = syntaxSnippet
+    ? { [appearance]: syntaxSnippet }
+    : undefined;
   return parseThemeFile({
     version: THEME_FILE_VERSION,
     name: resolveName(value),
     appearance,
     colors: { ...derived, ...overrides },
+    ...(syntax ? { syntax } : {}),
   });
 }
 
@@ -371,6 +377,7 @@ export function pairVsCodeThemes(
     // than failing the whole batch.
     if (group.light.length === 1 && group.dark.length === 1) {
       try {
+        const syntax = mergeThemeSyntax(group.light[0]!.syntax, group.dark[0]!.syntax);
         paired.push({
           order: group.order,
           theme: parseThemeFile({
@@ -380,6 +387,7 @@ export function pairVsCodeThemes(
             appearance: "light",
             colors: group.light[0]!.colors,
             variants: { dark: group.dark[0]!.colors },
+            ...(syntax ? { syntax } : {}),
           }),
         });
         continue;
@@ -414,6 +422,7 @@ export function resolveThemeLabelCollisions(
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
     } catch {

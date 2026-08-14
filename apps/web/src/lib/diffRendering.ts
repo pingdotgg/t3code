@@ -1,16 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 
-export const DIFF_THEME_NAMES = {
-  light: "pierre-light",
-  dark: "pierre-dark",
-} as const;
-
-export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
-
-export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
-}
+export { DIFF_THEME_NAMES, resolveDiffThemeName, type DiffThemeName } from "./syntaxThemeRuntime";
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
 const FNV_PRIME_32 = 0x01000193;

@@ -21,9 +21,9 @@ import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { useClientSettings } from "~/hooks/useSettings";
-import { useTheme } from "~/hooks/useTheme";
+import { useDiffTheme } from "~/hooks/useDiffTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
-import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
+import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -387,7 +387,6 @@ interface EditableFileSurfaceProps {
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
-  resolvedTheme: "light" | "dark";
   revealRequestId: number;
   wordWrap: boolean;
   onPostRender: FilePostRender;
@@ -436,12 +435,12 @@ function EditableFileSurface({
   relativePath,
   composerDraftTarget,
   contents,
-  resolvedTheme,
   revealRequestId,
   wordWrap,
   onPostRender,
   onPendingChange,
 }: EditableFileSurfaceProps) {
+  const { appearance, themeName: diffThemeName } = useDiffTheme();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
@@ -668,8 +667,8 @@ function EditableFileSurface({
               onLineSelectionChange: setSelectedRange,
               onLineSelectionEnd: handleLineSelectionEnd,
               overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
-              themeType: resolvedTheme,
+              theme: diffThemeName,
+              themeType: appearance,
               unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
               onPostRender: handlePostRender,
             }}
@@ -708,12 +707,7 @@ function RenderedMarkdownSurface({
   onPendingChange,
 }: Omit<
   EditableFileSurfaceProps,
-  | "resolvedTheme"
-  | "composerDraftTarget"
-  | "revealLine"
-  | "revealRequestId"
-  | "wordWrap"
-  | "onPostRender"
+  "composerDraftTarget" | "revealLine" | "revealRequestId" | "wordWrap" | "onPostRender"
 > & {
   threadRef: ScopedThreadRef;
 }) {
@@ -768,7 +762,7 @@ export default function FilePreviewPanel({
   onOpenFile,
   onPendingChange,
 }: FilePreviewPanelProps) {
-  const { resolvedTheme } = useTheme();
+  const { appearance: resolvedTheme, themeName: diffThemeName } = useDiffTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1008,7 +1002,7 @@ export default function FilePreviewPanel({
               />
             ) : file.data.truncated ? (
               <Virtualizer
-                key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
+                key={`${relativePath}:${diffThemeName}:${file.data.byteLength}`}
                 className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
                 config={{
                   overscrollSize: 600,
@@ -1024,7 +1018,7 @@ export default function FilePreviewPanel({
                   options={{
                     disableFileHeader: true,
                     overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
+                    theme: diffThemeName,
                     themeType: resolvedTheme,
                     unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
                     onPostRender: onFilePostRender,
@@ -1034,13 +1028,12 @@ export default function FilePreviewPanel({
               </Virtualizer>
             ) : (
               <EditableFileSurface
-                key={`${relativePath}:${resolvedTheme}`}
+                key={`${relativePath}:${diffThemeName}`}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}
                 composerDraftTarget={composerDraftTarget}
                 contents={file.data.contents}
-                resolvedTheme={resolvedTheme}
                 revealRequestId={revealRequestId}
                 wordWrap={wordWrap}
                 onPostRender={onFilePostRender}

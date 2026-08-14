@@ -60,12 +60,12 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
-import { useTheme } from "../hooks/useTheme";
+import { useDiffTheme } from "../hooks/useDiffTheme";
 import { getClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
@@ -749,7 +749,7 @@ function UncachedShikiCodeBlock({
   cacheKey,
   isStreaming,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
+  const highlighter = use(getSyntaxHighlighterPromise(language, themeName));
   const highlightedHtml = useMemo(() => {
     try {
       return highlighter.codeToHtml(code, { lang: language, theme: themeName });
@@ -1328,7 +1328,7 @@ function ChatMarkdown({
   className,
   lineBreaks = false,
 }: ChatMarkdownProps) {
-  const { resolvedTheme } = useTheme();
+  const { appearance: resolvedTheme, themeName: diffThemeName } = useDiffTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1342,7 +1342,6 @@ function ChatMarkdown({
     environmentId,
     serverConfig?.availableEditors ?? [],
   );
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,

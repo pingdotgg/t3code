@@ -278,11 +278,7 @@ function OpenContentSearchDialog(props: {
                         {match.lineNumber}
                       </span>
                       <span className="min-w-0 flex-1 truncate whitespace-pre">
-                        <HighlightedSearchLine
-                          match={match}
-                          path={group.path}
-                          theme={resolvedTheme}
-                        />
+                        <HighlightedSearchLine match={match} path={group.path} />
                       </span>
                     </button>
                   ))}

@@ -2,8 +2,9 @@ import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
+import { useDiffThemeName } from "../../hooks/useDiffTheme";
 import { useTheme } from "../../hooks/useTheme";
-import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
+import { type DiffThemeName } from "../../lib/diffRendering";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 // The font previews are the real surfaces, not lookalikes: the composer's
@@ -121,8 +122,7 @@ function StaticDiffHtml({ html }: { html: string }) {
 
 /** The diff panel's file diff, statically rendered by its real pipeline. */
 export function CodeFontPreview() {
-  const { resolvedTheme } = useTheme();
-  const themeName = resolveDiffThemeName(resolvedTheme);
+  const themeName = useDiffThemeName();
   const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
   useEffect(() => {
     let cancelled = false;

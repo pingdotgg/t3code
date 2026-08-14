@@ -2,7 +2,7 @@ import { getFiletypeFromFileName } from "@pierre/diffs";
 import type { ProjectContentMatch } from "@t3tools/contracts";
 import { memo, Suspense, use, useMemo, type CSSProperties } from "react";
 
-import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { useDiffThemeName } from "~/hooks/useDiffTheme";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
@@ -129,19 +129,19 @@ function SyntaxHighlightedTokens(props: {
   readonly line: string;
   readonly language: string;
   readonly ranges: ReadonlyArray<Range>;
-  readonly theme: "light" | "dark";
+  readonly themeName: string;
 }) {
-  const highlighter = use(getSyntaxHighlighterPromise(props.language));
+  const highlighter = use(getSyntaxHighlighterPromise(props.language, props.themeName));
   const tokens = useMemo(() => {
     try {
       return highlighter.codeToTokens(props.line, {
         lang: props.language,
-        theme: resolveDiffThemeName(props.theme),
+        theme: props.themeName,
       }).tokens[0];
     } catch {
       return undefined;
     }
-  }, [highlighter, props.language, props.line, props.theme]);
+  }, [highlighter, props.language, props.line, props.themeName]);
 
   return tokens ? (
     <HighlightedTokens line={props.line} ranges={props.ranges} tokens={tokens} />
@@ -157,8 +157,8 @@ function SyntaxHighlightedTokens(props: {
 export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: {
   readonly match: ProjectContentMatch;
   readonly path: string;
-  readonly theme: "light" | "dark";
 }) {
+  const themeName = useDiffThemeName();
   const ranges = useMemo(() => normalizeRanges(props.match), [props.match]);
   const fallback = (
     <HighlightedTokens
@@ -175,7 +175,7 @@ export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: 
           line={props.match.lineContent}
           language={getFiletypeFromFileName(props.path)}
           ranges={ranges}
-          theme={props.theme}
+          themeName={themeName}
         />
       </Suspense>
     </RenderErrorBoundary>

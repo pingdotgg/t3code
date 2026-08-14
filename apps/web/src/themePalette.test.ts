@@ -302,6 +302,51 @@ describe("theme files", () => {
     expect(parseThemeFile(JSON.parse(serialized)).collection).toEqual(theme.collection);
   });
 
+  it("round-trips VS Code syntax highlighting and keeps it off chrome edits", () => {
+    const syntax = {
+      dark: {
+        tokenColors: [
+          {
+            scope: ["comment"],
+            settings: { foreground: "#6272a4" },
+          },
+        ],
+        colors: { "editor.foreground": "#f8f8f2", "editor.background": "#282a36" },
+      },
+    };
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      id: "dracula",
+      name: "Dracula",
+      appearance: "dark",
+      colors: { canvas: "#282a36", accent: "#bd93f9" },
+      syntax,
+    });
+    expect(theme.syntax).toEqual(syntax);
+    const serialized = JSON.parse(serializeThemeFile(theme));
+    expect(serialized.syntax).toEqual(syntax);
+    expect(parseThemeFile(serialized).syntax).toEqual(syntax);
+
+    const chromeOnly = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      id: theme.id,
+      name: theme.label,
+      appearance: theme.appearance,
+      colors: { ...theme.colors, canvas: "#111111" },
+      syntax: theme.syntax,
+    });
+    expect(chromeOnly.syntax).toEqual(theme.syntax);
+    expect(chromeOnly.colors.canvas).not.toBe(theme.colors.canvas);
+
+    const withoutSyntax = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Plain",
+      appearance: "dark",
+      colors: { canvas: "#111111" },
+    });
+    expect(withoutSyntax.syntax).toBeUndefined();
+  });
+
   it("keeps sidebar artwork disabled for custom theme files", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,

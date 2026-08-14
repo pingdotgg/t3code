@@ -31,10 +31,10 @@ import {
 import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
- * A full theme export is a few KB, so anything past this is not a theme file.
- * The guard runs on the size before the bytes are ever read: a large file
- * would otherwise be pulled into memory, highlighted, and rendered, which
- * locks the UI for as long as that takes.
+ * Theme exports with editor highlighting can be tens of KB. Anything past this
+ * is not a theme file. The guard runs on the size before the bytes are ever
+ * read: a large file would otherwise be pulled into memory, highlighted, and
+ * rendered, which locks the UI for as long as that takes.
  */
 export const MAX_THEME_FILE_BYTES = 256 * 1024;
 
@@ -51,7 +51,7 @@ function formatByteSize(bytes: number): string {
 /** Returns the error to show for a file too large to be a theme, else null. */
 export function describeOversizedThemeFile(bytes: number): string | null {
   if (bytes <= MAX_THEME_FILE_BYTES) return null;
-  return `That file is ${formatByteSize(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatByteSize(MAX_THEME_FILE_BYTES)}).`;
+  return `That file is ${formatByteSize(bytes)}. Theme files must be under ${formatByteSize(MAX_THEME_FILE_BYTES)}, so this one was not read.`;
 }
 
 function escapeJsonHtml(value: string): string {
@@ -94,14 +94,20 @@ function highlightJson(value: string): string {
   return highlighted + escapeJsonHtml(value.slice(cursor));
 }
 
-function ThemeJsonEditor({
+export function ThemeJsonEditor({
   id,
   value,
   onChange,
+  placeholder,
+  "aria-label": ariaLabel,
+  compact = false,
 }: {
   id: string;
   value: string;
   onChange: (value: string) => void;
+  placeholder?: string;
+  "aria-label"?: string;
+  compact?: boolean;
 }) {
   const highlightRef = useRef<HTMLPreElement>(null);
   const isPlainText = value.length > MAX_HIGHLIGHTED_JSON_LENGTH;
@@ -129,15 +135,17 @@ function ThemeJsonEditor({
         </pre>
       )}
       <textarea
-        aria-label="Theme JSON"
+        aria-label={ariaLabel ?? "Theme JSON"}
         className={cn(
-          "relative z-10 block min-h-72 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-[12px] leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-accent/30",
+          "relative z-10 block w-full resize-y overflow-auto bg-transparent p-3 font-mono text-[12px] leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-accent/30",
+          compact ? "min-h-40" : "min-h-72",
           isPlainText ? "text-foreground" : "text-transparent selection:text-transparent",
         )}
         id={id}
         onChange={(event) => onChange(event.currentTarget.value)}
         onScroll={syncScroll}
         placeholder={
+          placeholder ??
           '{\n  "version": 1,\n  "name": "Aurora",\n  "appearance": "light",\n  "colors": { ... }\n}'
         }
         spellCheck={false}
@@ -331,6 +339,7 @@ export function ThemeImportDialog({
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
       if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
@@ -342,6 +351,7 @@ export function ThemeImportDialog({
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
       if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;

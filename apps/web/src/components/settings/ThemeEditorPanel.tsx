@@ -25,12 +25,23 @@ import {
   type ThemeColorRole,
   type ThemeDefinition,
 } from "../../themePalette";
+import {
+  applySyntaxThemeJson,
+  formatSyntaxThemeJson,
+  mergeThemeSyntax,
+  SYNTAX_THEME_JSON_PLACEHOLDER,
+  syntaxFromAppearances,
+  type VsCodeSyntaxTheme,
+} from "../../themeSyntax";
+import { applySyntaxThemePreview } from "../../lib/syntaxThemeRuntime";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { getThemeRoleLabel, ThemeColorField } from "./ThemeColorPicker";
+import { ThemeJsonEditor } from "./ThemeImportDialog";
+import { CodeFontPreview } from "./SettingsFontPreviews";
 import {
   clearThemeInspectorHover,
   clearThemeInspectorHighlights,
@@ -173,6 +184,13 @@ export function ThemeEditorPanel({
     Record<ThemeAppearance, boolean>
   >({ light: false, dark: false });
   const [error, setError] = useState<string | null>(null);
+  const [syntaxJsonByAppearance, setSyntaxJsonByAppearance] = useState<
+    Record<ThemeAppearance, string>
+  >({ light: "", dark: "" });
+  const [syntaxByAppearance, setSyntaxByAppearance] = useState<
+    Partial<Record<ThemeAppearance, VsCodeSyntaxTheme>>
+  >({});
+  const [syntaxError, setSyntaxError] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [roleQuery, setRoleQuery] = useState("");
   const [isInspecting, setIsInspecting] = useState(false);
@@ -266,6 +284,15 @@ export function ThemeEditorPanel({
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
       setSimpleColorsDirtyByAppearance({ light: false, dark: false });
       setColorsByAppearance(nextColors);
+      setSyntaxJsonByAppearance({
+        light: formatSyntaxThemeJson(sourceTheme?.syntax?.light),
+        dark: formatSyntaxThemeJson(sourceTheme?.syntax?.dark),
+      });
+      setSyntaxByAppearance({
+        ...(sourceTheme?.syntax?.light ? { light: sourceTheme.syntax.light } : {}),
+        ...(sourceTheme?.syntax?.dark ? { dark: sourceTheme.syntax.dark } : {}),
+      });
+      setSyntaxError(null);
       setSelectedRole(null);
       setUsageCount(null);
       setIsInspecting(false);
@@ -330,7 +357,14 @@ export function ThemeEditorPanel({
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
     applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
-  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
+    applySyntaxThemePreview(syntaxByAppearance[activeAppearance], activeAppearance);
+  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open, syntaxByAppearance]);
+
+  useEffect(() => {
+    if (!open || !isDraftSeeded) return;
+    const result = applySyntaxThemeJson(syntaxJsonByAppearance[activeAppearance]);
+    setSyntaxError(result.ok ? null : result.error);
+  }, [activeAppearance, isDraftSeeded, open, syntaxJsonByAppearance]);
 
   useEffect(() => {
     if (!open) return;
@@ -580,6 +614,28 @@ export function ThemeEditorPanel({
     };
   }, [clearInspectorSelection, isInspecting, open, selectThemeRole]);
 
+  const handleSyntaxJsonChange = useCallback(
+    (value: string) => {
+      setSyntaxJsonByAppearance((current) => ({
+        ...current,
+        [activeAppearance]: value,
+      }));
+      const result = applySyntaxThemeJson(value);
+      if (!result.ok) {
+        setSyntaxError(result.error);
+        return;
+      }
+      setSyntaxError(null);
+      setSyntaxByAppearance((current) => {
+        const next = { ...current };
+        if (result.syntax) next[activeAppearance] = result.syntax;
+        else delete next[activeAppearance];
+        return next;
+      });
+    },
+    [activeAppearance],
+  );
+
   const handleAdvancedChange = useCallback(
     (checked: boolean) => {
       setIsAdvanced(checked);
@@ -629,6 +685,8 @@ export function ThemeEditorPanel({
               : colorsByAppearance.dark,
           }
         : colorsByAppearance;
+      const editedModes = editingTheme ? getThemeModes(editingTheme) : [activeAppearance];
+      const draftSyntax = syntaxFromAppearances(syntaxByAppearance, editedModes);
 
       let savedTheme: ThemeDefinition;
       let mergedAppearance: ThemeAppearance | null = null;
@@ -638,13 +696,13 @@ export function ThemeEditorPanel({
         // into it and the edited entry retires, so both cards become one.
         // Colliding palettes cannot merge — neither side should be silently
         // overwritten.
-        const editedModes = getThemeModes(editingTheme);
         const collision = editedModes.find((mode) => takenAppearances.includes(mode));
         if (collision) {
           setError(`“${mergeTarget.label}” already has a ${collision} palette. Pick another name.`);
           return;
         }
         mergedAppearance = editedModes[0] ?? null;
+        const syntax = mergeThemeSyntax(mergeTarget.syntax, draftSyntax);
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
             version: THEME_FILE_VERSION,
@@ -656,6 +714,7 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
+            ...(syntax ? { syntax } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
@@ -687,6 +746,7 @@ export function ThemeEditorPanel({
             ...(getThemeModes(editingTheme).length > 1
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
+            ...(draftSyntax ? { syntax: draftSyntax } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
@@ -703,6 +763,7 @@ export function ThemeEditorPanel({
         // survives when every palette in the theme came from the guided
         // editor.
         mergedAppearance = activeAppearance;
+        const syntax = mergeThemeSyntax(mergeTarget.syntax, draftSyntax);
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
             version: THEME_FILE_VERSION,
@@ -714,6 +775,7 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
+            ...(syntax ? { syntax } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
@@ -725,6 +787,7 @@ export function ThemeEditorPanel({
             name,
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
+            ...(draftSyntax ? { syntax: draftSyntax } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
         );
@@ -1082,6 +1145,28 @@ export function ThemeEditorPanel({
               {renderColorsHeader()}
               {renderColorFields()}
             </div>
+            <section className="space-y-2">
+              <div>
+                <h3 className="text-sm font-medium">Syntax highlighting</h3>
+                <p className="text-xs text-muted-foreground">
+                  VS Code tokenColors for diffs and code. Chrome colors never rewrite this.
+                </p>
+              </div>
+              {syntaxError ? (
+                <p aria-live="polite" className="text-sm text-destructive">
+                  {syntaxError}
+                </p>
+              ) : null}
+              <ThemeJsonEditor
+                compact
+                aria-label="Syntax highlighting JSON"
+                id="theme-syntax-json-editor"
+                onChange={handleSyntaxJsonChange}
+                placeholder={SYNTAX_THEME_JSON_PLACEHOLDER}
+                value={syntaxJsonByAppearance[activeAppearance]}
+              />
+              <CodeFontPreview />
+            </section>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>

@@ -28,13 +28,12 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
-import { useTheme } from "../hooks/useTheme";
+import { useDiffTheme } from "../hooks/useDiffTheme";
 import {
   buildFileDiffRenderKey,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
-  resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
@@ -99,7 +98,7 @@ export default function DiffPanel({
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
 }: DiffPanelProps) {
-  const { resolvedTheme } = useTheme();
+  const { appearance: resolvedTheme, themeName: diffThemeName } = useDiffTheme();
   const settings = useClientSettings();
   const [initialGitScope] = useState(initialGitScopeProp);
   const diffRenderMode = useDiffPanelStore((state) => state.diffRenderMode);
@@ -938,7 +937,7 @@ export default function DiffPanel({
                     diffStyle: diffRenderMode === "split" ? "split" : "unified",
                     lineDiffType: "none",
                     overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
+                    theme: diffThemeName,
                     themeType: resolvedTheme as DiffThemeType,
                     stickyHeaders: true,
                     ...(loadDiffFiles ? { loadDiffFiles } : {}),
