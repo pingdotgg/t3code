@@ -20,7 +20,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, EnumWindows,
+    ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, EnumWindows, GetClassNameW,
     GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SW_RESTORE, SetForegroundWindow,
     ShowWindow, WindowFromPoint, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN,
     WM_RBUTTONUP,
@@ -145,6 +145,18 @@ impl WindowsDesktop {
         }
     }
 
+    /// Chromium / Electron ignore posted `WM_*BUTTON*` messages, so
+    /// `PostMessageW` can "succeed" without delivering a real click.
+    fn ignores_posted_mouse(hwnd: HWND) -> bool {
+        let mut buf = [0u16; 256];
+        let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+        if len == 0 {
+            return false;
+        }
+        let class = String::from_utf16_lossy(&buf[..len as usize]);
+        class.starts_with("Chrome_") || class.starts_with("Chrome_WidgetWin")
+    }
+
     /// Deliver a left/right click via posted mouse messages so the system
     /// cursor does not move. Many Win32 apps honor this; Chromium and
     /// DirectInput often do not — callers fall back to the cursor path.
@@ -154,6 +166,11 @@ impl WindowsDesktop {
         let Some(hwnd) = Self::hwnd_at_screen(sx, sy) else {
             return false;
         };
+        // Refuse a false success on targets that ignore posted mouse messages
+        // so callers take the synthetic-cursor path instead.
+        if Self::ignores_posted_mouse(hwnd) {
+            return false;
+        }
         let mut client = POINT { x: sx, y: sy };
         if !unsafe { ScreenToClient(hwnd, &mut client) }.as_bool() {
             return false;
@@ -358,6 +375,10 @@ impl Desktop for WindowsDesktop {
         self.registry.clear();
         let mut next_id = 0u32;
         let mut lines = vec![format!("{app} (pid {pid}), {} window(s)", windows.len())];
+        // One shared element budget across every window — recreating the walk
+        // buffer per window would let multi-window apps emit
+        // windows.len() * max_elements rows.
+        let mut element_lines = Vec::new();
 
         for (index, window) in windows.iter().enumerate() {
             let element = match self
@@ -370,16 +391,16 @@ impl Desktop for WindowsDesktop {
             let title = element.get_name().unwrap_or_default();
             lines.push(String::new());
             lines.push(format!("── window {index}: \"{title}\""));
-            let mut window_lines = Vec::new();
+            let window_start = element_lines.len();
             self.walk(
                 &element,
                 0,
                 max_depth,
                 max_elements,
                 &mut next_id,
-                &mut window_lines,
+                &mut element_lines,
             );
-            lines.extend(window_lines);
+            lines.extend(element_lines[window_start..].iter().cloned());
         }
 
         if next_id == 0 {

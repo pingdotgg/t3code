@@ -627,14 +627,18 @@ fn cursor_rgba() -> &'static [(u8, u8, u8, u8)] {
 
 fn blit_cursor_png(buf: &mut [u8], tip: (f64, f64), sx: f64, sy: f64, cos_t: f64, sin_t: f64) {
     let pixels = cursor_rgba();
+    // Large travel spikes can drive scale ≤ 0 (div-by-zero / mirrored sprite)
+    // or make the scan radius cover millions of off-frame pixels.
+    let sx = sx.max(0.01);
+    let sy = sy.max(0.01);
     let inv_det = 1.0 / (sx * sy);
     let isx = sy * inv_det;
     let isy = sx * inv_det;
     let radius = (SIDE as f64) * 0.55 * sx.max(sy);
-    let min_x = (tip.0 - radius).floor() as i32;
-    let max_x = (tip.0 + radius).ceil() as i32;
-    let min_y = (tip.1 - radius).floor() as i32;
-    let max_y = (tip.1 + radius).ceil() as i32;
+    let min_x = (tip.0 - radius).floor().max(0.0) as i32;
+    let max_x = (tip.0 + radius).ceil().min((SIDE - 1) as f64) as i32;
+    let min_y = (tip.1 - radius).floor().max(0.0) as i32;
+    let max_y = (tip.1 + radius).ceil().min((SIDE - 1) as f64) as i32;
 
     for y in min_y..=max_y {
         for x in min_x..=max_x {

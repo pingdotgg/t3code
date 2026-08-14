@@ -1682,6 +1682,16 @@ export const makeCodexSessionRuntime = (
           });
           return next;
         });
+        yield* Ref.update(approvalCorrelationsRef, (current) => {
+          const next = new Map(current);
+          next.set(payload.serverName, {
+            requestId,
+            requestKind,
+            turnId,
+            itemId: undefined,
+          });
+          return next;
+        });
 
         yield* emitEvent({
           kind: "request",
