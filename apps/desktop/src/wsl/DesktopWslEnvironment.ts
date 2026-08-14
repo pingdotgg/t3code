@@ -229,15 +229,18 @@ const NODE_PTY_PROBE_SCRIPT = (
 printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
-// The server bundle externalizes its deps to node_modules, and the WSL Node
-// can't read inside app.asar, so confirm those deps are unpacked on the real
-// filesystem before reporting the backend healthy. "effect" is the framework
-// every server module imports; resolving it validates the whole node_modules
-// tree. Exit 3 marks this distinct from a node-pty problem so the caller can
-// report it accurately instead of letting the server crash on
-// ERR_MODULE_NOT_FOUND at launch (which, in wsl-only mode, would just fail to
-// launch with no fallback).
-try { require.resolve("effect"); } catch (_e) { process.exit(3); }
+// The WSL Node can't read inside app.asar, so confirm what the server needs is
+// unpacked on the real filesystem before reporting the backend healthy. Exit 3
+// marks this distinct from a node-pty prebuild problem so the caller can report
+// it accurately instead of letting the server crash on ERR_MODULE_NOT_FOUND at
+// launch (which, in wsl-only mode, would just fail to launch with no fallback).
+//
+// The sentinel must be a package the CLI bundle leaves external. It used to be
+// "effect", back when the bundle externalized its runtime deps and the whole
+// node_modules tree was unpacked. The bundle now inlines its JS dependencies,
+// so "effect" no longer exists on disk and only the native packages do —
+// resolving node-pty is what actually validates the unpacked tree.
+try { require.resolve("node-pty/package.json"); } catch (_e) { process.exit(3); }
 const fs = require("node:fs");
 const path = require("node:path");
 const pkgDir = path.dirname(require.resolve("node-pty/package.json"));
@@ -462,16 +465,17 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    // Server dependencies (e.g. "effect") couldn't be resolved on the WSL
-    // filesystem — a packaging regression, since the server bundle needs its
-    // node_modules unpacked from the asar. Fatal so wsl-only mode falls back to
-    // Windows and dual mode surfaces the reason inline, instead of the server
-    // crash-looping on ERR_MODULE_NOT_FOUND once it actually launches.
+    // The packages the server bundle leaves external (node-pty and the other
+    // native addons) couldn't be resolved on the WSL filesystem — a packaging
+    // regression, since those must be unpacked from the asar. Fatal so wsl-only
+    // mode falls back to Windows and dual mode surfaces the reason inline,
+    // instead of the server crash-looping on ERR_MODULE_NOT_FOUND once it
+    // actually launches.
     if (probe.exitCode === 3) {
       return {
         ok: false,
         reason:
-          "WSL server dependencies could not be loaded (for example \"effect\"). The server's bundled node_modules is not readable by the WSL distro's Node — this is a packaging problem with this build. Please report it.",
+          'WSL server dependencies could not be loaded (for example "node-pty"). The native packages the server needs are not unpacked where the WSL distro\'s Node can read them — this is a packaging problem with this build. Please report it.',
         fatal: true,
       } as const;
     }
