@@ -211,6 +211,7 @@ function makeTestLayer(input: {
         }
         return { settings: desktopSettings, changed };
       }),
+    setLinuxNativeWindowFrame: () => Effect.die("unexpected Linux window frame change"),
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
     setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
@@ -367,6 +368,28 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
   });
 
 describe("DesktopWindow", () => {
+  it("uses native window decorations only when the Linux preference is enabled", () => {
+    assert.deepEqual(DesktopWindow.resolveWindowTitleBarOptions(false, "linux", true), {
+      frame: true,
+    });
+    assert.deepEqual(DesktopWindow.resolveWindowTitleBarOptions(false, "win32", true), {
+      titleBarStyle: "hidden",
+      titleBarOverlay: {
+        color: "#01000000",
+        height: 40,
+        symbolColor: "#1f2937",
+      },
+    });
+    assert.deepEqual(DesktopWindow.resolveWindowTitleBarOptions(false, "linux", false), {
+      titleBarStyle: "hidden",
+      titleBarOverlay: {
+        color: "#01000000",
+        height: 40,
+        symbolColor: "#1f2937",
+      },
+    });
+  });
+
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

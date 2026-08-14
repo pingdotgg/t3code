@@ -44,7 +44,7 @@ const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
-  "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
+  "frame" | "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
 >;
 
 type DesktopWindowRuntimeServices =
@@ -196,10 +196,15 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
-function getWindowTitleBarOptions(
+export function resolveWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
+  linuxNativeWindowFrame: boolean,
 ): WindowTitleBarOptions {
+  if (platform === "linux" && linuxNativeWindowFrame) {
+    return { frame: true };
+  }
+
   if (platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
@@ -209,18 +214,22 @@ function getWindowTitleBarOptions(
 
   return {
     titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: TITLEBAR_COLOR,
-      height: TITLEBAR_HEIGHT,
-      symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
-    },
+    titleBarOverlay: getTitleBarOverlay(shouldUseDarkColors),
   };
+}
+
+function getTitleBarOverlay(shouldUseDarkColors: boolean) {
+  return {
+    color: TITLEBAR_COLOR,
+    height: TITLEBAR_HEIGHT,
+    symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
+  } as const;
 }
 
 function syncWindowAppearance(
   window: Electron.BrowserWindow,
   shouldUseDarkColors: boolean,
-  platform: NodeJS.Platform,
+  usesTitleBarOverlay: boolean,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
     if (window.isDestroyed()) {
@@ -228,10 +237,10 @@ function syncWindowAppearance(
     }
 
     window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
-    if (typeof titleBarOverlay === "object") {
-      window.setTitleBarOverlay(titleBarOverlay);
+    if (!usesTitleBarOverlay) {
+      return;
     }
+    window.setTitleBarOverlay(getTitleBarOverlay(shouldUseDarkColors));
   });
 }
 
@@ -273,6 +282,7 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const windowsWithTitleBarOverlay = new WeakSet<Electron.BrowserWindow>();
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
   const dismissConnectingSplash = Effect.gen(function* () {
@@ -329,6 +339,11 @@ export const make = Effect.gen(function* () {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+    const titleBarOptions = resolveWindowTitleBarOptions(
+      shouldUseDarkColors,
+      environment.platform,
+      persistedSettings.linuxNativeWindowFrame,
+    );
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
@@ -343,7 +358,7 @@ export const make = Effect.gen(function* () {
       backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
       ...iconOption,
       title: environment.displayName,
-      ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
+      ...titleBarOptions,
       webPreferences: {
         preload: environment.preloadPath,
         backgroundThrottling: false,
@@ -353,6 +368,9 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
       },
     });
+    if (typeof titleBarOptions.titleBarOverlay === "object") {
+      windowsWithTitleBarOverlay.add(window);
+    }
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
@@ -859,7 +877,7 @@ export const make = Effect.gen(function* () {
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+        syncWindowAppearance(window, shouldUseDarkColors, windowsWithTitleBarOverlay.has(window)),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });

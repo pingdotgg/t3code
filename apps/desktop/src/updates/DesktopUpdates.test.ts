@@ -159,6 +159,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         get: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
         load: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
         setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
+        setLinuxNativeWindowFrame: () => Effect.die("unexpected Linux window frame change"),
         setServerExposureMode: () => Effect.die("unexpected server exposure update"),
         setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
         setUpdateChannel: () => Effect.fail(setUpdateChannelError),

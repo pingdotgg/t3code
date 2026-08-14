@@ -129,6 +129,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     };
   },
+  getLinuxNativeWindowFrame: () =>
+    ipcRenderer.invoke(IpcChannels.GET_LINUX_NATIVE_WINDOW_FRAME_CHANNEL),
+  setLinuxNativeWindowFrame: (enabled: boolean) =>
+    ipcRenderer.invoke(IpcChannels.SET_LINUX_NATIVE_WINDOW_FRAME_CHANNEL, enabled),
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),

@@ -939,6 +939,85 @@ function BackgroundActivityAdvancedDialog({
   );
 }
 
+function LinuxNativeWindowFrameSetting() {
+  const getLinuxNativeWindowFrame = window.desktopBridge?.getLinuxNativeWindowFrame;
+  const setLinuxNativeWindowFrame = window.desktopBridge?.setLinuxNativeWindowFrame;
+  const [enabled, setEnabled] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [supported, setSupported] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (
+      typeof getLinuxNativeWindowFrame !== "function" ||
+      typeof setLinuxNativeWindowFrame !== "function"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    void getLinuxNativeWindowFrame()
+      .then((current) => {
+        if (!cancelled) {
+          setSupported(current !== null);
+          if (current !== null) {
+            setEnabled(current);
+          }
+          setLoaded(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.error("Could not read the Linux native window frame setting.", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getLinuxNativeWindowFrame, setLinuxNativeWindowFrame]);
+
+  if (
+    typeof getLinuxNativeWindowFrame !== "function" ||
+    typeof setLinuxNativeWindowFrame !== "function" ||
+    !loaded ||
+    !supported
+  ) {
+    return null;
+  }
+
+  const updateNativeWindowFrame = (next: boolean) => {
+    setSaving(true);
+    void setLinuxNativeWindowFrame(next)
+      .then(setEnabled)
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not change window frame",
+            description: error instanceof Error ? error.message : "Desktop settings write failed.",
+          }),
+        );
+      })
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <SettingsRow
+      title="Use native window frame"
+      description="Let the Linux window manager draw the title bar and window controls. Requires a full restart."
+      control={
+        <Switch
+          checked={enabled}
+          disabled={saving}
+          onCheckedChange={(checked) => updateNativeWindowFrame(Boolean(checked))}
+          aria-label="Use native Linux window frame"
+        />
+      }
+    />
+  );
+}
+
 export function AppearanceSettingsPanel() {
   const {
     appearanceMode,
@@ -982,6 +1061,8 @@ export function AppearanceSettingsPanel() {
             onImportOpenChange={setIsImportThemeOpen}
           />
         </div>
+
+        <LinuxNativeWindowFrameSetting />
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}

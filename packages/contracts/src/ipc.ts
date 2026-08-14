@@ -1075,6 +1075,10 @@ export interface DesktopBridge {
   onMenuAction: (listener: (action: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
+  /** Linux-only. Returns null on Windows and macOS. */
+  getLinuxNativeWindowFrame?: () => Promise<boolean | null>;
+  /** Linux-only. The new frame style takes effect after the desktop app restarts. */
+  setLinuxNativeWindowFrame?: (enabled: boolean) => Promise<boolean>;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;

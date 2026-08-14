@@ -7,8 +7,15 @@ import type * as Electron from "electron";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import {
+  getLinuxNativeWindowFrame,
+  getLocalEnvironmentBootstraps,
+  getWindowFullscreenState,
+  setLinuxNativeWindowFrame,
+} from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -144,5 +151,41 @@ describe("getWindowFullscreenState", () => {
         }),
       ),
     );
+  });
+});
+
+describe("Linux native window frame settings", () => {
+  it.effect("reads and changes the preference on Linux", () => {
+    const layer = Layer.mergeAll(
+      DesktopAppSettings.layerTest(),
+      Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "linux",
+      } as DesktopEnvironment.DesktopEnvironment["Service"]),
+    );
+
+    return Effect.gen(function* () {
+      assert.isFalse(yield* getLinuxNativeWindowFrame.handler(undefined));
+      assert.isTrue(yield* setLinuxNativeWindowFrame.handler(true));
+      assert.isTrue(yield* getLinuxNativeWindowFrame.handler(undefined));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reports the preference as unsupported outside Linux", () => {
+    const layer = Layer.mergeAll(
+      DesktopAppSettings.layerTest({
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        linuxNativeWindowFrame: true,
+      }),
+      Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+      } as DesktopEnvironment.DesktopEnvironment["Service"]),
+    );
+
+    return Effect.gen(function* () {
+      assert.isNull(yield* getLinuxNativeWindowFrame.handler(undefined));
+      assert.isFalse(yield* setLinuxNativeWindowFrame.handler(false));
+      const settings = yield* DesktopAppSettings.DesktopAppSettings;
+      assert.isTrue((yield* settings.get).linuxNativeWindowFrame);
+    }).pipe(Effect.provide(layer));
   });
 });
