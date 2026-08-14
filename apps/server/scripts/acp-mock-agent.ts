@@ -23,6 +23,7 @@ const emitAvailableCommandClearUpdates =
 const emitAvailableCommandsDuringCreate =
   process.env.T3_ACP_EMIT_AVAILABLE_COMMANDS_DURING_CREATE === "1";
 const exitAfterPrompt = process.env.T3_ACP_EXIT_AFTER_PROMPT === "1";
+const exitBeforePromptResponse = process.env.T3_ACP_EXIT_BEFORE_PROMPT_RESPONSE === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
@@ -973,6 +974,11 @@ const program = Effect.gen(function* () {
           ),
           Effect.forkDetach,
         );
+      }
+      if (exitBeforePromptResponse) {
+        yield* Effect.sync((): void => {
+          process.exit(9);
+        });
       }
 
       return { stopReason: "end_turn" };

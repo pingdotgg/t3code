@@ -334,6 +334,21 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
         if (context.stopped) return;
         context.stopped = true;
         yield* Deferred.succeed(context.stoppedSignal, undefined);
+        const activeTurnId = context.activeTurnId;
+        context.activeTurnId = undefined;
+        if (activeTurnId !== undefined) {
+          yield* publish({
+            type: "turn.completed",
+            ...(yield* nextEventStamp()),
+            provider: PROVIDER,
+            threadId: context.threadId,
+            turnId: activeTurnId,
+            payload: {
+              state: options?.exitKind === "error" ? "failed" : "cancelled",
+              stopReason: null,
+            },
+          });
+        }
         yield* settleApprovals(context.pendingApprovals);
         yield* settleUserInputs(context.pendingUserInputs);
         if (context.notificationFiber) yield* Fiber.interrupt(context.notificationFiber);
@@ -658,19 +673,6 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             Effect.forkIn(ownedContext.scope),
           );
           sessions.set(input.threadId, ownedContext);
-          yield* Effect.exit(acp.processExit).pipe(
-            Effect.flatMap((processExit) => {
-              if (ownedContext.stopped || sessions.get(ownedContext.threadId) !== ownedContext) {
-                return Effect.void;
-              }
-              const reason = Exit.isSuccess(processExit)
-                ? `Kimi ACP process exited with code ${processExit.value}.`
-                : "Kimi ACP process exited unexpectedly.";
-              return stopSessionInternal(ownedContext, { exitKind: "error", reason });
-            }),
-            Effect.catch(() => Effect.void),
-            Effect.forkIn(adapterScope),
-          );
           transferred = true;
           yield* publish({
             type: "session.started",
@@ -693,6 +695,27 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             threadId: input.threadId,
             payload: { providerThreadId: started.sessionId },
           });
+          yield* Effect.exit(acp.processExit).pipe(
+            Effect.flatMap((processExit) => {
+              if (ownedContext.stopped || sessions.get(ownedContext.threadId) !== ownedContext) {
+                return Effect.void;
+              }
+              const reason = Exit.isSuccess(processExit)
+                ? `Kimi ACP process exited with code ${processExit.value}.`
+                : "Kimi ACP process exited unexpectedly.";
+              return stopSessionInternal(ownedContext, { exitKind: "error", reason });
+            }),
+            Effect.catch(() => Effect.void),
+            Effect.forkIn(adapterScope),
+          );
+          yield* Effect.yieldNow;
+          if (ownedContext.stopped || sessions.get(input.threadId) !== ownedContext) {
+            return yield* new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: "Kimi ACP process exited during session startup.",
+            });
+          }
           return session;
         }).pipe(Effect.scoped),
       );

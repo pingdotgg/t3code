@@ -379,14 +379,19 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
   it.effect("removes a session when the Kimi ACP process exits", () =>
     Effect.gen(function* () {
       const adapter = yield* makeTestAdapter(
-        yield* makeKimiWrapper({ T3_ACP_EXIT_AFTER_PROMPT: "1" }),
+        yield* makeKimiWrapper({ T3_ACP_EXIT_BEFORE_PROMPT_RESPONSE: "1" }),
       );
       const threadId = ThreadId.make("kimi-process-exit");
       const exited = yield* Deferred.make<ProviderRuntimeEvent>();
+      const events: ProviderRuntimeEvent[] = [];
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        event.threadId === threadId && event.type === "session.exited"
-          ? Deferred.succeed(exited, event).pipe(Effect.asVoid)
-          : Effect.void,
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.threadId === threadId && event.type === "session.exited"
+              ? Deferred.succeed(exited, event).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
       ).pipe(Effect.forkChild);
 
       yield* adapter.startSession({
@@ -395,10 +400,19 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
         cwd: process.cwd(),
         runtimeMode: "approval-required",
       });
-      yield* adapter.sendTurn({ threadId, input: "exit after this prompt", attachments: [] });
+      yield* adapter
+        .sendTurn({ threadId, input: "exit before responding", attachments: [] })
+        .pipe(Effect.result);
       const exitEvent = yield* Deferred.await(exited);
 
       assert.deepInclude(exitEvent.payload, { exitKind: "error" });
+      const relevantTypes = events
+        .filter((event) => event.threadId === threadId)
+        .map((event) => event.type);
+      assert.isBelow(
+        relevantTypes.indexOf("turn.completed"),
+        relevantTypes.indexOf("session.exited"),
+      );
       assert.isFalse(yield* adapter.hasSession(threadId));
       yield* Fiber.interrupt(eventsFiber);
     }),
