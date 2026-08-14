@@ -135,6 +135,7 @@ import {
 import { showDesktopUpdateDownloadedToast } from "./desktopUpdate.toast";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
+import { ProgressSpinner } from "./ui/spinner";
 import {
   Dialog,
   DialogDescription,
@@ -2761,6 +2762,7 @@ interface SidebarProjectsContentProps {
   arm64IntelBuildWarningDescription: string | null;
   desktopUpdateButtonAction: "download" | "install" | "none";
   desktopUpdateButtonDisabled: boolean;
+  desktopUpdateProgress: number | null;
   desktopUpdateActionPending: boolean;
   handleDesktopUpdateButtonClick: () => void;
   projectSortOrder: SidebarProjectSortOrder;
@@ -2803,6 +2805,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     arm64IntelBuildWarningDescription,
     desktopUpdateButtonAction,
     desktopUpdateButtonDisabled,
+    desktopUpdateProgress,
     desktopUpdateActionPending,
     handleDesktopUpdateButtonClick,
     projectSortOrder,
@@ -2892,7 +2895,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <TriangleAlertIcon />
             <AlertTitle>Intel build on Apple Silicon</AlertTitle>
             <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
-            {desktopUpdateButtonAction !== "none" ? (
+            {desktopUpdateButtonAction !== "none" || desktopUpdateProgress !== null ? (
               <AlertAction>
                 <Button
                   size="xs"
@@ -2900,9 +2903,17 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   disabled={desktopUpdateButtonDisabled || desktopUpdateActionPending}
                   onClick={handleDesktopUpdateButtonClick}
                 >
-                  {desktopUpdateButtonAction === "download"
-                    ? "Download ARM build"
-                    : "Install ARM build"}
+                  {desktopUpdateProgress !== null ? (
+                    <ProgressSpinner
+                      value={desktopUpdateProgress}
+                      aria-label="ARM build download progress"
+                    />
+                  ) : null}
+                  {desktopUpdateProgress !== null
+                    ? "Downloading ARM build"
+                    : desktopUpdateButtonAction === "download"
+                      ? "Download ARM build"
+                      : "Install ARM build"}
                 </Button>
               </AlertAction>
             ) : null}
@@ -3525,6 +3536,8 @@ export default function LegacySidebar() {
   const desktopUpdateButtonAction = desktopUpdateState
     ? resolveDesktopUpdateButtonAction(desktopUpdateState)
     : "none";
+  const desktopUpdateProgress =
+    desktopUpdateState?.status === "downloading" ? (desktopUpdateState.downloadPercent ?? 0) : null;
   const showArm64IntelBuildWarning =
     isElectron && shouldShowArm64IntelBuildWarning(desktopUpdateState);
   const arm64IntelBuildWarningDescription =
@@ -3663,6 +3676,7 @@ export default function LegacySidebar() {
         arm64IntelBuildWarningDescription={arm64IntelBuildWarningDescription}
         desktopUpdateButtonAction={desktopUpdateButtonAction}
         desktopUpdateButtonDisabled={desktopUpdateButtonDisabled}
+        desktopUpdateProgress={desktopUpdateProgress}
         desktopUpdateActionPending={desktopUpdateActionPending}
         handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
         projectSortOrder={sidebarProjectSortOrder}

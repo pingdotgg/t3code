@@ -20,6 +20,7 @@ import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Separator } from "../ui/separator";
 import { SidebarMenuItem } from "../ui/sidebar";
+import { ProgressSpinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function keyReleaseNoteItems(items: ReadonlyArray<string>) {
@@ -252,7 +253,13 @@ function SidebarUpdateControl() {
               )}
               onClick={handleAction}
             >
-              {action === "install" ? (
+              {isDownloading ? (
+                <ProgressSpinner
+                  value={state?.downloadPercent ?? 0}
+                  aria-label="Update download progress"
+                  className="size-4"
+                />
+              ) : action === "install" ? (
                 <RotateCwIcon className="size-4" />
               ) : isUpdateState ? (
                 <DownloadIcon className="size-4" />
