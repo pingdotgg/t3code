@@ -26,6 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_RBUTTONUP,
 };
 
+use super::agent_cursor::AgentCursor;
 use super::{Desktop, DesktopError, Point, Result, ScrollDirection, format_app_list};
 use crate::apps;
 
@@ -423,10 +424,14 @@ impl Desktop for WindowsDesktop {
             && let Ok(invoke) = element.get_pattern::<UIInvokePattern>()
             && invoke.invoke().is_ok()
         {
+            if let Ok((x, y)) = Self::center(element) {
+                AgentCursor::shared().press(x, y);
+            }
             return Ok(format!("pressed e{id}"));
         }
 
         let (x, y) = self.point_coordinates(target)?;
+        AgentCursor::shared().press(x, y);
         // Prefer window-message delivery so the user's cursor stays put.
         if click_count <= 1 && Self::background_click(x, y, false) {
             return Ok(format!("clicked at ({x:.0}, {y:.0}) in background"));
@@ -453,6 +458,7 @@ impl Desktop for WindowsDesktop {
 
     fn right_click(&mut self, target: Point) -> Result<String> {
         let (x, y) = self.point_coordinates(target)?;
+        AgentCursor::shared().press(x, y);
         if Self::background_click(x, y, true) {
             return Ok(format!("right-clicked at ({x:.0}, {y:.0}) in background"));
         }
@@ -465,10 +471,12 @@ impl Desktop for WindowsDesktop {
     fn drag(&mut self, from: Point, to: Point) -> Result<String> {
         let (from_x, from_y) = self.point_coordinates(from)?;
         let (to_x, to_y) = self.point_coordinates(to)?;
+        AgentCursor::shared().show(from_x, from_y);
         let mouse = Mouse::default();
         mouse
             .move_to(&UIPoint::new(from_x as i32, from_y as i32))
             .map_err(|error| DesktopError::new(format!("could not reach the drag origin: {error}")))?;
+        AgentCursor::shared().press(to_x, to_y);
         mouse
             .drag_to(MouseButton::LEFT, &UIPoint::new(to_x as i32, to_y as i32))
             .map_err(|error| DesktopError::new(format!("drag failed: {error}")))?;
@@ -510,6 +518,7 @@ impl Desktop for WindowsDesktop {
         // The wheel goes to whatever is under the cursor, so move there first.
         if let Some(id) = element {
             let (x, y) = Self::center(self.element(id)?)?;
+            AgentCursor::shared().show(x, y);
             Mouse::default()
                 .move_to(&UIPoint::new(x as i32, y as i32))
                 .map_err(|error| DesktopError::new(format!("could not move cursor: {error}")))?;
