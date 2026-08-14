@@ -2,7 +2,7 @@ import { sha256 } from "@noble/hashes/sha2";
 import JSZip from "jszip";
 import { parse, type ParseError } from "jsonc-parser";
 
-import type { ThemeDefinition } from "./themePalette";
+import { normalizeThemeTokenColors, type ThemeDefinition } from "./themePalette";
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
@@ -21,6 +21,7 @@ const MAX_ZIP_ENTRIES = 2_000;
 const MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 200;
 const MAX_THEMES_PER_EXTENSION = 40;
+const MAX_IMPORTED_SYNTAX_BYTES = 2 * 1024 * 1024;
 const MAX_INCLUDE_DEPTH = 8;
 const MAX_PACKAGE_PATH_LENGTH = 1_024;
 const MAX_COLOR_VALUE_LENGTH = 128;
@@ -341,9 +342,11 @@ function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unk
       }
     }
   }
+  const syntax = normalizeThemeTokenColors(value.tokenColors);
   return {
     ...(typeof value.include === "string" ? { include: value.include } : {}),
     colors,
+    ...(syntax ? { tokenColors: syntax.tokenColors } : {}),
   };
 }
 
@@ -559,6 +562,14 @@ async function loadThemeObject(
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(path);
   const base = await loadThemeObject(zip, includePath, cache, budget, nextAncestors, signal);
+  const tokenColors = [
+    ...(Array.isArray(base.tokenColors) ? base.tokenColors : []),
+    ...(Array.isArray(value.tokenColors) ? value.tokenColors : []),
+  ];
+  const syntax = normalizeThemeTokenColors(tokenColors);
+  if (tokenColors.length > 0 && !syntax) {
+    throw new Error("Theme includes contain too many syntax rules.");
+  }
   const resolved = {
     ...base,
     ...value,
@@ -566,6 +577,7 @@ async function loadThemeObject(
       ...(isRecord(base.colors) ? base.colors : {}),
       ...(isRecord(value.colors) ? value.colors : {}),
     },
+    tokenColors: syntax?.tokenColors,
   };
   cache.set(path, resolved);
   return resolved;
@@ -705,6 +717,7 @@ export async function importOpenVsxThemeExtension(
   const failures: string[] = [];
   const themeCache = new Map<string, Record<string, unknown>>();
   const themeBudget = { files: 0 };
+  let importedSyntaxBytes = 0;
   for (const contribution of contributions) {
     signal?.throwIfAborted();
     if (typeof contribution.path !== "string") {
@@ -732,8 +745,15 @@ export async function importOpenVsxThemeExtension(
         ...(type ? { type } : {}),
       };
       if (!isVsCodeThemeFile(decorated)) throw new Error("not a VS Code color theme");
+      const theme = parseVsCodeThemeFile(decorated);
+      importedSyntaxBytes += new TextEncoder().encode(
+        JSON.stringify(theme.syntax ?? {}),
+      ).byteLength;
+      if (importedSyntaxBytes > MAX_IMPORTED_SYNTAX_BYTES) {
+        throw new Error("That extension contains too many syntax rules to import safely.");
+      }
       parsed.push({
-        theme: parseVsCodeThemeFile(decorated),
+        theme,
         sourceName: path.split("/").at(-1)!,
         sourcePath: path,
       });

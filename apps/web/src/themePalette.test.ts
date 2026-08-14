@@ -300,6 +300,16 @@ describe("theme files", () => {
         name: "Community Demo",
         appearance: "dark",
         colors: { canvas: "#111111" },
+        syntax: {
+          dark: {
+            tokenColors: [
+              {
+                scope: ["comment", "punctuation.definition.comment"],
+                settings: { foreground: "#6e6a86", fontStyle: "italic" },
+              },
+            ],
+          },
+        },
       }),
       collection: { id: "open-vsx:demo.theme", label: "Demo Theme" },
     };
@@ -310,8 +320,36 @@ describe("theme files", () => {
       name: theme.label,
       appearance: "dark",
       collection: theme.collection,
+      syntax: theme.syntax,
     });
-    expect(parseThemeFile(JSON.parse(serialized)).collection).toEqual(theme.collection);
+    const parsed = parseThemeFile(JSON.parse(serialized));
+    expect(parsed.collection).toEqual(theme.collection);
+    expect(parsed.syntax).toEqual(theme.syntax);
+  });
+
+  it("rejects unbounded or unsafe syntax rules", () => {
+    const parseWithTokenColors = (tokenColors: unknown[]) =>
+      parseThemeFile({
+        version: THEME_FILE_VERSION,
+        name: "Unsafe syntax",
+        appearance: "dark",
+        colors: { accent: "#8b5cf6" },
+        syntax: { dark: { tokenColors } },
+      });
+
+    expect(() =>
+      parseWithTokenColors([
+        { scope: "keyword", settings: { foreground: "var(--injected-color)" } },
+      ]),
+    ).toThrow("Theme syntax must contain valid light or dark token colors.");
+    expect(() =>
+      parseWithTokenColors(
+        Array.from({ length: 4_097 }, () => ({
+          scope: "keyword",
+          settings: { foreground: "#c4a7e7" },
+        })),
+      ),
+    ).toThrow("Theme syntax must contain valid light or dark token colors.");
   });
 
   it("keeps sidebar artwork disabled for custom theme files", () => {

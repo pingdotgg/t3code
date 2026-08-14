@@ -93,12 +93,24 @@ export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors
 export type ThemeVariantOverrides = Readonly<Partial<Record<ThemeAppearance, ThemeColorOverrides>>>;
 export type ThemePreferenceMode = ThemeAppearance | "system";
 export type ThemeCollection = Readonly<{ id: string; label: string }>;
+export type ThemeTokenColorRule = Readonly<{
+  name?: string;
+  scope?: string | ReadonlyArray<string>;
+  settings: Readonly<{
+    foreground?: string;
+    background?: string;
+    fontStyle?: string;
+  }>;
+}>;
+export type ThemeSyntax = Readonly<{ tokenColors: ReadonlyArray<ThemeTokenColorRule> }>;
+export type ThemeSyntaxVariants = Readonly<Partial<Record<ThemeAppearance, ThemeSyntax>>>;
 export type ThemeDefinition = Readonly<{
   id: string;
   label: string;
   appearance: ThemeAppearance;
   colors: ThemeColors;
   variants?: ThemeVariants;
+  syntax?: ThemeSyntaxVariants;
   /** Groups related imported variants into one library card. */
   collection?: ThemeCollection;
   /** Allows Dev/Nightly artwork to render over a maintainer-controlled sidebar. */
@@ -114,6 +126,7 @@ export type ThemeFile = Readonly<{
   appearance: ThemeAppearance;
   colors: ThemeColorOverrides;
   variants?: ThemeVariantOverrides;
+  syntax?: ThemeSyntaxVariants;
   collection?: ThemeCollection;
   managed?: boolean;
 }>;
@@ -192,6 +205,104 @@ function parseThemeCollection(value: unknown): ThemeCollection | undefined {
     : undefined;
 }
 
+const MAX_THEME_TOKEN_COLOR_RULES = 4_096;
+const MAX_THEME_TOKEN_SCOPES_PER_RULE = 64;
+const MAX_THEME_TOKEN_SCOPE_LENGTH = 512;
+const MAX_THEME_TOKEN_RULE_NAME_LENGTH = 256;
+const MAX_THEME_TOKEN_FONT_STYLE_LENGTH = 128;
+const SYNTAX_COLOR_PATTERN = /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i;
+const SYNTAX_FONT_STYLES = new Set(["italic", "bold", "underline", "strikethrough"]);
+
+function parseThemeTokenScope(value: unknown): ThemeTokenColorRule["scope"] | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") {
+    const scope = value.trim();
+    return scope.length > 0 && scope.length <= MAX_THEME_TOKEN_SCOPE_LENGTH ? scope : null;
+  }
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_THEME_TOKEN_SCOPES_PER_RULE
+  ) {
+    return null;
+  }
+  const scopes = value.map((scope) => (typeof scope === "string" ? scope.trim() : ""));
+  return scopes.every((scope) => scope.length > 0 && scope.length <= MAX_THEME_TOKEN_SCOPE_LENGTH)
+    ? scopes
+    : null;
+}
+
+function normalizeSyntaxColor(value: unknown): string | undefined {
+  if (typeof value !== "string" || !SYNTAX_COLOR_PATTERN.test(value)) return undefined;
+  const hex = value.slice(1).toLowerCase();
+  return `#${hex.length <= 4 ? [...hex].map((character) => character.repeat(2)).join("") : hex}`;
+}
+
+function parseThemeTokenColorRule(value: unknown): ThemeTokenColorRule | null {
+  if (!isRecord(value) || !isRecord(value.settings)) return null;
+  const scope = parseThemeTokenScope(value.scope);
+  if (scope === null) return null;
+  const foreground = normalizeSyntaxColor(value.settings.foreground);
+  const background = normalizeSyntaxColor(value.settings.background);
+  const rawFontStyle = value.settings.fontStyle;
+  const fontStyle =
+    typeof rawFontStyle === "string" &&
+    rawFontStyle.length <= MAX_THEME_TOKEN_FONT_STYLE_LENGTH &&
+    rawFontStyle
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .every((style) => SYNTAX_FONT_STYLES.has(style))
+      ? rawFontStyle.trim()
+      : undefined;
+  if (foreground === undefined && background === undefined && fontStyle === undefined) return null;
+
+  const name =
+    typeof value.name === "string" &&
+    value.name.trim().length > 0 &&
+    value.name.trim().length <= MAX_THEME_TOKEN_RULE_NAME_LENGTH
+      ? value.name.trim()
+      : undefined;
+  return {
+    ...(name ? { name } : {}),
+    ...(scope ? { scope } : {}),
+    settings: {
+      ...(foreground ? { foreground } : {}),
+      ...(background ? { background } : {}),
+      ...(fontStyle !== undefined ? { fontStyle } : {}),
+    },
+  };
+}
+
+export function normalizeThemeTokenColors(value: unknown): ThemeSyntax | undefined {
+  if (!Array.isArray(value) || value.length > MAX_THEME_TOKEN_COLOR_RULES) return undefined;
+  const tokenColors = value.flatMap((rule) => {
+    const parsed = parseThemeTokenColorRule(rule);
+    return parsed ? [parsed] : [];
+  });
+  return tokenColors.length > 0 ? { tokenColors } : undefined;
+}
+
+function parseThemeSyntax(value: unknown): ThemeSyntax | null {
+  if (!isRecord(value) || !Array.isArray(value.tokenColors)) return null;
+  const syntax = normalizeThemeTokenColors(value.tokenColors);
+  return syntax && syntax.tokenColors.length === value.tokenColors.length ? syntax : null;
+}
+
+function parseThemeSyntaxVariants(value: unknown): ThemeSyntaxVariants | null | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return null;
+
+  const variants: Partial<Record<ThemeAppearance, ThemeSyntax>> = {};
+  for (const [appearance, syntax] of Object.entries(value)) {
+    if (!isThemeAppearance(appearance)) return null;
+    const parsedSyntax = parseThemeSyntax(syntax);
+    if (!parsedSyntax) return null;
+    variants[appearance] = parsedSyntax;
+  }
+  return Object.keys(variants).length > 0 ? variants : undefined;
+}
+
 function parseStoredThemeColors(value: unknown, appearance: ThemeAppearance): ThemeColors | null {
   if (!isRecord(value)) return null;
 
@@ -237,6 +348,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   if (!colors) return null;
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
   if (value.variants !== undefined && variants === null) return null;
+  const syntax = parseThemeSyntaxVariants(value.syntax);
   const collection = parseThemeCollection(value.collection);
 
   return {
@@ -245,6 +357,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     appearance: value.appearance,
     colors,
     ...(variants ? { variants } : {}),
+    ...(syntax ? { syntax } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
   };
@@ -1842,6 +1955,10 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   if (value.collection !== undefined && !collection) {
     throw new Error("Theme collections need a valid id and label.");
   }
+  const syntax = parseThemeSyntaxVariants(value.syntax);
+  if (value.syntax !== undefined && syntax === null) {
+    throw new Error("Theme syntax must contain valid light or dark token colors.");
+  }
 
   const fallback = getDefaultThemeColors(appearance);
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
@@ -1868,6 +1985,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     appearance,
     colors: { ...fallback, ...overrides },
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
+    ...(syntax ? { syntax } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
   };
@@ -1882,6 +2000,7 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     appearance: canonicalTheme.appearance,
     colors: canonicalTheme.colors,
     ...(canonicalTheme.variants ? { variants: canonicalTheme.variants } : {}),
+    ...(canonicalTheme.syntax ? { syntax: canonicalTheme.syntax } : {}),
     ...(canonicalTheme.collection ? { collection: canonicalTheme.collection } : {}),
     ...(canonicalTheme.managed ? { managed: true } : {}),
   };

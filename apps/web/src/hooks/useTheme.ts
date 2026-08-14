@@ -4,11 +4,12 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
-  CUSTOM_THEMES_STORAGE_KEY,
-  invalidateCustomThemes,
   canonicalThemePreference,
   isKnownThemePreference,
+  getThemeColorsForMode,
+  getThemeDefinition,
   getThemePreferenceMode,
+  subscribeToCustomThemes,
   parseThemeHalves,
   resolveDesktopTheme,
   resolveThemeAppearance,
@@ -21,6 +22,7 @@ import {
   type ThemeHalves,
   type ThemePreferenceMode,
 } from "../themePalette";
+import { resolveSyntaxThemeName } from "../lib/syntaxTheme";
 
 type Theme = ThemePreference;
 type ThemeSnapshot = {
@@ -411,6 +413,13 @@ function handleSystemAppearanceChange() {
   emitChange();
 }
 
+function handleCustomThemesChange() {
+  lastSnapshot = null;
+  lastAppliedTheme = null;
+  applyTheme(getStored(), true);
+  emitChange();
+}
+
 function handleStorageChange(e: StorageEvent) {
   if (e.key === STORAGE_KEY) {
     themeStorageReadFailure = null;
@@ -422,12 +431,8 @@ function handleStorageChange(e: StorageEvent) {
   } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY || e.key === THEME_HALVES_STORAGE_KEY) {
     applyTheme(getStored(), true);
     emitChange();
-  } else if (e.key === CUSTOM_THEMES_STORAGE_KEY || e.key === null) {
-    if (e.key === null) themeStorageReadFailure = null;
-    invalidateCustomThemes();
-    lastAppliedTheme = null;
-    applyTheme(getStored(), true);
-    emitChange();
+  } else if (e.key === null) {
+    themeStorageReadFailure = null;
   }
 }
 
@@ -443,9 +448,11 @@ function subscribe(listener: () => void): () => void {
     const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
     mq?.addEventListener("change", handleSystemAppearanceChange);
     window.addEventListener("storage", handleStorageChange);
+    const unsubscribeFromCustomThemes = subscribeToCustomThemes(handleCustomThemesChange);
     removeWindowListeners = () => {
       mq?.removeEventListener("change", handleSystemAppearanceChange);
       window.removeEventListener("storage", handleStorageChange);
+      unsubscribeFromCustomThemes();
     };
   }
 
@@ -469,6 +476,17 @@ export function useTheme() {
     snapshot.appearanceMode,
     snapshot.themeHalves,
   );
+  const syntaxTheme = getThemeDefinition(
+    resolveThemeHalf(theme, snapshot.themeHalves, resolvedTheme),
+  );
+  const syntaxThemeColors = syntaxTheme ? getThemeColorsForMode(syntaxTheme, resolvedTheme) : null;
+  const syntaxThemeName = resolveSyntaxThemeName({
+    appearance: resolvedTheme,
+    background: syntaxThemeColors?.codeBackground ?? "#000000",
+    foreground: syntaxThemeColors?.codeForeground ?? "#ffffff",
+    ...(syntaxTheme ? { label: syntaxTheme.label } : {}),
+    ...(syntaxTheme?.syntax?.[resolvedTheme] ? { syntax: syntaxTheme.syntax[resolvedTheme] } : {}),
+  });
 
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;
@@ -632,6 +650,7 @@ export function useTheme() {
     followSystem: snapshot.followSystem,
     appearanceMode: snapshot.appearanceMode,
     resolvedTheme,
+    syntaxThemeName,
     themeHalves: snapshot.themeHalves,
   } as const;
 }

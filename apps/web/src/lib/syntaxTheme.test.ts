@@ -1,0 +1,87 @@
+import type { ThemeRegistrationResolved } from "@pierre/diffs";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const { registerCustomTheme } = vi.hoisted(() => ({
+  registerCustomTheme: vi.fn(),
+}));
+
+vi.mock("@pierre/diffs", () => ({ registerCustomTheme }));
+
+import { resolveSyntaxThemeName } from "./syntaxTheme";
+
+const syntax = {
+  tokenColors: [
+    {
+      name: "Comments",
+      scope: ["comment", "punctuation.definition.comment"],
+      settings: { foreground: "#6e6a86", fontStyle: "italic" },
+    },
+  ],
+};
+
+describe("syntax theme resolution", () => {
+  beforeEach(() => {
+    registerCustomTheme.mockClear();
+  });
+
+  it("uses the bundled fallback when the active app theme has no syntax rules", () => {
+    expect(
+      resolveSyntaxThemeName({
+        appearance: "dark",
+        background: "#191724",
+        foreground: "#e0def4",
+      }),
+    ).toBe("pierre-dark");
+    expect(registerCustomTheme).not.toHaveBeenCalled();
+  });
+
+  it("registers stable content-addressed Shiki themes", async () => {
+    const input = {
+      appearance: "dark" as const,
+      background: "#191724",
+      foreground: "#e0def4",
+      label: "Rosé Pine",
+      syntax,
+    };
+    const first = resolveSyntaxThemeName(input);
+    const second = resolveSyntaxThemeName(input);
+
+    expect(first).toBe(second);
+    expect(first).toMatch(/^t3-syntax-dark-/);
+    expect(registerCustomTheme).toHaveBeenCalledTimes(1);
+
+    const loader = registerCustomTheme.mock
+      .calls[0]![1] as () => Promise<ThemeRegistrationResolved>;
+    await expect(loader()).resolves.toMatchObject({
+      name: first,
+      displayName: "Rosé Pine",
+      type: "dark",
+      bg: "#191724",
+      fg: "#e0def4",
+      settings: syntax.tokenColors,
+      tokenColors: syntax.tokenColors,
+    });
+  });
+
+  it("uses a new registration when token colors change", () => {
+    const first = resolveSyntaxThemeName({
+      appearance: "dark",
+      background: "#1a1725",
+      foreground: "#e0def4",
+      syntax,
+    });
+    const second = resolveSyntaxThemeName({
+      appearance: "dark",
+      background: "#1a1725",
+      foreground: "#e0def4",
+      syntax: {
+        tokenColors: [
+          { scope: "comment", settings: { foreground: "#908caa", fontStyle: "italic" } },
+        ],
+      },
+    });
+
+    expect(second).not.toBe(first);
+    expect(registerCustomTheme).toHaveBeenCalledTimes(2);
+  });
+});

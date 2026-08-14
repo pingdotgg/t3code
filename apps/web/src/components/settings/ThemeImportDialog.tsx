@@ -37,6 +37,8 @@ import { ThemeSearchSection } from "./ThemeSearchSection";
  * locks the UI for as long as that takes.
  */
 export const MAX_THEME_FILE_BYTES = 256 * 1024;
+export const MAX_THEME_BATCH_FILES = 64;
+export const MAX_THEME_BATCH_BYTES = 2 * 1024 * 1024;
 
 /** Highlighting rebuilds the whole markup on every keystroke, so oversized
  *  pastes fall back to plain text instead of freezing the editor. */
@@ -52,6 +54,18 @@ function formatByteSize(bytes: number): string {
 export function describeOversizedThemeFile(bytes: number): string | null {
   if (bytes <= MAX_THEME_FILE_BYTES) return null;
   return `That file is ${formatByteSize(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatByteSize(MAX_THEME_FILE_BYTES)}).`;
+}
+
+export function describeOversizedThemeBatch(
+  files: ReadonlyArray<Pick<ImportableThemeFile, "size">>,
+): string | null {
+  if (files.length > MAX_THEME_BATCH_FILES) {
+    return `Select no more than ${MAX_THEME_BATCH_FILES} theme files at once.`;
+  }
+  const totalBytes = files.reduce((total, file) => total + file.size, 0);
+  return totalBytes > MAX_THEME_BATCH_BYTES
+    ? `That batch is ${formatByteSize(totalBytes)}. Select at most ${formatByteSize(MAX_THEME_BATCH_BYTES)} of theme files at once.`
+    : null;
 }
 
 function escapeJsonHtml(value: string): string {
@@ -273,6 +287,11 @@ export function ThemeImportDialog({
   const readThemeFiles = useCallback(
     (files: ReadonlyArray<ImportableThemeFile>) => {
       if (files.length === 0) return;
+      const oversized = describeOversizedThemeBatch(files);
+      if (oversized) {
+        setError(oversized);
+        return;
+      }
       if (files.length === 1) void readThemeFile(files[0]!);
       else void readThemeBatch(files);
     },
@@ -331,6 +350,7 @@ export function ThemeImportDialog({
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
       if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
@@ -342,6 +362,7 @@ export function ThemeImportDialog({
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
       if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;

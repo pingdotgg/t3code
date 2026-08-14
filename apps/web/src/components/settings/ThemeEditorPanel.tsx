@@ -656,6 +656,9 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
+            ...(mergeTarget.syntax || editingTheme.syntax
+              ? { syntax: { ...mergeTarget.syntax, ...editingTheme.syntax } }
+              : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
@@ -687,6 +690,7 @@ export function ThemeEditorPanel({
             ...(getThemeModes(editingTheme).length > 1
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
+            ...(editingTheme.syntax ? { syntax: editingTheme.syntax } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
@@ -714,6 +718,7 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
+            ...(mergeTarget.syntax ? { syntax: mergeTarget.syntax } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
@@ -725,6 +730,9 @@ export function ThemeEditorPanel({
             name,
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
+            ...(seedTheme?.syntax?.[activeAppearance]
+              ? { syntax: { [activeAppearance]: seedTheme.syntax[activeAppearance] } }
+              : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
         );

@@ -52,7 +52,13 @@ const VSCODE_DARK = {
     "list.hoverBackground": "#1f3e5e59",
     "list.activeSelectionBackground": "#1f3e5e99",
   },
-  tokenColors: [],
+  tokenColors: [
+    {
+      name: "Comments",
+      scope: ["comment", "punctuation.definition.comment"],
+      settings: { foreground: "#6e6a86", fontStyle: "italic" },
+    },
+  ],
 };
 
 describe("VS Code theme import", () => {
@@ -70,7 +76,7 @@ describe("VS Code theme import", () => {
     expect(isVsCodeThemeFile("nope")).toBe(false);
   });
 
-  it("carries the editor surfaces and accent across", () => {
+  it("carries the editor surfaces, accent, and syntax rules across", () => {
     const theme = parseVsCodeThemeFile(VSCODE_DARK);
     // The slug name is read as words; a displayName would win verbatim.
     expect(theme.label).toBe("Pierre Dark Soft");
@@ -80,6 +86,24 @@ describe("VS Code theme import", () => {
     expect(asHex(theme.colors.accent)).toBe("#69b1ff");
     expect(asHex(theme.colors.sidebar)).toBe("#101010");
     expect(asHex(theme.colors.terminalBackground)).toBe("#101010");
+    expect(theme.syntax?.dark?.tokenColors).toEqual(VSCODE_DARK.tokenColors);
+  });
+
+  it("normalizes compact TextMate colors for Shiki", () => {
+    const theme = parseVsCodeThemeFile({
+      ...VSCODE_DARK,
+      tokenColors: [
+        {
+          scope: "keyword",
+          settings: { foreground: "#AbC", background: "#1234" },
+        },
+      ],
+    });
+
+    expect(theme.syntax?.dark?.tokenColors[0]?.settings).toEqual({
+      foreground: "#aabbcc",
+      background: "#11223344",
+    });
   });
 
   it("flattens alpha overlays onto the surface they sit on", () => {
@@ -184,6 +208,12 @@ describe("VS Code theme import", () => {
           "editor.foreground": type === "dark" ? "#e6e6e6" : "#1f1f1f",
           focusBorder: "#69b1ff",
         },
+        tokenColors: [
+          {
+            scope: "keyword",
+            settings: { foreground: type === "dark" ? "#c4a7e7" : "#907aa9" },
+          },
+        ],
       });
     const themes = pairVsCodeThemes([
       make("github-dark", "dark"),
@@ -200,6 +230,8 @@ describe("VS Code theme import", () => {
     expect(getThemeColorsForMode(github, "dark")).not.toBeNull();
     expect(asHex(getThemeColorsForMode(github, "dark")!.canvas)).toBe("#101014");
     expect(asHex(github.colors.canvas)).toBe("#fdfdfd");
+    expect(github.syntax?.light?.tokenColors[0]?.settings.foreground).toBe("#907aa9");
+    expect(github.syntax?.dark?.tokenColors[0]?.settings.foreground).toBe("#c4a7e7");
     // The unpaired dimmed variant stays a single dark theme.
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
   });

@@ -1,6 +1,7 @@
 import {
   createVividThemeColors,
   getThemeModes,
+  normalizeThemeTokenColors,
   parseThemeFile,
   themeColorToHex,
   THEME_FILE_VERSION,
@@ -321,11 +322,13 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
 
   // Reuse the theme-file parser so ids, names, and color values go through the
   // same validation as a hand-written file.
+  const syntax = normalizeThemeTokenColors(value.tokenColors);
   return parseThemeFile({
     version: THEME_FILE_VERSION,
     name: resolveName(value),
     appearance,
     colors: { ...derived, ...overrides },
+    ...(syntax ? { syntax: { [appearance]: syntax } } : {}),
   });
 }
 
@@ -380,6 +383,7 @@ export function pairVsCodeThemes(
             appearance: "light",
             colors: group.light[0]!.colors,
             variants: { dark: group.dark[0]!.colors },
+            syntax: { ...group.light[0]!.syntax, ...group.dark[0]!.syntax },
           }),
         });
         continue;
@@ -414,6 +418,7 @@ export function resolveThemeLabelCollisions(
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
     } catch {
