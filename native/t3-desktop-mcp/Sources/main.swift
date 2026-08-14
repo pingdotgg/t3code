@@ -1173,12 +1173,24 @@ enum Chrome {
 
     private static var cachedWindowID: Int?
     private static var cachedChromePid: pid_t?
+    /// Process start time for `cachedChromePid` — PIDs alone are reusable after relaunch.
+    private static var cachedChromeLaunch: TimeInterval?
     private static var didLoadState = false
 
     private static func chromePid() -> pid_t? {
         NSWorkspace.shared.runningApplications
             .first(where: { $0.bundleIdentifier == "com.google.Chrome" })?
             .processIdentifier
+    }
+
+    private static func chromeApp(pid: pid_t) -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier == pid && $0.bundleIdentifier == "com.google.Chrome"
+        }
+    }
+
+    private static func launchInterval(for app: NSRunningApplication) -> TimeInterval? {
+        app.launchDate?.timeIntervalSince1970
     }
 
     private static func loadState() {
@@ -1197,6 +1209,7 @@ enum Chrome {
         }
         cachedWindowID = windowId
         cachedChromePid = pid_t(chromePid)
+        cachedChromeLaunch = object["chromeLaunch"] as? TimeInterval
     }
 
     private static func persistState() {
@@ -1204,7 +1217,10 @@ enum Chrome {
             try? FileManager.default.removeItem(at: stateURL)
             return
         }
-        let payload: [String: Any] = ["windowId": windowId, "chromePid": Int(chromePid)]
+        var payload: [String: Any] = ["windowId": windowId, "chromePid": Int(chromePid)]
+        if let launch = cachedChromeLaunch {
+            payload["chromeLaunch"] = launch
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
         try? data.write(to: stateURL, options: .atomic)
     }
@@ -1225,8 +1241,14 @@ enum Chrome {
                 } else {
                     cachedChromePid = chromePid()
                 }
+                if let pid = cachedChromePid, let app = chromeApp(pid: pid) {
+                    cachedChromeLaunch = launchInterval(for: app)
+                } else {
+                    cachedChromeLaunch = nil
+                }
             } else {
                 cachedChromePid = nil
+                cachedChromeLaunch = nil
             }
             persistState()
         }
@@ -1238,30 +1260,33 @@ enum Chrome {
         guard let id = cachedWindowID else { return nil }
         // Window ids are only valid within a single Chrome process lifetime.
         // After a restart Chrome can reuse the numeric id for an ordinary user
-        // window; refuse to reclaim unless the pid still matches *and* an AX
-        // window under that pid still matches the scripted frame.
-        guard let expectedPid = cachedChromePid else {
+        // window; refuse to reclaim unless the pid still matches *and* the
+        // process launch time matches (PIDs are reusable).
+        guard let expectedPid = cachedChromePid, let app = chromeApp(pid: expectedPid) else {
             agentWindowID = nil
             return nil
         }
-        let liveChromePids = Set(
-            NSWorkspace.shared.runningApplications
-                .filter { $0.bundleIdentifier == "com.google.Chrome" }
-                .map(\.processIdentifier)
-        )
-        guard liveChromePids.contains(expectedPid) else {
+        if let expectedLaunch = cachedChromeLaunch,
+           let liveLaunch = launchInterval(for: app),
+           abs(expectedLaunch - liveLaunch) > 0.5
+        {
             agentWindowID = nil
             return nil
         }
-        guard windowExists(id), let frame = boundsOf(id) else {
+        guard windowExists(id) else {
             agentWindowID = nil
             return nil
         }
-        guard let match = axWindow(matching: frame, pid: expectedPid) else {
-            agentWindowID = nil
-            return nil
+        // Prefer AX confirmation when available, but do not drop a still-valid
+        // scripting window when AX is unavailable or briefly skewed — that would
+        // force ensureAgentWindow to open a new Chrome window every call.
+        if let frame = boundsOf(id),
+           let match = axWindow(matching: frame, pid: expectedPid)
+        {
+            cachedChromePid = match.pid
+            cachedChromeLaunch = launchInterval(for: app)
+            return id
         }
-        cachedChromePid = match.pid
         return id
     }
 
@@ -1385,6 +1410,7 @@ enum Chrome {
     /// tolerance is tight. When `pid` is set, only that Chrome process is searched.
     static func axWindow(matching frame: CGRect, pid: pid_t? = nil) -> (element: AXUIElement, pid: pid_t)? {
         var best: (AXUIElement, pid_t, CGFloat)?
+        var tied = false
         for app in NSWorkspace.shared.runningApplications
         where app.bundleIdentifier == "com.google.Chrome" {
             if let pid, app.processIdentifier != pid { continue }
@@ -1394,12 +1420,16 @@ enum Chrome {
                       let size = axSize(window, kAXSizeAttribute as String) else { continue }
                 let distance = hypot(origin.x - frame.origin.x, origin.y - frame.origin.y)
                     + hypot(size.width - frame.width, size.height - frame.height)
-                if best == nil || distance < best!.2 {
+                if best == nil || distance + 0.5 < best!.2 {
                     best = (window, app.processIdentifier, distance)
+                    tied = false
+                } else if let current = best, abs(distance - current.2) <= 0.5 {
+                    tied = true
                 }
             }
         }
-        guard let best, best.2 < 12 else { return nil }
+        // Equal-distance matches are ambiguous (stacked / identical frames).
+        guard let best, !tied, best.2 < 12 else { return nil }
         return (best.0, best.1)
     }
 }
