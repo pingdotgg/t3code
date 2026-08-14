@@ -242,6 +242,7 @@ describe("DesktopShellEnvironment", () => {
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
+          "C:\\Users\\testuser\\.cargo\\bin",
           "C:\\Custom\\Bin",
         ].join(";"),
       );
