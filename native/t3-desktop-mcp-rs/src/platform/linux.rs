@@ -15,9 +15,13 @@ use atspi::proxy::accessible::AccessibleProxy;
 use atspi::{connection::AccessibilityConnection, Role};
 use futures_lite::future::block_on;
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ConnectionExt as _, GetKeyboardMappingReply, Keycode};
+use x11rb::protocol::xproto::{
+    ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask, GetKeyboardMappingReply,
+    InputFocus, Keycode, StackMode,
+};
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
+use xcap::Window;
 
 use super::{Desktop, DesktopError, Point, Result, ScrollDirection, format_app_list};
 use crate::apps;
@@ -191,6 +195,57 @@ impl LinuxDesktop {
         .map_err(|error| DesktopError::new(format!("element cannot take focus: {error}")))?;
         block_on(component.grab_focus())
             .map_err(|error| DesktopError::new(format!("focus refused: {error}")))
+    }
+
+    /// Raise and focus a window via EWMH `_NET_ACTIVE_WINDOW` + X11 focus.
+    ///
+    /// AT-SPI `grab_focus` is enough on many GTK apps, but dialogs (zenity) and
+    /// some WMs refuse it. Matching Windows' `SetForegroundWindow`, this asks
+    /// the window manager over X11 — which covers X11 and XWayland sessions.
+    fn raise_x11_window(&self, pid: u32) -> Result<()> {
+        let window_id = largest_window_id_for_pid(pid)?;
+        let (connection, screen) = self.x11()?;
+        let root = connection.setup().roots[*screen].root;
+
+        // Best-effort restore/raise before the EWMH request — harmless if the
+        // window is already mapped and on top.
+        let _ = connection.map_window(window_id);
+        connection
+            .configure_window(
+                window_id,
+                &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+            )
+            .map_err(|error| DesktopError::new(format!("could not raise window: {error}")))?;
+
+        let atom = connection
+            .intern_atom(false, b"_NET_ACTIVE_WINDOW")
+            .map_err(|error| DesktopError::new(format!("could not intern _NET_ACTIVE_WINDOW: {error}")))?
+            .reply()
+            .map_err(|error| {
+                DesktopError::new(format!("could not intern _NET_ACTIVE_WINDOW: {error}"))
+            })?
+            .atom;
+        // data[0]=1 (application), data[1]=CurrentTime, data[2]=0 (no requestor).
+        let event = ClientMessageEvent::new(32, window_id, atom, [1u32, 0, 0, 0, 0]);
+        connection
+            .send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
+            .map_err(|error| {
+                DesktopError::new(format!("could not send _NET_ACTIVE_WINDOW: {error}"))
+            })?;
+
+        // Nudge for WMs (Openbox under Xvfb) that ignore the client message.
+        connection
+            .set_input_focus(InputFocus::PARENT, window_id, 0u32)
+            .map_err(|error| DesktopError::new(format!("could not set input focus: {error}")))?;
+        connection
+            .flush()
+            .map_err(|error| DesktopError::new(format!("X11 flush failed: {error}")))?;
+        Ok(())
     }
 
     /// Run an element's first accessible action, which toolkits map to "press"
@@ -474,6 +529,37 @@ fn truncate(value: &str, limit: usize) -> String {
     cleaned.chars().take(limit).collect::<String>() + "…"
 }
 
+/// Largest on-screen window owned by `pid`, for EWMH activation.
+fn largest_window_id_for_pid(pid: u32) -> Result<u32> {
+    let windows = std::panic::catch_unwind(Window::all)
+        .map_err(|_| DesktopError::new("window enumeration is not supported by this display server"))?
+        .map_err(|error| DesktopError::new(format!("failed to enumerate windows: {error}")))?;
+
+    let mut best: Option<(u32, u32)> = None; // (area, id)
+    for window in windows {
+        if window.pid().unwrap_or(0) != pid || window.is_minimized().unwrap_or(false) {
+            continue;
+        }
+        let width = window.width().unwrap_or(0);
+        let height = window.height().unwrap_or(0);
+        if width == 0 || height == 0 {
+            continue;
+        }
+        let Ok(id) = window.id() else {
+            continue;
+        };
+        let area = width.saturating_mul(height);
+        if best.is_none_or(|(best_area, _)| area > best_area) {
+            best = Some((area, id));
+        }
+    }
+    best.map(|(_, id)| id).ok_or_else(|| {
+        DesktopError::new(format!(
+            "pid {pid} has no raisable window — it may be minimized or have no UI"
+        ))
+    })
+}
+
 /// Map a character to an X11 keysym.
 ///
 /// Latin-1 is its own keysym range; everything else uses the Unicode range
@@ -584,11 +670,11 @@ impl Desktop for LinuxDesktop {
     }
 
     fn activate_app(&mut self, app: &str) -> Result<String> {
-        // There is no portable "raise this window" verb on Linux, but focusing
-        // the app's frame gets there on most desktops.
+        // Prefer AT-SPI grab_focus (portable), then fall back to EWMH raise —
+        // dialogs often refuse Component.grab_focus even when X11 can activate.
         let applications = self.applications()?;
         let lowered = app.to_lowercase();
-        let (reference, name, _) = applications
+        let (reference, name, a11y_pid) = applications
             .into_iter()
             .find(|(_, name, _)| name.to_lowercase().contains(&lowered))
             .ok_or_else(|| {
@@ -611,10 +697,27 @@ impl Desktop for LinuxDesktop {
                 return Ok(format!("activated {name}"));
             }
         }
-        Err(DesktopError::new(format!(
-            "{name} refused focus — window managers vary here. The other tools do not need it \
-             focused, so carry on without activating it"
-        )))
+
+        let pid = if a11y_pid != 0 {
+            a11y_pid
+        } else {
+            // AT-SPI often omits a usable pid; xcap window grouping still can.
+            apps::resolve_pid(&name)
+                .or_else(|_| apps::resolve_pid(app))
+                .map_err(|error| {
+                    DesktopError::new(format!(
+                        "{name} refused AT-SPI focus and no X11 window matched ({error})"
+                    ))
+                })?
+        };
+
+        match self.raise_x11_window(pid) {
+            Ok(()) => Ok(format!("activated {name} (pid {pid})")),
+            Err(error) => Err(DesktopError::new(format!(
+                "{name} refused focus ({error}) — window managers vary here. The other tools do \
+                 not need it focused, so carry on without activating it"
+            ))),
+        }
     }
 
     fn click(&mut self, target: Point, click_count: u32) -> Result<String> {
