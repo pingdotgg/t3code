@@ -5,6 +5,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  grokAcpSpawnArgs,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
 
@@ -13,6 +14,35 @@ describe("resolveGrokAcpBaseModelId", () => {
     expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("  grok-test-custom-model  ")).toBe("grok-test-custom-model");
+  });
+});
+
+describe("grokAcpSpawnArgs", () => {
+  it("inherits the Grok CLI config when no T3 runtime mode is set", () => {
+    expect(grokAcpSpawnArgs()).toEqual(["agent", "stdio"]);
+  });
+
+  it("forces Grok to ask when T3 is Supervised", () => {
+    expect(grokAcpSpawnArgs("approval-required")).toEqual([
+      "--permission-mode",
+      "default",
+      "agent",
+      "stdio",
+    ]);
+  });
+
+  it("maps Full access to Grok always-approve", () => {
+    expect(grokAcpSpawnArgs("full-access")).toEqual(["agent", "--always-approve", "stdio"]);
+  });
+
+  it("maps Auto-accept edits and Auto onto Grok permission modes", () => {
+    expect(grokAcpSpawnArgs("auto-accept-edits")).toEqual([
+      "--permission-mode",
+      "acceptEdits",
+      "agent",
+      "stdio",
+    ]);
+    expect(grokAcpSpawnArgs("auto")).toEqual(["--permission-mode", "auto", "agent", "stdio"]);
   });
 });
 
@@ -32,6 +62,16 @@ describe("buildGrokAcpSpawnInput", () => {
         GROK_OAUTH2_REFERRER: "t3code",
       },
     });
+  });
+
+  it("puts Supervised on the Grok argv so config always-approve cannot win", () => {
+    const spawn = buildGrokAcpSpawnInput(
+      { binaryPath: "/usr/local/bin/grok" },
+      "/tmp/project",
+      undefined,
+      "approval-required",
+    );
+    expect(spawn.args).toEqual(["--permission-mode", "default", "agent", "stdio"]);
   });
 });
 
