@@ -577,17 +577,20 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
-  it("repairs a deleted worktree when the project checkout is on the same branch", async () => {
-    const harness = await createHarness({ currentBranch: "main" });
+  it("repairs a deleted worktree before starting first-turn helpers", async () => {
+    const recoveredBranch = "t3code/1234abcd";
+    const harness = await createHarness({ currentBranch: recoveredBranch });
     const missingWorktreePath = NodePath.join(harness.workspaceRoot, "deleted-worktree");
     const now = "2026-01-01T00:00:00.000Z";
+    harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: "recovered branch" }));
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Recovered title" }));
 
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-deleted-worktree"),
         threadId: ThreadId.make("thread-1"),
-        branch: "main",
+        branch: recoveredBranch,
         worktreePath: missingWorktreePath,
       }),
     );
@@ -602,6 +605,7 @@ describe("ProviderCommandReactor", () => {
           text: "continue from the project checkout",
           attachments: [],
         },
+        titleSeed: "Thread",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -609,14 +613,37 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
     expect(harness.refreshLocalStatus).toHaveBeenCalledWith(harness.workspaceRoot);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       cwd: harness.workspaceRoot,
     });
+    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+      cwd: harness.workspaceRoot,
+    });
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
+      cwd: harness.workspaceRoot,
+    });
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+      cwd: harness.workspaceRoot,
+      oldBranch: recoveredBranch,
+    });
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.branch === "t3code/recovered-branch" &&
+        thread.worktreePath === null &&
+        thread.title === "Recovered title"
+      );
+    });
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.branch).toBe("main");
+    expect(thread?.branch).toBe("t3code/recovered-branch");
     expect(thread?.worktreePath).toBeNull();
+    expect(thread?.title).toBe("Recovered title");
   });
 
   it("refuses to repair a deleted worktree onto a different branch", async () => {

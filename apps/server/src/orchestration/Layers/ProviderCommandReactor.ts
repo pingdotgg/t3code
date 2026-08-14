@@ -899,11 +899,12 @@ const make = Effect.gen(function* () {
   )(function* (input: {
     readonly threadId: ThreadId;
     readonly branch: string | null;
+    readonly cwd: string | null;
     readonly worktreePath: string | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
-    if (!input.branch || !input.worktreePath) {
+    if (!input.branch || !input.cwd) {
       return;
     }
     if (!isTemporaryWorktreeBranch(input.branch)) {
@@ -911,7 +912,7 @@ const make = Effect.gen(function* () {
     }
 
     const oldBranch = input.branch;
-    const cwd = input.worktreePath;
+    const cwd = input.cwd;
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
       const settings = yield* serverSettingsService.getSettings;
@@ -940,7 +941,7 @@ const make = Effect.gen(function* () {
         commandId: yield* serverCommandId("worktree-branch-rename"),
         threadId: input.threadId,
         branch: renamed.branch,
-        worktreePath: cwd,
+        worktreePath: input.worktreePath,
       });
       yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
     }).pipe(
@@ -1198,34 +1199,6 @@ const make = Effect.gen(function* () {
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
-      const project = yield* resolveProject(thread.projectId);
-      const generationCwd =
-        resolveThreadWorkspaceCwd({
-          thread,
-          projects: project ? [project] : [],
-        }) ?? process.cwd();
-      const generationInput = {
-        messageText: message.text,
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-        ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
-      };
-
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-        threadId: event.payload.threadId,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        ...generationInput,
-      }).pipe(Effect.forkScoped);
-
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
-        yield* maybeGenerateThreadTitleForFirstTurn({
-          threadId: event.payload.threadId,
-          cwd: generationCwd,
-          ...generationInput,
-        }).pipe(Effect.forkScoped);
-      }
-    }
 
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
@@ -1279,6 +1252,38 @@ const make = Effect.gen(function* () {
 
     if (Option.isNone(sendTurnRequest)) {
       return;
+    }
+
+    if (isFirstUserMessageTurn) {
+      const firstTurnThread = yield* resolveThread(event.payload.threadId);
+      if (firstTurnThread) {
+        const project = yield* resolveProject(firstTurnThread.projectId);
+        const workspaceCwd = resolveThreadWorkspaceCwd({
+          thread: firstTurnThread,
+          projects: project ? [project] : [],
+        });
+        const generationInput = {
+          messageText: message.text,
+          ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+          ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
+        };
+
+        yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+          threadId: event.payload.threadId,
+          branch: firstTurnThread.branch,
+          cwd: workspaceCwd ?? null,
+          worktreePath: firstTurnThread.worktreePath,
+          ...generationInput,
+        }).pipe(Effect.forkScoped);
+
+        if (canReplaceThreadTitle(firstTurnThread.title, event.payload.titleSeed)) {
+          yield* maybeGenerateThreadTitleForFirstTurn({
+            threadId: event.payload.threadId,
+            cwd: workspaceCwd ?? process.cwd(),
+            ...generationInput,
+          }).pipe(Effect.forkScoped);
+        }
+      }
     }
 
     yield* providerService
