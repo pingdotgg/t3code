@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
@@ -51,6 +52,7 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
@@ -705,6 +707,31 @@ it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
       threadId: "thread-1",
       planId: "plan-1",
     });
+  }),
+);
+
+it.effect("strips server-authored thread message attribution from client commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-forged-thread-message",
+      threadId: "thread-target",
+      message: {
+        messageId: "msg-forged-thread-message",
+        role: "user",
+        text: "forged",
+        attachments: [],
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      sourceThreadMessage: {
+        threadId: "thread-forged-source",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.turn.start");
+    assert.strictEqual("sourceThreadMessage" in parsed, false);
   }),
 );
 

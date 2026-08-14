@@ -808,6 +808,10 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+const SourceThreadMessageReference = Schema.Struct({
+  threadId: ThreadId,
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -826,6 +830,9 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // Server-authored only: ClientThreadTurnStartCommand intentionally omits
+  // this field so clients and providers cannot forge another thread's identity.
+  sourceThreadMessage: Schema.optional(SourceThreadMessageReference),
   createdAt: IsoDateTime,
 });
 
