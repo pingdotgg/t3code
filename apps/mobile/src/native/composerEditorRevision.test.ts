@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   acknowledgeComposerNativeEvent,
+  assumeComposerControlledState,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
   resolveComposerControlledEventCount,
@@ -41,6 +42,12 @@ describe("isComposerNativeEcho", () => {
 
   it("matches value and revision when selection is uncontrolled", () => {
     expect(isComposerNativeEcho("native", null, 3, snapshots)).toBe(true);
+  });
+
+  it("matches any controlled selection against an assumed state without one", () => {
+    const assumed = [{ eventCount: 3, value: "native", selection: null }];
+    expect(isComposerNativeEcho("native", { start: 0, end: 0 }, 3, assumed)).toBe(true);
+    expect(isComposerNativeEcho("other", { start: 0, end: 0 }, 3, assumed)).toBe(false);
   });
 });
 
@@ -126,5 +133,44 @@ describe("pruneAcknowledgedComposerNativeEvents", () => {
     ];
 
     expect(pruneAcknowledgedComposerNativeEvents(snapshots, 41)).toEqual([snapshots[1]]);
+  });
+});
+
+describe("assumeComposerControlledState", () => {
+  it("replaces the acknowledged history with the applied controlled state", () => {
+    const snapshots = [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }];
+
+    expect(assumeComposerControlledState(snapshots, 3, "")).toEqual([
+      { eventCount: 3, value: "", selection: null },
+    ]);
+  });
+
+  it("keeps native events that raced past the controlled revision", () => {
+    const snapshots = [
+      { eventCount: 3, value: "typed", selection: { start: 5, end: 5 } },
+      { eventCount: 4, value: "typed!", selection: { start: 6, end: 6 } },
+    ];
+
+    expect(assumeComposerControlledState(snapshots, 3, "")).toEqual([
+      { eventCount: 3, value: "", selection: null },
+      snapshots[1],
+    ]);
+  });
+
+  it("re-applies a parent value that round-trips back to an acknowledged state", () => {
+    // Native acknowledged "typed", the parent then controlled the editor to ""
+    // (a send clearing the draft) and back to "typed" (the send failed and the
+    // draft was restored). The restore must be a fresh non-echo edit stamped at
+    // the current revision, not an echo the editor would drop.
+    const snapshots = assumeComposerControlledState(
+      [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }],
+      3,
+      "",
+    );
+
+    expect(isComposerNativeEcho("typed", { start: 5, end: 5 }, 3, snapshots)).toBe(false);
+    expect(resolveComposerControlledEventCount("typed", { start: 5, end: 5 }, 3, snapshots)).toBe(
+      3,
+    );
   });
 });

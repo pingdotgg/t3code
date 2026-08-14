@@ -31,10 +31,7 @@ export function resolveComposerControlledEventCount(
     if (snapshot?.value !== value) continue;
 
     newestValueEventCount ??= snapshot.eventCount;
-    if (
-      selection === null ||
-      (snapshot.selection?.start === selection.start && snapshot.selection.end === selection.end)
-    ) {
+    if (selection === null || snapshotSelectionMatches(snapshot, selection)) {
       return snapshot.eventCount;
     }
   }
@@ -49,6 +46,18 @@ export function resolveComposerControlledEventCount(
   return mostRecentEventCount;
 }
 
+// A snapshot without a selection describes a state the editor applied itself
+// (an assumed controlled document, where the native side may have bounded the
+// caret). It matches any controlled selection: such matches only ever produce
+// echoes, and echo payloads never control the caret.
+function snapshotSelectionMatches(
+  snapshot: ComposerNativeEventSnapshot,
+  selection: ComposerEditorSelection,
+): boolean {
+  if (snapshot.selection === null) return true;
+  return snapshot.selection.start === selection.start && snapshot.selection.end === selection.end;
+}
+
 export function isComposerNativeEcho(
   value: string,
   selection: ComposerEditorSelection | null,
@@ -61,13 +70,31 @@ export function isComposerNativeEcho(
       snapshot !== undefined &&
       snapshot.eventCount === eventCount &&
       snapshot.value === value &&
-      (selection === null ||
-        (snapshot.selection?.start === selection.start && snapshot.selection.end === selection.end))
+      (selection === null || snapshotSelectionMatches(snapshot, selection))
     ) {
       return true;
     }
   }
   return false;
+}
+
+/**
+ * Records that a parent-driven controlled document was handed to the native
+ * editor. From that point the acknowledged snapshot history describes a
+ * superseded native state, so it is replaced with the assumed applied state;
+ * a later parent update back to a previously acknowledged value must classify
+ * as a fresh edit, not as a native echo the editor would drop. Native events
+ * that raced past the controlled revision stay authoritative and are kept.
+ */
+export function assumeComposerControlledState(
+  snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
+  eventCount: number,
+  value: string,
+): ComposerNativeEventSnapshot[] {
+  return [
+    { eventCount, value, selection: null },
+    ...snapshots.filter((snapshot) => snapshot.eventCount > eventCount),
+  ];
 }
 
 export function pruneAcknowledgedComposerNativeEvents(
