@@ -481,6 +481,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
       yield* sql`DELETE FROM projection_state`;
 
       yield* sql`
@@ -555,7 +556,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'default',
             NULL,
             NULL,
-            NULL,
+            'turn-archived',
             NULL,
             0,
             0,
@@ -565,6 +566,41 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-04-06T00:00:06.000Z',
             NULL
           )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-archived',
+          'turn-archived',
+          'message-archived',
+          NULL,
+          NULL,
+          NULL,
+          'completed',
+          '2026-04-06T00:00:04.000Z',
+          '2026-04-06T00:00:04.500Z',
+          '2026-04-06T00:00:05.000Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
       `;
 
       yield* sql`
@@ -602,6 +638,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (stored._tag === "Some") {
         assert.equal(stored.value.id, archivedThreadId);
         assert.equal(stored.value.archivedAt, "2026-04-06T00:00:06.000Z");
+        assert.equal(stored.value.latestTurn?.turnId, asTurnId("turn-archived"));
+        assert.equal(stored.value.latestTurn?.state, "completed");
       }
     }),
   );
