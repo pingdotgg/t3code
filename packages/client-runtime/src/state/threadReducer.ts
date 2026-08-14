@@ -571,6 +571,24 @@ export function applyThreadDetailEvent(
       // thread.reverted that discards turns can still resolve a value from
       // the turns that survive.
       const supersedesContextWindow = isResolvableContextWindowActivity(activity);
+      // Live streams append in order: when the new activity sorts at or after
+      // the tail and its id is unseen, a plain append preserves ordering
+      // without re-filtering and re-sorting the whole history on every event.
+      const lastActivity = thread.activities.at(-1);
+      if (
+        !supersedesContextWindow &&
+        (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
+        !thread.activities.some((entry) => entry.id === activity.id)
+      ) {
+        return {
+          kind: "updated",
+          thread: {
+            ...thread,
+            activities: Arr.append(thread.activities, activity),
+            updatedAt: event.occurredAt,
+          },
+        };
+      }
       const activities = pipe(
         thread.activities,
         Arr.filter(

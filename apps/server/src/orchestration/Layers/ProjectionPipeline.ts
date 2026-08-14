@@ -130,6 +130,17 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
+function activityAffectsShellSummary(kind: string): boolean {
+  return (
+    kind === "user-input.requested" ||
+    kind === "user-input.resolved" ||
+    kind === "provider.user-input.respond.failed" ||
+    kind === "approval.requested" ||
+    kind === "approval.resolved" ||
+    kind === "provider.approval.respond.failed"
+  );
+}
+
 function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
@@ -850,9 +861,51 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        case "thread.message-sent":
+        // Message events cannot change any derived summary field except
+        // latestUserMessageAt, which is a monotonic maximum that folds in
+        // directly — the full refresh would re-read every message, plan,
+        // activity, and approval on each streaming assistant delta.
+        case "thread.message-sent": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const previousLatest = existingRow.value.latestUserMessageAt;
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            updatedAt: event.occurredAt,
+            latestUserMessageAt:
+              event.payload.role === "user" &&
+              (previousLatest === null || event.payload.createdAt > previousLatest)
+                ? event.payload.createdAt
+                : previousLatest,
+          });
+          return;
+        }
+
+        // Only approval and user-input lifecycle activities feed the pending
+        // counters; the high-frequency progress/tool activities just bump
+        // updatedAt.
+        case "thread.activity-appended": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            updatedAt: event.occurredAt,
+          });
+          if (activityAffectsShellSummary(event.payload.activity.kind)) {
+            yield* refreshThreadShellSummary(event.payload.threadId);
+          }
+          return;
+        }
+
         case "thread.proposed-plan-upserted":
-        case "thread.activity-appended":
         case "thread.approval-response-requested":
         case "thread.user-input-response-requested": {
           const existingRow = yield* projectionThreadRepository.getById({

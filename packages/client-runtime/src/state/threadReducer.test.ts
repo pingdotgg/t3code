@@ -683,6 +683,89 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("re-sorts when an activity arrives out of order", () => {
+      const makeActivity = (id: string, sequence: number) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary: `Ran command ${sequence}`,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        sequence,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [makeActivity("activity-a", 1), makeActivity("activity-c", 3)],
+        },
+        {
+          ...baseEventFields,
+          sequence: 131,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-b", 2),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-c",
+        ]);
+      }
+    });
+
+    it("replaces a re-delivered activity instead of duplicating it", () => {
+      const makeActivity = (id: string, sequence: number, summary: string) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        sequence,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [
+            makeActivity("activity-a", 1, "first"),
+            makeActivity("activity-b", 2, "second"),
+          ],
+        },
+        {
+          ...baseEventFields,
+          sequence: 132,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-b", 2, "second (redelivered)"),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+        ]);
+        expect(result.thread.activities[1]?.summary).toBe("second (redelivered)");
+      }
+    });
+
     it("replaces earlier resolvable context-window updates for the same turn", () => {
       const contextWindowActivity = (id: string, sequence: number, usedTokens: unknown) => ({
         id: EventId.make(id),
