@@ -614,13 +614,79 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
+    const validateProjectCheckoutBranch = Effect.fnUntraced(function* (input: {
+      readonly deletedWorktreePath?: string;
+    }) {
+      const expectedBranch = thread.branch;
+      if (!project || !expectedBranch) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: input.deletedWorktreePath
+            ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and its project checkout or expected branch could not be found.`
+            : `Thread '${threadId}' is bound to a project branch that could not be resolved.`,
+        });
+      }
+
+      const projectCheckoutExists = yield* fileSystem.exists(project.workspaceRoot).pipe(
+        Effect.mapError(
+          () =>
+            new ProviderAdapterRequestError({
+              provider: providerErrorLabel(String(desiredInstanceId)),
+              method: "thread.turn.start",
+              detail: input.deletedWorktreePath
+                ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and T3 Code could not check its project checkout '${project.workspaceRoot}'.`
+                : `T3 Code could not check project checkout '${project.workspaceRoot}' for thread '${threadId}'.`,
+            }),
+        ),
+      );
+      if (!projectCheckoutExists) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: input.deletedWorktreePath
+            ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and its project checkout '${project.workspaceRoot}' is also missing.`
+            : `Thread '${threadId}' is bound to branch '${expectedBranch}', but its project checkout '${project.workspaceRoot}' is missing.`,
+        });
+      }
+
+      const localStatus = yield* vcsStatusBroadcaster
+        .refreshLocalStatus(project.workspaceRoot)
+        .pipe(
+          Effect.mapError(
+            () =>
+              new ProviderAdapterRequestError({
+                provider: providerErrorLabel(String(desiredInstanceId)),
+                method: "thread.turn.start",
+                detail: input.deletedWorktreePath
+                  ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and T3 Code could not verify the branch in project checkout '${project.workspaceRoot}'.`
+                  : `T3 Code could not verify project checkout '${project.workspaceRoot}' for thread '${threadId}' on branch '${expectedBranch}'.`,
+              }),
+          ),
+        );
+      const currentBranch = localStatus.isRepo ? localStatus.refName : null;
+      if (currentBranch !== expectedBranch) {
+        const currentBranchLabel = localStatus.isRepo
+          ? (currentBranch ?? "detached HEAD")
+          : "not a Git repository";
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: input.deletedWorktreePath
+            ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}' for branch '${expectedBranch}'. The project checkout '${project.workspaceRoot}' is on '${currentBranchLabel}', so T3 Code refused to run the turn in the wrong checkout. Restore the worktree or check out '${expectedBranch}' in the project checkout and retry.`
+            : `Thread '${threadId}' is bound to branch '${expectedBranch}', but project checkout '${project.workspaceRoot}' is on '${currentBranchLabel}'. T3 Code refused to run the turn in the wrong checkout. Check out '${expectedBranch}' and retry.`,
+        });
+      }
+
+      return project.workspaceRoot;
+    });
     const effectiveCwd = yield* Effect.gen(function* () {
       const resolvedCwd = resolveThreadWorkspaceCwd({
         thread,
         projects: project ? [project] : [],
       });
       if (!thread.worktreePath) {
-        return resolvedCwd;
+        return thread.branch ? yield* validateProjectCheckoutBranch({}) : resolvedCwd;
       }
 
       const worktreeExists = yield* fileSystem.exists(thread.worktreePath).pipe(
@@ -637,56 +703,9 @@ const make = Effect.gen(function* () {
         return thread.worktreePath;
       }
 
-      if (!project) {
-        return yield* new ProviderAdapterRequestError({
-          provider: providerErrorLabel(String(desiredInstanceId)),
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and its project checkout could not be found.`,
-        });
-      }
-
-      const projectCheckoutExists = yield* fileSystem.exists(project.workspaceRoot).pipe(
-        Effect.mapError(
-          () =>
-            new ProviderAdapterRequestError({
-              provider: providerErrorLabel(String(desiredInstanceId)),
-              method: "thread.turn.start",
-              detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and T3 Code could not check its project checkout '${project.workspaceRoot}'.`,
-            }),
-        ),
-      );
-      if (!projectCheckoutExists) {
-        return yield* new ProviderAdapterRequestError({
-          provider: providerErrorLabel(String(desiredInstanceId)),
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and its project checkout '${project.workspaceRoot}' is also missing.`,
-        });
-      }
-
-      const localStatus = yield* vcsStatusBroadcaster
-        .refreshLocalStatus(project.workspaceRoot)
-        .pipe(
-          Effect.mapError(
-            () =>
-              new ProviderAdapterRequestError({
-                provider: providerErrorLabel(String(desiredInstanceId)),
-                method: "thread.turn.start",
-                detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and T3 Code could not verify the branch in project checkout '${project.workspaceRoot}'.`,
-              }),
-          ),
-        );
-      const expectedBranch = thread.branch;
-      const currentBranch = localStatus.isRepo ? localStatus.refName : null;
-      if (!expectedBranch || currentBranch !== expectedBranch) {
-        const currentBranchLabel = localStatus.isRepo
-          ? (currentBranch ?? "detached HEAD")
-          : "not a Git repository";
-        return yield* new ProviderAdapterRequestError({
-          provider: providerErrorLabel(String(desiredInstanceId)),
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}' for branch '${expectedBranch ?? "unknown"}'. The project checkout '${project.workspaceRoot}' is on '${currentBranchLabel}', so T3 Code refused to run the turn in the wrong checkout. Restore the worktree or check out '${expectedBranch ?? "the thread branch"}' in the project checkout and retry.`,
-        });
-      }
+      const projectCheckout = yield* validateProjectCheckoutBranch({
+        deletedWorktreePath: thread.worktreePath,
+      });
 
       yield* orchestrationEngine.dispatch({
         type: "thread.meta.update",
@@ -694,7 +713,7 @@ const make = Effect.gen(function* () {
         threadId,
         worktreePath: null,
       });
-      return project.workspaceRoot;
+      return projectCheckout;
     });
 
     const startProviderSession = (input?: {

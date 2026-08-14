@@ -167,6 +167,7 @@ describe("ProviderCommandReactor", () => {
     NodeFS.mkdirSync(worktreePath, { recursive: true });
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
+    let currentBranch = input?.currentBranch ?? "main";
     const runtimeSessions: Array<ProviderSession> = [];
     const modelSelection = input?.threadModelSelection ?? {
       instanceId: ProviderInstanceId.make("codex"),
@@ -292,7 +293,7 @@ describe("ProviderCommandReactor", () => {
         isRepo: true,
         hasPrimaryRemote: true,
         isDefaultRef: false,
-        refName: input?.currentBranch ?? "main",
+        refName: currentBranch,
         hasWorkingTreeChanges: false,
         workingTree: {
           files: [],
@@ -522,6 +523,9 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       runtimeSessions,
+      setCurrentBranch: (branch: string) => {
+        currentBranch = branch;
+      },
       workspaceRoot,
       worktreePath,
       stateDir,
@@ -661,6 +665,98 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.lastError).toContain(missingWorktreePath);
     expect(thread?.session?.lastError).toContain("feature/original-worktree");
     expect(thread?.session?.lastError).toContain("main");
+  });
+
+  it("keeps validating the branch after recovering a deleted worktree", async () => {
+    let failStartup = true;
+    const harness = await createHarness({
+      currentBranch: "main",
+      startSessionEffect: (session) =>
+        failStartup
+          ? Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread.start",
+                detail: "deterministic startup failure",
+              }),
+            )
+          : Effect.succeed(session),
+    });
+    const missingWorktreePath = NodePath.join(harness.workspaceRoot, "deleted-worktree");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-deleted-worktree-follow-up"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "main",
+        worktreePath: missingWorktreePath,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-deleted-worktree-failed-startup"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-deleted-worktree-failed-startup"),
+          role: "user",
+          text: "recover, then fail to start",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+          ?.status === "error"
+      );
+    });
+    let readModel = await harness.readModel();
+    let thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.worktreePath).toBeNull();
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+
+    harness.setCurrentBranch("feature/other");
+    failStartup = false;
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-deleted-worktree-branch-drift"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-deleted-worktree-branch-drift"),
+          role: "user",
+          text: "do not retry on a different branch",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(async () => {
+      if (harness.startSession.mock.calls.length > 1) return true;
+      const currentReadModel = await harness.readModel();
+      return (
+        currentReadModel.threads
+          .find((entry) => entry.id === ThreadId.make("thread-1"))
+          ?.session?.lastError?.includes("feature/other") ?? false
+      );
+    });
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    readModel = await harness.readModel();
+    thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.lastError).toContain("main");
+    expect(thread?.session?.lastError).toContain("feature/other");
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
