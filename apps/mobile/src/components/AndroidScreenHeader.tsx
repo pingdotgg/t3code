@@ -51,7 +51,6 @@ export function AndroidScreenHeader(props: {
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
-  readonly embedded?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const foregroundColor = useThemeColor("--color-foreground");
@@ -60,7 +59,7 @@ export function AndroidScreenHeader(props: {
     <View
       className="border-b border-header-border bg-header px-3 pb-2.5"
       style={{
-        paddingTop: props.embedded ? 8 : Math.max(insets.top, 12),
+        paddingTop: Math.max(insets.top, 12),
       }}
     >
       <View className="min-h-12 flex-row items-center gap-2">
@@ -110,8 +109,6 @@ export function AndroidScreenHeader(props: {
   );
 }
 
-export function AndroidSheetHeader(
-  props: Omit<Parameters<typeof AndroidScreenHeader>[0], "embedded">,
-) {
-  return <AndroidScreenHeader {...props} embedded />;
+export function AndroidSheetHeader(props: Parameters<typeof AndroidScreenHeader>[0]) {
+  return <AndroidScreenHeader {...props} />;
 }
