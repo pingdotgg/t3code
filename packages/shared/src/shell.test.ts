@@ -21,6 +21,7 @@ import {
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   SpawnExecutableResolution,
+  WINDOWS_POWERSHELL_CANDIDATES,
   WindowsShellEnvironment,
   type WindowsShellEnvironmentReader,
 } from "./shell.ts";
@@ -215,6 +216,12 @@ describe("mergePathEntries", () => {
   });
 });
 
+describe("WINDOWS_POWERSHELL_CANDIDATES", () => {
+  it("tries Windows PowerShell 5.1 before pwsh", () => {
+    expect(WINDOWS_POWERSHELL_CANDIDATES).toEqual(["powershell.exe", "pwsh.exe"]);
+  });
+});
+
 describe("readEnvironmentFromWindowsShell", () => {
   it("extracts environment variables from a PowerShell command", () => {
     const execFile = vi.fn<
@@ -232,7 +239,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       PATH: "C:\\Users\\testuser\\AppData\\Roaming\\npm",
     });
     expect(execFile).toHaveBeenCalledWith(
-      "pwsh.exe",
+      "powershell.exe",
       expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
       { encoding: "utf8", timeout: 5000 },
     );
@@ -268,14 +275,14 @@ describe("readEnvironmentFromWindowsShell", () => {
       PATH: "C:\\Tools",
     });
     expect(execFile).toHaveBeenCalledWith(
-      "pwsh.exe",
+      "powershell.exe",
       expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
       { encoding: "utf8", timeout: 5000 },
     );
     expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
   });
 
-  it("falls back to Windows PowerShell when pwsh.exe is unavailable", () => {
+  it("falls back to PowerShell 7 when Windows PowerShell 5.1 is unavailable", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -283,8 +290,8 @@ describe("readEnvironmentFromWindowsShell", () => {
         options: { encoding: "utf8"; timeout: number },
       ) => string
     >((file) => {
-      if (file === "pwsh.exe") {
-        throw new Error("spawn pwsh.exe ENOENT");
+      if (file === "powershell.exe") {
+        throw new Error("spawn powershell.exe ENOENT");
       }
       return "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n";
     });
@@ -292,11 +299,11 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
       PATH: "C:\\Tools",
     });
-    expect(execFile).toHaveBeenNthCalledWith(1, "pwsh.exe", expect.any(Array), {
+    expect(execFile).toHaveBeenNthCalledWith(1, "powershell.exe", expect.any(Array), {
       encoding: "utf8",
       timeout: 5000,
     });
-    expect(execFile).toHaveBeenNthCalledWith(2, "powershell.exe", expect.any(Array), {
+    expect(execFile).toHaveBeenNthCalledWith(2, "pwsh.exe", expect.any(Array), {
       encoding: "utf8",
       timeout: 5000,
     });

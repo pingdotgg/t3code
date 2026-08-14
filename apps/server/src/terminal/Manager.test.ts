@@ -1298,12 +1298,17 @@ it.layer(
 
       if (platform === "win32") {
         expect(
-          ptyAdapter.spawnInputs.some(
-            (input) =>
-              input.shell === "pwsh.exe" ||
-              input.shell === "powershell.exe" ||
-              input.shell === "cmd.exe",
-          ),
+          ptyAdapter.spawnInputs.some((input) => {
+            const shell = input.shell.toLowerCase();
+            return (
+              shell === "pwsh.exe" ||
+              shell === "powershell.exe" ||
+              shell === "cmd.exe" ||
+              shell.endsWith("\\powershell.exe") ||
+              shell.endsWith("\\pwsh.exe") ||
+              shell.endsWith("\\cmd.exe")
+            );
+          }),
         ).toBe(true);
       } else {
         expect(
@@ -1315,7 +1320,7 @@ it.layer(
     }),
   );
 
-  it.effect("prefers PowerShell over ComSpec for Windows terminals", () =>
+  it.effect("prefers Windows PowerShell 5.1 over ComSpec for Windows terminals", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
         env: {
@@ -1329,7 +1334,7 @@ it.layer(
 
       expect(ptyAdapter.spawnInputs[0]).toEqual(
         expect.objectContaining({
-          shell: "pwsh.exe",
+          shell: "powershell.exe",
           args: ["-NoLogo"],
         }),
       );
@@ -1348,20 +1353,15 @@ it.layer(
           SystemRoot: "C:\\Windows",
         },
       }).pipe(Effect.provide(withHostPlatform("win32")));
-      ptyAdapter.spawnFailures.push(
-        new Error("spawn custom-shell.exe ENOENT"),
-        new Error("spawn pwsh.exe ENOENT"),
-      );
+      ptyAdapter.spawnFailures.push(new Error("spawn custom-shell.exe ENOENT"));
 
       yield* manager.open(openInput());
 
       expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
         "C:\\missing\\custom-shell.exe",
-        "pwsh.exe",
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       ]);
       expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
-      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
     }),
   );
 

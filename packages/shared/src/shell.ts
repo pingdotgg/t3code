@@ -17,7 +17,10 @@ const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
-const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+
+// Windows PowerShell 5.1 first (always present); pwsh only as fallback.
+// Probe scripts must stay 5.1-compatible either way.
+export const WINDOWS_POWERSHELL_CANDIDATES = ["powershell.exe", "pwsh.exe"] as const;
 
 type ExecFileSyncLike = (
   file: string,
@@ -381,7 +384,7 @@ export function readEnvironmentFromWindowsShell(
     "-Command",
     command,
   ];
-  for (const shell of WINDOWS_SHELL_CANDIDATES) {
+  for (const shell of WINDOWS_POWERSHELL_CANDIDATES) {
     try {
       const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
 

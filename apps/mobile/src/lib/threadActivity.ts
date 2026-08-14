@@ -785,7 +785,7 @@ function splitExecutableAndRest(value: string): { executable: string; rest: stri
 
 const SHELL_WRAPPER_SPECS = [
   {
-    executables: ["pwsh", "pwsh.exe", "powershell", "powershell.exe"],
+    executables: ["powershell", "powershell.exe", "pwsh", "pwsh.exe"],
     wrapperFlagPattern: /(?:^|\s)-command\s+/i,
   },
   {

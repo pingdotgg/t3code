@@ -438,7 +438,7 @@ function enqueueProcessEvent(
 
 function defaultShellResolver(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string {
   if (platform === "win32") {
-    return "pwsh.exe";
+    return "powershell.exe";
   }
   return env.SHELL ?? "bash";
 }
@@ -543,9 +543,9 @@ function resolveShellCandidates(
   if (platform === "win32") {
     return uniqueShellCandidates([
       requested,
-      shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
       shellCandidateFromCommand("powershell.exe", platform),
+      shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(env.ComSpec ?? null, platform),
       shellCandidateFromCommand(windowsCmdPath(env), platform),
       shellCandidateFromCommand("cmd.exe", platform),
@@ -633,9 +633,9 @@ function windowsInspectSubprocess(
   return Effect.gen(function* () {
     const processRunner = yield* ProcessRunner.ProcessRunner;
     return yield* processRunner.run({
-      // powershell.exe is a real executable — never spawn it through cmd.exe
-      // shell mode, which would re-tokenize the `-Command` payload (pipes,
-      // semicolons) before PowerShell ever sees it.
+      // Windows PowerShell 5.1 is a real executable — never spawn it through
+      // cmd.exe shell mode, which would re-tokenize the `-Command` payload
+      // (pipes, semicolons) before PowerShell ever sees it.
       command: "powershell.exe",
       args: ["-NoProfile", "-NonInteractive", "-Command", command],
       timeout: "1500 millis",
