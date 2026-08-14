@@ -827,6 +827,7 @@ it.effect("rebases packaged links into the isolated tree", () =>
       destination,
       "node_modules/.pnpm/example@1/node_modules/example",
     );
+    const resolvedCopiedPackage = yield* fs.realPath(copiedPackage);
     assert.equal(
       yield* fs.readLink(path.join(destination, "node_modules/example-relative")),
       copiedPackage,
@@ -837,11 +838,11 @@ it.effect("rebases packaged links into the isolated tree", () =>
     );
     assert.equal(
       yield* fs.realPath(path.join(destination, "node_modules/example-relative")),
-      copiedPackage,
+      resolvedCopiedPackage,
     );
     assert.equal(
       yield* fs.realPath(path.join(destination, "node_modules/example-absolute")),
-      copiedPackage,
+      resolvedCopiedPackage,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
