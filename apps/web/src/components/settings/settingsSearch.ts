@@ -235,6 +235,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "computer-history",
   },
   {
+    id: "computer-history-privacy",
+    title: "Computer History privacy",
+    to: "/settings/computer-history",
+    targetId: "computer-history-privacy",
+  },
+  {
     id: "computer-history-timeline",
     title: "Computer History timeline",
     to: "/settings/computer-history",

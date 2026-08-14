@@ -44,6 +44,9 @@ describe("computer history filters", () => {
 
   it("never allows private-browsing style urls", () => {
     expect(websiteMatchesFilter("chrome://newtab", "exclude", [])).toBe(false);
+    expect(websiteMatchesFilter("about:privatebrowsing", "exclude", [])).toBe(false);
+    expect(websiteMatchesFilter("https://mail.example/(Private)", "exclude", [])).toBe(false);
+    expect(websiteMatchesFilter("https://example.com", "exclude", [])).toBe(true);
   });
 });
 

@@ -117,17 +117,32 @@ export function websiteMatchesFilter(
     return true;
   }
   // Private-mode browsing is never included (heuristic: common private markers).
-  const lowered = url.toLowerCase();
-  if (
-    lowered.includes("chrome://newtab") ||
-    lowered.startsWith("about:privatebrowsing") ||
-    lowered.includes("edge://newtab")
-  ) {
+  if (isPrivateBrowsingUrl(url)) {
     return false;
   }
   if (filters.length === 0) {
     return mode === "exclude";
   }
+  const lowered = url.toLowerCase();
   const hit = filters.some((filter) => lowered.includes(filter.toLowerCase()));
   return mode === "exclude" ? !hit : hit;
+}
+
+/** Best-effort detection of private / incognito browser surfaces. */
+export function isPrivateBrowsingUrl(url: string): boolean {
+  const lowered = url.toLowerCase();
+  return (
+    lowered.includes("chrome://newtab") ||
+    lowered.includes("chrome://private") ||
+    lowered.includes("chrome-search://local-ntp") ||
+    lowered.startsWith("about:privatebrowsing") ||
+    lowered.includes("about:privatebrowsing") ||
+    lowered.includes("edge://newtab") ||
+    lowered.includes("edge://private") ||
+    lowered.includes("brave://newtab") ||
+    lowered.includes("opera://private") ||
+    lowered.includes("(private)") ||
+    lowered.includes("incognito") ||
+    lowered.includes("inprivate")
+  );
 }
