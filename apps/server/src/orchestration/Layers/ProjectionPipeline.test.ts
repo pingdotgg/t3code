@@ -159,6 +159,11 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
 
+      const syncedPreferenceRows = yield* sql<Record<string, unknown>>`
+        SELECT * FROM projection_synced_client_preferences
+      `;
+      assert.deepEqual(syncedPreferenceRows, []);
+
       const stateRows = yield* sql<{
         readonly projector: string;
         readonly lastAppliedSequence: number;
@@ -1171,6 +1176,96 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
 );
 
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
+  it.effect(
+    "rebuilds synced preferences deterministically from duplicate and out-of-order events",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* eventStore.append({
+          type: "client-preferences.patched",
+          eventId: EventId.make("preferences-fresh"),
+          aggregateKind: "client-preferences",
+          aggregateId: "client-preferences",
+          occurredAt: "2026-08-14T12:00:00.000Z",
+          commandId: CommandId.make("preferences-fresh"),
+          causationEventId: null,
+          correlationId: CommandId.make("preferences-fresh"),
+          metadata: {},
+          payload: {
+            patch: { planModeEnabled: true, appearanceMode: "dark" },
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+        });
+        yield* eventStore.append({
+          type: "client-preferences.patched",
+          eventId: EventId.make("preferences-stale"),
+          aggregateKind: "client-preferences",
+          aggregateId: "client-preferences",
+          occurredAt: "2026-08-14T11:00:00.000Z",
+          commandId: CommandId.make("preferences-stale"),
+          causationEventId: null,
+          correlationId: CommandId.make("preferences-stale"),
+          metadata: {},
+          payload: {
+            patch: { planModeEnabled: false },
+            updatedAt: "2026-08-14T11:00:00.000Z",
+          },
+        });
+        const equalStampEvent = yield* eventStore.append({
+          type: "client-preferences.patched",
+          eventId: EventId.make("preferences-equal-stamp"),
+          aggregateKind: "client-preferences",
+          aggregateId: "client-preferences",
+          occurredAt: "2026-08-14T12:00:00.000Z",
+          commandId: CommandId.make("preferences-equal-stamp"),
+          causationEventId: null,
+          correlationId: CommandId.make("preferences-equal-stamp"),
+          metadata: {},
+          payload: {
+            patch: { planModeEnabled: false },
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+        yield* projectionPipeline.projectEvent(equalStampEvent);
+        yield* projectionPipeline.projectEvent(equalStampEvent);
+
+        const readPreferences = () =>
+          sql<{
+            readonly planModeEnabled: number;
+            readonly appearanceMode: string | null;
+            readonly updatedAt: string;
+          }>`
+          SELECT
+            plan_mode_enabled AS "planModeEnabled",
+            appearance_mode AS "appearanceMode",
+            updated_at AS "updatedAt"
+          FROM projection_synced_client_preferences
+        `;
+        const expected = [
+          {
+            planModeEnabled: 0,
+            appearanceMode: "dark",
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+        ];
+        assert.deepEqual(yield* readPreferences(), expected);
+
+        yield* sql`DELETE FROM projection_synced_client_preferences`;
+        yield* sql`
+        DELETE FROM projection_state
+        WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.syncedClientPreferences}
+      `;
+        yield* projectionPipeline.bootstrap;
+
+        assert.deepEqual(yield* readPreferences(), expected);
+      }),
+  );
+
   it.effect("resumes from projector last_applied_sequence without replaying older events", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

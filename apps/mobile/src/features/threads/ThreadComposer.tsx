@@ -9,7 +9,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   detectComposerTrigger,
-  replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
@@ -65,6 +64,7 @@ import {
 } from "@t3tools/shared/searchRanking";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import {
   type ExistingThreadSettingsRouteSession,
@@ -74,6 +74,13 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
+import {
+  getBuiltInComposerSlashCommands,
+  replaceCurrentComposerTrigger,
+  resolveComposerSubmitInteractionMode,
+  resolveSlashCommandInteractionMode,
+} from "./plan-mode";
+import { usePlanModeEnabled } from "./use-plan-mode-enabled";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -329,6 +336,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
+  const planModeEnabled = usePlanModeEnabled();
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -347,25 +355,28 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
 
   // ── Trigger detection ────────────────────────────────────
-  const [composerSelection, setComposerSelection] = useState(() => ({
+  const composerSelectionRef = useRef({
     start: props.draftMessage.length,
     end: props.draftMessage.length,
-  }));
+  });
+  const [composerSelection, setComposerSelection] = useState(composerSelectionRef.current);
 
-  const handleSelectionChange = useCallback((selection: ComposerEditorSelection) => {
+  const updateComposerSelection = useCallback((selection: ComposerEditorSelection) => {
+    composerSelectionRef.current = selection;
     setComposerSelection(selection);
   }, []);
+  const handleSelectionChange = updateComposerSelection;
   useEffect(() => {
     const end = props.draftMessage.length;
-    setComposerSelection((selection) => {
-      const start = Math.min(selection.start, end);
-      const selectionEnd = Math.min(selection.end, end);
-      if (start === selection.start && selectionEnd === selection.end) {
-        return selection;
-      }
-      return { start, end: selectionEnd };
-    });
-  }, [props.draftMessage.length]);
+    const selection = composerSelectionRef.current;
+    const next = {
+      start: Math.min(selection.start, end),
+      end: Math.min(selection.end, end),
+    };
+    if (next.start !== selection.start || next.end !== selection.end) {
+      updateComposerSelection(next);
+    }
+  }, [props.draftMessage.length, updateComposerSelection]);
 
   const composerTrigger = useMemo<ComposerTrigger | null>(() => {
     if (composerSelection.start !== composerSelection.end) {
@@ -384,30 +395,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
     if (composerTrigger.kind === "slash-command") {
       const q = composerTrigger.query.toLowerCase();
-      const allBuiltIn = [
-        {
-          id: "cmd:model",
-          type: "slash-command" as const,
-          command: "model",
-          label: "/model",
-          description: "Switch model",
-        },
-        {
-          id: "cmd:plan",
-          type: "slash-command" as const,
-          command: "plan",
-          label: "/plan",
-          description: "Switch to plan mode",
-        },
-        {
-          id: "cmd:default",
-          type: "slash-command" as const,
-          command: "default",
-          label: "/default",
-          description: "Switch to default mode",
-        },
-      ];
-      const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
+      const builtIn = getBuiltInComposerSlashCommands({ planModeEnabled, query: q });
 
       const providerCommands: ComposerCommandItem[] = [];
       for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
@@ -522,13 +510,26 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, planModeEnabled, selectedProviderStatus]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+    const draft = getComposerDraftSnapshot(threadKey);
+    const submitInteractionMode = resolveComposerSubmitInteractionMode({
+      text: draft.text,
+      attachmentCount: draft.attachments.length,
+      planModeEnabled,
+    });
+    if (submitInteractionMode !== null) {
+      updateComposerSelection({ start: 0, end: 0 });
+      onChangeDraftMessage("");
+      onUpdateInteractionMode(submitInteractionMode);
+      return;
+    }
+
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
     try {
@@ -546,53 +547,65 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       inFlightThreadIdsRef.current.delete(threadKey);
     }
   }, [
+    onChangeDraftMessage,
     onSendMessage,
+    onUpdateInteractionMode,
+    planModeEnabled,
     props.environmentId,
     props.environmentLabel,
     props.selectedThread.id,
     props.selectedThread.title,
+    updateComposerSelection,
   ]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;
 
-      if (
-        item.type === "slash-command" &&
-        (item.command === "plan" || item.command === "default")
-      ) {
-        const result = replaceTextRange(
-          draftMessage,
-          composerTrigger.rangeStart,
-          composerTrigger.rangeEnd,
-          "",
-        );
-        setComposerSelection({ start: result.cursor, end: result.cursor });
-        onChangeDraftMessage(result.text);
-        onUpdateInteractionMode(item.command);
-        return;
-      }
-
+      const interactionMode =
+        item.type === "slash-command"
+          ? resolveSlashCommandInteractionMode({
+              command: item.command,
+              planModeEnabled,
+            })
+          : null;
       let replacement = "";
       if (item.type === "path") {
         replacement = `${serializeComposerFileLink(item.path)} `;
       } else if (item.type === "skill") {
         replacement = `$${item.skill.name} `;
       } else if (item.type === "slash-command") {
-        replacement = `/${item.command} `;
+        replacement = interactionMode === null ? `/${item.command} ` : "";
       } else if (item.type === "provider-slash-command") {
         replacement = `/${item.command.name} `;
       }
 
-      const result = replaceTextRange(
-        draftMessage,
-        composerTrigger.rangeStart,
-        composerTrigger.rangeEnd,
+      const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+      const draft = getComposerDraftSnapshot(threadKey);
+      const result = replaceCurrentComposerTrigger({
+        text: draft.text,
+        selection: composerSelectionRef.current,
+        expectedKind: composerTrigger.kind,
+        expectedText: draftMessage.slice(composerTrigger.rangeStart, composerTrigger.rangeEnd),
         replacement,
-      );
-      setComposerSelection({ start: result.cursor, end: result.cursor });
+        extendSlashCommandToken: true,
+      });
+      if (!result) return;
+      updateComposerSelection({ start: result.cursor, end: result.cursor });
       onChangeDraftMessage(result.text);
+      if (interactionMode !== null) {
+        onUpdateInteractionMode(interactionMode);
+      }
     },
-    [composerTrigger, draftMessage, onChangeDraftMessage, onUpdateInteractionMode],
+    [
+      composerTrigger,
+      draftMessage,
+      onChangeDraftMessage,
+      onUpdateInteractionMode,
+      planModeEnabled,
+      props.environmentId,
+      props.selectedThread.id,
+      updateComposerSelection,
+    ],
   );
 
   // ── Model menu ───────────────────────────────────────────

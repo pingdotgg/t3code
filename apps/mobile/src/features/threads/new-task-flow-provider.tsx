@@ -77,11 +77,12 @@ import {
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { resolvePendingTaskInteractionMode } from "./legacy-plan-mode";
-import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
+import { resolveComposerInteractionMode } from "./plan-mode";
+import { usePlanModePreferenceState } from "./use-plan-mode-enabled";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -194,7 +195,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
-  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
+  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } =
+    usePlanModePreferenceState();
   const projectScopes = useMemo(
     () =>
       sortHomeProjectScopes({
@@ -401,9 +403,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode = planModeEnabled
-    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
-    : DEFAULT_PROVIDER_INTERACTION_MODE;
+  const interactionMode = resolveComposerInteractionMode({
+    interactionMode: selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+    planModeEnabled,
+  });
 
   // Stored selections only count while their provider is usable on the
   // server; otherwise the server's default model wins instead of silently
@@ -896,11 +899,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       editingPendingProject,
       editingPendingTask,
+      planModeEnabled,
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
       selectedProjectDraftKey,
-      planModeEnabled,
       planModePreferenceLoaded,
       startFromOrigin,
       workspaceMode,

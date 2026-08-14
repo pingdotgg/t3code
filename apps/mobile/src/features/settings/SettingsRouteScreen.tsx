@@ -35,6 +35,7 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { usePlanModeEnabled } from "../threads/use-plan-mode-enabled";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
   type AppUpdateCheckState,
@@ -43,6 +44,7 @@ import {
   runAppUpdateCheck,
 } from "../updates/app-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useUpdatePlanModePreference } from "../../state/synced-client-preferences";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -548,37 +550,35 @@ function GeneralSettingsSection() {
   );
 }
 
-/**
- * Device-local legacy toggles. Mobile has no client-settings sync, so this is
- * the counterpart of web's Settings → General → Legacy features backed by
- * mobile preferences.
- */
 function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const preferences = useAtomValue(mobilePreferencesAtom);
+  const updatePlanModePreference = useUpdatePlanModePreference();
+  const planModeEnabled = usePlanModeEnabled();
   const threadListV2Enabled = useThreadListV2Enabled();
-  const planModeEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
 
   return (
     <View className="gap-3">
       <SettingsSection title="Legacy">
+        <SettingsSwitchRow
+          icon="hammer"
+          label="Plan Mode (Legacy)"
+          value={planModeEnabled}
+          onValueChange={updatePlanModePreference}
+        />
         <SettingsSwitchRow
           icon="sidebar.left"
           label="Legacy Thread List"
           value={!threadListV2Enabled}
           onValueChange={(value) => savePreferences({ legacyThreadListEnabled: value })}
         />
-        <SettingsSwitchRow
-          icon="hammer"
-          label="Plan Mode"
-          value={planModeEnabled}
-          onValueChange={(value) => savePreferences({ planModeEnabled: value })}
-        />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
-        control; otherwise every task runs in Build mode.
+        Opt into retired interfaces kept for compatibility. Plan mode restores the Build/Plan
+        control and the /plan and /default commands; while off, every task uses default mode.
+      </Text>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Brings back the original grouped thread list. The default list is flat, in creation order:
+        active work renders as cards; settled threads collapse to compact rows.
       </Text>
     </View>
   );

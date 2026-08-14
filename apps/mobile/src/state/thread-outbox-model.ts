@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { resolveComposerInteractionMode } from "../features/threads/plan-mode";
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -89,11 +90,30 @@ export interface ThreadSettingsSnapshot {
 export function resolveQueuedThreadSettings(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
+  planModeEnabled: boolean,
 ): ThreadSettingsSnapshot {
   return {
     modelSelection: message.modelSelection ?? thread.modelSelection,
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
-    interactionMode: message.interactionMode ?? thread.interactionMode,
+    interactionMode: resolveComposerInteractionMode({
+      interactionMode: message.interactionMode ?? thread.interactionMode,
+      planModeEnabled,
+    }),
+  };
+}
+
+export function resolveQueuedThreadSendDecision(
+  message: QueuedThreadMessage,
+  thread: ThreadSettingsSnapshot,
+  readPlanModeEnabled: () => boolean,
+): {
+  readonly planModeEnabled: boolean;
+  readonly settings: ThreadSettingsSnapshot;
+} {
+  const planModeEnabled = readPlanModeEnabled();
+  return {
+    planModeEnabled,
+    settings: resolveQueuedThreadSettings(message, thread, planModeEnabled),
   };
 }
 

@@ -77,6 +77,7 @@ import {
   NATIVE_SHEET_SURFACE_CONTENT_STYLE,
 } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
+import { useSyncedClientPreferences } from "./state/synced-client-preferences";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -372,6 +373,11 @@ function ThreadOutboxDrainWorker() {
   return null;
 }
 
+function SyncedClientPreferencesWorker() {
+  useSyncedClientPreferences();
+  return null;
+}
+
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
@@ -408,6 +414,7 @@ function RootStackLayout(props: {
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
+      <SyncedClientPreferencesWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
         <AdaptiveWorkspaceLayout pathname={workspacePathname}>

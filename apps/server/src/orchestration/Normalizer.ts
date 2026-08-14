@@ -15,6 +15,8 @@ import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
+export const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
+
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
   receivedAt: IsoDateTime,
@@ -26,6 +28,16 @@ export const canonicalizeClientCommandTimestamps = (
           createdAt: receivedAt,
         }
       : command;
+
+  if (canonicalCommand.type === "client-preferences.patch") {
+    const maximumUpdatedAt =
+      DateTime.toEpochMillis(DateTime.makeUnsafe(receivedAt)) +
+      SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS;
+    return DateTime.toEpochMillis(DateTime.makeUnsafe(canonicalCommand.updatedAt)) >
+      maximumUpdatedAt
+      ? { ...canonicalCommand, updatedAt: receivedAt }
+      : canonicalCommand;
+  }
 
   if (canonicalCommand.type !== "thread.turn.start" || !canonicalCommand.bootstrap?.createThread) {
     return canonicalCommand;

@@ -789,6 +789,7 @@ const buildAppUnderTest = (options?: {
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
+          getSyncedClientPreferences: () => Effect.succeed(undefined),
           getArchivedShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: 0,
@@ -5982,6 +5983,77 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
       assertTrue(result.failure.cause instanceof Error);
       assert.include(result.failure.cause.message, projectionError.message);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("streams a client preference patch incrementally instead of replacing the shell", () =>
+    Effect.gen(function* () {
+      const canonicalPreferences = {
+        planModeEnabled: true,
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      } as const;
+      let patchedEvent: OrchestrationEvent | null = null;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (command.type === "client-preferences.patch") {
+                  patchedEvent = {
+                    sequence: 1,
+                    eventId: EventId.make("event-client-preferences-patched"),
+                    aggregateKind: "client-preferences",
+                    aggregateId: "client-preferences",
+                    occurredAt: command.updatedAt,
+                    commandId: command.commandId,
+                    causationEventId: null,
+                    correlationId: null,
+                    metadata: {},
+                    type: "client-preferences.patched",
+                    payload: {
+                      patch: command.patch,
+                      updatedAt: command.updatedAt,
+                    },
+                  };
+                }
+                return { sequence: 1 };
+              }),
+            latestSequence: Effect.succeed(1),
+            readEvents: () => (patchedEvent === null ? Stream.empty : Stream.make(patchedEvent)),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () => Effect.die("patch replay must not load a shell snapshot"),
+            getSyncedClientPreferences: () => Effect.succeed(canonicalPreferences),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const ack = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.syncedClientPreferencesPatch]({
+            patch: { planModeEnabled: true },
+            updatedAt: canonicalPreferences.updatedAt,
+          }),
+        ),
+      );
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+            afterSequence: 0,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+
+      assert.deepEqual(ack, canonicalPreferences);
+      assert.deepEqual(items[0], {
+        kind: "client-preferences-updated",
+        sequence: 1,
+        preferences: canonicalPreferences,
+      });
+      assert.deepEqual(items[1], { kind: "synchronized" });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

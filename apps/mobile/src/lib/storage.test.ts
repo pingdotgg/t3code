@@ -172,9 +172,24 @@ describe("mobile connection storage", () => {
 
   it("loads legacy preferences when SQLite is unavailable", async () => {
     mocks.setDatabaseFailures(true, true);
-    await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));
+    await mocks.setItemAsync(
+      "t3code.preferences",
+      JSON.stringify({ baseFontSize: 17, planModeEnabled: true }),
+    );
 
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17, planModeEnabled: true });
+  });
+
+  it("drops non-canonical synced preference stamps used for lexical LWW ordering", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00Z",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({ planModeEnabled: true });
   });
 
   it("falls back to secure storage when SQLite cannot save preferences", async () => {

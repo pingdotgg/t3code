@@ -22,6 +22,11 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import {
+  SyncedClientPreferences,
+  SyncedClientPreferencesPatch,
+  SyncedClientPreferencesUpdatedAt,
+} from "./syncedClientPreferences.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -426,6 +431,7 @@ export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
+  syncedClientPreferences: Schema.optional(SyncedClientPreferences),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -501,6 +507,8 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
+  // Optional so cached snapshots and older servers remain wire-compatible.
+  syncedClientPreferences: Schema.optional(SyncedClientPreferences),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
@@ -525,6 +533,11 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     kind: Schema.Literal("thread-removed"),
     sequence: NonNegativeInt,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("client-preferences-updated"),
+    sequence: NonNegativeInt,
+    preferences: SyncedClientPreferences,
   }),
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
@@ -632,6 +645,16 @@ export const OrchestrationThreadDetailSnapshot = Schema.Struct({
   page: Schema.optional(OrchestrationThreadDetailPage),
 });
 export type OrchestrationThreadDetailSnapshot = typeof OrchestrationThreadDetailSnapshot.Type;
+
+export const SyncedClientPreferencesAggregateId = Schema.Literal("client-preferences");
+export type SyncedClientPreferencesAggregateId = typeof SyncedClientPreferencesAggregateId.Type;
+
+const ClientPreferencesPatchCommand = Schema.Struct({
+  type: Schema.Literal("client-preferences.patch"),
+  commandId: CommandId,
+  patch: SyncedClientPreferencesPatch,
+  updatedAt: SyncedClientPreferencesUpdatedAt,
+});
 
 export const ProjectCreateCommand = Schema.Struct({
   type: Schema.Literal("project.create"),
@@ -910,6 +933,7 @@ const ThreadSessionStopCommand = Schema.Struct({
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
+  ClientPreferencesPatchCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -938,6 +962,7 @@ export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
 
 export const ClientOrchestrationCommand = Schema.Union([
+  ClientPreferencesPatchCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -1056,6 +1081,7 @@ export const OrchestrationCommand = Schema.Union([
 export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 
 export const OrchestrationEventType = Schema.Literals([
+  "client-preferences.patched",
   "project.created",
   "project.meta-updated",
   "project.deleted",
@@ -1088,9 +1114,18 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals([
+  "client-preferences",
+  "project",
+  "thread",
+]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
+
+export const ClientPreferencesPatchedPayload = Schema.Struct({
+  patch: SyncedClientPreferencesPatch,
+  updatedAt: SyncedClientPreferencesUpdatedAt,
+});
 
 export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
@@ -1332,7 +1367,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([SyncedClientPreferencesAggregateId, ProjectId, ThreadId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1341,6 +1376,11 @@ const EventBaseFields = {
 } as const;
 
 export const OrchestrationEvent = Schema.Union([
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("client-preferences.patched"),
+    payload: ClientPreferencesPatchedPayload,
+  }),
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("project.created"),

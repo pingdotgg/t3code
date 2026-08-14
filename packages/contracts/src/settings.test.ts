@@ -9,12 +9,67 @@ import {
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
+import {
+  SyncedClientPreferences,
+  SyncedClientPreferencesPatch,
+  PatchSyncedClientPreferencesRequest,
+} from "./syncedClientPreferences.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeSyncedClientPreferences = Schema.decodeUnknownSync(SyncedClientPreferences);
+const decodeSyncedClientPreferencesPatch = Schema.decodeUnknownSync(SyncedClientPreferencesPatch);
+const decodePatchSyncedClientPreferencesRequest = Schema.decodeUnknownSync(
+  PatchSyncedClientPreferencesRequest,
+);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+describe("SyncedClientPreferences", () => {
+  it("accepts exactly the three rollout keys plus the LWW stamp", () => {
+    const preferences = decodeSyncedClientPreferences({
+      planModeEnabled: true,
+      appearanceMode: "dark",
+      themeId: "midnight",
+      updatedAt: "2026-08-14T12:00:00.000Z",
+      ignored: true,
+    });
+    const patch = decodeSyncedClientPreferencesPatch({
+      planModeEnabled: false,
+      appearanceMode: "system",
+      themeId: "default",
+      ignored: true,
+    });
+
+    expect(Object.keys(preferences).sort()).toEqual([
+      "appearanceMode",
+      "planModeEnabled",
+      "themeId",
+      "updatedAt",
+    ]);
+    expect(Object.keys(patch).sort()).toEqual(["appearanceMode", "planModeEnabled", "themeId"]);
+  });
+
+  it("rejects non-canonical LWW stamps", () => {
+    expect(() =>
+      decodeSyncedClientPreferences({
+        planModeEnabled: true,
+        updatedAt: "not-a-date",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects empty and unknown-only patches at the RPC boundary", () => {
+    expect(() => decodeSyncedClientPreferencesPatch({})).toThrow();
+    expect(() =>
+      decodePatchSyncedClientPreferencesRequest({
+        patch: { unsupported: true },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      }),
+    ).toThrow();
+  });
+});
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {

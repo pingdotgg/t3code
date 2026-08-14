@@ -9,14 +9,19 @@
  * access is intentionally named as such so environment-sensitive consumers
  * cannot silently read the wrong server's settings.
  */
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
+  type PatchSyncedClientPreferencesRequest,
   ServerSettings,
   type ServerSettingsPatch,
+  type SyncedClientPreferences,
 } from "@t3tools/contracts";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import {
   type ClientSettingsPatch,
   type ClientSettings,
@@ -34,8 +39,12 @@ import {
   themeAllowsSidebarArtwork,
 } from "~/themePalette";
 import * as Struct from "effect/Struct";
+import * as Option from "effect/Option";
+import { Atom } from "effect/unstable/reactivity";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
+import { environmentSession } from "~/state/session";
+import { environmentShell } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 
@@ -49,6 +58,25 @@ let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
+const SHELL_NOT_LIVE = Symbol("shell-not-live");
+const EMPTY_SYNCED_CLIENT_PREFERENCES_ATOM = Atom.make(SHELL_NOT_LIVE);
+const EMPTY_AUTH_SESSION_ATOM = Atom.make(null);
+
+export function createSyncedClientPreferencesSliceAtom(
+  shellStateAtom: Atom.Atom<EnvironmentShellState>,
+) {
+  return Atom.make((get): SyncedClientPreferences | undefined | typeof SHELL_NOT_LIVE => {
+    const shell = get(shellStateAtom);
+    if (shell.status !== "live") return SHELL_NOT_LIVE;
+    return Option.getOrNull(shell.snapshot)?.syncedClientPreferences;
+  });
+}
+
+const syncedClientPreferencesSliceAtom = Atom.family((environmentId: EnvironmentId) =>
+  createSyncedClientPreferencesSliceAtom(environmentShell.stateValueAtom(environmentId)).pipe(
+    Atom.withLabel(`web:synced-client-preferences:${environmentId}`),
+  ),
+);
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -204,22 +232,361 @@ function useClientSettingsValue(): ClientSettings {
 export function mergeEnvironmentSettings(
   serverSettings: ServerSettings,
   clientSettings: ClientSettings,
+  syncedClientPreferences?: SyncedClientPreferences,
 ): UnifiedSettings {
-  return { ...serverSettings, ...clientSettings };
+  return {
+    ...serverSettings,
+    ...clientSettings,
+    ...(syncedClientPreferences?.planModeEnabled === undefined
+      ? {}
+      : { planModeEnabled: syncedClientPreferences.planModeEnabled }),
+  };
 }
 
 function useMergedSettings<T>(
   serverSettings: ServerSettings,
+  syncedClientPreferences: SyncedClientPreferences | undefined,
   selector: ((settings: UnifiedSettings) => T) | undefined,
 ): T {
   const clientSettings = useClientSettingsValue();
 
   const merged = useMemo<UnifiedSettings>(
-    () => mergeEnvironmentSettings(serverSettings, clientSettings),
-    [clientSettings, serverSettings],
+    () => mergeEnvironmentSettings(serverSettings, clientSettings, syncedClientPreferences),
+    [clientSettings, serverSettings, syncedClientPreferences],
   );
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
+}
+
+export function nextSyncedClientPreferencesUpdatedAt(
+  currentUpdatedAt: string | undefined,
+  now: string,
+): string {
+  if (currentUpdatedAt === undefined || now > currentUpdatedAt) return now;
+  return new Date(Date.parse(currentUpdatedAt) + 1).toISOString();
+}
+
+export function createSyncedPlanModeWrite(input: {
+  readonly value: boolean;
+  readonly serverPreferences: SyncedClientPreferences | undefined;
+  readonly now: string;
+}) {
+  return {
+    clientPatch: { planModeEnabled: input.value },
+    request: {
+      patch: { planModeEnabled: input.value },
+      updatedAt: nextSyncedClientPreferencesUpdatedAt(
+        input.serverPreferences?.updatedAt,
+        input.now,
+      ),
+    },
+  } as const;
+}
+
+type SyncedPlanModePatchTarget = {
+  readonly environmentId: EnvironmentId;
+  readonly input: PatchSyncedClientPreferencesRequest;
+};
+
+type SyncedPlanModePatch<E> = (
+  target: SyncedPlanModePatchTarget,
+) => Promise<AtomCommandResult<SyncedClientPreferences, E>>;
+
+export interface SyncedPlanModeHydrationInput<E> {
+  readonly environmentId: EnvironmentId | null;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly clientHydrated: boolean;
+  readonly clientValue: boolean;
+  readonly live: boolean;
+  readonly serverPreferences: SyncedClientPreferences | undefined;
+  readonly canPatch: boolean;
+  readonly now: string;
+  readonly patch: SyncedPlanModePatch<E>;
+  readonly persist: (value: boolean) => void;
+}
+
+export type SyncedPlanModeHydrationAction =
+  | { readonly type: "none" }
+  | { readonly type: "adopt"; readonly value: boolean; readonly updatedAt: string }
+  | { readonly type: "seed"; readonly value: boolean; readonly updatedAt: string };
+
+export function resolveSyncedPlanModeHydrationAction(input: {
+  readonly clientHydrated: boolean;
+  readonly clientValue: boolean;
+  readonly serverPreferences: SyncedClientPreferences | undefined;
+  readonly seedPending: boolean;
+  readonly writePending?: { readonly value: boolean; readonly updatedAt: string };
+  readonly adoptedUpdatedAt?: string;
+  readonly now: string;
+}): SyncedPlanModeHydrationAction {
+  if (!input.clientHydrated) return { type: "none" };
+  if (
+    input.writePending !== undefined &&
+    (input.serverPreferences === undefined ||
+      input.serverPreferences.updatedAt < input.writePending.updatedAt)
+  ) {
+    return { type: "none" };
+  }
+  if (input.serverPreferences?.planModeEnabled !== undefined) {
+    return input.adoptedUpdatedAt !== undefined &&
+      input.serverPreferences.updatedAt <= input.adoptedUpdatedAt
+      ? { type: "none" }
+      : {
+          type: "adopt",
+          value: input.serverPreferences.planModeEnabled,
+          updatedAt: input.serverPreferences.updatedAt,
+        };
+  }
+  if (input.seedPending) return { type: "none" };
+  return {
+    type: "seed",
+    value: input.clientValue,
+    updatedAt: nextSyncedClientPreferencesUpdatedAt(input.serverPreferences?.updatedAt, input.now),
+  };
+}
+
+export function createSyncedPlanModeHydrationController() {
+  const adoptedUpdatedAtByEnvironment = new Map<EnvironmentId, string>();
+  const seedPendingByEnvironment = new Map<EnvironmentId, string>();
+  const writePendingByEnvironment = new Map<
+    EnvironmentId,
+    { readonly value: boolean; readonly updatedAt: string }
+  >();
+  const writeInFlightByEnvironment = new Map<EnvironmentId, string>();
+  const markAdopted = (environmentId: EnvironmentId, updatedAt: string) => {
+    const current = adoptedUpdatedAtByEnvironment.get(environmentId);
+    if (current === undefined || updatedAt > current) {
+      adoptedUpdatedAtByEnvironment.set(environmentId, updatedAt);
+    }
+  };
+
+  const settlePatch = <E>(input: {
+    readonly environmentId: EnvironmentId;
+    readonly requestedUpdatedAt: string;
+    readonly result: AtomCommandResult<SyncedClientPreferences, E>;
+    readonly persist: (value: boolean) => void;
+  }) => {
+    if (writeInFlightByEnvironment.get(input.environmentId) === input.requestedUpdatedAt) {
+      writeInFlightByEnvironment.delete(input.environmentId);
+    }
+    if (input.result._tag === "Failure") {
+      if (seedPendingByEnvironment.get(input.environmentId) === input.requestedUpdatedAt) {
+        seedPendingByEnvironment.delete(input.environmentId);
+      }
+      return;
+    }
+
+    const matchingWrite =
+      writePendingByEnvironment.get(input.environmentId)?.updatedAt === input.requestedUpdatedAt;
+    const matchingSeed =
+      seedPendingByEnvironment.get(input.environmentId) === input.requestedUpdatedAt;
+    if (!matchingWrite && !matchingSeed) return;
+
+    if (matchingWrite) writePendingByEnvironment.delete(input.environmentId);
+    if (matchingSeed) seedPendingByEnvironment.delete(input.environmentId);
+    markAdopted(input.environmentId, input.result.value.updatedAt);
+    if (input.result.value.planModeEnabled !== undefined) {
+      input.persist(input.result.value.planModeEnabled);
+    }
+  };
+
+  const dispatchPatch = <E>(input: {
+    readonly target: SyncedPlanModePatchTarget;
+    readonly patch: SyncedPlanModePatch<E>;
+    readonly persist: (value: boolean) => void;
+  }) => {
+    const { environmentId } = input.target;
+    const requestedUpdatedAt = input.target.input.updatedAt;
+    writeInFlightByEnvironment.set(environmentId, requestedUpdatedAt);
+    void input.patch(input.target).then((result) => {
+      settlePatch({ environmentId, requestedUpdatedAt, result, persist: input.persist });
+    });
+  };
+
+  const synchronize = <E>(input: SyncedPlanModeHydrationInput<E>) => {
+    const environmentId = input.environmentId;
+    if (environmentId === null || environmentId !== input.primaryEnvironmentId || !input.live) {
+      return;
+    }
+    if (input.serverPreferences?.planModeEnabled !== undefined) {
+      seedPendingByEnvironment.delete(environmentId);
+    }
+    const pendingWrite = writePendingByEnvironment.get(environmentId);
+    if (
+      pendingWrite !== undefined &&
+      input.serverPreferences !== undefined &&
+      input.serverPreferences.updatedAt >= pendingWrite.updatedAt
+    ) {
+      writePendingByEnvironment.delete(environmentId);
+      writeInFlightByEnvironment.delete(environmentId);
+    }
+    const activePendingWrite = writePendingByEnvironment.get(environmentId);
+    if (
+      input.canPatch &&
+      activePendingWrite !== undefined &&
+      (input.serverPreferences === undefined ||
+        input.serverPreferences.updatedAt < activePendingWrite.updatedAt) &&
+      writeInFlightByEnvironment.get(environmentId) !== activePendingWrite.updatedAt
+    ) {
+      dispatchPatch<E>({
+        target: {
+          environmentId,
+          input: {
+            patch: { planModeEnabled: activePendingWrite.value },
+            updatedAt: activePendingWrite.updatedAt,
+          },
+        },
+        patch: input.patch,
+        persist: input.persist,
+      });
+    }
+
+    const adoptedUpdatedAt = adoptedUpdatedAtByEnvironment.get(environmentId);
+    const action = resolveSyncedPlanModeHydrationAction({
+      clientHydrated: input.clientHydrated,
+      clientValue: input.clientValue,
+      serverPreferences: input.serverPreferences,
+      seedPending: seedPendingByEnvironment.has(environmentId),
+      ...(activePendingWrite === undefined ? {} : { writePending: activePendingWrite }),
+      ...(adoptedUpdatedAt === undefined ? {} : { adoptedUpdatedAt }),
+      now: input.now,
+    });
+    if (action.type === "adopt") {
+      markAdopted(environmentId, action.updatedAt);
+      if (input.clientValue !== action.value) input.persist(action.value);
+      return;
+    }
+    if (action.type !== "seed" || !input.canPatch) return;
+
+    seedPendingByEnvironment.set(environmentId, action.updatedAt);
+    dispatchPatch<E>({
+      target: {
+        environmentId,
+        input: {
+          patch: { planModeEnabled: action.value },
+          updatedAt: action.updatedAt,
+        },
+      },
+      patch: input.patch,
+      persist: input.persist,
+    });
+  };
+
+  const write = <E>(input: {
+    readonly environmentId: EnvironmentId | null;
+    readonly value: boolean;
+    readonly serverPreferences: SyncedClientPreferences | undefined;
+    readonly canPatch: boolean;
+    readonly now: string;
+    readonly patch: SyncedPlanModePatch<E>;
+    readonly persist: (value: boolean) => void;
+  }) => {
+    if (input.environmentId === null || !input.canPatch) return;
+    const environmentId = input.environmentId;
+    const next = createSyncedPlanModeWrite({
+      value: input.value,
+      serverPreferences: input.serverPreferences,
+      now: input.now,
+    });
+    writePendingByEnvironment.set(environmentId, {
+      value: input.value,
+      updatedAt: next.request.updatedAt,
+    });
+    dispatchPatch<E>({
+      target: { environmentId, input: next.request },
+      patch: input.patch,
+      persist: input.persist,
+    });
+  };
+
+  return {
+    synchronize,
+    write,
+    reset() {
+      adoptedUpdatedAtByEnvironment.clear();
+      seedPendingByEnvironment.clear();
+      writePendingByEnvironment.clear();
+      writeInFlightByEnvironment.clear();
+    },
+  };
+}
+
+const syncedPlanModeHydrationController = createSyncedPlanModeHydrationController();
+
+export function useSyncedPlanModeHydrationEffect<E>(
+  controller: ReturnType<typeof createSyncedPlanModeHydrationController>,
+  input: SyncedPlanModeHydrationInput<E>,
+): void {
+  useEffect(() => {
+    controller.synchronize(input);
+  }, [
+    controller,
+    input.canPatch,
+    input.clientHydrated,
+    input.clientValue,
+    input.environmentId,
+    input.live,
+    input.patch,
+    input.persist,
+    input.primaryEnvironmentId,
+    input.serverPreferences,
+  ]);
+}
+
+function useEnvironmentSyncedClientPreferences(environmentId: EnvironmentId | null) {
+  const preferences = useAtomValue(
+    environmentId === null
+      ? EMPTY_SYNCED_CLIENT_PREFERENCES_ATOM
+      : syncedClientPreferencesSliceAtom(environmentId),
+  );
+  return {
+    live: preferences !== SHELL_NOT_LIVE,
+    preferences: preferences === SHELL_NOT_LIVE ? undefined : preferences,
+  } as const;
+}
+
+function useCanPatchSyncedClientPreferences(environmentId: EnvironmentId | null): boolean {
+  const session = useAtomValue(
+    environmentId === null
+      ? EMPTY_AUTH_SESSION_ATOM
+      : environmentSession.sessionStateValueAtom(environmentId),
+  );
+  return (
+    session?.authenticated === true &&
+    session.scopes?.includes(AuthOrchestrationOperateScope) === true
+  );
+}
+
+function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
+  const clientSettings = useClientSettingsValue();
+  const clientHydrated = useClientSettingsHydrated();
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const synced = useEnvironmentSyncedClientPreferences(environmentId);
+  const canPatch = useCanPatchSyncedClientPreferences(primaryEnvironmentId);
+  const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
+    label: "synced client preferences seed",
+    reportFailure: false,
+  });
+  const persistSyncedPlanMode = useCallback((value: boolean) => {
+    if (getClientSettingsSnapshot().planModeEnabled !== value) {
+      persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
+    }
+  }, []);
+
+  useSyncedPlanModeHydrationEffect(syncedPlanModeHydrationController, {
+    environmentId,
+    primaryEnvironmentId,
+    clientHydrated,
+    clientValue: clientSettings.planModeEnabled,
+    live: synced.live,
+    serverPreferences: synced.preferences,
+    canPatch,
+    now: new Date().toISOString(),
+    patch: patchPreferences,
+    persist: persistSyncedPlanMode,
+  });
+
+  return synced.preferences;
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -284,14 +651,25 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
+  const syncedClientPreferences = useSyncedPlanModeHydration(environmentId);
+  return useMergedSettings(
+    serverSettings ?? DEFAULT_SERVER_SETTINGS,
+    syncedClientPreferences,
+    selector,
+  );
 }
 
 /** Primary-only settings access for the settings UI and other explicitly global surfaces. */
 export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  return useMergedSettings(useAtomValue(primaryServerSettingsAtom), selector);
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const syncedClientPreferences = useSyncedPlanModeHydration(environmentId);
+  return useMergedSettings(
+    useAtomValue(primaryServerSettingsAtom),
+    syncedClientPreferences,
+    selector,
+  );
 }
 
 /**
@@ -304,6 +682,16 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   const persistServerSettings = useAtomCommand(
     serverEnvironment.updateSettings,
     "server settings update",
+  );
+  const syncedEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const synced = useEnvironmentSyncedClientPreferences(syncedEnvironmentId);
+  const canPatchSyncedPreferences = useCanPatchSyncedClientPreferences(syncedEnvironmentId);
+  const patchSyncedClientPreferences = useAtomCommand(
+    serverEnvironment.patchSyncedClientPreferences,
+    {
+      label: "synced client preferences update",
+      reportFailure: false,
+    },
   );
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
@@ -323,8 +711,30 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           ...clientPatch,
         });
       }
+      if (clientPatch.planModeEnabled !== undefined) {
+        syncedPlanModeHydrationController.write({
+          environmentId: syncedEnvironmentId,
+          value: clientPatch.planModeEnabled,
+          serverPreferences: synced.preferences,
+          canPatch: canPatchSyncedPreferences,
+          now: new Date().toISOString(),
+          patch: patchSyncedClientPreferences,
+          persist: (value) => {
+            if (getClientSettingsSnapshot().planModeEnabled !== value) {
+              persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
+            }
+          },
+        });
+      }
     },
-    [environmentId, persistServerSettings],
+    [
+      canPatchSyncedPreferences,
+      environmentId,
+      patchSyncedClientPreferences,
+      persistServerSettings,
+      synced.preferences,
+      syncedEnvironmentId,
+    ],
   );
 
   return updateSettings;
@@ -354,6 +764,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
+  syncedPlanModeHydrationController.reset();
 }
 
 export function __setClientSettingsForTests(settings: ClientSettings): void {

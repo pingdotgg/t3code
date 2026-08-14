@@ -177,6 +177,31 @@ describe("applyShellStreamEvent", () => {
     });
   });
 
+  it("applies synced client preference updates", () => {
+    const snapshot = {
+      ...baseSnapshot,
+      projects: [stubProject],
+      threads: [stubThread],
+    };
+    const next = applyShellStreamEvent(snapshot, {
+      kind: "client-preferences-updated",
+      sequence: 7,
+      preferences: {
+        planModeEnabled: true,
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
+    });
+
+    expect(next.syncedClientPreferences).toEqual({
+      planModeEnabled: true,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    });
+    expect(next.snapshotSequence).toBe(7);
+    expect(next.projects).toBe(snapshot.projects);
+    expect(next.threads).toBe(snapshot.threads);
+    expect(next.updatedAt).toBe(snapshot.updatedAt);
+  });
+
   it("returns original snapshot for unrecognized event kinds", () => {
     const unknownEvent = { kind: "unknown-future-event", sequence: 99 } as any;
     const next = applyShellStreamEvent(baseSnapshot, unknownEvent);

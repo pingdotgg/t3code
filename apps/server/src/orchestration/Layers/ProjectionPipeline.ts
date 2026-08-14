@@ -56,6 +56,7 @@ import {
 } from "../../attachmentStore.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
+  syncedClientPreferences: "projection.synced-client-preferences",
   projects: "projection.projects",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
@@ -1606,7 +1607,43 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applySyncedClientPreferencesProjection: ProjectorDefinition["apply"] = (event) => {
+      if (event.type !== "client-preferences.patched") {
+        return Effect.void;
+      }
+      const planModeEnabled =
+        event.payload.patch.planModeEnabled === undefined
+          ? null
+          : Number(event.payload.patch.planModeEnabled);
+      const appearanceMode = event.payload.patch.appearanceMode ?? null;
+      const themeId = event.payload.patch.themeId ?? null;
+      return sql`
+        INSERT INTO projection_synced_client_preferences (
+          singleton_id,
+          plan_mode_enabled,
+          appearance_mode,
+          theme_id,
+          updated_at
+        )
+        VALUES (1, ${planModeEnabled}, ${appearanceMode}, ${themeId}, ${event.payload.updatedAt})
+        ON CONFLICT (singleton_id)
+        DO UPDATE SET
+          plan_mode_enabled = COALESCE(excluded.plan_mode_enabled, plan_mode_enabled),
+          appearance_mode = COALESCE(excluded.appearance_mode, appearance_mode),
+          theme_id = COALESCE(excluded.theme_id, theme_id),
+          updated_at = excluded.updated_at
+        WHERE excluded.updated_at >= updated_at
+      `.pipe(
+        Effect.asVoid,
+        Effect.mapError(toPersistenceSqlError("ProjectionPipeline.syncedClientPreferences:upsert")),
+      );
+    };
+
     const projectors: ReadonlyArray<ProjectorDefinition> = [
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.syncedClientPreferences,
+        apply: applySyncedClientPreferencesProjection,
+      },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
         apply: applyProjectsProjection,

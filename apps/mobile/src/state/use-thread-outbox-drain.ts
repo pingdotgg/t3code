@@ -15,12 +15,18 @@ import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
+import {
+  resolveComposerInteractionMode,
+  resolvePlanModeEnabled,
+} from "../features/threads/plan-mode";
+import { usePlanModePreferenceState } from "../features/threads/use-plan-mode-enabled";
 import { toUploadChatImageAttachments } from "../lib/composerImages";
+import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { useProjects, useThreadShells } from "./entities";
+import { mobilePreferencesAtom } from "./preferences";
 import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
@@ -31,7 +37,7 @@ import {
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
-  resolveQueuedThreadSettings,
+  resolveQueuedThreadSendDecision,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
   type QueuedThreadMessage,
@@ -85,6 +91,13 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
   return CommandId.make(`${message.commandId}:${setting}`);
 }
 
+function readPlanModeEnabled(): boolean {
+  const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+  return resolvePlanModeEnabled(
+    AsyncResult.isSuccess(preferences) ? preferences.value.planModeEnabled : undefined,
+  );
+}
+
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -102,6 +115,7 @@ export function useThreadOutboxDrain(): void {
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
   const projects = useProjects();
+  const { loaded: planModePreferenceLoaded } = usePlanModePreferenceState();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());
@@ -167,7 +181,11 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const settings = resolveQueuedThreadSettings(queuedMessage, thread);
+      const { planModeEnabled, settings } = resolveQueuedThreadSendDecision(
+        queuedMessage,
+        thread,
+        readPlanModeEnabled,
+      );
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
       if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
@@ -230,7 +248,10 @@ export function useThreadOutboxDrain(): void {
           },
           modelSelection: settings.modelSelection,
           runtimeMode: settings.runtimeMode,
-          interactionMode: settings.interactionMode,
+          interactionMode: resolveComposerInteractionMode({
+            interactionMode: settings.interactionMode,
+            planModeEnabled,
+          }),
           createdAt: queuedMessage.createdAt,
         },
       });
@@ -251,6 +272,7 @@ export function useThreadOutboxDrain(): void {
       creation: QueuedThreadCreation,
       projectCwd: string,
     ) => {
+      const planModeEnabled = readPlanModeEnabled();
       const modelSelection = queuedMessage.modelSelection;
       if (modelSelection === undefined) {
         return false;
@@ -269,7 +291,10 @@ export function useThreadOutboxDrain(): void {
           attachments: queuedMessage.attachments,
           modelSelection,
           runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-          interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+          interactionMode: resolveComposerInteractionMode({
+            interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+            planModeEnabled,
+          }),
           workspaceMode: creation.workspaceMode,
           branch: creation.branch,
           worktreePath: creation.worktreePath,
@@ -283,7 +308,9 @@ export function useThreadOutboxDrain(): void {
   );
 
   useEffect(() => {
-    if (dispatchingQueuedMessageId !== null) {
+    // Wait for the stored mode before draining. Load errors resolve to defaults,
+    // so only an atom construction failure can leave this pending forever.
+    if (!planModePreferenceLoaded || dispatchingQueuedMessageId !== null) {
       return;
     }
 
@@ -414,6 +441,7 @@ export function useThreadOutboxDrain(): void {
     connectedEnvironments,
     dispatchingQueuedMessageId,
     editingQueuedMessageIds,
+    planModePreferenceLoaded,
     projects,
     queuedMessagesByThreadKey,
     retryTick,

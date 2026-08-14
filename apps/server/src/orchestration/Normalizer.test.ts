@@ -70,4 +70,29 @@ describe("canonicalizeClientCommandTimestamps", () => {
     expect(result.createdAt).toBe(serverReceivedAt);
     expect(result.bootstrap?.createThread?.createdAt).toBe(serverReceivedAt);
   });
+
+  it("falls back to server time for an excessively future-skewed preference stamp", () => {
+    const command: ClientOrchestrationCommand = {
+      type: "client-preferences.patch",
+      commandId: CommandId.make("command-preferences-future"),
+      patch: { planModeEnabled: true },
+      updatedAt: "2026-07-18T00:05:00.001Z",
+    };
+
+    expect(canonicalizeClientCommandTimestamps(command, serverReceivedAt)).toEqual({
+      ...command,
+      updatedAt: serverReceivedAt,
+    });
+  });
+
+  it("preserves a preference stamp within the allowed future skew", () => {
+    const command: ClientOrchestrationCommand = {
+      type: "client-preferences.patch",
+      commandId: CommandId.make("command-preferences-allowed-skew"),
+      patch: { planModeEnabled: true },
+      updatedAt: "2026-07-18T00:05:00.000Z",
+    };
+
+    expect(canonicalizeClientCommandTimestamps(command, serverReceivedAt)).toEqual(command);
+  });
 });

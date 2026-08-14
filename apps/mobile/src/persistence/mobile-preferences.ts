@@ -5,7 +5,10 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  type SidebarProjectGroupingMode,
+  SyncedClientPreferencesUpdatedAt,
+} from "@t3tools/contracts";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -13,6 +16,7 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const isSyncedClientPreferencesUpdatedAt = Schema.is(SyncedClientPreferencesUpdatedAt);
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -28,6 +32,11 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly autoSettleOnMerge?: boolean;
   /**
+   * Offline cache of the most recently reconciled environment preference.
+   */
+  readonly planModeEnabled?: boolean;
+  readonly syncedClientPreferencesUpdatedAt?: string;
+  /**
    * Device-local mirror of the web `legacySidebarEnabled` setting. Mobile has
    * no client-settings sync, so the legacy grouped thread list is opted into
    * per device. Deliberately a fresh key (was `threadListV2Enabled`, an
@@ -35,8 +44,6 @@ export interface Preferences {
    * default flat list — see `resolveThreadListV2Enabled`.
    */
   readonly legacyThreadListEnabled?: boolean;
-  /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
-  readonly planModeEnabled?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -89,8 +96,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     autoSettleOnMerge?: boolean;
-    legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
+    syncedClientPreferencesUpdatedAt?: string;
+    legacyThreadListEnabled?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -130,11 +138,17 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.autoSettleOnMerge === "boolean") {
     preferences.autoSettleOnMerge = parsed.autoSettleOnMerge;
   }
-  if (typeof parsed.legacyThreadListEnabled === "boolean") {
-    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
-  }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (
+    typeof parsed.syncedClientPreferencesUpdatedAt === "string" &&
+    isSyncedClientPreferencesUpdatedAt(parsed.syncedClientPreferencesUpdatedAt)
+  ) {
+    preferences.syncedClientPreferencesUpdatedAt = parsed.syncedClientPreferencesUpdatedAt;
+  }
+  if (typeof parsed.legacyThreadListEnabled === "boolean") {
+    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
   }
   return preferences;
 }

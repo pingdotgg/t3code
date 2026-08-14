@@ -1,5 +1,6 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
+  ClientPreferencesPatchedPayload,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -205,6 +206,29 @@ export function projectEvent(
   };
 
   switch (event.type) {
+    case "client-preferences.patched":
+      return decodeForEvent(
+        ClientPreferencesPatchedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const current = nextBase.syncedClientPreferences;
+          if (current !== undefined && current.updatedAt > payload.updatedAt) {
+            return { ...nextBase, updatedAt: model.updatedAt };
+          }
+          return {
+            ...nextBase,
+            syncedClientPreferences: {
+              ...current,
+              ...payload.patch,
+              updatedAt: payload.updatedAt,
+            },
+          };
+        }),
+      );
+
     case "project.created":
       return decodeForEvent(ProjectCreatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {

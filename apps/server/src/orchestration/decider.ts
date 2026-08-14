@@ -224,6 +224,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   Crypto.Crypto
 > {
   switch (command.type) {
+    case "client-preferences.patch":
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "client-preferences",
+          aggregateId: "client-preferences",
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "client-preferences.patched",
+        payload: {
+          patch: command.patch,
+          updatedAt: command.updatedAt,
+        },
+      };
+
     case "project.create": {
       yield* requireProjectAbsent({
         readModel,

@@ -1,0 +1,325 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  createPlanModePreferenceWrite,
+  fanOutPlanModePreferencePatches,
+  reconcilePlanModePreferences,
+  settlePendingPlanModePreferencePatch,
+} from "./synced-client-preferences-model";
+
+const environmentId = (value: string) => EnvironmentId.make(value);
+
+describe("synced client preferences", () => {
+  it("adopts the environment plan mode into the device cache on connect", () => {
+    expect(
+      reconcilePlanModePreferences({
+        localPlanModeEnabled: false,
+        localUpdatedAt: "2026-08-14T11:00:00.000Z",
+        environments: [
+          {
+            environmentId: environmentId("environment-1"),
+            preferences: {
+              planModeEnabled: true,
+              updatedAt: "2026-08-14T12:00:00.000Z",
+            },
+          },
+        ],
+        now: "2026-08-14T12:01:00.000Z",
+      }),
+    ).toEqual({
+      localPatch: {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00.000Z",
+      },
+      environmentPatches: [],
+    });
+  });
+
+  it("fans a mobile toggle out to every connected environment", () => {
+    const write = createPlanModePreferenceWrite({
+      value: true,
+      connectedEnvironmentIds: [environmentId("environment-1"), environmentId("environment-2")],
+      currentUpdatedAts: ["2026-08-14T12:00:00.000Z", "2026-08-14T12:02:00.000Z"],
+      now: "2026-08-14T12:01:00.000Z",
+    });
+
+    expect(write.localPatch).toEqual({
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAt: "2026-08-14T12:02:00.001Z",
+    });
+    expect(write.environmentPatches).toEqual([
+      {
+        environmentId: environmentId("environment-1"),
+        input: {
+          patch: { planModeEnabled: true },
+          updatedAt: "2026-08-14T12:02:00.001Z",
+        },
+      },
+      {
+        environmentId: environmentId("environment-2"),
+        input: {
+          patch: { planModeEnabled: true },
+          updatedAt: "2026-08-14T12:02:00.001Z",
+        },
+      },
+    ]);
+  });
+
+  it("keeps offline toggles device-local", () => {
+    expect(
+      createPlanModePreferenceWrite({
+        value: false,
+        connectedEnvironmentIds: [],
+        currentUpdatedAts: [],
+        now: "2026-08-14T12:00:00.000Z",
+      }),
+    ).toEqual({
+      localPatch: {
+        planModeEnabled: false,
+        syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00.000Z",
+      },
+      environmentPatches: [],
+    });
+  });
+
+  it("reconciles stale environments to the most recent stamped value", () => {
+    const reconciliation = reconcilePlanModePreferences({
+      localPlanModeEnabled: false,
+      localUpdatedAt: "2026-08-14T10:00:00.000Z",
+      environments: [
+        {
+          environmentId: environmentId("environment-1"),
+          preferences: {
+            planModeEnabled: false,
+            updatedAt: "2026-08-14T11:00:00.000Z",
+          },
+        },
+        {
+          environmentId: environmentId("environment-2"),
+          preferences: {
+            planModeEnabled: true,
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+        },
+      ],
+      now: "2026-08-14T12:01:00.000Z",
+    });
+
+    expect(reconciliation.localPatch).toMatchObject({ planModeEnabled: true });
+    expect(reconciliation.environmentPatches).toHaveLength(1);
+    expect(reconciliation.environmentPatches[0]?.environmentId).toBe(
+      environmentId("environment-1"),
+    );
+    expect(reconciliation.environmentPatches[0]?.input.patch.planModeEnabled).toBe(true);
+  });
+
+  it("reuses the winning stamp across pre-ack reconciliation passes", () => {
+    const environments = [
+      {
+        environmentId: environmentId("environment-1"),
+        preferences: {
+          planModeEnabled: false,
+          updatedAt: "2026-08-14T11:00:00.000Z",
+        },
+      },
+      {
+        environmentId: environmentId("environment-2"),
+        preferences: {
+          planModeEnabled: true,
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      },
+    ];
+    const first = reconcilePlanModePreferences({
+      localPlanModeEnabled: false,
+      localUpdatedAt: "2026-08-14T10:00:00.000Z",
+      environments,
+      now: "2026-08-14T12:01:00.000Z",
+    });
+    const second = reconcilePlanModePreferences({
+      localPlanModeEnabled: first.localPatch?.planModeEnabled,
+      localUpdatedAt: first.localPatch?.syncedClientPreferencesUpdatedAt,
+      environments,
+      now: "2026-08-14T12:01:01.000Z",
+    });
+
+    expect(first.environmentPatches[0]?.input.updatedAt).toBe("2026-08-14T12:00:00.000Z");
+    expect(second.environmentPatches[0]?.input.updatedAt).toBe(
+      first.environmentPatches[0]?.input.updatedAt,
+    );
+  });
+
+  it("advances once past a newer non-plan preference stamp", () => {
+    const environments = [
+      {
+        environmentId: environmentId("appearance-only"),
+        preferences: {
+          appearanceMode: "dark" as const,
+          updatedAt: "2026-08-14T13:00:00.000Z",
+        },
+      },
+      {
+        environmentId: environmentId("plan-source"),
+        preferences: {
+          planModeEnabled: true,
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      },
+    ];
+    const first = reconcilePlanModePreferences({
+      localPlanModeEnabled: false,
+      localUpdatedAt: "2026-08-14T11:00:00.000Z",
+      environments,
+      now: "2026-08-14T12:30:00.000Z",
+    });
+    const second = reconcilePlanModePreferences({
+      localPlanModeEnabled: first.localPatch?.planModeEnabled,
+      localUpdatedAt: first.localPatch?.syncedClientPreferencesUpdatedAt,
+      environments,
+      now: "2026-08-14T13:01:00.000Z",
+    });
+
+    expect(first.environmentPatches).toHaveLength(2);
+    expect(first.environmentPatches[0]?.input.updatedAt).toBe("2026-08-14T13:00:00.001Z");
+    expect(second.environmentPatches[0]?.input.updatedAt).toBe(
+      first.environmentPatches[0]?.input.updatedAt,
+    );
+  });
+
+  it("patches only stale environments after a peer converges", () => {
+    const reconciliation = reconcilePlanModePreferences({
+      localPlanModeEnabled: true,
+      localUpdatedAt: "2026-08-14T12:00:00.000Z",
+      environments: [
+        {
+          environmentId: environmentId("current"),
+          preferences: {
+            planModeEnabled: true,
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+        },
+        {
+          environmentId: environmentId("stale"),
+          preferences: {
+            planModeEnabled: false,
+            updatedAt: "2026-08-14T11:00:00.000Z",
+          },
+        },
+      ],
+      now: "2026-08-14T12:01:00.000Z",
+    });
+
+    expect(reconciliation.environmentPatches.map((target) => target.environmentId)).toEqual([
+      environmentId("stale"),
+    ]);
+  });
+
+  it("bounds a fast device clock just after the newest observed environment stamp", () => {
+    const reconciliation = reconcilePlanModePreferences({
+      localPlanModeEnabled: true,
+      localUpdatedAt: "2099-01-01T00:00:00.000Z",
+      environments: [
+        {
+          environmentId: environmentId("environment-1"),
+          canPatch: true,
+          preferences: {
+            planModeEnabled: false,
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+        },
+      ],
+      now: "2099-01-01T00:00:01.000Z",
+    });
+
+    expect(reconciliation.localPatch).toEqual({
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00.001Z",
+    });
+    expect(reconciliation.environmentPatches).toEqual([
+      {
+        environmentId: environmentId("environment-1"),
+        input: {
+          patch: { planModeEnabled: true },
+          updatedAt: "2026-08-14T12:00:00.001Z",
+        },
+      },
+    ]);
+  });
+
+  it("clears pending reconciliation from an older canonical patch ack", () => {
+    const target = {
+      environmentId: environmentId("environment-1"),
+      input: {
+        patch: { planModeEnabled: true },
+        updatedAt: "2099-01-01T00:00:00.000Z",
+      },
+    } as const;
+    const pendingByEnvironment = new Map([[target.environmentId, target.input.updatedAt]]);
+    const canonical = {
+      planModeEnabled: true,
+      updatedAt: "2026-08-14T12:00:30.000Z",
+    } as const;
+
+    const localPatch = settlePendingPlanModePreferencePatch({
+      pendingByEnvironment,
+      target,
+      result: AsyncResult.success(canonical),
+    });
+    const next = reconcilePlanModePreferences({
+      localPlanModeEnabled: localPatch?.planModeEnabled,
+      localUpdatedAt: localPatch?.syncedClientPreferencesUpdatedAt,
+      environments: [
+        {
+          environmentId: target.environmentId,
+          canPatch: true,
+          preferences: canonical,
+        },
+      ],
+      now: "2099-01-01T00:00:01.000Z",
+    });
+
+    expect(pendingByEnvironment.size).toBe(0);
+    expect(localPatch).toEqual({
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAt: canonical.updatedAt,
+    });
+    expect(next.environmentPatches).toEqual([]);
+  });
+
+  it("does not seed a connected environment without patch scope", () => {
+    const reconciliation = reconcilePlanModePreferences({
+      localPlanModeEnabled: true,
+      localUpdatedAt: undefined,
+      environments: [
+        {
+          environmentId: environmentId("read-only"),
+          canPatch: false,
+          preferences: undefined,
+        },
+      ],
+      now: "2026-08-14T12:00:00.000Z",
+    });
+
+    expect(reconciliation.environmentPatches).toEqual([]);
+  });
+
+  it("continues fan-out when one environment write fails", async () => {
+    const attempted: string[] = [];
+    const targets = createPlanModePreferenceWrite({
+      value: true,
+      connectedEnvironmentIds: [environmentId("failing"), environmentId("healthy")],
+      currentUpdatedAts: [],
+      now: "2026-08-14T12:00:00.000Z",
+    }).environmentPatches;
+
+    await expect(
+      fanOutPlanModePreferencePatches(targets, async (target) => {
+        attempted.push(target.environmentId);
+        if (target.environmentId === environmentId("failing")) throw new Error("offline");
+      }),
+    ).resolves.toBeUndefined();
+    expect(attempted).toEqual([environmentId("failing"), environmentId("healthy")]);
+  });
+});

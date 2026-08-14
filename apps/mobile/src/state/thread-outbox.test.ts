@@ -17,6 +17,7 @@ import {
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
+  resolveQueuedThreadSendDecision,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
@@ -98,15 +99,74 @@ describe("thread outbox", () => {
       selectedMessage,
     );
     expect(
-      resolveQueuedThreadSettings(legacyMessage, {
-        modelSelection: selectedMessage.modelSelection,
-        runtimeMode: selectedMessage.runtimeMode,
-        interactionMode: selectedMessage.interactionMode,
-      }),
+      resolveQueuedThreadSettings(
+        legacyMessage,
+        {
+          modelSelection: selectedMessage.modelSelection,
+          runtimeMode: selectedMessage.runtimeMode,
+          interactionMode: selectedMessage.interactionMode,
+        },
+        true,
+      ),
     ).toEqual({
       modelSelection: selectedMessage.modelSelection,
       runtimeMode: selectedMessage.runtimeMode,
       interactionMode: selectedMessage.interactionMode,
+    });
+  });
+
+  it("forces queued plan-mode settings to default while legacy plan mode is disabled", () => {
+    const message = {
+      ...queuedMessage({
+        messageId: "message-1",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      interactionMode: "plan",
+    } satisfies QueuedThreadMessage;
+    const thread = {
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    } as const;
+
+    expect(resolveQueuedThreadSettings(message, thread, false).interactionMode).toBe("default");
+    expect(resolveQueuedThreadSettings(message, thread, true).interactionMode).toBe("plan");
+  });
+
+  it("uses the live preference when legacy plan mode is disabled mid-drain", () => {
+    let planModeEnabled = true;
+    let preferenceReads = 0;
+    const message = {
+      ...queuedMessage({
+        messageId: "message-1",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      interactionMode: "plan",
+    } satisfies QueuedThreadMessage;
+    const thread = {
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    } as const;
+    const queuedSettings = resolveQueuedThreadSettings(message, thread, planModeEnabled);
+
+    planModeEnabled = false;
+    const sendDecision = resolveQueuedThreadSendDecision(message, thread, () => {
+      preferenceReads += 1;
+      return planModeEnabled;
+    });
+
+    expect(queuedSettings.interactionMode).toBe("plan");
+    expect(preferenceReads).toBe(1);
+    expect(sendDecision).toMatchObject({
+      planModeEnabled: false,
+      settings: { interactionMode: "default" },
     });
   });
 

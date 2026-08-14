@@ -54,6 +54,13 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const LegacyShellSnapshot = Schema.Struct({
+  snapshotSequence: Schema.Number,
+  projects: Schema.Array(Schema.Unknown),
+  threads: Schema.Array(Schema.Unknown),
+  updatedAt: Schema.String,
+});
+const decodeLegacyShellSnapshot = Schema.decodeUnknownEffect(LegacyShellSnapshot);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -942,3 +949,40 @@ it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects 
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
 });
+
+it.effect("rejects unknown-only synced preference patches through generic dispatch", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "client-preferences.patch",
+        commandId: "preferences-empty-patch",
+        patch: { unsupported: true },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("keeps new shell snapshots decodable by legacy clients", () =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeLegacyShellSnapshot({
+      snapshotSequence: 1,
+      projects: [],
+      threads: [],
+      syncedClientPreferences: {
+        planModeEnabled: true,
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(decoded, {
+      snapshotSequence: 1,
+      projects: [],
+      threads: [],
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    });
+  }),
+);

@@ -2,6 +2,7 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
+  SyncedClientPreferencesAggregateId,
   ThreadId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
@@ -59,10 +60,15 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "client-preferences" | "project" | "thread";
+  readonly aggregateId: SyncedClientPreferencesAggregateId | ProjectId | ThreadId;
 } {
   switch (command.type) {
+    case "client-preferences.patch":
+      return {
+        aggregateKind: "client-preferences",
+        aggregateId: "client-preferences",
+      };
     case "project.create":
     case "project.meta.update":
     case "project.delete":
