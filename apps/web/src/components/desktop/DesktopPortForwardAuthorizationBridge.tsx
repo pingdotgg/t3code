@@ -1,10 +1,16 @@
 import { resolveTcpPortForwardSocketUrl } from "@t3tools/client-runtime/authorization";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { useEffect } from "react";
 
 import { runtime } from "../../lib/runtime";
 import { readCurrentPreparedConnection } from "../../state/session";
+import {
+  isMissingPortForwardEnvironment,
+  portForwardAuthorizationErrorMessage,
+} from "./desktopPortForwardAuthorization";
 
 export function DesktopPortForwardAuthorizationBridge() {
   useEffect(() => {
@@ -19,7 +25,7 @@ export function DesktopPortForwardAuthorizationBridge() {
             // Only the renderer that owns a live connection should answer.
             return;
           }
-          return runtime.runPromise(
+          return runtime.runPromiseExit(
             Effect.gen(function* () {
               const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
               return yield* resolveTcpPortForwardSocketUrl({
@@ -31,20 +37,30 @@ export function DesktopPortForwardAuthorizationBridge() {
             }),
           );
         })
-        .then((socketUrl) => {
-          if (socketUrl !== undefined) {
-            return bridge.resolveAuthorization(request.requestId, socketUrl);
+        .then((result) => {
+          if (result === undefined) return;
+          if (Exit.isSuccess(result)) {
+            return bridge.resolveAuthorization(request.requestId, result.value);
           }
+          return bridge.resolveAuthorization(
+            request.requestId,
+            null,
+            portForwardAuthorizationErrorMessage(Cause.squash(result.cause)),
+          );
         })
-        .catch((cause) =>
-          bridge
+        .catch((cause) => {
+          // Authorization requests used to be broadcast to every desktop
+          // renderer. Old windows that do not own this environment must stay
+          // silent so they cannot race the connected renderer's response.
+          if (isMissingPortForwardEnvironment(cause)) return;
+          return bridge
             .resolveAuthorization(
               request.requestId,
               null,
-              cause instanceof Error ? cause.message : String(cause),
+              portForwardAuthorizationErrorMessage(cause),
             )
-            .catch(() => undefined),
-        );
+            .catch(() => undefined);
+        });
     });
   }, []);
 

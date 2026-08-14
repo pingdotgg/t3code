@@ -431,8 +431,9 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const handleConnection = (forward: ManagedForward, socket: NodeNet.Socket) =>
-    Effect.gen(function* () {
+  const handleConnection = (forward: ManagedForward, socket: NodeNet.Socket) => {
+    let connectionState: "connecting" | "connected" = "connecting";
+    return Effect.gen(function* () {
       const accepted = yield* Ref.modify(forwards, (current) => {
         const activeTotal = [...current.values()].reduce(
           (total, entry) => total + entry.sockets.size,
@@ -454,12 +455,18 @@ export const make = Effect.gen(function* () {
       }
       yield* updateSnapshot(forward.snapshot.id, (snapshot) => ({
         ...snapshot,
-        activeConnections: snapshot.activeConnections + 1,
+        connectingConnections: snapshot.connectingConnections + 1,
         lastError: null,
       }));
       const socketUrl = yield* authorize(forward);
       const webSocket = yield* openWebSocket(socketUrl);
       forward.webSockets.add(webSocket);
+      yield* updateSnapshot(forward.snapshot.id, (snapshot) => ({
+        ...snapshot,
+        connectingConnections: Math.max(0, snapshot.connectingConnections - 1),
+        activeConnections: snapshot.activeConnections + 1,
+      }));
+      connectionState = "connected";
       yield* runConnection(socket, webSocket);
       forward.webSockets.delete(webSocket);
     }).pipe(
@@ -475,11 +482,16 @@ export const make = Effect.gen(function* () {
           socket.destroy();
           yield* updateSnapshot(forward.snapshot.id, (snapshot) => ({
             ...snapshot,
-            activeConnections: Math.max(0, snapshot.activeConnections - 1),
+            ...(connectionState === "connected"
+              ? { activeConnections: Math.max(0, snapshot.activeConnections - 1) }
+              : {
+                  connectingConnections: Math.max(0, snapshot.connectingConnections - 1),
+                }),
           }));
         }),
       ),
     );
+  };
 
   const create: DesktopPortForwardManager["Service"]["create"] = Effect.fn(
     "DesktopPortForwardManager.create",
@@ -506,6 +518,7 @@ export const make = Effect.gen(function* () {
       remoteHost: input.remoteHost,
       remotePort: input.remotePort,
       status: "running",
+      connectingConnections: 0,
       activeConnections: 0,
       lastError: null,
     };

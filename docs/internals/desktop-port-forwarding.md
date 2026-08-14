@@ -100,8 +100,8 @@ per running definition. The current panel shows:
 
 - environment label plus a short environment-ID fingerprint;
 - remote destination and assigned desktop address;
-- running/error status;
-- active connection count;
+- listener, connecting, connected, and error status;
+- connecting and established bridge counts kept separate;
 - manual creation and stop actions.
 
 Copy address, open HTTP service, edit, persistence, and richer lifecycle states

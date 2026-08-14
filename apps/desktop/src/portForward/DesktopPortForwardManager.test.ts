@@ -1,9 +1,31 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type DesktopPortForwardAuthorizationRequest } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as NodeNet from "node:net";
 
 import * as DesktopPortForwardManager from "./DesktopPortForwardManager.ts";
+
+const connectLocal = (port: number) =>
+  Effect.callback<NodeNet.Socket, Error>((resume) => {
+    const socket = NodeNet.createConnection({ host: "127.0.0.1", port });
+    const onConnect = () => {
+      socket.off("error", onError);
+      resume(Effect.succeed(socket));
+    };
+    const onError = (cause: Error) => {
+      socket.off("connect", onConnect);
+      resume(Effect.fail(cause));
+    };
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+    return Effect.sync(() => {
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      socket.destroy();
+    });
+  });
 
 it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
   it("preserves renderer authorization failures for the forward status", () => {
@@ -97,5 +119,48 @@ it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
       expect(second.localPort).not.toBe(first.localPort);
       expect(yield* manager.list).toHaveLength(2);
     }).pipe(Effect.provide(DesktopPortForwardManager.layer)),
+  );
+
+  it.effect("does not report a local socket as active before its bridge connects", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* DesktopPortForwardManager.DesktopPortForwardManager;
+        const authorization = yield* Deferred.make<DesktopPortForwardAuthorizationRequest>();
+        const failed = yield* Deferred.make<void>();
+
+        yield* manager.subscribeAuthorizationRequests((request) =>
+          Deferred.succeed(authorization, request).pipe(Effect.asVoid),
+        );
+        yield* manager.subscribeStateChanges((snapshots) => {
+          const snapshot = snapshots[0];
+          return snapshot !== undefined &&
+            snapshot.connectingConnections === 0 &&
+            snapshot.lastError !== null
+            ? Deferred.succeed(failed, undefined).pipe(Effect.asVoid)
+            : Effect.void;
+        });
+
+        const created = yield* manager.create({
+          environmentId: EnvironmentId.make("environment-a"),
+          remoteHost: "127.0.0.1",
+          remotePort: 3000,
+        });
+        const socket = yield* connectLocal(created.localPort);
+        yield* Effect.addFinalizer(() => Effect.sync(() => socket.destroy()));
+
+        const request = yield* Deferred.await(authorization);
+        const [connecting] = yield* manager.list;
+        expect(connecting?.connectingConnections).toBe(1);
+        expect(connecting?.activeConnections).toBe(0);
+
+        yield* manager.resolveAuthorization(request.requestId, "not a valid WebSocket URL");
+        yield* Deferred.await(failed);
+
+        const [settled] = yield* manager.list;
+        expect(settled?.connectingConnections).toBe(0);
+        expect(settled?.activeConnections).toBe(0);
+        expect(settled?.lastError).toContain("validate-ticket-url");
+      }).pipe(Effect.provide(DesktopPortForwardManager.layer)),
+    ),
   );
 });

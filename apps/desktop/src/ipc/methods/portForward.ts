@@ -1,17 +1,35 @@
 import {
   DesktopPortForwardAuthorizationResolution,
+  type DesktopPortForwardAuthorizationRequest,
   DesktopPortForwardCreateInput,
   DesktopPortForwardSnapshot,
   DesktopPortForwardStopEnvironmentInput,
   DesktopPortForwardStopInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopPortForwardManager from "../../portForward/DesktopPortForwardManager.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+
+export const sendPortForwardAuthorizationRequest = Effect.fn(
+  "desktop.ipc.portForward.sendAuthorizationRequest",
+)(function* (
+  electronWindow: ElectronWindow.ElectronWindow["Service"],
+  request: DesktopPortForwardAuthorizationRequest,
+) {
+  const target = yield* electronWindow.currentMainOrFirst;
+  yield* Option.match(target, {
+    onNone: () => Effect.void,
+    onSome: (window) =>
+      Effect.sync(() => {
+        window.webContents.send(IpcChannels.PORT_FORWARD_AUTHORIZATION_REQUEST_CHANNEL, request);
+      }),
+  });
+});
 
 export const installPortForwardEventForwarding = Effect.fn(
   "desktop.ipc.portForward.installEventForwarding",
@@ -22,7 +40,7 @@ export const installPortForwardEventForwarding = Effect.fn(
     electronWindow.sendAll(IpcChannels.PORT_FORWARD_STATE_CHANNEL, snapshots),
   );
   yield* manager.subscribeAuthorizationRequests((request) =>
-    electronWindow.sendAll(IpcChannels.PORT_FORWARD_AUTHORIZATION_REQUEST_CHANNEL, request),
+    sendPortForwardAuthorizationRequest(electronWindow, request),
   );
 });
 

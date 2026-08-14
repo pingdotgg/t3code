@@ -13,6 +13,7 @@ import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { portForwardConnectionSummary } from "./desktopPortForwardPresentation";
 
 function parsePort(value: string): number | null {
   const parsed = Number(value);
@@ -268,8 +269,7 @@ export function DesktopPortForwardControl({
                   <p className="truncate font-medium tabular-nums">127.0.0.1:{forward.localPort}</p>
                   <p className="truncate text-muted-foreground tabular-nums">
                     {environmentLabels.get(forward.environmentId) ?? "Unknown environment"} · →
-                    127.0.0.1:{forward.remotePort}
-                    {forward.activeConnections > 0 ? ` · ${forward.activeConnections} active` : ""}
+                    127.0.0.1:{forward.remotePort} · {portForwardConnectionSummary(forward)}
                   </p>
                   {forward.lastError === null ? null : (
                     <p className="truncate text-destructive">{forward.lastError}</p>
