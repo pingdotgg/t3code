@@ -1612,7 +1612,7 @@ export default function Sidebar() {
     unpinThread,
     reorderPinnedThread,
     deleteThread,
-    countOrphanedWorktreesForThreads,
+    collectOrphanedWorktreePathsForThreads,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -2882,24 +2882,32 @@ export default function Sidebar() {
       // Asked once for the whole batch. Left to itself each deleteThread call
       // opens its own worktree confirmation, so a ten-row selection meant ten
       // prompts with a round trip of deletion work between them.
-      const orphanedWorktreeCount = countOrphanedWorktreesForThreads(
+      const orphanedWorktreePaths = collectOrphanedWorktreePathsForThreads(
         deleteTargets.map(({ threadRef }) => threadRef),
       );
-      let worktreeDecision: "delete" | "keep" = "keep";
-      if (orphanedWorktreeCount > 0) {
+      // The answer travels with the exact paths it was given for, so a worktree
+      // that only becomes orphaned mid-batch still gets its own prompt.
+      let worktreeBatch: { decision: "delete" | "keep"; paths: ReadonlySet<string> } = {
+        decision: "keep",
+        paths: orphanedWorktreePaths,
+      };
+      if (orphanedWorktreePaths.size > 0) {
         const confirmedWorktrees = await settlePromise(() =>
           api.dialogs.confirm(
             [
               "Delete the worktrees too?",
-              orphanedWorktreeCount === 1
+              orphanedWorktreePaths.size === 1
                 ? "There is 1 worktree linked only to the threads you're deleting."
-                : `There are ${orphanedWorktreeCount} worktrees linked only to the threads you're deleting.`,
+                : `There are ${orphanedWorktreePaths.size} worktrees linked only to the threads you're deleting.`,
             ].join("\n"),
             { variant: "destructive" },
           ),
         );
         if (confirmedWorktrees._tag === "Failure") return;
-        worktreeDecision = confirmedWorktrees.value ? "delete" : "keep";
+        worktreeBatch = {
+          decision: confirmedWorktrees.value ? "delete" : "keep",
+          paths: orphanedWorktreePaths,
+        };
       }
       // Grown as deletions actually land, never seeded with the whole batch:
       // orphaned-worktree detection must only discount threads that are
@@ -2909,7 +2917,7 @@ export default function Sidebar() {
       for (const { threadKey, threadRef } of deleteTargets) {
         const result = await deleteThread(threadRef, {
           deletedThreadKeys,
-          worktreeDecision,
+          worktreeBatch,
         });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
@@ -2933,7 +2941,7 @@ export default function Sidebar() {
       attemptSnooze,
       clearSelection,
       confirmThreadDelete,
-      countOrphanedWorktreesForThreads,
+      collectOrphanedWorktreePathsForThreads,
       deleteThread,
       markThreadUnread,
       performSnooze,

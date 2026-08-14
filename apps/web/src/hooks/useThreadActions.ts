@@ -273,10 +273,10 @@ export function useThreadActions() {
     [unarchiveThreadMutation],
   );
 
-  /** How many worktrees deleting `targets` as one batch would orphan. Callers
-      use it to ask the worktree question once up front and hand the answer to
-      every `deleteThread` call via `worktreeDecision`. */
-  const countOrphanedWorktreesForThreads = useCallback(
+  /** The worktrees deleting `targets` as one batch would orphan. Callers use it
+      to ask the worktree question once up front and hand the answer, along with
+      these exact paths, to every `deleteThread` call via `worktreeBatch`. */
+  const collectOrphanedWorktreePathsForThreads = useCallback(
     (targets: ReadonlyArray<ScopedThreadRef>) => {
       const threadIdsByEnvironment = new Map<EnvironmentId, Set<ThreadId>>();
       for (const target of targets) {
@@ -288,7 +288,7 @@ export function useThreadActions() {
         }
       }
 
-      let count = 0;
+      const paths = new Set<string>();
       for (const [environmentId, threadIds] of threadIdsByEnvironment) {
         const threads = readEnvironmentThreadRefs(environmentId).flatMap((ref) => {
           const shell = readThreadShell(ref);
@@ -304,9 +304,11 @@ export function useThreadActions() {
               : [],
           ),
         );
-        count += getOrphanedWorktreePathsForThreads(threads, removableThreadIds).length;
+        for (const path of getOrphanedWorktreePathsForThreads(threads, removableThreadIds)) {
+          paths.add(path);
+        }
       }
-      return count;
+      return paths;
     },
     [],
   );
@@ -316,10 +318,14 @@ export function useThreadActions() {
       target: ScopedThreadRef,
       opts: {
         deletedThreadKeys?: ReadonlySet<string>;
-        /** Pre-answer for the orphaned-worktree prompt. Batch callers set it
-            so a multi-thread delete opens one dialog instead of one per
-            thread; the default asks, leaving single deletes untouched. */
-        worktreeDecision?: "ask" | "delete" | "keep";
+        /** Pre-answer for the orphaned-worktree prompt, so a multi-thread
+            delete opens one dialog instead of one per thread. It only covers
+            `paths`, the worktrees counted when that dialog was shown: anything
+            orphaned later — say another client deletes the thread that was
+            holding a worktree while this batch runs — was never part of what
+            the user agreed to, so it falls back to its own prompt. Unset for
+            single deletes, which keep asking. */
+        worktreeBatch?: { decision: "delete" | "keep"; paths: ReadonlySet<string> };
       } = {},
     ) => {
       const resolved = resolveThreadTarget(target);
@@ -365,10 +371,12 @@ export function useThreadActions() {
         : null;
       const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
       const localApi = readLocalApi();
-      const worktreeDecision = opts.worktreeDecision ?? "ask";
+      const batchAnswered =
+        orphanedWorktreePath !== null &&
+        (opts.worktreeBatch?.paths.has(orphanedWorktreePath) ?? false);
       let shouldDeleteWorktree = false;
-      if (canDeleteWorktree && worktreeDecision !== "ask") {
-        shouldDeleteWorktree = worktreeDecision === "delete";
+      if (canDeleteWorktree && batchAnswered) {
+        shouldDeleteWorktree = opts.worktreeBatch?.decision === "delete";
       } else if (canDeleteWorktree && localApi) {
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
@@ -753,7 +761,7 @@ export function useThreadActions() {
     () => ({
       archiveThread,
       unarchiveThread,
-      countOrphanedWorktreesForThreads,
+      collectOrphanedWorktreePathsForThreads,
       deleteThread,
       confirmAndDeleteThread,
       settleThread,
@@ -767,7 +775,7 @@ export function useThreadActions() {
     [
       archiveThread,
       confirmAndDeleteThread,
-      countOrphanedWorktreesForThreads,
+      collectOrphanedWorktreePathsForThreads,
       deleteThread,
       pinThread,
       reorderPinnedThread,
