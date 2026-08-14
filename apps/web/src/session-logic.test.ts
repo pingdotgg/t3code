@@ -1239,6 +1239,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "grep-complete",
+      toolCallId: "tool-grep-1",
       toolTitle: "grep",
       detail: "19 files",
       itemType: "web_search",

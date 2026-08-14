@@ -65,6 +65,8 @@ export interface WorkLogEntry {
   id: string;
   createdAt: string;
   turnId?: TurnId | null;
+  /** Stable provider identity across in-progress and completed lifecycle updates. */
+  toolCallId?: string;
   label: string;
   detail?: string;
   command?: string;

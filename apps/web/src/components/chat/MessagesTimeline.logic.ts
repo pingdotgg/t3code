@@ -175,6 +175,9 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       entry: WorkLogEntry;
+      groupedEntries: WorkLogEntry[];
+      groupId: string;
+      expanded: boolean;
     }
   | {
       kind: "work-toggle";
@@ -331,6 +334,14 @@ function toolGroupSummaryKind(entries: ReadonlyArray<WorkLogEntry>): ToolGroupAc
   return actions.size === 1 ? actions.values().next().value! : "mixed";
 }
 
+function workGroupIdentity(timelineEntryId: string, entry: WorkLogEntry): string {
+  return entry.toolCallId ? `tool:${entry.toolCallId}` : timelineEntryId;
+}
+
+function workGroupId(timelineEntryId: string, entry: WorkLogEntry): string {
+  return `work-group:${workGroupIdentity(timelineEntryId, entry)}`;
+}
+
 export function resolveAssistantMessageCopyState({
   text,
   showCopyButton,
@@ -421,15 +432,16 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
 
 /**
  * Settled turns fold their commentary and tool activity behind a
- * "Worked for ..." row anchored at the turn's first foldable entry; the
- * terminal assistant message stays visible below the fold.
+ * "Worked for ..." row placed immediately before the next terminal assistant
+ * response. A steer can split one visible response across turn ids, so tying
+ * the disclosure to the first hidden entry would strand it above the steer.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unsettledTurnId: TurnId | null;
-}): ReadonlyMap<string, TurnFold> {
+}): ReadonlyMap<string, ReadonlyArray<TurnFold>> {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
@@ -484,7 +496,7 @@ function deriveTurnFolds(input: {
     }
   }
 
-  const foldsByAnchorEntryId = new Map<string, TurnFold>();
+  const foldsByAnchorEntryId = new Map<string, TurnFold[]>();
   for (const [turnId, group] of groupsByTurnId) {
     if (turnId === input.unsettledTurnId) {
       continue;
@@ -514,6 +526,24 @@ function deriveTurnFolds(input: {
     if (!firstEntry || !lastEntry) {
       continue;
     }
+    const lastHiddenEntryIndex = input.timelineEntries.findLastIndex((entry) =>
+      hiddenEntryIds.has(entry.id),
+    );
+    if (lastHiddenEntryIndex < 0) {
+      continue;
+    }
+    const nextTerminalAssistantEntry = input.timelineEntries
+      .slice(lastHiddenEntryIndex + 1)
+      .find(
+        (entry) =>
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          input.terminalAssistantMessageIds.has(entry.message.id),
+      );
+    const anchorEntry = nextTerminalAssistantEntry ?? input.timelineEntries[lastHiddenEntryIndex];
+    if (!anchorEntry) {
+      continue;
+    }
 
     const isLatestInterruptedTurn =
       input.latestTurn?.turnId === turnId && input.latestTurn.state === "interrupted";
@@ -540,13 +570,16 @@ function deriveTurnFolds(input: {
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorEntryId.set(firstEntry.id, {
+    const fold = {
       turnId,
-      anchorEntryId: firstEntry.id,
-      createdAt: firstEntry.createdAt,
+      anchorEntryId: anchorEntry.id,
+      createdAt: anchorEntry.createdAt,
       hiddenEntryIds,
       label,
-    });
+    };
+    const anchoredFolds = foldsByAnchorEntryId.get(anchorEntry.id);
+    if (anchoredFolds) anchoredFolds.push(fold);
+    else foldsByAnchorEntryId.set(anchorEntry.id, [fold]);
   }
   return foldsByAnchorEntryId;
 }
@@ -578,10 +611,12 @@ export function deriveMessagesTimelineRows(input: {
     unsettledTurnId,
   });
   const collapsedEntryIds = new Set<string>();
-  for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedTurnIds?.has(fold.turnId)) {
-      for (const entryId of fold.hiddenEntryIds) {
-        collapsedEntryIds.add(entryId);
+  for (const folds of foldsByAnchorEntryId.values()) {
+    for (const fold of folds) {
+      if (!input.expandedTurnIds?.has(fold.turnId)) {
+        for (const entryId of fold.hiddenEntryIds) {
+          collapsedEntryIds.add(entryId);
+        }
       }
     }
   }
@@ -661,6 +696,7 @@ export function deriveMessagesTimelineRows(input: {
     const anchorEntry = entry;
     let latestToolEntry = entry;
     const batchEntryIds = [entry.id];
+    const visibleBatchEntries = [entry.entry];
     let cursor = index + 1;
     while (cursor < input.timelineEntries.length) {
       const nextEntry = input.timelineEntries[cursor];
@@ -679,6 +715,9 @@ export function deriveMessagesTimelineRows(input: {
       ) {
         latestToolEntry = nextEntry;
       }
+      if (!workEntryIndicatesToolNeutralStatus(nextEntry.entry)) {
+        visibleBatchEntries.push(nextEntry.entry);
+      }
       cursor += 1;
     }
 
@@ -687,11 +726,15 @@ export function deriveMessagesTimelineRows(input: {
     // summary so none of its calls disappear behind the live one-line view.
     if (hasLaterTurnContent[cursor] !== true) {
       for (const entryId of batchEntryIds) activeWorkEntryIds.add(entryId);
+      const groupId = workGroupId(anchorEntry.id, anchorEntry.entry);
       activeWorkRowsByAnchorId.set(anchorEntry.id, {
         kind: "work-live",
-        id: `work-live:${anchorEntry.id}`,
+        id: `work-live:${workGroupIdentity(anchorEntry.id, anchorEntry.entry)}`,
         createdAt: anchorEntry.createdAt,
         entry: latestToolEntry.entry,
+        groupedEntries: visibleBatchEntries,
+        groupId,
+        expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
       });
     }
     index = cursor - 1;
@@ -712,16 +755,18 @@ export function deriveMessagesTimelineRows(input: {
       });
     }
 
-    const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
-    if (turnFold) {
-      nextRows.push({
-        kind: "turn-fold",
-        id: `turn-fold:${turnFold.turnId}`,
-        createdAt: turnFold.createdAt,
-        turnId: turnFold.turnId,
-        label: turnFold.label,
-        expanded: input.expandedTurnIds?.has(turnFold.turnId) ?? false,
-      });
+    const anchoredTurnFolds = foldsByAnchorEntryId.get(timelineEntry.id);
+    if (anchoredTurnFolds) {
+      for (const turnFold of anchoredTurnFolds) {
+        nextRows.push({
+          kind: "turn-fold",
+          id: `turn-fold:${turnFold.turnId}`,
+          createdAt: turnFold.createdAt,
+          turnId: turnFold.turnId,
+          label: turnFold.label,
+          expanded: input.expandedTurnIds?.has(turnFold.turnId) ?? false,
+        });
+      }
     }
 
     if (collapsedEntryIds.has(timelineEntry.id)) {
@@ -732,6 +777,18 @@ export function deriveMessagesTimelineRows(input: {
       const activeWorkRow = activeWorkRowsByAnchorId.get(timelineEntry.id);
       if (activeWorkRow) {
         nextRows.push(activeWorkRow);
+        if (activeWorkRow.expanded) {
+          for (const [entryIndex, workEntry] of activeWorkRow.groupedEntries.entries()) {
+            nextRows.push({
+              kind: "work",
+              id: workEntry.id,
+              createdAt: workEntry.createdAt,
+              groupedEntries: [workEntry],
+              isExpandedToolGroupEntry: true,
+              isLastExpandedToolGroupEntry: entryIndex === activeWorkRow.groupedEntries.length - 1,
+            });
+          }
+        }
       }
       continue;
     }
@@ -761,7 +818,7 @@ export function deriveMessagesTimelineRows(input: {
           (entry) => workLogEntryIsToolLike(entry) && entry.agentSpawn === undefined,
         );
         if (onlyToolEntries) {
-          const groupId = `work-group:${timelineEntry.id}`;
+          const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           nextRows.push({
@@ -798,7 +855,7 @@ export function deriveMessagesTimelineRows(input: {
             isLastExpandedToolGroupEntry: false,
           });
         } else {
-          const groupId = `work-group:${timelineEntry.id}`;
+          const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           // Agent-spawn CTA rows are always visible: a running fleet must
           // never hide behind a "+N tool calls" toggle. Selection is by
@@ -971,8 +1028,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
 
-    case "work-live":
-      return Equal.equals(a.entry, (b as typeof a).entry);
+    case "work-live": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.groupId === bw.groupId &&
+        a.expanded === bw.expanded &&
+        Equal.equals(a.entry, bw.entry) &&
+        Equal.equals(a.groupedEntries, bw.groupedEntries)
+      );
+    }
 
     case "work-toggle": {
       const bw = b as typeof a;
