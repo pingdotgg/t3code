@@ -204,6 +204,10 @@ direct HTTPS or Tailscale connections, and desktop-managed SSH environments.
 
 For the active environment, the cable icon in the conversation header opens a
 compact version of the same controls and shows how many forwards are running.
+Each forward reports **Listening** until a local application connects,
+**connecting** while T3 Code authorizes and opens the remote bridge, and
+**connected** only after that bridge is established. A failed bridge shows its
+error without stopping the loopback listener, so a later connection can retry.
 
 The forward is TCP-only and can reach only `127.0.0.1` on the remote
 environment. It is not exposed to your LAN or the public Internet. Manual

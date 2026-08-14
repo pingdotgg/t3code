@@ -42,6 +42,7 @@ export const DesktopPortForwardSnapshot = Schema.Struct({
   remoteHost: TcpPortForwardHost,
   remotePort: TcpPort,
   status: DesktopPortForwardStatus,
+  connectingConnections: NonNegativeInt,
   activeConnections: NonNegativeInt,
   lastError: Schema.NullOr(Schema.String),
 });

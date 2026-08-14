@@ -10,6 +10,7 @@ import { useServerConfigs } from "../../state/entities";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { portForwardConnectionSummary } from "../desktop/desktopPortForwardPresentation";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 function parsePort(value: string): number | null {
@@ -199,11 +200,12 @@ export function DesktopPortForwardsSettings() {
           title={`${forward.localHost}:${forward.localPort}`}
           description={`${labels.get(forward.environmentId) ?? forward.environmentId} · ${forward.remoteHost}:${forward.remotePort}`}
           status={
-            forward.lastError === null ? (
-              `${forward.activeConnections} active connection${forward.activeConnections === 1 ? "" : "s"}`
-            ) : (
-              <span className="text-destructive">{forward.lastError}</span>
-            )
+            <span className="flex flex-col items-end gap-0.5">
+              <span>{portForwardConnectionSummary(forward)}</span>
+              {forward.lastError === null ? null : (
+                <span className="max-w-96 text-right text-destructive">{forward.lastError}</span>
+              )}
+            </span>
           }
           control={
             <Button
