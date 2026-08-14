@@ -14,6 +14,7 @@ export {
   type NativeMarkdownDocumentChunk,
   type NativeMarkdownTextRun,
 } from "./src/nativeMarkdownText";
+export { markdownNodeDirection, markdownTextDirection } from "./src/markdownTextDirection";
 export { MarkdownTextPrimitive } from "./src/MarkdownTextPrimitive";
 export {
   SelectableMarkdownText,

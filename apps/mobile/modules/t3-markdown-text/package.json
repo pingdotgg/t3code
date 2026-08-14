@@ -18,6 +18,7 @@
   "react-native": "./index.ts",
   "exports": {
     ".": "./index.ts",
+    "./direction": "./src/markdownTextDirection.ts",
     "./file-icons": "./src/markdownFileIcons.ts",
     "./links": "./src/markdownLinks.ts",
     "./markdown": "./src/nativeMarkdownText.ts",

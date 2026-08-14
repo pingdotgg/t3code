@@ -3,6 +3,7 @@ import { Image, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
+import { markdownNodeDirection } from "./markdownTextDirection";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import { nativeMarkdownDocumentRuns, nativeMarkdownListItemBlocks } from "./nativeMarkdownText";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios";
@@ -510,13 +511,19 @@ function NativeList(props: {
         return (
           <View
             key={nodeKey(item, index)}
-            style={{ alignItems: "flex-start", flexDirection: "row" }}
+            style={{
+              // Per item, not per list: a right-to-left item mirrors its own row and puts the
+              // marker on the side its text starts from, while its neighbours keep theirs.
+              direction: markdownNodeDirection(item),
+              alignItems: "flex-start",
+              flexDirection: "row",
+            }}
           >
             <View
               style={{
                 width: markerWidth,
                 height: props.textStyle.lineHeight,
-                marginRight: 6,
+                marginEnd: 6,
                 alignItems: ordered ? "flex-end" : "center",
                 justifyContent: "flex-start",
               }}
@@ -622,10 +629,11 @@ export function NativeMarkdownBlock(props: {
       return (
         <View
           style={{
-            borderLeftColor: props.textStyle.quoteMarkerColor,
-            borderLeftWidth: 2,
+            direction: markdownNodeDirection(props.node),
+            borderStartColor: props.textStyle.quoteMarkerColor,
+            borderStartWidth: 2,
             marginVertical: props.compact ? 4 : 0,
-            paddingLeft: 11,
+            paddingStart: 11,
             paddingVertical: 2,
             gap: 6,
           }}

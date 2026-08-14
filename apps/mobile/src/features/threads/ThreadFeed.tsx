@@ -82,6 +82,7 @@ import {
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+import { markdownNodeDirection } from "@t3tools/mobile-markdown-text/direction";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
@@ -631,17 +632,25 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                 <Renderer key={childKey} node={child} depth={1} inListItem parentIsText={false} />
               );
             }
+            // Per item: a right-to-left item mirrors its own row so the marker lands on the side
+            // its text starts from. Matches the web client's per-block direction.
+            const itemDirection = markdownNodeDirection(child);
             return (
-              <View className="mb-[3px] flex-row items-start" key={childKey}>
+              <View
+                className="mb-[3px] flex-row items-start"
+                key={childKey}
+                style={{ direction: itemDirection }}
+              >
                 <NativeText
                   className="font-sans"
                   style={{
                     width: ordered ? 22 : 12,
-                    marginRight: 5,
+                    marginEnd: 5,
                     color: inlineTextColor,
                     fontSize: markdownFontSizes.m,
                     lineHeight: markdownFontSizes.bodyLineHeight,
-                    textAlign: ordered ? "right" : "center",
+                    // A number hugs the text it labels, which the mirrored row moved to its left.
+                    textAlign: ordered ? (itemDirection === "rtl" ? "left" : "right") : "center",
                   }}
                 >
                   {ordered ? `${start + index}.` : "•"}
