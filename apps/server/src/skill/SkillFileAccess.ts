@@ -118,16 +118,21 @@ export const readResolvedSkillFile = Effect.fn("readResolvedSkillFile")(function
 
         const bytesToRead = Math.min(stat.size, MAX_TEXT_BYTES);
         const bytes = Buffer.allocUnsafe(bytesToRead);
-        const { bytesRead } = yield* Effect.tryPromise({
-          try: () => handle.read(bytes, 0, bytesToRead, 0),
-          catch: (cause) =>
-            new SkillReadFileError({
-              skillName: input.skillName,
-              relativePath: input.relativePath,
-              failure: "operation_failed",
-              cause,
-            }),
-        });
+        let bytesRead = 0;
+        while (bytesRead < bytesToRead) {
+          const { bytesRead: readCount } = yield* Effect.tryPromise({
+            try: () => handle.read(bytes, bytesRead, bytesToRead - bytesRead, bytesRead),
+            catch: (cause) =>
+              new SkillReadFileError({
+                skillName: input.skillName,
+                relativePath: input.relativePath,
+                failure: "operation_failed",
+                cause,
+              }),
+          });
+          if (readCount === 0) break;
+          bytesRead += readCount;
+        }
         const contents = bytes.subarray(0, bytesRead).toString("utf8");
         if (contents.includes("\u0000")) {
           return yield* new SkillReadFileError({

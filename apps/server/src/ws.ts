@@ -1064,9 +1064,18 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
+              const existingProviderInstanceId =
+                command.type === "thread.turn.start" &&
+                command.modelSelection === undefined &&
+                command.bootstrap?.createThread === undefined
+                  ? Option.getOrUndefined(
+                      yield* projectionSnapshotQuery.getThreadShellById(command.threadId),
+                    )?.modelSelection.instanceId
+                  : undefined;
               const normalizedCommand = yield* normalizeDispatchCommand(
                 command,
                 yield* providerRegistry.getProviders,
+                existingProviderInstanceId,
               );
               // Archive and settle both mean "done with this thread", so a
               // live provider session must not keep running background work

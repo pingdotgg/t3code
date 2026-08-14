@@ -95,9 +95,24 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const existingProviderInstanceId =
+            args.payload.type === "thread.turn.start" &&
+            args.payload.modelSelection === undefined &&
+            args.payload.bootstrap?.createThread === undefined
+              ? Option.getOrUndefined(
+                  yield* projectionSnapshotQuery
+                    .getThreadShellById(args.payload.threadId)
+                    .pipe(
+                      Effect.catch((cause) =>
+                        failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+                      ),
+                    ),
+                )?.modelSelection.instanceId
+              : undefined;
           const normalizedCommand = yield* normalizeDispatchCommand(
             args.payload,
             yield* providerRegistry.getProviders,
+            existingProviderInstanceId,
           ).pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
           return yield* orchestrationEngine
             .dispatch(normalizedCommand)

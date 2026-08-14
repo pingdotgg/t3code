@@ -6,7 +6,6 @@ import {
   type ClientOrchestrationCommand,
   type IsoDateTime,
   type OrchestrationCommand,
-  type ServerProvider,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
@@ -16,6 +15,15 @@ import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+
+type SkillProvider = {
+  readonly instanceId: string;
+  readonly skills: ReadonlyArray<{
+    readonly name: string;
+    readonly path: string;
+    readonly enabled: boolean;
+  }>;
+};
 
 export function resolveInvokedSkills(
   text: string,
@@ -29,6 +37,21 @@ export function resolveInvokedSkills(
     const skill = skills.find((candidate) => candidate.enabled && candidate.name === name);
     return skill ? [{ name: skill.name, path: skill.path }] : [];
   });
+}
+
+export function resolveTurnStartSkills(
+  command: Extract<ClientOrchestrationCommand, { type: "thread.turn.start" }>,
+  providers: ReadonlyArray<SkillProvider>,
+  existingProviderInstanceId?: string,
+) {
+  const providerInstanceId =
+    command.modelSelection?.instanceId ??
+    command.bootstrap?.createThread?.modelSelection.instanceId ??
+    existingProviderInstanceId;
+  const provider = providerInstanceId
+    ? providers.find((candidate) => candidate.instanceId === providerInstanceId)
+    : undefined;
+  return resolveInvokedSkills(command.message.text, provider?.skills ?? []);
 }
 
 export const canonicalizeClientCommandTimestamps = (
@@ -61,7 +84,8 @@ export const canonicalizeClientCommandTimestamps = (
 
 export const normalizeDispatchCommand = (
   command: ClientOrchestrationCommand,
-  providers: ReadonlyArray<ServerProvider> = [],
+  providers: ReadonlyArray<SkillProvider> = [],
+  existingProviderInstanceId?: string,
 ) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
@@ -188,15 +212,10 @@ export const normalizeDispatchCommand = (
       { concurrency: 1 },
     );
 
-    const providerInstanceId =
-      canonicalCommand.modelSelection?.instanceId ??
-      canonicalCommand.bootstrap?.createThread?.modelSelection.instanceId;
-    const provider = providerInstanceId
-      ? providers.find((candidate) => candidate.instanceId === providerInstanceId)
-      : undefined;
-    const resolvedSkills = resolveInvokedSkills(
-      canonicalCommand.message.text,
-      provider?.skills ?? [],
+    const resolvedSkills = resolveTurnStartSkills(
+      canonicalCommand,
+      providers,
+      existingProviderInstanceId,
     );
 
     return {
@@ -204,7 +223,10 @@ export const normalizeDispatchCommand = (
       message: {
         ...canonicalCommand.message,
         attachments: normalizedAttachments,
-        ...(resolvedSkills.length > 0 ? { resolvedSkills } : {}),
+        // This is always server-derived, including an explicit empty list.
+        // Omitting it would turn newly submitted unresolved skills into legacy
+        // messages and let a later provider change make them clickable.
+        resolvedSkills,
       },
     } satisfies OrchestrationCommand;
   });

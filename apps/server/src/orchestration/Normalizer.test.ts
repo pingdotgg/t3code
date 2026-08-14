@@ -8,7 +8,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { canonicalizeClientCommandTimestamps, resolveInvokedSkills } from "./Normalizer.ts";
+import {
+  canonicalizeClientCommandTimestamps,
+  resolveInvokedSkills,
+  resolveTurnStartSkills,
+} from "./Normalizer.ts";
 
 const clientCreatedAt = "2031-01-01T00:00:00.000Z";
 const serverReceivedAt = "2026-07-18T00:00:00.000Z";
@@ -80,5 +84,54 @@ describe("resolveInvokedSkills", () => {
         { name: "disabled", path: "/skills/disabled/SKILL.md", enabled: false },
       ]),
     ).toEqual([{ name: "review", path: "/skills/review/SKILL.md" }]);
+  });
+
+  it("uses the existing thread provider for follow-up turns", () => {
+    const command: Extract<ClientOrchestrationCommand, { type: "thread.turn.start" }> = {
+      type: "thread.turn.start",
+      commandId: CommandId.make("command-3"),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: MessageId.make("message-2"),
+        role: "user",
+        text: "Use $review",
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: clientCreatedAt,
+    };
+
+    expect(
+      resolveTurnStartSkills(
+        command,
+        [
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+            skills: [{ name: "review", path: "/skills/review/SKILL.md", enabled: true }],
+          },
+        ],
+        ProviderInstanceId.make("codex"),
+      ),
+    ).toEqual([{ name: "review", path: "/skills/review/SKILL.md" }]);
+  });
+
+  it("returns an explicit empty resolution for unknown or disabled skill calls", () => {
+    const command: Extract<ClientOrchestrationCommand, { type: "thread.turn.start" }> = {
+      type: "thread.turn.start",
+      commandId: CommandId.make("command-4"),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: MessageId.make("message-3"),
+        role: "user",
+        text: "Use $missing",
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: clientCreatedAt,
+    };
+
+    expect(resolveTurnStartSkills(command, [], ProviderInstanceId.make("codex"))).toEqual([]);
   });
 });
