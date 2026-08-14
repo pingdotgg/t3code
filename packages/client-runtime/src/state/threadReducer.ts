@@ -35,28 +35,14 @@ const activityOrder = O.combineAll<OrchestrationThreadActivity>([
   O.mapInput(O.String, (a) => a.id),
 ]);
 
-/**
- * Id index for each activities array, so the streaming append path can check
- * for a re-delivered id without scanning the whole history per event. Keyed
- * by array identity: the append path moves the set forward to the array it
- * produces, and any array reduced without a cached set (an older state, a
- * snapshot) rebuilds it once.
- */
+// Per-array id index so the streaming append path can reject a re-delivered
+// id without rescanning the history. Only arrays this reducer produced are
+// indexed: presence also proves the array is activityOrder-sorted, which
+// snapshot-loaded arrays (DB order, null sequences first) are not.
 const activityIdIndex = new WeakMap<
   ReadonlyArray<OrchestrationThreadActivity>,
   Set<OrchestrationThreadActivity["id"]>
 >();
-
-function activityIds(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): Set<OrchestrationThreadActivity["id"]> {
-  let ids = activityIdIndex.get(activities);
-  if (ids === undefined) {
-    ids = new Set(activities.map((activity) => activity.id));
-    activityIdIndex.set(activities, ids);
-  }
-  return ids;
-}
 
 /**
  * Matches the validity rule in `deriveLatestContextWindowSnapshot` (and the
@@ -594,19 +580,19 @@ export function applyThreadDetailEvent(
       // thread.reverted that discards turns can still resolve a value from
       // the turns that survive.
       const supersedesContextWindow = isResolvableContextWindowActivity(activity);
-      // Live streams append in order: when the new activity sorts at or after
-      // the tail and its id is unseen, a plain append preserves ordering
-      // without re-filtering and re-sorting the whole history on every event.
+      // Live streams append in order: an unseen id sorting at/after the tail
+      // of a known-sorted array appends without re-filtering and re-sorting
+      // the whole history on every event. The id set moves forward to the new
+      // array; a superseded array falls back to the sorting path.
+      const ids = activityIdIndex.get(thread.activities);
       const lastActivity = thread.activities.at(-1);
       if (
         !supersedesContextWindow &&
+        ids !== undefined &&
         (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
-        !activityIds(thread.activities).has(activity.id)
+        !ids.has(activity.id)
       ) {
         const activities = Arr.append(thread.activities, activity);
-        // Move the id set forward instead of copying it: the superseded array
-        // rebuilds its set on the off chance it is reduced against again.
-        const ids = activityIds(thread.activities);
         activityIdIndex.delete(thread.activities);
         ids.add(activity.id);
         activityIdIndex.set(activities, ids);
@@ -633,6 +619,7 @@ export function applyThreadDetailEvent(
         Arr.append(activity),
         Arr.sort(activityOrder),
       );
+      activityIdIndex.set(activities, new Set(activities.map((entry) => entry.id)));
 
       return {
         kind: "updated",

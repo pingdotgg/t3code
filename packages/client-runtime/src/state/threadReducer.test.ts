@@ -723,6 +723,49 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("repairs snapshot ordering before fast-path appends engage", () => {
+      const makeActivity = (id: string, sequence: number | null) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary: `Ran ${id}`,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        ...(sequence === null ? {} : { sequence }),
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      // Snapshot loads deliver null-sequence rows first (DB order), which
+      // activityOrder sorts last; an in-order live append must not freeze
+      // that prefix.
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [makeActivity("activity-null", null), makeActivity("activity-a", 1)],
+        },
+        {
+          ...baseEventFields,
+          sequence: 135,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-b", 2),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-null",
+        ]);
+      }
+    });
+
     it("dedupes a re-delivery arriving right after an in-order append", () => {
       const makeActivity = (id: string, sequence: number, summary: string) => ({
         id: EventId.make(id),
@@ -754,15 +797,24 @@ describe("applyThreadDetailEvent", () => {
       }
       const second = applyThreadDetailEvent(
         first.thread,
-        makeEvent(134, makeActivity("activity-b", 3, "second (redelivered)")),
+        makeEvent(134, makeActivity("activity-c", 3, "third")),
       );
       expect(second.kind).toBe("updated");
-      if (second.kind === "updated") {
-        expect(second.thread.activities.map((activity) => activity.id)).toEqual([
+      if (second.kind !== "updated") {
+        return;
+      }
+      const third = applyThreadDetailEvent(
+        second.thread,
+        makeEvent(135, makeActivity("activity-c", 4, "third (redelivered)")),
+      );
+      expect(third.kind).toBe("updated");
+      if (third.kind === "updated") {
+        expect(third.thread.activities.map((activity) => activity.id)).toEqual([
           "activity-a",
           "activity-b",
+          "activity-c",
         ]);
-        expect(second.thread.activities[1]?.summary).toBe("second (redelivered)");
+        expect(third.thread.activities[2]?.summary).toBe("third (redelivered)");
       }
     });
 
