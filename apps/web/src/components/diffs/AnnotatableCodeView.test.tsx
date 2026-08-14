@@ -44,7 +44,7 @@ describe("AnnotatableCodeView", () => {
   });
 
   it("versions same-path files by render content without changing their identity", () => {
-    const patch = [
+    const firstPatchText = [
       "diff --git a/src/example.ts b/src/example.ts",
       "--- a/src/example.ts",
       "+++ b/src/example.ts",
@@ -52,8 +52,16 @@ describe("AnnotatableCodeView", () => {
       "-export const value = 1;",
       "+export const value = 2;",
     ].join("\n");
-    const firstPatch = getRenderablePatch(patch, "first");
-    const secondPatch = getRenderablePatch(patch, "second");
+    const secondPatchText = [
+      "diff --git a/src/example.ts b/src/example.ts",
+      "--- a/src/example.ts",
+      "+++ b/src/example.ts",
+      "@@ -1 +1 @@",
+      "-export const value = 2;",
+      "+export const value = 3;",
+    ].join("\n");
+    const firstPatch = getRenderablePatch(firstPatchText, "test");
+    const secondPatch = getRenderablePatch(secondPatchText, "test");
     if (firstPatch?.kind !== "files" || secondPatch?.kind !== "files") {
       throw new Error("Expected a renderable file patch.");
     }
