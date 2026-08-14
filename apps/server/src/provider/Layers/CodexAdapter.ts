@@ -55,6 +55,8 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ComputerHistoryService from "../../computerHistory/service.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -1654,6 +1656,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -1727,7 +1730,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
-          stateDir: serverConfig.stateDir,
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
@@ -1873,6 +1875,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
+    // Load via the Effect-owned helper. Capture ServerConfig/ServerSettings at
+    // adapter construction (same pattern as makeResolveEnabledDesktopMcp) so
+    // sendTurn keeps R = never.
+    const computerHistoryContext = yield* ComputerHistoryService.loadComputerHistoryContext().pipe(
+      Effect.provideService(ServerConfig, serverConfig),
+      Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+      Effect.orElseSucceed(() => undefined),
+    );
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
@@ -1887,6 +1897,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
+        ...(computerHistoryContext ? { computerHistoryContext } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
   });

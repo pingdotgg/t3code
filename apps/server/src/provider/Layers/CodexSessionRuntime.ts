@@ -115,8 +115,6 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
-  /** Absolute T3 state dir used to load Computer History context for turns. */
-  readonly stateDir?: string;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -129,6 +127,8 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  /** Preloaded Computer History context from the Effect-owned loader. */
+  readonly computerHistoryContext?: string;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -1951,23 +1951,7 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
-          const computerHistoryContext = yield* Effect.tryPromise({
-            try: async () => {
-              if (!options.stateDir) return undefined;
-              const {
-                buildComputerHistoryContextBlock,
-                loadRecentContextMarkdown,
-                readControlFile,
-                resolveComputerHistoryRoot,
-              } = await import("@t3tools/shared/computerHistory");
-              const root = resolveComputerHistoryRoot(options.stateDir);
-              const control = await readControlFile(root);
-              if (!control?.enabled || control.paused) return undefined;
-              const markdown = await loadRecentContextMarkdown(root);
-              return markdown ? buildComputerHistoryContextBlock(markdown) : undefined;
-            },
-            catch: () => undefined,
-          }).pipe(Effect.orElseSucceed(() => undefined));
+          const computerHistoryContext = input.computerHistoryContext;
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,

@@ -73,6 +73,10 @@ export const runComputerHistorySummarization = Effect.fn("computerHistory.summar
 /**
  * Fork a lightweight loop that syncs control.json and summarizes segments.
  * Safe to install in any runtime; no-ops when Computer History is disabled.
+ *
+ * Canonical export is `layer` (same convention as BackgroundPolicy / UsageService).
+ * Callers acquire state via `ServerConfig` / `ServerSettingsService` — never via
+ * process.env globals.
  */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
