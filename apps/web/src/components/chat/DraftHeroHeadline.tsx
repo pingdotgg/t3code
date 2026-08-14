@@ -115,8 +115,11 @@ export function DraftHeroHeadline({
               return;
             }
             const project = entry.targetProject;
+            // Changing the repo of a draft moves the typed content along:
+            // the user started writing in the wrong project, not a new task.
             void handleNewThread(scopeProjectRef(project.environmentId, project.id), {
               replace: true,
+              carryComposerContent: true,
             });
           }}
         >

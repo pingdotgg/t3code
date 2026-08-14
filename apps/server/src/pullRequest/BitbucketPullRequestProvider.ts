@@ -19,6 +19,9 @@ const CAPABILITIES: PullRequestCapabilities = {
   actions: ["merge", "close"],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
+  // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is
+  // read and none is offered.
+  reactions: false,
   review: {
     inlineComment: true,
     reply: true,
@@ -26,6 +29,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
+  edit: { changeRequest: true, comment: true },
 };
 
 /**
@@ -249,10 +253,30 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
+    updateChangeRequest: (input) =>
+      api
+        .updateChangeRequest({
+          repository: input.repository,
+          number: input.number,
+          title: input.title,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+
     comment: (input) =>
       api
         .comment({ repository: input.repository, number: input.number, body: input.body })
         .pipe(Effect.mapError(fail("comment"))),
+
+    updateComment: (input) =>
+      api
+        .updateComment({
+          repository: input.repository,
+          number: input.number,
+          commentId: input.commentId,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateComment"))),
 
     submitReview: (input) =>
       api
@@ -274,6 +298,17 @@ export const make = Effect.gen(function* () {
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+
+    // Never called: `capabilities.reactions` is false, and the service refuses without it.
+    setReaction: () =>
+      Effect.fail(
+        new PullRequestProviderError({
+          provider: "bitbucket",
+          operation: "setReaction",
+          reason: "failed",
+          detail: "Bitbucket does not support reactions.",
+        }),
+      ),
 
     setThreadResolution: (input) =>
       api
