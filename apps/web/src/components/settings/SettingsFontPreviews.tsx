@@ -238,7 +238,6 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
       onData: echo,
       onResize: noop,
       onSelectionChange: noop,
-      onCopy: (text) => void navigator.clipboard?.writeText(text).catch(noop),
       // Tab keeps walking the settings page instead of feeding the echo loop.
       beforeKey: (event) => event.key !== "Tab",
       onLinkActivate: noop,
