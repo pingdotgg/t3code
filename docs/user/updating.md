@@ -1,7 +1,9 @@
 # Keeping T3 Code in Sync
 
 The T3 Code web or desktop app and the server it connects to work best when they use the same
-version. If they do not match, T3 Code shows a warning with the right update option for that server.
+version. If the server is older, T3 Code shows a warning with the right update option for that
+server. If this app is older, the desktop update indicator in the sidebar is the place to update;
+T3 Code does not offer to move the server backward.
 
 ## Where to Find the Update
 
