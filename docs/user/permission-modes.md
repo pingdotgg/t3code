@@ -40,8 +40,9 @@ shell commands.
 
 Each provider maps these modes onto its own approval and sandbox settings. Codex, for example,
 translates the mode into its approval policy and sandbox level, so **Supervised** runs the CLI
-with prompting enabled and a restricted workspace while **Full access** disables both. The
-labels above describe what you get; the exact per-provider translation is internal and may
-change.
+with prompting enabled and a restricted workspace while **Full access** disables both. Grok
+threads do the same: **Supervised** starts Grok in ask mode even if your Grok CLI config is
+set to always-approve, and **Full access** starts Grok with always-approve. The labels above
+describe what you get; the exact per-provider translation is internal and may change.
 
 Mobile offers the same four modes with the same labels and descriptions.
