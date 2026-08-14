@@ -4,9 +4,11 @@ import { resolvePathLinkTarget, splitPathAndPosition } from "./terminal-links";
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
 const WINDOWS_UNC_PATH_PATTERN = /^\\\\/;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
+const MARKDOWN_LINK_HREF_PATTERN =
+  /\[[^\]]*]\((?:<([^>\r\n]+)>|([^)\s]+))(?:\s+["'][^"']*["'])?\)/g;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
-const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}$/;
-const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._ -]+(?:\/[A-Za-z0-9._ -]+)+(?::\d+){0,2}$/;
+const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._ -]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
@@ -62,6 +64,25 @@ function unwrapMarkdownLinkDestination(value: string): string {
 
 export function normalizeMarkdownLinkDestination(value: string): string {
   return unwrapMarkdownLinkDestination(value.trim());
+}
+
+export function extractMarkdownLinkHrefs(text: string): string[] {
+  const hrefs: string[] = [];
+  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
+    const href = (match[1] ?? match[2])?.trim();
+    if (href) hrefs.push(href);
+  }
+  return hrefs;
+}
+
+export function normalizeMarkdownLinkHrefKey(href: string): string {
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  const rewrittenHref = rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+  try {
+    return encodeURI(rewrittenHref).replace(/%25(?=[0-9A-Fa-f]{2})/g, "%");
+  } catch {
+    return rewrittenHref;
+  }
 }
 
 function stripSearchAndHash(value: string): { path: string; hash: string } {

@@ -50,6 +50,11 @@ export const LaunchEditorInput = Schema.Struct({
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 
+export const RevealInFileManagerInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+});
+export type RevealInFileManagerInput = typeof RevealInFileManagerInput.Type;
+
 export class ExternalLauncherUnknownEditorError extends Schema.TaggedErrorClass<ExternalLauncherUnknownEditorError>()(
   "ExternalLauncherUnknownEditorError",
   {

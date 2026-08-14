@@ -16,6 +16,7 @@ import {
   ExternalLauncherUnsupportedEditorError,
   type EditorId,
   type LaunchEditorInput,
+  type RevealInFileManagerInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -45,7 +46,7 @@ export {
   ExternalLauncherUnsupportedEditorError,
   isExternalLauncherError,
 } from "@t3tools/contracts";
-export type { LaunchEditorInput };
+export type { LaunchEditorInput, RevealInFileManagerInput };
 interface EditorLaunch {
   readonly editor: EditorId;
   readonly target: string;
@@ -59,6 +60,11 @@ interface ProcessLaunch {
   readonly options: ChildProcess.CommandOptions;
 }
 
+interface FileManagerRevealTarget {
+  readonly path: string;
+  readonly isDirectory: boolean;
+}
+
 interface TargetPathAndPosition {
   readonly path: string;
   readonly line: string;
@@ -66,6 +72,7 @@ interface TargetPathAndPosition {
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+const WSL_DISTRO_NAME_PATTERN = /^\w(?:[\w .-]*\w)?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -106,6 +113,14 @@ const CommandLookupEnvConfig = Config.all({
   Path: Config.string("Path").pipe(Config.option),
   path: Config.string("path").pipe(Config.option),
   PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  DISPLAY: Config.string("DISPLAY").pipe(Config.option),
+  WAYLAND_DISPLAY: Config.string("WAYLAND_DISPLAY").pipe(Config.option),
+  WSL_DISTRO_NAME: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
+  WSL_INTEROP: Config.string("WSL_INTEROP").pipe(Config.option),
+  SSH_CONNECTION: Config.string("SSH_CONNECTION").pipe(Config.option),
+  SSH_TTY: Config.string("SSH_TTY").pipe(Config.option),
+  SESSIONNAME: Config.string("SESSIONNAME").pipe(Config.option),
+  container: Config.string("container").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -223,7 +238,99 @@ function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLa
   };
 }
 
-function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
+function resolveWslDistroName(env: NodeJS.ProcessEnv): string | undefined {
+  const distroName = env.WSL_DISTRO_NAME?.trim();
+  return distroName && WSL_DISTRO_NAME_PATTERN.test(distroName) ? distroName : undefined;
+}
+
+function shouldUseWindowsFileManagerFromWsl(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  return shouldUseWindowsBrowserFromWsl(platform, env) && resolveWslDistroName(env) !== undefined;
+}
+
+function hasGraphicalFileManagerSession(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  if (env.SSH_CONNECTION?.trim() || env.SSH_TTY?.trim()) return false;
+  if (shouldUseWindowsFileManagerFromWsl(platform, env)) return true;
+  if (platform === "linux") {
+    return Boolean(env.DISPLAY?.trim() || env.WAYLAND_DISPLAY?.trim());
+  }
+  if (platform === "win32") {
+    return env.SESSIONNAME?.trim().toLowerCase() !== "services";
+  }
+  return true;
+}
+
+function normalizeWindowsFileManagerPath(target: string): string {
+  return target.replaceAll("/", "\\");
+}
+
+function resolveWslFileManagerPath(target: string, env: NodeJS.ProcessEnv): string {
+  const distroName = resolveWslDistroName(env);
+  if (!distroName) return target;
+  return `\\\\wsl.localhost\\${distroName}${normalizeWindowsFileManagerPath(target)}`;
+}
+
+function fileManagerFolderPath(platform: NodeJS.Platform, target: string, path: Path.Path): string {
+  if (platform !== "win32") return path.dirname(target);
+
+  const normalized = normalizeWindowsFileManagerPath(target);
+  const separatorIndex = normalized.lastIndexOf("\\");
+  if (separatorIndex < 0) return ".";
+  if (separatorIndex === 2 && normalized[1] === ":") return normalized.slice(0, 3);
+  return normalized.slice(0, separatorIndex) || "\\";
+}
+
+const resolveFileManagerRevealTarget = Effect.fn("externalLauncher.resolveFileManagerRevealTarget")(
+  function* (
+    platform: NodeJS.Platform,
+    target: string,
+  ): Effect.fn.Return<FileManagerRevealTarget, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fallbackPath = fileManagerFolderPath(platform, target, path);
+    let candidate = target;
+
+    while (true) {
+      const info = yield* fileSystem.stat(candidate).pipe(Effect.orElseSucceed(() => null));
+      if (info) {
+        return { path: candidate, isDirectory: info.type === "Directory" };
+      }
+
+      const parent = fileManagerFolderPath(platform, candidate, path);
+      if (parent === candidate) {
+        return { path: fallbackPath, isDirectory: true };
+      }
+      candidate = parent;
+    }
+  },
+);
+
+function fileManagerRevealArgs(
+  platform: NodeJS.Platform,
+  revealTarget: FileManagerRevealTarget,
+  path: Path.Path,
+  env: NodeJS.ProcessEnv,
+): ReadonlyArray<string> {
+  const target = revealTarget.path;
+  if (shouldUseWindowsFileManagerFromWsl(platform, env)) {
+    const windowsTarget = resolveWslFileManagerPath(target, env);
+    return revealTarget.isDirectory ? [windowsTarget] : ["/select,", windowsTarget];
+  }
+  if (revealTarget.isDirectory) {
+    return [platform === "win32" ? normalizeWindowsFileManagerPath(target) : target];
+  }
+  if (platform === "darwin") return ["-R", target];
+  if (platform === "win32") return ["/select,", normalizeWindowsFileManagerPath(target)];
+  return [fileManagerFolderPath(platform, target, path)];
+}
+
+function fileManagerCommandForPlatform(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string {
+  if (shouldUseWindowsFileManagerFromWsl(platform, env)) return "explorer.exe";
   switch (platform) {
     case "darwin":
       return "open";
@@ -270,7 +377,8 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
 
   for (const editor of EDITORS) {
     if (editor.commands === null) {
-      const command = fileManagerCommandForPlatform(platform);
+      if (!hasGraphicalFileManagerSession(platform, env)) continue;
+      const command = fileManagerCommandForPlatform(platform, env);
       if (yield* isCommandAvailable(command, { env })) {
         available.push(editor.id);
       }
@@ -337,6 +445,10 @@ export class ExternalLauncher extends Context.Service<
      * Launches the editor as a detached process so server startup is not blocked.
      */
     readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+    /** Reveal a workspace file in the host file manager. */
+    readonly revealInFileManager: (
+      input: RevealInFileManagerInput,
+    ) => Effect.Effect<void, ExternalLauncherError>;
   }
 >()("t3/process/externalLauncher") {}
 
@@ -376,13 +488,51 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const path = yield* Path.Path;
+  const target = shouldUseWindowsFileManagerFromWsl(platform, env)
+    ? path.resolve(input.cwd)
+    : input.cwd;
   return {
     editor: editorDef.id,
-    target: input.cwd,
-    command: fileManagerCommandForPlatform(platform),
-    args: [input.cwd],
+    target,
+    command: fileManagerCommandForPlatform(platform, env),
+    args: [
+      shouldUseWindowsFileManagerFromWsl(platform, env)
+        ? resolveWslFileManagerPath(target, env)
+        : target,
+    ],
   };
 });
+
+const resolveFileManagerRevealLaunch = Effect.fn("externalLauncher.resolveFileManagerRevealLaunch")(
+  function* (
+    input: RevealInFileManagerInput,
+  ): Effect.fn.Return<EditorLaunch, ExternalLauncherError, FileSystem.FileSystem | Path.Path> {
+    const platform = yield* HostProcessPlatform;
+    const env = yield* readCommandLookupEnv;
+    if (!hasGraphicalFileManagerSession(platform, env)) {
+      return yield* new ExternalLauncherUnsupportedEditorError({ editor: "file-manager" });
+    }
+    const path = yield* Path.Path;
+    const target = shouldUseWindowsFileManagerFromWsl(platform, env)
+      ? path.resolve(input.path)
+      : input.path;
+    const revealTarget = yield* resolveFileManagerRevealTarget(platform, target);
+    const args = fileManagerRevealArgs(platform, revealTarget, path, env);
+
+    yield* Effect.annotateCurrentSpan({
+      "externalLauncher.target": target,
+      "externalLauncher.platform": platform,
+    });
+
+    return {
+      editor: "file-manager",
+      target,
+      command: fileManagerCommandForPlatform(platform, env),
+      args,
+    };
+  },
+);
 
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   launch: ProcessLaunch,
@@ -496,6 +646,14 @@ export const make = Effect.gen(function* () {
     launchEditor: (input) =>
       provideCommandResolutionServices(
         Effect.flatMap(resolveEditorLaunch(input), (launch) =>
+          launchEditorProcess(launch).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ),
+      ),
+    revealInFileManager: (input) =>
+      provideCommandResolutionServices(
+        Effect.flatMap(resolveFileManagerRevealLaunch(input), (launch) =>
           launchEditorProcess(launch).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),
