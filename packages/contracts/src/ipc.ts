@@ -1072,6 +1072,15 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /**
+   * Resolve the absolute filesystem path backing a dragged or picked file
+   * (Electron `webUtils.getPathForFile`). Returns an empty string when the file
+   * has no on-disk path (e.g. synthesized in-memory). The argument is a DOM
+   * `File`; it is typed as `unknown` because the contracts package is built
+   * without the DOM lib. Optional so browser builds, which cannot resolve OS
+   * paths, may omit it.
+   */
+  getPathForFile?: (file: unknown) => string;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
