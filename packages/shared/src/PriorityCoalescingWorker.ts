@@ -8,29 +8,32 @@
  *
  * @module PriorityCoalescingWorker
  */
-import * as Scope from "effect/Scope";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import * as TxQueue from "effect/TxQueue";
 import * as TxRef from "effect/TxRef";
 
-export interface PriorityCoalescingWorker<K, V> {
+export interface PriorityCoalescingWorker<K extends string, V> {
   readonly enqueueRealtime: (value: V) => Effect.Effect<void>;
   readonly enqueueBackground: (key: K, value: V) => Effect.Effect<void>;
   readonly drain: Effect.Effect<void>;
 }
 
-interface BackgroundState<K, V> {
-  readonly latestByKey: Map<K, V>;
-  readonly queuedKeys: Set<K>;
-  readonly activeKeys: Set<K>;
+interface BackgroundState<K extends string, V> {
+  readonly latestByKey: HashMap.HashMap<K, V>;
+  readonly queuedKeys: HashSet.HashSet<K>;
+  readonly activeKeys: HashSet.HashSet<K>;
 }
 
-type WorkItem<K, V> =
+type WorkItem<K extends string, V> =
   | { readonly _tag: "Realtime"; readonly value: V }
   | { readonly _tag: "Background"; readonly key: K; readonly value: V };
 
-export const makePriorityCoalescingWorker = <K, V, E, R>(options: {
+export const makePriorityCoalescingWorker = <K extends string, V, E, R>(options: {
   readonly mergeBackground: (current: V, next: V) => V;
   readonly process: (value: V) => Effect.Effect<void, E, R>;
 }): Effect.Effect<PriorityCoalescingWorker<K, V>, never, Scope.Scope | R> =>
@@ -38,9 +41,9 @@ export const makePriorityCoalescingWorker = <K, V, E, R>(options: {
     const realtimeQueue = yield* Effect.acquireRelease(TxQueue.unbounded<V>(), TxQueue.shutdown);
     const backgroundQueue = yield* Effect.acquireRelease(TxQueue.unbounded<K>(), TxQueue.shutdown);
     const backgroundState = yield* TxRef.make<BackgroundState<K, V>>({
-      latestByKey: new Map(),
-      queuedKeys: new Set(),
-      activeKeys: new Set(),
+      latestByKey: HashMap.empty(),
+      queuedKeys: HashSet.empty(),
+      activeKeys: HashSet.empty(),
     });
     const outstanding = yield* TxRef.make(0);
 
@@ -52,49 +55,61 @@ export const makePriorityCoalescingWorker = <K, V, E, R>(options: {
 
       const key = yield* TxQueue.take(backgroundQueue);
       const state = yield* TxRef.get(backgroundState);
-      if (!state.latestByKey.has(key)) {
+      const value = HashMap.get(state.latestByKey, key);
+      if (Option.isNone(value)) {
         return yield* Effect.txRetry;
       }
-      const value = state.latestByKey.get(key) as V;
 
-      const latestByKey = new Map(state.latestByKey);
-      latestByKey.delete(key);
-      const queuedKeys = new Set(state.queuedKeys);
-      queuedKeys.delete(key);
-      const activeKeys = new Set(state.activeKeys);
-      activeKeys.add(key);
-      yield* TxRef.set(backgroundState, { latestByKey, queuedKeys, activeKeys });
+      yield* TxRef.set(backgroundState, {
+        latestByKey: HashMap.remove(state.latestByKey, key),
+        queuedKeys: HashSet.remove(state.queuedKeys, key),
+        activeKeys: HashSet.add(state.activeKeys, key),
+      });
 
-      return { _tag: "Background", key, value } as const;
+      return { _tag: "Background", key, value: value.value } as const;
     }).pipe(Effect.tx);
 
     const finishBackground = (key: K) =>
       Effect.gen(function* () {
         const state = yield* TxRef.get(backgroundState);
-        const activeKeys = new Set(state.activeKeys);
-        activeKeys.delete(key);
+        const activeKeys = HashSet.remove(state.activeKeys, key);
 
-        if (!state.latestByKey.has(key)) {
+        if (!HashMap.has(state.latestByKey, key)) {
           yield* TxRef.set(backgroundState, { ...state, activeKeys });
           yield* TxRef.update(outstanding, (count) => count - 1);
           return;
         }
 
-        const queuedKeys = new Set(state.queuedKeys);
-        queuedKeys.add(key);
-        yield* TxRef.set(backgroundState, { ...state, queuedKeys, activeKeys });
+        yield* TxRef.set(backgroundState, {
+          ...state,
+          queuedKeys: HashSet.add(state.queuedKeys, key),
+          activeKeys,
+        });
         yield* TxQueue.offer(backgroundQueue, key);
       }).pipe(Effect.tx);
+
+    // One malformed event must not terminate the worker and strand later work.
+    // Scoped interruption still propagates so shutdown remains prompt.
+    const keepWorkerAlive = <A, E>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+        ),
+      );
 
     yield* takeNext.pipe(
       Effect.flatMap((item: WorkItem<K, V>) =>
         item._tag === "Realtime"
-          ? options
-              .process(item.value)
-              .pipe(
-                Effect.ensuring(TxRef.update(outstanding, (count) => count - 1).pipe(Effect.tx)),
-              )
-          : options.process(item.value).pipe(Effect.ensuring(finishBackground(item.key))),
+          ? keepWorkerAlive(
+              options
+                .process(item.value)
+                .pipe(
+                  Effect.ensuring(TxRef.update(outstanding, (count) => count - 1).pipe(Effect.tx)),
+                ),
+            )
+          : keepWorkerAlive(
+              options.process(item.value).pipe(Effect.ensuring(finishBackground(item.key))),
+            ),
       ),
       Effect.forever,
       Effect.forkScoped,
@@ -110,21 +125,26 @@ export const makePriorityCoalescingWorker = <K, V, E, R>(options: {
     const enqueueBackground: PriorityCoalescingWorker<K, V>["enqueueBackground"] = (key, value) =>
       Effect.gen(function* () {
         const state = yield* TxRef.get(backgroundState);
-        const latestByKey = new Map(state.latestByKey);
-        const existing = latestByKey.get(key);
-        latestByKey.set(
+        const existing = HashMap.get(state.latestByKey, key);
+        const latestByKey = HashMap.set(
+          state.latestByKey,
           key,
-          existing === undefined ? value : options.mergeBackground(existing, value),
+          Option.match(existing, {
+            onNone: () => value,
+            onSome: (current) => options.mergeBackground(current, value),
+          }),
         );
 
-        if (state.queuedKeys.has(key) || state.activeKeys.has(key)) {
+        if (HashSet.has(state.queuedKeys, key) || HashSet.has(state.activeKeys, key)) {
           yield* TxRef.set(backgroundState, { ...state, latestByKey });
           return;
         }
 
-        const queuedKeys = new Set(state.queuedKeys);
-        queuedKeys.add(key);
-        yield* TxRef.set(backgroundState, { ...state, latestByKey, queuedKeys });
+        yield* TxRef.set(backgroundState, {
+          ...state,
+          latestByKey,
+          queuedKeys: HashSet.add(state.queuedKeys, key),
+        });
         yield* TxRef.update(outstanding, (count) => count + 1);
         yield* TxQueue.offer(backgroundQueue, key);
       }).pipe(Effect.tx);

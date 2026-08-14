@@ -135,7 +135,7 @@ function isTaskLifecycleInput(input: RuntimeIngestionInput): input is Extract<
   );
 }
 
-function mergeBackgroundIngestion(
+export function mergeBackgroundIngestion(
   current: RuntimeIngestionBatch,
   next: RuntimeIngestionBatch,
 ): RuntimeIngestionBatch {
@@ -146,6 +146,24 @@ function mergeBackgroundIngestion(
 
   const latestByType = new Map<(typeof TASK_LIFECYCLE_ORDER)[number], RuntimeIngestionInput>();
   for (const input of combined) {
+    const previous = latestByType.get(input.event.type);
+    if (
+      input.event.type === "task.updated" &&
+      previous?.source === "runtime" &&
+      previous.event.type === "task.updated"
+    ) {
+      latestByType.set(input.event.type, {
+        ...input,
+        event: {
+          ...input.event,
+          payload: {
+            ...previous.event.payload,
+            ...input.event.payload,
+          },
+        },
+      });
+      continue;
+    }
     latestByType.set(input.event.type, input);
   }
   return TASK_LIFECYCLE_ORDER.flatMap((eventType) => {
@@ -2031,6 +2049,11 @@ const make = Effect.gen(function* () {
         case "task.progress":
         case "task.updated":
         case "task.completed": {
+          // A realtime session exit can overtake queued background task
+          // telemetry. Never let those stale rows resurrect sidebar liveness.
+          if (thread.session?.status === "stopped") {
+            break;
+          }
           const payload = event.payload as {
             taskId: string;
             taskType?: string;

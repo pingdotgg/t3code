@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { runtimeEventToActivities } from "./ProviderRuntimeIngestion.ts";
+import { mergeBackgroundIngestion, runtimeEventToActivities } from "./ProviderRuntimeIngestion.ts";
 
 const base = {
   provider: ProviderDriverKind.make("codex"),
@@ -80,5 +80,47 @@ describe("runtimeEventToActivities task progress", () => {
     expect(usagePayload.typedUsage).toEqual({ totalTokens: 4_200, toolUses: 7 });
     expect(usagePayload.usageSnapshot).toBe(true);
     expect(usagePayload).not.toHaveProperty("status");
+  });
+});
+
+describe("mergeBackgroundIngestion", () => {
+  it("preserves fields from partial task status patches", () => {
+    const taskId = RuntimeTaskId.make("agent-partial-update");
+    const statusUpdate = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.updated",
+        eventId: EventId.make("evt-task-status"),
+        payload: {
+          taskId,
+          status: "completed",
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+    const completionTimeUpdate = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.updated",
+        eventId: EventId.make("evt-task-ended-at"),
+        payload: {
+          taskId,
+          endedAt: "2026-08-06T00:00:01.000Z",
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+
+    const merged = mergeBackgroundIngestion([statusUpdate], [completionTimeUpdate]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.event.type).toBe("task.updated");
+    if (merged[0]?.event.type === "task.updated") {
+      expect(merged[0].event.payload).toEqual({
+        taskId,
+        status: "completed",
+        endedAt: "2026-08-06T00:00:01.000Z",
+      });
+    }
   });
 });
