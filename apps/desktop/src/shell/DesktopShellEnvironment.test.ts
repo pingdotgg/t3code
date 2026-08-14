@@ -129,12 +129,53 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("ensures a UTF-8 character locale when macOS launch environment has none", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => envOutput({ PATH: "/usr/bin", LANG: "  ", LC_CTYPE: "" }),
+      });
+
+      assert.equal(env.LC_CTYPE, "UTF-8");
+    }),
+  );
+
+  it.effect("hydrates locale variables from the macOS login shell before using a fallback", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            LANG: "ru_RU.UTF-8",
+            LC_CTYPE: "ru_RU.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "ru_RU.UTF-8");
+      assert.equal(env.LC_CTYPE, "ru_RU.UTF-8");
+    }),
+  );
+
   it.effect("preserves inherited POSIX values when present", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
         PATH: "/usr/bin",
         SSH_AUTH_SOCK: "/tmp/inherited.sock",
+        LC_CTYPE: "uk_UA.UTF-8",
       };
 
       yield* runShellEnvironment({
@@ -144,11 +185,13 @@ describe("DesktopShellEnvironment", () => {
           envOutput({
             PATH: "/opt/homebrew/bin:/usr/bin",
             SSH_AUTH_SOCK: "/tmp/login-shell.sock",
+            LC_CTYPE: "en_US.UTF-8",
           }),
       });
 
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/inherited.sock");
+      assert.equal(env.LC_CTYPE, "uk_UA.UTF-8");
     }),
   );
 
@@ -171,6 +214,7 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
+      assert.equal(env.LC_CTYPE, undefined);
     }),
   );
 

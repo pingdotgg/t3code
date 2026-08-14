@@ -69,6 +69,9 @@ export class DesktopShellEnvironment extends Context.Service<
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
   "SSH_AUTH_SOCK",
@@ -83,6 +86,8 @@ const LOGIN_SHELL_ENV_NAMES = [
   "XDG_SESSION_TYPE",
   "WAYLAND_DISPLAY",
 ] as const;
+const POSIX_LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
+const DARWIN_UTF8_CTYPE = "UTF-8";
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
@@ -443,6 +448,23 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     }
     if (!config.env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
       config.env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
+    }
+
+    for (const name of POSIX_LOCALE_ENV_NAMES) {
+      const shellValue = trimNonEmpty(shellEnvironment[name]);
+      if (Option.isNone(trimNonEmpty(config.env[name])) && Option.isSome(shellValue)) {
+        config.env[name] = shellValue.value;
+      }
+    }
+    const hasCharacterLocale = [config.env.LC_ALL, config.env.LC_CTYPE, config.env.LANG].some(
+      (value) => Option.isSome(trimNonEmpty(value)),
+    );
+    if (config.platform === "darwin" && !hasCharacterLocale) {
+      // Finder-launched apps commonly inherit no locale. macOS then defaults
+      // terminal shells to US-ASCII, so zsh edits UTF-8 input byte-by-byte.
+      // The platform-native UTF-8 ctype fixes character handling without
+      // forcing the user's language, collation, or message locale.
+      config.env.LC_CTYPE = DARWIN_UTF8_CTYPE;
     }
 
     const shellPreferredEnvNames = [
