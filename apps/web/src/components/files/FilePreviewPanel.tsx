@@ -1017,7 +1017,7 @@ export default function FilePreviewPanel({
               />
             ) : file.data.truncated ? (
               <Virtualizer
-                key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
+                key={`${relativePath}:${syntaxThemeName}:${file.data.byteLength}`}
                 className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
                 config={{
                   overscrollSize: 600,

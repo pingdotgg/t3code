@@ -373,13 +373,14 @@ export function PullRequestCodeTab({
       loadedSlices.map((slice) => {
         // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
         // key of position alone would keep handing back the parse of the patch it replaced.
-        const cacheKey = `pull-request:${scopeKey}:${syntaxThemeName}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
-        const cached = parseCache.current.get(cacheKey);
+        const sliceKey = `${scopeKey}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
+        const parseCacheKey = `pull-request:${syntaxThemeName}:${sliceKey}`;
+        const cached = parseCache.current.get(parseCacheKey);
         if (cached) return cached;
-        const parsed = getRenderablePatch(slice.patch, cacheKey, {
+        const parsed = getRenderablePatch(slice.patch, `pull-request:${sliceKey}`, {
           compactPartialHunkOffsets: true,
         });
-        if (parsed) parseCache.current.set(cacheKey, parsed);
+        if (parsed) parseCache.current.set(parseCacheKey, parsed);
         return parsed;
       }),
     [loadedSlices, scopeKey, syntaxThemeName],
@@ -483,7 +484,7 @@ export function PullRequestCodeTab({
           // The viewer re-renders an item only when its version changes, so everything the
           // annotations show has to be part of it.
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${syntaxThemeName}:${collapsed ? "1" : "0"}:${annotations
               .map(
                 ({ side, lineNumber, metadata }) =>
                   `${side}:${lineNumber}:${metadata.draft ? "d" : ""}:${metadata.pending
@@ -520,6 +521,7 @@ export function PullRequestCodeTab({
       foldOverride,
       pendingComments,
       placedThreadIds,
+      syntaxThemeName,
       toggledFiles,
     ],
   );

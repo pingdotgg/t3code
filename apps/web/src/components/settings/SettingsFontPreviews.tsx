@@ -127,20 +127,27 @@ function StaticDiffHtml({ html }: { html: string }) {
 /** The diff panel's file diff, statically rendered by its real pipeline. */
 export function CodeFontPreview() {
   const { syntaxThemeName: themeName } = useTheme();
-  const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
+  const [preview, setPreview] = useState<{
+    themeName: DiffThemeName;
+    htmlByFile: readonly string[];
+  } | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void loadDiffPreviewHtml(themeName).then((html) => {
-      if (!cancelled) setHtmlByFile(html);
-    });
+    void loadDiffPreviewHtml(themeName)
+      .then((htmlByFile) => {
+        if (!cancelled) setPreview({ themeName, htmlByFile });
+      })
+      .catch(() => {
+        if (!cancelled) setPreview(null);
+      });
     return () => {
       cancelled = true;
     };
   }, [themeName]);
-  if (htmlByFile === null) return null;
+  if (preview?.themeName !== themeName) return null;
   return (
     <div className="mt-1 mb-2 space-y-2">
-      {htmlByFile.map((html) => (
+      {preview.htmlByFile.map((html) => (
         <StaticDiffHtml key={html} html={html} />
       ))}
     </div>
