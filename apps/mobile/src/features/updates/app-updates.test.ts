@@ -49,7 +49,7 @@ function makeUpdateEnvironment(overrides: Partial<AppUpdateEnvironment> = {}): {
       confirmInstallNow: vi.fn(async () => true),
       flushPendingWrites: vi.fn(async () => {}),
       isSafeToRestartInBackground: vi.fn(async () => true),
-      onNextBackground: vi.fn((apply: () => void) => {
+      onNextBackground: vi.fn((apply: () => void, _includeCurrent: boolean) => {
         backgroundCallbacks.push(apply);
       }),
       onForegroundStay: vi.fn((apply: () => void) => {
@@ -184,11 +184,16 @@ describe("runAppUpdateCheck", () => {
 
     await runAppUpdateCheck({ client, deferral, environment });
     expect(backgroundCallbacks).toHaveLength(1);
+    // Arming may fire for an already-backgrounded app…
+    expect(vi.mocked(environment.onNextBackground).mock.calls[0]![1]).toBe(true);
 
     backgroundCallbacks[0]!();
     await vi.waitFor(() => expect(backgroundCallbacks).toHaveLength(2));
     expect(client.reloadAsync).not.toHaveBeenCalled();
     expect(deferral.pendingInstall).toBe(true);
+    // …but a re-arm must wait for a fresh transition, or an unsafe attempt
+    // would retry in a tight loop within the same background session.
+    expect(vi.mocked(environment.onNextBackground).mock.calls[1]![1]).toBe(false);
 
     safe.mockResolvedValue(true);
     backgroundCallbacks[1]!();
@@ -332,6 +337,58 @@ describe("runAppUpdateCheck", () => {
     expect(environment.confirmInstallNow).not.toHaveBeenCalled();
     expect(client.reloadAsync).toHaveBeenCalledOnce();
     expect(states).toEqual(["checking", "downloading", "restarting"]);
+  });
+
+  it("holds an automatic rollback restart when the flush fails and re-arms it", async () => {
+    const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = makeUpdateClient({
+      checkForUpdateAsync: vi.fn(async () => ({
+        isAvailable: false,
+        isRollBackToEmbedded: true,
+      })),
+      fetchUpdateAsync: vi.fn(async () => ({
+        isNew: false,
+        isRollBackToEmbedded: true,
+      })),
+    });
+    const flushPendingWrites = vi.fn(async (): Promise<void> => {
+      throw new Error("storage unavailable");
+    });
+    const { backgroundCallbacks, environment } = makeUpdateEnvironment({ flushPendingWrites });
+    const deferral = createAppUpdateDeferral();
+
+    await runAppUpdateCheck({ client, deferral, environment });
+
+    // Nobody asked for this restart, so it must not discard the state it
+    // failed to land; the rollback waits armed for the next backgrounding.
+    expect(client.reloadAsync).not.toHaveBeenCalled();
+    expect(deferral.pendingInstall).toBe(true);
+    expect(backgroundCallbacks).toHaveLength(1);
+
+    flushPendingWrites.mockResolvedValue(undefined);
+    backgroundCallbacks[0]!();
+    await vi.waitFor(() => expect(client.reloadAsync).toHaveBeenCalledOnce());
+    reportError.mockRestore();
+  });
+
+  it("still restarts a user-requested install when the flush fails", async () => {
+    const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = makeAvailableUpdateClient();
+    const { environment } = makeUpdateEnvironment({
+      flushPendingWrites: vi.fn(async () => {
+        throw new Error("storage unavailable");
+      }),
+    });
+
+    await runAppUpdateCheck({
+      applyMode: "immediate",
+      client,
+      deferral: createAppUpdateDeferral(),
+      environment,
+    });
+
+    expect(client.reloadAsync).toHaveBeenCalledOnce();
+    reportError.mockRestore();
   });
 
   it("restarts into the embedded bundle for a rollback directive", async () => {

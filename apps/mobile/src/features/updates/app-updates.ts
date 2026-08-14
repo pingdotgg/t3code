@@ -49,8 +49,14 @@ export interface AppUpdateEnvironment {
    * app-initiated handoff like the Android image picker.
    */
   readonly isSafeToRestartInBackground: () => Promise<boolean>;
-  /** Runs `apply` the next time the app leaves the foreground. */
-  readonly onNextBackground: (apply: () => void) => void;
+  /**
+   * Runs `apply` the next time the app enters the background. With
+   * `includeCurrent`, an app that is already backgrounded fires immediately
+   * (so a backgrounding that raced module load is not missed); without it,
+   * only a future transition fires, so an attempt that already failed in the
+   * current background session cannot retry in a tight loop.
+   */
+  readonly onNextBackground: (apply: () => void, includeCurrent: boolean) => void;
   /**
    * Runs `apply` once the app has stayed foregrounded for the whole prompt
    * window — the signal that a deferred install has had no backgrounding to
@@ -289,7 +295,20 @@ async function performAppUpdateCheck(
   // A rollback directive exists to pull a broken bundle; never hold it
   // behind a prompt or a deferred install.
   if (options.applyMode === "immediate" || fetched.value.isRollBackToEmbedded) {
-    await installAppUpdate(client, environment, deferral, options);
+    const outcome = await installAppUpdate(
+      client,
+      environment,
+      deferral,
+      options,
+      options.applyMode === "immediate",
+    );
+    if (outcome === "flush-failed") {
+      // Only reachable for an automatic rollback: keep the state-bearing
+      // runtime alive and retry like a deferred install. The fetched rollback
+      // still applies at the next cold start regardless.
+      setState("ready");
+      armDeferredAppUpdateInstall(client, environment, deferral);
+    }
     return;
   }
 
@@ -297,48 +316,55 @@ async function performAppUpdateCheck(
   armDeferredAppUpdateInstall(client, environment, deferral);
 }
 
+type AppUpdateInstallOutcome = "installed" | "flush-failed" | "restart-failed";
+
 /**
  * Restarting mid-session while native surfaces are mounted is the crashiest
  * moment expo-updates has, so the restart flushes persistence first and, by
  * default, waits for a backgrounding — where nothing is rendering and the
- * teardown is invisible. Returns whether the restart went through (or is
- * being handled by a concurrent install); `false` means it failed.
+ * teardown is invisible. Only a restart the user explicitly asked for may
+ * proceed over a failed flush; an automatic one aborts with "flush-failed"
+ * so unsaved state is never silently discarded.
  */
 async function installAppUpdate(
   client: AppUpdateClient,
   environment: AppUpdateEnvironment,
   deferral: AppUpdateDeferral,
   options: AppUpdateCheckOptions,
-): Promise<boolean> {
-  if (deferral.installInProgress) return true;
+  userRequested: boolean,
+): Promise<AppUpdateInstallOutcome> {
+  // A concurrent install sequence already owns the restart.
+  if (deferral.installInProgress) return "installed";
   deferral.installInProgress = true;
   const setState = options.onStateChange ?? (() => {});
   setState("restarting");
   const flushed = await settlePromise(() => environment.flushPendingWrites());
   if (flushed._tag === "Failure") {
-    // The user asked for this restart, so a failed flush is logged but does
-    // not block it.
     reportUpdateFailure(flushed, "Could not save pending state.", undefined);
+    if (!userRequested) {
+      deferral.installInProgress = false;
+      return "flush-failed";
+    }
   }
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
     reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", options.onFailure);
     setState("idle");
     deferral.installInProgress = false;
-    return false;
+    return "restart-failed";
   }
-  return true;
+  return "installed";
 }
 
-/** Restarts into an already-downloaded update; a failed restart releases the deferral. */
+/** Restarts into an already-downloaded update at the user's request. */
 async function installPendingAppUpdate(
   client: AppUpdateClient,
   environment: AppUpdateEnvironment,
   deferral: AppUpdateDeferral,
   options: AppUpdateCheckOptions,
 ): Promise<void> {
-  const installed = await installAppUpdate(client, environment, deferral, options);
-  if (!installed) {
+  const outcome = await installAppUpdate(client, environment, deferral, options, true);
+  if (outcome === "restart-failed") {
     // Let later checks re-arm the install; the downloaded update still
     // applies at the next cold start regardless.
     deferral.pendingInstall = false;
@@ -352,7 +378,7 @@ function armDeferredAppUpdateInstall(
 ): void {
   if (deferral.pendingInstall) return;
   deferral.pendingInstall = true;
-  scheduleDeferredAppUpdateInstall(client, environment, deferral);
+  scheduleDeferredAppUpdateInstall(client, environment, deferral, true);
   environment.onForegroundStay(() => {
     void promptDeferredAppUpdateInstall(client, environment, deferral);
   });
@@ -381,10 +407,11 @@ function scheduleDeferredAppUpdateInstall(
   client: AppUpdateClient,
   environment: AppUpdateEnvironment,
   deferral: AppUpdateDeferral,
+  includeCurrent: boolean,
 ): void {
   environment.onNextBackground(() => {
     void applyDeferredAppUpdateInstall(client, environment, deferral);
-  });
+  }, includeCurrent);
 }
 
 async function applyDeferredAppUpdateInstall(
@@ -403,7 +430,9 @@ async function applyDeferredAppUpdateInstall(
       reportUpdateFailure(flushed, "Could not save pending state.", undefined);
     }
     deferral.installInProgress = false;
-    scheduleDeferredAppUpdateInstall(client, environment, deferral);
+    // This attempt already ran in the current background session; retrying
+    // before a fresh transition would just loop over the same failure.
+    scheduleDeferredAppUpdateInstall(client, environment, deferral, false);
     return;
   }
   const reloaded = await settlePromise(() => client.reloadAsync());
@@ -451,7 +480,7 @@ async function defaultIsSafeToRestartInBackground(): Promise<boolean> {
   return AppState.currentState === "background";
 }
 
-function defaultOnNextBackground(apply: () => void): void {
+function defaultOnNextBackground(apply: () => void, includeCurrent: boolean): void {
   void import("react-native").then(({ AppState }) => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "background") return;
@@ -460,7 +489,7 @@ function defaultOnNextBackground(apply: () => void): void {
     });
     // The app may already have backgrounded while this module was loading;
     // the listener alone would then wait a whole extra foreground cycle.
-    if (AppState.currentState === "background") {
+    if (includeCurrent && AppState.currentState === "background") {
       subscription.remove();
       apply();
     }
