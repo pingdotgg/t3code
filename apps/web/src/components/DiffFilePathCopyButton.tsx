@@ -1,7 +1,7 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef } from "react";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import { Button } from "./ui/button";
+import { DIFF_HEADER_ICON_BUTTON_CLASS_NAME } from "./diffs/diffHeaderControls";
 import {
   ANCHORED_COPY_TOAST_TIMEOUT_MS,
   showAnchoredCopyErrorToast,
@@ -21,11 +21,10 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button
+          <button
             ref={ref}
             type="button"
-            size="icon-xs"
-            variant="ghost"
+            className={`${DIFF_HEADER_ICON_BUTTON_CLASS_NAME} text-muted-foreground`}
             aria-label="Copy file path"
             onClick={() => copyToClipboard(filePath, undefined)}
           />
