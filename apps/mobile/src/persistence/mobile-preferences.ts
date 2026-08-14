@@ -12,6 +12,12 @@ import {
   type SyncedClientPreferencesUpdatedAtByField as SyncedClientPreferencesUpdatedAtByFieldValue,
 } from "@t3tools/contracts";
 
+import {
+  isMobileAppearanceMode,
+  isMobileBuiltInThemeId,
+  type MobileAppearanceMode,
+} from "../lib/mobileTheme";
+import { sanitizeImportedMobileThemes, type ImportedMobileTheme } from "../lib/mobileThemeFile";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-storage";
@@ -24,6 +30,9 @@ const isSyncedClientPreferencesUpdatedAtByField = Schema.is(
 );
 
 export interface Preferences {
+  readonly appearanceMode?: MobileAppearanceMode;
+  readonly themeId?: string;
+  readonly importedThemes?: ReadonlyArray<ImportedMobileTheme>;
   readonly liveActivitiesEnabled?: boolean;
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
@@ -89,6 +98,9 @@ export class MobilePreferencesStore extends Context.Service<
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    appearanceMode?: MobileAppearanceMode;
+    themeId?: string;
+    importedThemes?: ReadonlyArray<ImportedMobileTheme>;
     liveActivitiesEnabled?: boolean;
     baseFontSize?: number;
     terminalFontSize?: number | null;
@@ -106,6 +118,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     legacyThreadListEnabled?: boolean;
   } = {};
 
+  if (isMobileAppearanceMode(parsed.appearanceMode)) {
+    preferences.appearanceMode = parsed.appearanceMode;
+  }
+  const importedThemes = sanitizeImportedMobileThemes(parsed.importedThemes);
+  if (importedThemes.length > 0) preferences.importedThemes = importedThemes;
+  if (
+    isMobileBuiltInThemeId(parsed.themeId) ||
+    (typeof parsed.themeId === "string" &&
+      importedThemes.some((theme) => theme.id === parsed.themeId))
+  ) {
+    preferences.themeId = parsed.themeId;
+  }
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
   }

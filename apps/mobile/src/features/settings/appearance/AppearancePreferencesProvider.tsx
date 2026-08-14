@@ -1,7 +1,16 @@
-import { createContext, use, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { useColorScheme } from "react-native";
 
 import { Uniwind } from "uniwind";
 
@@ -12,13 +21,43 @@ import {
   type AppearancePreferences,
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
+import {
+  resolveColorSchemeOverride,
+  removeImportedMobileTheme,
+  resolveMobileNativeSurfaceColors,
+  resolveMobileThemePreferences,
+  resolveMobileThemeVariables,
+  isMobileThemeId,
+  type MobileAppearanceMode,
+  type MobileNativeSurfaceColors,
+  type MobileThemeAppearance,
+  type MobileThemeId,
+  type MobileThemePreferences,
+} from "../../../lib/mobileTheme";
+import {
+  addImportedMobileTheme,
+  importedMobileThemesKey,
+  parseMobileThemeFileJson,
+  sanitizeImportedMobileThemes,
+  type ImportedMobileTheme,
+} from "../../../lib/mobileThemeFile";
+import type { Preferences } from "../../../persistence/mobile-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import { cacheTerminalFontSize } from "../../terminal/terminalUiState";
 
 interface AppearancePreferencesContextValue {
   /** Effective values with base-size derivation applied. Use this for rendering. */
   readonly appearance: ResolvedAppearance;
+  readonly appearanceMode: MobileAppearanceMode;
+  readonly effectiveColorScheme: MobileThemeAppearance;
+  readonly themeId: MobileThemeId;
+  readonly importedThemes: ReadonlyArray<ImportedMobileTheme>;
+  readonly nativeSurfaceColors: MobileNativeSurfaceColors | null;
   readonly isReady: boolean;
+  readonly setAppearanceMode: (value: MobileAppearanceMode) => void;
+  readonly setThemeId: (value: MobileThemeId) => void;
+  readonly importThemeJson: (value: string) => void;
+  readonly removeImportedTheme: (themeId: string) => void;
   readonly setBaseFontSize: (value: number) => void;
   /** Pass null to clear the override and follow the base font size. */
   readonly setTerminalFontSize: (value: number | null) => void;
@@ -30,18 +69,35 @@ interface AppearancePreferencesContextValue {
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
 
 /**
- * Injects the scaled `--text-*` variables into Uniwind so every
- * className-based text size (`text-sm`, `text-base`, ...) re-resolves live.
  * Updates the current theme last so the active stylesheet settles correctly.
  */
+function applyThemeVariables(
+  themeId: MobileThemeId,
+  importedThemes: ReadonlyArray<ImportedMobileTheme>,
+) {
+  const currentTheme = Uniwind.currentTheme;
+
+  for (const theme of ["light", "dark"] as const) {
+    if (theme !== currentTheme) {
+      Uniwind.updateCSSVariables(
+        theme,
+        resolveMobileThemeVariables(themeId, theme, importedThemes),
+      );
+    }
+  }
+  Uniwind.updateCSSVariables(
+    currentTheme,
+    resolveMobileThemeVariables(themeId, currentTheme, importedThemes),
+  );
+}
+
+/** Injects scaled `--text-*` variables so className text sizes re-resolve live. */
 function applyTextScaleVariables(baseFontSize: number) {
   const variables = resolveTextScaleVariables(baseFontSize);
   const currentTheme = Uniwind.currentTheme;
 
   for (const theme of ["light", "dark"] as const) {
-    if (theme !== currentTheme) {
-      Uniwind.updateCSSVariables(theme, variables);
-    }
+    if (theme !== currentTheme) Uniwind.updateCSSVariables(theme, variables);
   }
   Uniwind.updateCSSVariables(currentTheme, variables);
 }
@@ -49,6 +105,8 @@ function applyTextScaleVariables(baseFontSize: number) {
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const systemColorScheme = useColorScheme();
+  const [hasAppliedInitialPreferences, setHasAppliedInitialPreferences] = useState(false);
   const preferences = useMemo(
     () =>
       resolveAppearancePreferences(
@@ -56,15 +114,60 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       ),
     [preferencesResult],
   );
-  const isReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const importedThemesSource = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.importedThemes
+    : null;
+  const importedThemesCacheKey = importedMobileThemesKey(importedThemesSource);
+  const importedThemes = useMemo(
+    () => sanitizeImportedMobileThemes(JSON.parse(importedThemesCacheKey) as unknown),
+    [importedThemesCacheKey],
+  );
+  const themePreferences = useMemo(
+    () =>
+      resolveMobileThemePreferences(
+        AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null,
+        importedThemes,
+      ),
+    [importedThemes, preferencesResult],
+  );
+  const preferencesLoaded = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const effectiveColorScheme =
+    resolveColorSchemeOverride(themePreferences.appearanceMode) ??
+    (systemColorScheme === "dark" ? "dark" : "light");
+  const nativeSurfaceColors = useMemo(
+    () =>
+      resolveMobileNativeSurfaceColors(
+        themePreferences.themeId,
+        effectiveColorScheme,
+        importedThemes,
+      ),
+    [effectiveColorScheme, importedThemes, themePreferences.themeId],
+  );
+
+  useEffect(() => {
+    applyThemeVariables(themePreferences.themeId, importedThemes);
+  }, [importedThemes, themePreferences.themeId]);
+
+  useEffect(() => {
+    Uniwind.setTheme(resolveColorSchemeOverride(themePreferences.appearanceMode) ?? "system");
+  }, [themePreferences.appearanceMode]);
 
   useEffect(() => {
     applyTextScaleVariables(preferences.baseFontSize);
+  }, [preferences.baseFontSize]);
+
+  useEffect(() => {
     cacheTerminalFontSize(resolveAppearance(preferences).terminalFontSize);
-  }, [preferences]);
+  }, [preferences.baseFontSize, preferences.terminalFontSize]);
+
+  useEffect(() => {
+    if (preferencesLoaded) setHasAppliedInitialPreferences(true);
+  }, [preferencesLoaded]);
+
+  const isReady = preferencesLoaded && hasAppliedInitialPreferences;
 
   const updatePreferences = useCallback(
-    (patch: Partial<AppearancePreferences>) => {
+    (patch: Partial<Preferences & AppearancePreferences & MobileThemePreferences>) => {
       savePreferences(patch);
     },
     [savePreferences],
@@ -98,16 +201,76 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [updatePreferences],
   );
 
+  const setAppearanceMode = useCallback(
+    (value: MobileAppearanceMode) => {
+      updatePreferences({ appearanceMode: value });
+    },
+    [updatePreferences],
+  );
+
+  const setThemeId = useCallback(
+    (value: MobileThemeId) => {
+      if (!isMobileThemeId(value, importedThemes)) return;
+      updatePreferences({ themeId: value });
+    },
+    [importedThemes, updatePreferences],
+  );
+
+  const importThemeJson = useCallback(
+    (source: string) => {
+      const importedTheme = parseMobileThemeFileJson(source);
+      const next = addImportedMobileTheme(importedThemes, importedTheme);
+      updatePreferences({ importedThemes: next, themeId: importedTheme.id });
+    },
+    [importedThemes, updatePreferences],
+  );
+
+  const removeImportedTheme = useCallback(
+    (removedThemeId: string) => {
+      const patch = removeImportedMobileTheme(
+        importedThemes,
+        removedThemeId,
+        themePreferences.themeId,
+      );
+      if (patch) updatePreferences(patch);
+    },
+    [importedThemes, themePreferences.themeId, updatePreferences],
+  );
+
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
       appearance: resolveAppearance(preferences),
+      appearanceMode: themePreferences.appearanceMode,
+      effectiveColorScheme,
+      themeId: themePreferences.themeId,
+      importedThemes,
+      nativeSurfaceColors,
       isReady,
+      setAppearanceMode,
+      setThemeId,
+      importThemeJson,
+      removeImportedTheme,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
     }),
-    [preferences, isReady, setBaseFontSize, setTerminalFontSize, setCodeFontSize, setCodeWordBreak],
+    [
+      preferences,
+      themePreferences,
+      effectiveColorScheme,
+      importedThemes,
+      nativeSurfaceColors,
+      isReady,
+      setAppearanceMode,
+      setThemeId,
+      importThemeJson,
+      removeImportedTheme,
+      setBaseFontSize,
+      setTerminalFontSize,
+      setCodeFontSize,
+      setCodeWordBreak,
+    ],
   );
 
   return (

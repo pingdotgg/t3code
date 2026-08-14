@@ -39,6 +39,7 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly isRunning: boolean;
   readonly autoFocus?: boolean;
   readonly keyboardFocusRequest?: number;
+  readonly appearanceScheme?: "light" | "dark";
   readonly theme?: TerminalTheme;
   readonly onInput: (data: string) => void;
   readonly onResize: (size: { readonly cols: number; readonly rows: number }) => void;
@@ -60,7 +61,8 @@ function estimateGridSize(input: {
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const inputRef = useRef<TextInput>(null);
-  const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
+  const systemAppearanceScheme = useColorScheme() === "light" ? "light" : "dark";
+  const appearanceScheme = props.appearanceScheme ?? systemAppearanceScheme;
   const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
   const statusLabel = props.isRunning
     ? "Native terminal unavailable. Using text fallback."
@@ -173,7 +175,8 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
 
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
+  const systemAppearanceScheme = useColorScheme() === "light" ? "light" : "dark";
+  const appearanceScheme = props.appearanceScheme ?? systemAppearanceScheme;
   const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();

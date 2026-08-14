@@ -6,6 +6,7 @@
 - [Permission modes](./user/permission-modes.md)
 - [Plan Mode](./user/plan-mode.md)
 - [Keyboard shortcuts](./user/keybindings.md)
+- [Appearance and themes](./user/appearance.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)

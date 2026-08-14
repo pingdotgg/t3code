@@ -6,6 +6,7 @@ import { createNativeReviewDiffTheme, type NativeReviewDiffData } from "./native
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useNativeReviewDiffHighlighting } from "./useNativeReviewDiffHighlighting";
 import { buildNativeReviewTokensResetKey } from "./reviewDiffBridgeKeys";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export { buildNativeReviewTokensResetKey, hashReviewDiffKey } from "./reviewDiffBridgeKeys";
 
@@ -32,11 +33,22 @@ export function useNativeReviewDiffBridge(input: {
     viewedFileIds,
   } = input;
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
+  const { nativeSurfaceColors } = useAppearancePreferences();
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
 
-  const theme = useMemo(() => createNativeReviewDiffTheme(scheme), [scheme]);
+  const theme = useMemo(
+    () => createNativeReviewDiffTheme(scheme, nativeSurfaceColors ?? undefined),
+    [
+      nativeSurfaceColors?.accent,
+      nativeSurfaceColors?.border,
+      nativeSurfaceColors?.foreground,
+      nativeSurfaceColors?.mutedForeground,
+      nativeSurfaceColors?.sheetBackground,
+      scheme,
+    ],
+  );
   const rowsJson = useMemo(() => JSON.stringify(data.rows), [data.rows]);
   const collapsedFileIdsJson = useMemo(() => JSON.stringify(collapsedFileIds), [collapsedFileIds]);
   const viewedFileIdsJson = useMemo(() => JSON.stringify(viewedFileIds), [viewedFileIds]);

@@ -80,8 +80,10 @@
       --color-md-blockquote-bg: rgba(0, 0, 0, 0.02);
       --color-md-code-bg: rgba(0, 0, 0, 0.04);
       --color-md-code-text: #262626;
+      --color-md-inline-code-text: #5f6368;
       --color-md-user-code-bg: rgba(255, 255, 255, 0.22);
       --color-md-user-code-text: #ffffff;
+      --color-md-user-inline-code-text: rgba(255, 255, 255, 0.82);
       --color-md-user-fence-bg: rgba(0, 0, 0, 0.16);
       --color-md-user-fence-text: #ffffff;
       --color-md-hr: rgba(0, 0, 0, 0.08);
@@ -174,8 +176,10 @@
       --color-md-blockquote-bg: rgba(255, 255, 255, 0.03);
       --color-md-code-bg: rgba(255, 255, 255, 0.06);
       --color-md-code-text: #e5e5e5;
+      --color-md-inline-code-text: #b8bcc2;
       --color-md-user-code-bg: rgba(255, 255, 255, 0.18);
       --color-md-user-code-text: #ffffff;
+      --color-md-user-inline-code-text: rgba(255, 255, 255, 0.82);
       --color-md-user-fence-bg: rgba(0, 0, 0, 0.28);
       --color-md-user-fence-text: #ffffff;
       --color-md-hr: rgba(255, 255, 255, 0.08);

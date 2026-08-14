@@ -181,15 +181,27 @@ private enum TerminalAppearanceScheme: String {
 }
 
 private extension UIColor {
-  convenience init(hexString: String) {
-    let sanitized = hexString.replacingOccurrences(of: "#", with: "")
-    let value = Int(sanitized, radix: 16) ?? 0
-    self.init(
-      red: CGFloat((value >> 16) & 0xFF) / 255,
-      green: CGFloat((value >> 8) & 0xFF) / 255,
-      blue: CGFloat(value & 0xFF) / 255,
-      alpha: 1
-    )
+  convenience init?(cssHex: String) {
+    let value = cssHex.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard value.hasPrefix("#") else { return nil }
+    let hex = String(value.dropFirst())
+    guard hex.count == 6 || hex.count == 8, let raw = UInt64(hex, radix: 16) else { return nil }
+
+    if hex.count == 8 {
+      self.init(
+        red: CGFloat((raw >> 24) & 0xFF) / 255,
+        green: CGFloat((raw >> 16) & 0xFF) / 255,
+        blue: CGFloat((raw >> 8) & 0xFF) / 255,
+        alpha: CGFloat(raw & 0xFF) / 255
+      )
+    } else {
+      self.init(
+        red: CGFloat((raw >> 16) & 0xFF) / 255,
+        green: CGFloat((raw >> 8) & 0xFF) / 255,
+        blue: CGFloat(raw & 0xFF) / 255,
+        alpha: 1
+      )
+    }
   }
 }
 
@@ -211,7 +223,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var isCreatingSurface = false
   private var surfaceCreationFailed = false
   private var appearance = TerminalAppearanceScheme.dark
-  private var backgroundColorValue = UIColor(hexString: "#24292e")
+  private var backgroundColorValue = UIColor(cssHex: "#24292e") ?? .black
 
   let onInput = EventDispatcher()
   let onResize = EventDispatcher()
@@ -276,7 +288,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   var backgroundColorHex: String = "#24292e" {
     didSet {
-      backgroundColorValue = UIColor(hexString: backgroundColorHex)
+      guard let color = UIColor(cssHex: backgroundColorHex) else {
+        backgroundColorHex = oldValue
+        return
+      }
+      backgroundColorValue = color
       applyTheme()
     }
   }

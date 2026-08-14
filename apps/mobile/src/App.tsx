@@ -1,8 +1,8 @@
 import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { StatusBar, useColorScheme } from "react-native";
+import { useEffect, useMemo } from "react";
+import { StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -57,44 +57,75 @@ function SplashScreenCoordinator() {
   return null;
 }
 
-export default function App() {
-  const colorScheme = useColorScheme();
+function ThemedApp() {
+  const { effectiveColorScheme } = useAppearancePreferences();
   const statusBarBg = useThemeColor("--color-status-bar");
+  const navigationBackground = String(useThemeColor("--color-screen"));
+  const navigationCard = String(useThemeColor("--color-sheet"));
+  const navigationText = String(useThemeColor("--color-foreground"));
+  const navigationBorder = String(useThemeColor("--color-border"));
+  const navigationPrimary = String(useThemeColor("--color-primary"));
+  const navigationTheme = useMemo(() => {
+    const base = effectiveColorScheme === "dark" ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        background: navigationBackground,
+        card: navigationCard,
+        text: navigationText,
+        border: navigationBorder,
+        primary: navigationPrimary,
+      },
+    };
+  }, [
+    effectiveColorScheme,
+    navigationBackground,
+    navigationBorder,
+    navigationCard,
+    navigationPrimary,
+    navigationText,
+  ]);
 
+  return (
+    <>
+      <SplashScreenCoordinator />
+      <GestureHandlerRootView className="flex-1">
+        <KeyboardProvider statusBarTranslucent>
+          <SafeAreaProvider>
+            <StatusBar
+              barStyle={effectiveColorScheme === "dark" ? "light-content" : "dark-content"}
+              backgroundColor={statusBarBg}
+              translucent
+            />
+            {/* The navigation theme drives the NATIVE header appearance: native-stack
+                forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
+                this, React Navigation defaults to its light theme and every native
+                header (glass buttons, title, materials) is forced light even when
+                the system is in dark mode. */}
+            {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
+            <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
+              <IncomingShareProvider>
+                <Navigation linking={appLinking} theme={navigationTheme} />
+              </IncomingShareProvider>
+              <ConfirmDialogHost />
+            </BlurTargetView>
+            {/* Anchored-menu overlays render here — in-window, so the
+                keyboard stays up while a dropdown is open. */}
+            <OverlayPortalHost />
+          </SafeAreaProvider>
+        </KeyboardProvider>
+      </GestureHandlerRootView>
+    </>
+  );
+}
+
+export default function App() {
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>
         <AppearancePreferencesProvider>
-          <SplashScreenCoordinator />
-          <GestureHandlerRootView className="flex-1">
-            <KeyboardProvider statusBarTranslucent>
-              <SafeAreaProvider>
-                <StatusBar
-                  barStyle={colorScheme === "dark" ? "light-content" : "dark-content"}
-                  backgroundColor={statusBarBg}
-                  translucent
-                />
-                {/* The navigation theme drives the NATIVE header appearance: native-stack
-                    forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
-                    this, React Navigation defaults to its light theme and every native
-                    header (glass buttons, title, materials) is forced light even when
-                    the system is in dark mode. */}
-                {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
-                <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
-                  <IncomingShareProvider>
-                    <Navigation
-                      linking={appLinking}
-                      theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-                    />
-                  </IncomingShareProvider>
-                  <ConfirmDialogHost />
-                </BlurTargetView>
-                {/* Anchored-menu overlays render here — in-window, so the
-                    keyboard stays up while a dropdown is open. */}
-                <OverlayPortalHost />
-              </SafeAreaProvider>
-            </KeyboardProvider>
-          </GestureHandlerRootView>
+          <ThemedApp />
         </AppearancePreferencesProvider>
       </CloudAuthProvider>
     </RegistryContext.Provider>

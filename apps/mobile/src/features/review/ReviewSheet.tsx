@@ -26,7 +26,6 @@ import {
   ScrollView,
   type NativeSyntheticEvent,
   StyleSheet,
-  useColorScheme,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -63,6 +62,7 @@ import {
 } from "../diffs/nativeReviewDiffSurface";
 import { NATIVE_REVIEW_DIFF_CONTENT_WIDTH } from "./nativeReviewDiffAdapter";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useReviewDiffData } from "./useReviewDiffData";
 import { useReviewDiffPrewarming } from "./useReviewDiffPrewarming";
 import { useReviewFileVisibility } from "./reviewFileVisibility";
@@ -346,7 +346,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const { panes, showAuxiliaryPane, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme();
+  const { effectiveColorScheme } = useAppearancePreferences();
   const headerIcon = String(useThemeColor("--color-icon"));
   const { environmentId, threadId } = props.route.params;
   const environment = useEnvironmentPresentation(environmentId);
@@ -371,7 +371,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   // selected thread (it always does when reached from the thread's toolbar).
   const gitMenuAvailable =
     selectedThread !== null && String(selectedThread.id) === String(threadId);
-  const selectedTheme = colorScheme === "dark" ? "dark" : "light";
+  const selectedTheme = effectiveColorScheme;
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed. (Android renders its own
   // in-flow AndroidScreenHeader, so it needs no inset either.)

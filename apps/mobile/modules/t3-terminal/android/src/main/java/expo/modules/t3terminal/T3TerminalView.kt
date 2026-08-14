@@ -428,10 +428,24 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
   }
 
-  private fun parseColor(value: String, fallback: Int): Int =
-    try {
+  private fun parseColor(value: String, fallback: Int): Int {
+    decodeCssHexColor(value)?.let { return it }
+    return try {
       Color.parseColor(value)
     } catch (_: IllegalArgumentException) {
       fallback
     }
+  }
+
+  private fun decodeCssHexColor(value: String): Int? {
+    val hex = value.trim().takeIf { it.startsWith("#") }?.drop(1) ?: return null
+    if (hex.length != 6 && hex.length != 8) return null
+    if (!hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
+    val raw = hex.toLongOrNull(16) ?: return null
+    if (hex.length == 6) return (0xff000000L or raw).toInt()
+
+    val alpha = raw and 0xff
+    val rgb = raw shr 8
+    return ((alpha shl 24) or rgb).toInt()
+  }
 }

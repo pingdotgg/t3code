@@ -2,14 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  FlatList,
-  ScrollView,
-  Text as NativeText,
-  useColorScheme,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { FlatList, ScrollView, Text as NativeText, useWindowDimensions, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
@@ -17,7 +10,6 @@ import {
   type NativeReviewDiffViewProps,
   resolveNativeReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
-import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
 import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
 import type { ReviewHighlightedToken } from "../review/shikiReviewHighlighter";
 import { cn } from "../../lib/cn";
@@ -25,11 +17,13 @@ import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences"
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import {
   buildNativeSourceTokens,
+  createNativeSourceFileTheme,
   NATIVE_SOURCE_CONTENT_WIDTH,
   nativeSourceRowId,
 } from "./nativeSourceFileAdapter";
 import { prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
@@ -115,8 +109,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
 });
 
 function useSourceFileModel(props: SourceFileSurfaceProps) {
-  const colorScheme = useColorScheme();
-  const theme: "dark" | "light" = colorScheme === "dark" ? "dark" : "light";
+  const { effectiveColorScheme: theme } = useAppearancePreferences();
   const document = useMemo(() => prepareSourceFileDocument(props.contents), [props.contents]);
   const { contents: normalizedContents, lines, rowsJson } = document;
   const targetIndex =
@@ -159,6 +152,7 @@ function NativeSourceFileSurface(
 ) {
   const { NativeView, onRefresh } = props;
   const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
+  const { nativeSurfaceColors } = useAppearancePreferences();
   const { width: viewportWidth } = useWindowDimensions();
   const { rowsJson, status, targetIndex, theme, tokens } = useSourceFileModel(props);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -178,7 +172,17 @@ function NativeSourceFileSurface(
     () => JSON.stringify(targetIndex === null ? [] : [nativeSourceRowId(targetIndex)]),
     [targetIndex],
   );
-  const themeJson = useMemo(() => JSON.stringify(createNativeReviewDiffTheme(theme)), [theme]);
+  const themeJson = useMemo(
+    () => JSON.stringify(createNativeSourceFileTheme(theme, nativeSurfaceColors ?? undefined)),
+    [
+      nativeSurfaceColors?.accent,
+      nativeSurfaceColors?.border,
+      nativeSurfaceColors?.foreground,
+      nativeSurfaceColors?.mutedForeground,
+      nativeSurfaceColors?.sheetBackground,
+      theme,
+    ],
+  );
   const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
   const contentWidth = codeWordBreak
     ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)

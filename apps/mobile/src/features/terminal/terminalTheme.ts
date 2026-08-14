@@ -1,3 +1,5 @@
+import type { MobileNativeSurfaceColors } from "../../lib/mobileTheme";
+
 export type TerminalAppearanceScheme = "light" | "dark";
 
 export interface TerminalTheme {
@@ -9,6 +11,11 @@ export interface TerminalTheme {
   readonly cursorBackground: string;
   readonly palette: readonly string[];
 }
+
+export type TerminalThemeOverrides = Pick<
+  MobileNativeSurfaceColors,
+  "terminalBackground" | "terminalForeground" | "terminalCursor" | "mutedForeground" | "border"
+>;
 
 const PIERRE_LIGHT_THEME: TerminalTheme = {
   // Pierre terminal palette with the app's shared screen background.
@@ -66,8 +73,21 @@ const PIERRE_DARK_THEME: TerminalTheme = {
   ],
 };
 
-export function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): TerminalTheme {
-  return scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
+export function getPierreTerminalTheme(
+  scheme: TerminalAppearanceScheme,
+  overrides?: TerminalThemeOverrides,
+): TerminalTheme {
+  const base = scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
+  if (!overrides) return base;
+  return {
+    ...base,
+    background: overrides.terminalBackground,
+    foreground: overrides.terminalForeground,
+    mutedForeground: overrides.mutedForeground,
+    border: overrides.border,
+    cursorForeground: overrides.terminalCursor,
+    cursorBackground: overrides.terminalBackground,
+  };
 }
 
 export function buildGhosttyThemeConfig(theme: TerminalTheme): string {

@@ -17,9 +17,15 @@ import {
   type ReviewRenderableLineRow,
 } from "./reviewModel";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
+import type { MobileNativeSurfaceColors } from "../../lib/mobileTheme";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
+
+export type NativeReviewDiffThemeOverrides = Pick<
+  MobileNativeSurfaceColors,
+  "sheetBackground" | "foreground" | "mutedForeground" | "border" | "accent"
+>;
 
 export const NATIVE_REVIEW_DIFF_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
@@ -112,12 +118,13 @@ function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment
 
 export function createNativeReviewDiffTheme(
   scheme: TerminalAppearanceScheme,
+  overrides?: NativeReviewDiffThemeOverrides,
 ): NativeReviewDiffTheme {
   const terminalTheme = getPierreTerminalTheme(scheme);
   const [, terminalRed, , , terminalBlue] = terminalTheme.palette;
 
   if (scheme === "dark") {
-    return {
+    const theme = {
       // Match the app surface (--color-sheet) so code views blend with the rest of
       // the app instead of using a distinct code-editor background.
       background: "#0e0e0e",
@@ -134,9 +141,10 @@ export function createNativeReviewDiffTheme(
       addText: "#5ECC71",
       deleteText: "#FF6762",
     };
+    return overrides ? applyNativeReviewDiffThemeOverrides(theme, overrides) : theme;
   }
 
-  return {
+  const theme = {
     // Match the app surface (--color-sheet) so code views blend with the rest of the
     // app instead of using a distinct code-editor background.
     background: "#f2f2f7",
@@ -152,6 +160,22 @@ export function createNativeReviewDiffTheme(
     deleteBar: terminalRed ?? "#ff2e3f",
     addText: "#199F43",
     deleteText: "#D52C36",
+  };
+  return overrides ? applyNativeReviewDiffThemeOverrides(theme, overrides) : theme;
+}
+
+function applyNativeReviewDiffThemeOverrides(
+  theme: NativeReviewDiffTheme,
+  overrides: NativeReviewDiffThemeOverrides,
+): NativeReviewDiffTheme {
+  return {
+    ...theme,
+    background: overrides.sheetBackground,
+    text: overrides.foreground,
+    mutedText: overrides.mutedForeground,
+    headerBackground: overrides.sheetBackground,
+    border: overrides.border,
+    hunkText: overrides.accent,
   };
 }
 
