@@ -34,7 +34,7 @@ export interface AppUpdateClient {
  * tear down the JavaScript runtime. Injectable so the flow stays unit-testable.
  */
 export interface AppUpdateEnvironment {
-  /** Asks the user to install the downloaded update now; `false` defers it. */
+  /** Asks the user to install the waiting update now; `false` keeps it deferred. */
   readonly confirmInstallNow: () => Promise<boolean>;
   /** Lands best-effort persisted state (drafts, outbox) before the restart. */
   readonly flushPendingWrites: () => Promise<void>;
@@ -47,6 +47,12 @@ export interface AppUpdateEnvironment {
   readonly isSafeToRestartInBackground: () => Promise<boolean>;
   /** Runs `apply` the next time the app leaves the foreground. */
   readonly onNextBackground: (apply: () => void) => void;
+  /**
+   * Runs `apply` once the app has stayed foregrounded for the whole prompt
+   * window — the signal that a deferred install has had no backgrounding to
+   * ride on.
+   */
+  readonly onForegroundStay: (apply: () => void) => void;
 }
 
 /** Tracks a downloaded update waiting for a safe moment to install. */
@@ -62,11 +68,12 @@ const appUpdateDeferral = createAppUpdateDeferral();
 
 interface AppUpdateCheckOptions {
   /**
-   * "prompt" (default) asks before restarting and defers a declined install to
-   * the next backgrounding. "immediate" restarts as soon as the download
+   * "background" (default) installs silently at the next backgrounding,
+   * asking only if the app then stays foregrounded so long that the install
+   * never gets its chance. "immediate" restarts as soon as the download
    * lands — reserved for flows where the user explicitly requested the update.
    */
-  readonly applyMode?: "immediate" | "prompt";
+  readonly applyMode?: "background" | "immediate";
   readonly client?: AppUpdateClient;
   readonly deferral?: AppUpdateDeferral;
   readonly environment?: AppUpdateEnvironment;
@@ -261,18 +268,13 @@ async function performAppUpdateCheck(
   }
 
   setState("ready");
-  const installNow = await settlePromise(() => environment.confirmInstallNow());
-  if (installNow._tag === "Success" && installNow.value) {
-    await installAppUpdate(client, environment, options);
-    return;
-  }
   armDeferredAppUpdateInstall(client, environment, deferral);
 }
 
 /**
  * Restarting mid-session while native surfaces are mounted is the crashiest
- * moment expo-updates has, so the restart flushes persistence first and, when
- * declined, waits for a backgrounding — where nothing is rendering and the
+ * moment expo-updates has, so the restart flushes persistence first and, by
+ * default, waits for a backgrounding — where nothing is rendering and the
  * teardown is invisible.
  */
 async function installAppUpdate(
@@ -299,6 +301,25 @@ function armDeferredAppUpdateInstall(
   if (deferral.pendingInstall) return;
   deferral.pendingInstall = true;
   scheduleDeferredAppUpdateInstall(client, environment, deferral);
+  environment.onForegroundStay(() => {
+    void promptDeferredAppUpdateInstall(client, environment, deferral);
+  });
+}
+
+/**
+ * A deferred install normally rides the next backgrounding, but a session that
+ * never leaves the foreground would sit on the download forever. Only then is
+ * the user asked, and declining simply leaves the background install armed.
+ */
+async function promptDeferredAppUpdateInstall(
+  client: AppUpdateClient,
+  environment: AppUpdateEnvironment,
+  deferral: AppUpdateDeferral,
+): Promise<void> {
+  if (!deferral.pendingInstall) return;
+  const installNow = await settlePromise(() => environment.confirmInstallNow());
+  if (installNow._tag !== "Success" || !installNow.value || !deferral.pendingInstall) return;
+  await installAppUpdate(client, environment, {});
 }
 
 function scheduleDeferredAppUpdateInstall(
@@ -325,7 +346,7 @@ async function applyDeferredAppUpdateInstall(
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
     reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", undefined);
-    // Give later checks their prompt back; the downloaded update still
+    // Let later checks re-arm the install; the downloaded update still
     // applies at the next cold start regardless.
     deferral.pendingInstall = false;
   }
@@ -336,7 +357,7 @@ async function defaultConfirmInstallNow(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     Alert.alert(
       "Update ready",
-      "A new version has been downloaded. Install it now, or it will be installed automatically the next time you leave the app.",
+      "A new version has been downloaded and installs automatically the next time you leave the app. Install it now instead?",
       [
         { onPress: () => resolve(false), style: "cancel", text: "Later" },
         { onPress: () => resolve(true), text: "Install Now" },
@@ -370,11 +391,46 @@ function defaultOnNextBackground(apply: () => void): void {
   });
 }
 
+/**
+ * How long the app may stay foregrounded with a downloaded update before the
+ * install prompt appears. Long enough that most sessions background naturally
+ * and install silently instead.
+ */
+export const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
+
+/**
+ * The window resets on every backgrounding because that is exactly when the
+ * deferred install gets its chance. iOS "inactive" blips (app switcher, a
+ * pulled-down notification shade) leave the timer running.
+ */
+function defaultOnForegroundStay(apply: () => void): void {
+  void import("react-native").then(({ AppState }) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      timer ??= setTimeout(() => {
+        subscription.remove();
+        apply();
+      }, DEFERRED_INSTALL_PROMPT_AFTER_MS);
+    };
+    const disarm = () => {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      timer = undefined;
+    };
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") arm();
+      else if (state === "background") disarm();
+    });
+    if (AppState.currentState === "active") arm();
+  });
+}
+
 const defaultAppUpdateEnvironment: AppUpdateEnvironment = {
   confirmInstallNow: defaultConfirmInstallNow,
   flushPendingWrites: defaultFlushPendingWrites,
   isSafeToRestartInBackground: defaultIsSafeToRestartInBackground,
   onNextBackground: defaultOnNextBackground,
+  onForegroundStay: defaultOnForegroundStay,
 };
 
 function reportUpdateFailure(

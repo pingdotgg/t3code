@@ -634,8 +634,8 @@ function AppSettingsSection() {
       ? "Checking…"
       : updateState === "downloading"
         ? "Downloading…"
-        : // "ready" appears only when this check joined an in-flight prompt-mode
-          // check; the install alert is on screen and holds the answer.
+        : // "ready" appears only when this check joined an in-flight background-mode
+          // check; that download installs at the next backgrounding.
           updateState === "ready"
           ? "Update ready"
           : updateState === "restarting"
