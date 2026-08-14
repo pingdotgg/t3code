@@ -763,7 +763,12 @@ export function BranchToolbarBranchSelector({
                 {triggerLabel}
               </span>
             </span>
-            <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+            <ChevronDownIcon
+              className={cn(
+                "size-4 shrink-0 opacity-50 transition-transform",
+                isBranchMenuOpen && "rotate-180",
+              )}
+            />
           </ComboboxTrigger>
         </span>
       </div>

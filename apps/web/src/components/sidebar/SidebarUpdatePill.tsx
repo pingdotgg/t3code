@@ -245,7 +245,7 @@ function SidebarUpdateControl() {
               aria-disabled={disabled || isActionPending || undefined}
               disabled={disabled || isActionPending}
               className={cn(
-                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors enabled:cursor-pointer focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60",
+                "inline-flex size-8 items-center justify-center rounded-[var(--control-radius)] outline-hidden ring-ring transition-colors enabled:cursor-pointer focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60",
                 isUpdateState
                   ? "bg-update-surface text-update-foreground enabled:hover:bg-update/12"
                   : "text-[var(--sidebar-icon-color)] enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground",

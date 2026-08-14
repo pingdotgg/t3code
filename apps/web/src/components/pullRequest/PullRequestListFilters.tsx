@@ -17,6 +17,7 @@ import {
   LayersIcon,
   ListFilterIcon,
   LoaderIcon,
+  RotateCcwIcon,
   SearchIcon,
 } from "lucide-react";
 import type { ElementType } from "react";
@@ -28,6 +29,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import {
   Menu,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -410,6 +412,23 @@ export function PullRequestFiltersMenu({
               );
             })}
         </MenuRadioGroup>
+        <MenuSeparator />
+        <MenuItem
+          disabled={!filtered}
+          onClick={() => {
+            if (state !== "open") onState("open");
+            if (involvement !== "all") onInvolvement("all");
+            if (Object.keys(filters).length > 0) onFilters({});
+            if (host !== undefined) onHost(undefined);
+            if (server !== undefined) onServer(undefined);
+            if (projectId !== undefined || projectEnvironmentId !== undefined) {
+              onProject(undefined, undefined);
+            }
+          }}
+        >
+          <RotateCcwIcon aria-hidden className="size-3.5" />
+          Reset filters
+        </MenuItem>
       </MenuPopup>
     </Menu>
   );

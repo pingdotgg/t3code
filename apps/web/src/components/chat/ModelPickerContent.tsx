@@ -6,7 +6,7 @@ import {
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { ChevronRightIcon, SearchIcon } from "lucide-react";
+import { ChevronDownIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import {
@@ -733,10 +733,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                               {legacySection.legacyModels.length} models
                             </div>
                           </div>
-                          <ChevronRightIcon
+                          <ChevronDownIcon
                             className={cn(
                               "size-4 transition-transform",
-                              legacySection.isExpanded && "rotate-90",
+                              legacySection.isExpanded && "rotate-180",
                             )}
                           />
                         </ComboboxItem>

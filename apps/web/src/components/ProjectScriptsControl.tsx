@@ -12,6 +12,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
+import { cn } from "~/lib/utils";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
@@ -187,7 +188,12 @@ export default function ProjectScriptsControl({
             <MenuTrigger
               render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
             >
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon
+                className={cn(
+                  "size-4 transition-transform",
+                  actionsMenuOpen.scripts && "rotate-180",
+                )}
+              />
             </MenuTrigger>
             <MenuPopup align="end">
               {scripts.map((script) => {
@@ -252,7 +258,9 @@ export default function ProjectScriptsControl({
             <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
               Add action
             </span>
-            <ChevronDownIcon className="size-3.5" />
+            <ChevronDownIcon
+              className={cn("size-4 transition-transform", actionsMenuOpen.imports && "rotate-180")}
+            />
           </MenuTrigger>
           <MenuPopup align="end">
             {importMenuItems}

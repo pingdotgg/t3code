@@ -29,7 +29,8 @@ function ConfiguredT3ConnectSidebarAvatar() {
       appearance={{
         elements: {
           avatarBox: "size-7",
-          userButtonTrigger: "rounded-lg p-1 hover:bg-sidebar-row-hover",
+          userButtonTrigger:
+            "size-8 rounded-[var(--control-radius)] p-0 hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring",
         },
       }}
     >

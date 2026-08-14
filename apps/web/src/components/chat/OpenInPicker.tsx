@@ -293,7 +293,10 @@ export const OpenInPicker = memo(function OpenInPicker({
             />
           }
         >
-          <ChevronDownIcon aria-hidden="true" className="size-4" />
+          <ChevronDownIcon
+            aria-hidden="true"
+            className="size-4 transition-transform in-data-popup-open:rotate-180"
+          />
         </MenuTrigger>
         <MenuPopup align="end">
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}

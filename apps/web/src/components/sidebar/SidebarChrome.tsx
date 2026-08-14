@@ -1,7 +1,9 @@
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
+  CircleAlertIcon,
   GitPullRequestIcon,
+  Link2Icon,
   SettingsIcon,
 } from "lucide-react";
 import { memo, useCallback } from "react";
@@ -134,6 +136,9 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
+  const hasConnectionProblem = environments.some(
+    ({ connection }) => connection.phase !== "connected" && Boolean(connection.error),
+  );
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -146,6 +151,10 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
+  }, [closeMobileSidebar, navigate]);
+  const handleConnectionsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/settings/connections" });
   }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
@@ -190,6 +199,27 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
                 <TooltipPopup side="top">Settings</TooltipPopup>
               </Tooltip>
             </SidebarMenuItem>
+            {hasConnectionProblem ? (
+              <SidebarMenuItem className="shrink-0">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <SidebarMenuButton
+                        aria-label="Connection settings"
+                        onClick={handleConnectionsClick}
+                        size="icon"
+                      >
+                        <span className="relative flex size-4 items-center justify-center">
+                          <Link2Icon className="size-4" />
+                          <CircleAlertIcon className="absolute -right-1 -top-1 size-2.5 fill-sidebar text-destructive" />
+                        </span>
+                      </SidebarMenuButton>
+                    }
+                  />
+                  <TooltipPopup side="top">Connection settings</TooltipPopup>
+                </Tooltip>
+              </SidebarMenuItem>
+            ) : null}
             {pullRequestsSupported ? (
               <SidebarMenuItem className="shrink-0">
                 <Tooltip>

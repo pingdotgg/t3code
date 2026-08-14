@@ -2362,11 +2362,11 @@ function OpenCommandPaletteDialog(props: {
               startAddon: (
                 <button
                   type="button"
-                  className="flex cursor-pointer items-center"
+                  className="-ms-1 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Back"
                   onClick={popView}
                 >
-                  <ArrowLeftIcon />
+                  <ArrowLeftIcon className="size-4" />
                 </button>
               ),
             }

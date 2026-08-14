@@ -46,7 +46,7 @@ export function ComposerControlChevron() {
   return (
     <ChevronDownIcon
       aria-hidden="true"
-      className="-mx-0.5 size-3.5 shrink-0 text-icon-muted"
+      className="-mx-0.5 size-4 shrink-0 text-icon-muted transition-transform in-data-popup-open:rotate-180"
       data-composer-control-chevron
       strokeWidth={2.25}
     />

@@ -1752,7 +1752,10 @@ export default function GitActionsControl({
               render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
               disabled={isGitActionRunning}
             >
-              <ChevronDownIcon aria-hidden="true" className="size-4" />
+              <ChevronDownIcon
+                aria-hidden="true"
+                className="size-4 transition-transform in-data-popup-open:rotate-180"
+              />
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
               {gitActionMenuItems.map((item) => {
