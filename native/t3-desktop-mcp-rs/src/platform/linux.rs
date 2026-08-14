@@ -298,10 +298,14 @@ impl LinuxDesktop {
     }
 
     fn move_pointer(&self, x: f64, y: f64) -> Result<()> {
+        // XTEST MotionNotify takes i16 screen coords — reject out-of-range or
+        // non-finite values instead of silently clamping via `as i16`.
+        let xi = to_xtest_coord(x, "x")?;
+        let yi = to_xtest_coord(y, "y")?;
         let (connection, screen) = self.x11()?;
         let root = connection.setup().roots[*screen].root;
         connection
-            .xtest_fake_input(6 /* MotionNotify */, 0, 0, root, x as i16, y as i16, 0)
+            .xtest_fake_input(6 /* MotionNotify */, 0, 0, root, xi, yi, 0)
             .map_err(|error| DesktopError::new(format!("could not move pointer: {error}")))?;
         connection
             .flush()
@@ -360,15 +364,18 @@ impl LinuxDesktop {
             // Prefer Shift_L, then Shift_R — never send an unshifted key when
             // the caller asked for Shift (that types the wrong character).
             Some(
-                self.keycode_for(0xffe1 /* Shift_L */)?
-                    .or(self.keycode_for(0xffe2 /* Shift_R */)?)
-                    .map(|(code, _)| code)
-                    .ok_or_else(|| {
-                        DesktopError::new(
-                            "Shift is required for this character but no Shift key is available \
-                             on the current keyboard layout",
-                        )
-                    })?,
+                match self.keycode_for(0xffe1 /* Shift_L */)? {
+                    Some((code, _)) => code,
+                    None => self
+                        .keycode_for(0xffe2 /* Shift_R */)?
+                        .map(|(code, _)| code)
+                        .ok_or_else(|| {
+                            DesktopError::new(
+                                "Shift is required for this character but no Shift key is available \
+                                 on the current keyboard layout",
+                            )
+                        })?,
+                },
             )
         } else {
             None
@@ -751,6 +758,23 @@ fn modifier_keysym(modifier: &str) -> Option<u32> {
     })
 }
 
+fn to_xtest_coord(value: f64, axis: &str) -> Result<i16> {
+    if !value.is_finite() {
+        return Err(DesktopError::new(format!(
+            "pointer {axis} coordinate must be finite (got {value})"
+        )));
+    }
+    if value < f64::from(i16::MIN) || value > f64::from(i16::MAX) {
+        return Err(DesktopError::new(format!(
+            "pointer {axis} coordinate {value} is outside the XTEST i16 range \
+             ({min}..={max})",
+            min = i16::MIN,
+            max = i16::MAX,
+        )));
+    }
+    Ok(value as i16)
+}
+
 impl Desktop for LinuxDesktop {
     fn list_apps(&mut self) -> Result<String> {
         // Window enumeration needs EWMH properties that minimal window managers
@@ -1032,15 +1056,18 @@ impl Desktop for LinuxDesktop {
             held.push(code);
         }
         if needs_shift {
-            let (shift, _) = self
-                .keycode_for(0xffe1 /* Shift_L */)?
-                .or(self.keycode_for(0xffe2 /* Shift_R */)?)
-                .ok_or_else(|| {
-                    DesktopError::new(
-                        "Shift is required for this key but no Shift key is available \
-                         on the current keyboard layout",
-                    )
-                })?;
+            let shift = match self.keycode_for(0xffe1 /* Shift_L */)? {
+                Some((code, _)) => code,
+                None => self
+                    .keycode_for(0xffe2 /* Shift_R */)?
+                    .map(|(code, _)| code)
+                    .ok_or_else(|| {
+                        DesktopError::new(
+                            "Shift is required for this key but no Shift key is available \
+                             on the current keyboard layout",
+                        )
+                    })?,
+            };
             held.push(shift);
         }
 
@@ -1137,13 +1164,21 @@ impl Desktop for LinuxDesktop {
 
 #[cfg(test)]
 mod tests {
-    use super::{char_to_keysym, modifier_keysym, named_keysym, truncate};
+    use super::{char_to_keysym, modifier_keysym, named_keysym, to_xtest_coord, truncate};
 
     #[test]
     fn latin1_characters_map_to_themselves() {
         assert_eq!(char_to_keysym('a'), 0x61);
         assert_eq!(char_to_keysym(' '), 0x20);
         assert_eq!(char_to_keysym('ÿ'), 0xff);
+    }
+
+    #[test]
+    fn xtest_coords_reject_non_finite_and_out_of_range() {
+        assert_eq!(to_xtest_coord(12.9, "x").unwrap(), 12);
+        assert!(to_xtest_coord(f64::NAN, "x").is_err());
+        assert!(to_xtest_coord(40_000.0, "x").is_err());
+        assert!(to_xtest_coord(-40_000.0, "y").is_err());
     }
 
     #[test]
