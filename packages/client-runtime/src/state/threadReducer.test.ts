@@ -723,6 +723,49 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("dedupes a re-delivery arriving right after an in-order append", () => {
+      const makeActivity = (id: string, sequence: number, summary: string) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        sequence,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      const makeEvent = (sequence: number, activity: ReturnType<typeof makeActivity>) =>
+        ({
+          ...baseEventFields,
+          sequence,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: { threadId: ThreadId.make("thread-1"), activity },
+        }) as const;
+      const first = applyThreadDetailEvent(
+        { ...baseThread, activities: [makeActivity("activity-a", 1, "first")] },
+        makeEvent(133, makeActivity("activity-b", 2, "second")),
+      );
+      expect(first.kind).toBe("updated");
+      if (first.kind !== "updated") {
+        return;
+      }
+      const second = applyThreadDetailEvent(
+        first.thread,
+        makeEvent(134, makeActivity("activity-b", 3, "second (redelivered)")),
+      );
+      expect(second.kind).toBe("updated");
+      if (second.kind === "updated") {
+        expect(second.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+        ]);
+        expect(second.thread.activities[1]?.summary).toBe("second (redelivered)");
+      }
+    });
+
     it("replaces a re-delivered activity instead of duplicating it", () => {
       const makeActivity = (id: string, sequence: number, summary: string) => ({
         id: EventId.make(id),
