@@ -174,6 +174,32 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("retains session updates emitted before session creation returns", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      expect(yield* runtime.getAvailableCommands).toEqual([
+        { name: "skill:startup", description: "Available during session creation" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_EMIT_AVAILABLE_COMMANDS_DURING_CREATE: "1" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("clears available command snapshots while preserving empty update events", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

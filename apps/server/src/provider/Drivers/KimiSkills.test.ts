@@ -99,6 +99,30 @@ it.layer(NodeServices.layer)("discoverKimiSkills", (it) => {
     }),
   );
 
+  it.effect("uses USERPROFILE for shared Windows agent skills when HOME is absent", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-kimi-skills-userprofile-",
+      });
+      const userProfile = path.join(tempDirectory, "profile");
+      yield* writeSkill(
+        path.join(userProfile, ".agents", "skills"),
+        "windows-shared",
+        ["---", "name: windows-shared", "description: Windows shared skill.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverKimiSkills(
+        { homePath: path.join(tempDirectory, "kimi-home") },
+        undefined,
+        { USERPROFILE: userProfile },
+      );
+
+      assert.equal(skills[0]?.name, "windows-shared");
+    }),
+  );
+
   it.effect("does not follow a discovered skill link outside its configured root", () => {
     // Windows can prohibit test symlink creation. This filesystem double models
     // its relevant observable behavior: a listed child resolves outside its root.

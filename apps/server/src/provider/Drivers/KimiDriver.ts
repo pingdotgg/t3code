@@ -140,7 +140,7 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Kimi snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build the Kimi provider snapshot.",
               cause,
             }),
         ),

@@ -65,7 +65,7 @@ export const discoverKimiSkills = Effect.fn("discoverKimiSkills")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const kimiHome = yield* resolveKimiHomePath(config, environment);
-  const osHome = environment?.HOME?.trim() || NodeOS.homedir();
+  const osHome = environment?.HOME?.trim() || environment?.USERPROFILE?.trim() || NodeOS.homedir();
   const roots: ReadonlyArray<{ readonly directory: string; readonly scope: KimiSkillScope }> = [
     { directory: path.join(kimiHome, "skills"), scope: "user" },
     { directory: path.join(osHome, ".agents", "skills"), scope: "user" },

@@ -185,6 +185,8 @@ export class AcpSessionRuntime extends Context.Service<
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
     /** Waits until the current event consumer has processed every queued event. */
     readonly drainEvents: Effect.Effect<void>;
+    /** Resolves when the ACP child process exits. */
+    readonly processExit: Effect.Effect<number, EffectAcpErrors.AcpError>;
     /** Latest mode state observed from session setup and `session/update` notifications. */
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     /** Latest available commands observed from `session/update` notifications. */
@@ -257,6 +259,7 @@ type AcpStartState =
   | {
       readonly _tag: "Starting";
       readonly deferred: Deferred.Deferred<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+      readonly pendingUpdates: ReadonlyArray<EffectAcpSchema.SessionNotification>;
     }
   | { readonly _tag: "Started"; readonly result: AcpStartedState };
 
@@ -391,15 +394,21 @@ export const make = (
         if (sessionUpdateIsReplay(notification)) {
           return;
         }
-        const startState = yield* Ref.get(startStateRef);
-        // One runtime projects one root ACP session. Child-session updates need
-        // explicit lineage routing and must never be flattened into this stream.
-        if (
-          startState._tag !== "Started" ||
-          notification.sessionId !== startState.result.sessionId
-        ) {
-          return;
-        }
+        const shouldHandle = yield* Ref.modify(startStateRef, (startState) => {
+          if (startState._tag === "Starting") {
+            return [
+              false,
+              { ...startState, pendingUpdates: [...startState.pendingUpdates, notification] },
+            ] as const;
+          }
+          // One runtime projects one root ACP session. Child-session updates need
+          // explicit lineage routing and must never be flattened into this stream.
+          return [
+            startState._tag === "Started" && notification.sessionId === startState.result.sessionId,
+            startState,
+          ] as const;
+        });
+        if (!shouldHandle) return;
         yield* handleSessionUpdate({
           queue: eventQueue,
           modeStateRef,
@@ -751,9 +760,29 @@ export const make = (
             return [
               startOnce.pipe(
                 Effect.tap((result) =>
-                  Ref.set(startStateRef, { _tag: "Started", result }).pipe(
-                    Effect.andThen(Deferred.succeed(deferred, result)),
-                  ),
+                  Effect.gen(function* () {
+                    const pendingUpdates = yield* Ref.modify(
+                      startStateRef,
+                      (state) =>
+                        [
+                          state._tag === "Starting" ? state.pendingUpdates : [],
+                          { _tag: "Started", result } satisfies AcpStartState,
+                        ] as const,
+                    );
+                    for (const notification of pendingUpdates) {
+                      if (notification.sessionId !== result.sessionId) continue;
+                      yield* handleSessionUpdate({
+                        queue: eventQueue,
+                        modeStateRef,
+                        availableCommandsRef,
+                        toolCallsRef,
+                        assistantSegmentRef,
+                        assistantItemRuntimeId,
+                        params: notification,
+                      });
+                    }
+                    yield* Deferred.succeed(deferred, result);
+                  }),
                 ),
                 Effect.onError((cause) =>
                   Deferred.failCause(deferred, cause).pipe(
@@ -761,7 +790,7 @@ export const make = (
                   ),
                 ),
               ),
-              { _tag: "Starting", deferred } satisfies AcpStartState,
+              { _tag: "Starting", deferred, pendingUpdates: [] } satisfies AcpStartState,
             ] as const;
         }
       });
@@ -794,6 +823,16 @@ export const make = (
         });
         yield* Deferred.await(acknowledge);
       }),
+      processExit: child.exitCode.pipe(
+        Effect.map(Number),
+        Effect.mapError(
+          (cause) =>
+            new EffectAcpErrors.AcpTransportError({
+              detail: "ACP child process exit could not be observed.",
+              cause,
+            }),
+        ),
+      ),
       getModeState: Ref.get(modeStateRef),
       getAvailableCommands: Ref.get(availableCommandsRef),
       getConfigOptions: Ref.get(configOptionsRef),

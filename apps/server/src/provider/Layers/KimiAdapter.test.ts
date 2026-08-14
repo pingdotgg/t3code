@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 
 import {
   KimiSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
@@ -25,6 +26,8 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { makeKimiAdapter } from "./KimiAdapter.ts";
 
 const decodeKimiSettings = Schema.decodeSync(KimiSettings);
@@ -65,7 +68,11 @@ async function readRequests(requestLogPath: string) {
       (line) =>
         JSON.parse(line) as {
           readonly method?: string;
-          readonly params?: { readonly configId?: string; readonly value?: unknown };
+          readonly params?: {
+            readonly configId?: string;
+            readonly value?: unknown;
+            readonly mcpServers?: ReadonlyArray<unknown>;
+          };
         },
     );
 }
@@ -77,8 +84,15 @@ const kimiAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-kimi-adapter-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-const makeTestAdapter = (binaryPath: string, instanceId = ProviderInstanceId.make("kimi")) =>
-  makeKimiAdapter(decodeKimiSettings({ binaryPath }), { instanceId }).pipe(Effect.orDie);
+const makeTestAdapter = (
+  binaryPath: string,
+  instanceId = ProviderInstanceId.make("kimi"),
+  nativeEventLogger?: EventNdjsonLogger,
+) =>
+  makeKimiAdapter(decodeKimiSettings({ binaryPath }), {
+    instanceId,
+    ...(nativeEventLogger ? { nativeEventLogger } : {}),
+  }).pipe(Effect.orDie);
 
 it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
   it.effect("rejects an incompatible Kimi CLI before starting ACP", () =>
@@ -321,6 +335,99 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
       assert.isFalse(yield* first.hasSession(resumedThread));
       assert.isTrue(yield* second.hasSession(otherThread));
       yield* second.stopAll();
+    }),
+  );
+
+  it.effect("preserves the T3 MCP credential when replacing a session", () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-mcp-")),
+      );
+      const requestLogPath = NodePath.join(directory, "requests.ndjson");
+      const adapter = yield* makeTestAdapter(
+        yield* makeKimiWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const threadId = ThreadId.make("kimi-mcp-replacement");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("kimi"),
+        endpoint: "http://127.0.0.1:4567/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+
+      const input = {
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required" as const,
+      };
+      yield* adapter.startSession(input);
+      yield* adapter.startSession(input);
+
+      const newSessionRequests = (yield* Effect.promise(() => readRequests(requestLogPath))).filter(
+        (entry) => entry.method === "session/new",
+      );
+      assert.equal(newSessionRequests.length, 2);
+      assert.isTrue(newSessionRequests.every((entry) => entry.params?.mcpServers?.length === 1));
+      assert.isDefined(McpProviderSession.readMcpProviderSession(threadId));
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("removes a session when the Kimi ACP process exits", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeTestAdapter(
+        yield* makeKimiWrapper({ T3_ACP_EXIT_AFTER_PROMPT: "1" }),
+      );
+      const threadId = ThreadId.make("kimi-process-exit");
+      const exited = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.threadId === threadId && event.type === "session.exited"
+          ? Deferred.succeed(exited, event).pipe(Effect.asVoid)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* adapter.sendTurn({ threadId, input: "exit after this prompt", attachments: [] });
+      const exitEvent = yield* Deferred.await(exited);
+
+      assert.deepInclude(exitEvent.payload, { exitKind: "error" });
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      yield* Fiber.interrupt(eventsFiber);
+    }),
+  );
+
+  it.effect("writes native ACP events through the configured logger", () =>
+    Effect.gen(function* () {
+      const records: unknown[] = [];
+      const logger: EventNdjsonLogger = {
+        filePath: "memory://kimi-native-events",
+        write: (event) => Effect.sync(() => records.push(event)),
+        close: () => Effect.void,
+      };
+      const adapter = yield* makeTestAdapter(
+        yield* makeKimiWrapper(),
+        ProviderInstanceId.make("kimi"),
+        logger,
+      );
+      const threadId = ThreadId.make("kimi-native-logging");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      assert.isAbove(records.length, 0);
+      yield* adapter.stopSession(threadId);
     }),
   );
 });

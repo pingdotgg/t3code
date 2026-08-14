@@ -57,6 +57,7 @@ const makeKimiFixture = Effect.fn("makeKimiFixture")(function* (
       `import * as readline from "node:readline";
 
 const mode = process.env.T3_KIMI_FIXTURE_MODE;
+const omitPlanMode = process.env.T3_KIMI_FIXTURE_OMIT_PLAN_MODE === "1";
 let currentModel = "kimi-code/kimi-for-coding";
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
 const fail = (id, code, message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\\n");
@@ -87,10 +88,9 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       sessionId: "kimi-fixture-session",
       modes: {
         currentModeId: "default",
-        availableModes: [
-          { id: "default", name: "Default" },
-          { id: "plan", name: "Plan" }
-        ]
+        availableModes: omitPlanMode
+          ? [{ id: "default", name: "Default" }]
+          : [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }]
       },
       configOptions: configOptions()
     });
@@ -142,6 +142,7 @@ describe("buildInitialKimiProviderSnapshot", () => {
     Effect.gen(function* () {
       const snapshot = yield* buildInitialKimiProviderSnapshot(kimiSettings({ enabled: false }));
       expect(snapshot.status).toBe("disabled");
+      expect(snapshot.showInteractionModeToggle).toBe(false);
       expect(snapshot.installed).toBe(false);
     }),
   );
@@ -372,6 +373,7 @@ describe("checkKimiProviderStatus", () => {
 
       expect(snapshot.status).toBe("ready");
       expect(snapshot.badgeLabel).toBe("Early Access");
+      expect(snapshot.showInteractionModeToggle).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual([
         "kimi-code/kimi-for-coding",
         "kimi-code/kimi-for-coding-highspeed",
@@ -415,6 +417,22 @@ describe("checkKimiProviderStatus", () => {
         { name: "review", description: "Review the current change", input: { hint: "scope" } },
         { name: "ship", description: "Prepare the current change" },
       ]);
+    }),
+  );
+
+  it.effect("hides plan mode when Kimi does not advertise it", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("ready", "0.29.0");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+          ...process.env,
+          T3_KIMI_FIXTURE_MODE: "ready",
+          T3_KIMI_FIXTURE_OMIT_PLAN_MODE: "1",
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.showInteractionModeToggle).toBe(false);
     }),
   );
 });

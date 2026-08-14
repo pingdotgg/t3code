@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -47,7 +48,7 @@ import {
 const KIMI_PRESENTATION = {
   displayName: "Kimi",
   badgeLabel: "Early Access",
-  showInteractionModeToggle: true,
+  showInteractionModeToggle: false,
   requiresNewThreadForModelChange: false,
 } as const;
 
@@ -61,6 +62,7 @@ interface KimiAcpDiscovery {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly capabilitiesByModel: ReadonlyMap<string, ModelCapabilities>;
   readonly commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
+  readonly supportsPlanMode: boolean;
 }
 
 type KimiAcpFailure = "unauthenticated" | "unsupported" | "failure";
@@ -302,12 +304,17 @@ const discoverKimiViaAcp = (
     ) {
       yield* runtime.setModel(currentModelId).pipe(Effect.ignore);
     }
+    const modeState = yield* runtime.getModeState;
     return {
       currentModelId,
       availableModels,
       configOptions: initialConfigOptions,
       capabilitiesByModel,
       commands: yield* runtime.getAvailableCommands,
+      supportsPlanMode:
+        modeState?.availableModes.some((mode) =>
+          ["plan", "architect"].includes(mode.id.trim().toLowerCase()),
+        ) ?? false,
     } satisfies KimiAcpDiscovery;
   }).pipe(Effect.scoped);
 
@@ -373,10 +380,7 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
-  | FileSystem.FileSystem
-  | import("effect/Path").Path
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getKimiFallbackModels(settings);
@@ -517,7 +521,10 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
   );
   const skills = yield* discoverKimiSkills(settings, cwd, environment);
   return buildServerProvider({
-    presentation: KIMI_PRESENTATION,
+    presentation: {
+      ...KIMI_PRESENTATION,
+      showInteractionModeToggle: discovery.supportsPlanMode,
+    },
     enabled: true,
     checkedAt,
     models: models.length > 0 ? models : fallbackModels,

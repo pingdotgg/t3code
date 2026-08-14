@@ -20,11 +20,13 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -46,6 +48,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   makeAcpAssistantItemEvent,
   makeAcpContentDeltaEvent,
@@ -67,6 +70,7 @@ import {
   runKimiVersionCommand,
 } from "../Drivers/KimiVersion.ts";
 import type { KimiAdapterShape } from "../Services/KimiAdapter.ts";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("kimi");
 const KIMI_RESUME_VERSION = 1 as const;
@@ -79,6 +83,7 @@ const isKimiResumeCursor = Schema.is(KimiResumeCursor);
 export interface KimiAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly instanceId?: ProviderInstanceId;
+  readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
 interface PendingApproval {
@@ -103,6 +108,7 @@ interface KimiSessionContext {
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
+  readonly stoppedSignal: Deferred.Deferred<void>;
   readonly supportsImages: boolean;
   stopped: boolean;
 }
@@ -190,34 +196,45 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* ServerConfig;
     const crypto = yield* Crypto.Crypto;
+    const adapterScope = yield* Scope.Scope;
+    const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
     const sessions = new Map<ThreadId, KimiSessionContext>();
     const threadLocks = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const ensureSupportedKimiVersion = (threadId: ThreadId) =>
       Effect.gen(function* () {
-        const probe = yield* runKimiVersionCommand(kimiSettings, options?.environment).pipe(
+        const probeResult = yield* runKimiVersionCommand(kimiSettings, options?.environment).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
+          Effect.timeoutOption(Duration.seconds(4)),
           Effect.result,
         );
-        if (Result.isFailure(probe)) {
+        if (Result.isFailure(probeResult)) {
           return yield* new ProviderAdapterProcessError({
             provider: PROVIDER,
             threadId,
             detail: "Failed to verify the Kimi CLI version before starting ACP.",
-            cause: probe.failure,
+            cause: probeResult.failure,
           });
         }
-        if (probe.success.code !== 0) {
+        if (Option.isNone(probeResult.success)) {
           return yield* new ProviderAdapterProcessError({
             provider: PROVIDER,
             threadId,
-            detail: `Kimi CLI version check exited with code ${probe.success.code}.`,
+            detail: "Kimi CLI version check timed out after 4 seconds.",
           });
         }
-        const version = parseKimiCliVersion(`${probe.success.stdout}\n${probe.success.stderr}`);
+        const probe = probeResult.success.value;
+        if (probe.code !== 0) {
+          return yield* new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: `Kimi CLI version check exited with code ${probe.code}.`,
+          });
+        }
+        const version = parseKimiCliVersion(`${probe.stdout}\n${probe.stderr}`);
         const compatibilityIssue = getKimiCliCompatibilityIssue(version);
         if (compatibilityIssue !== null) {
           return yield* new ProviderAdapterProcessError({
@@ -305,23 +322,35 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
         ),
       );
 
-    const stopSessionInternal = (context: KimiSessionContext) =>
+    const stopSessionInternal = (
+      context: KimiSessionContext,
+      options?: {
+        readonly clearMcp?: boolean;
+        readonly exitKind?: "graceful" | "error";
+        readonly reason?: string;
+      },
+    ) =>
       Effect.gen(function* () {
         if (context.stopped) return;
         context.stopped = true;
+        yield* Deferred.succeed(context.stoppedSignal, undefined);
         yield* settleApprovals(context.pendingApprovals);
         yield* settleUserInputs(context.pendingUserInputs);
         if (context.notificationFiber) yield* Fiber.interrupt(context.notificationFiber);
         yield* Effect.ignore(context.acp.cancel);
         yield* Effect.ignore(Scope.close(context.scope, Exit.void));
         sessions.delete(context.threadId);
-        McpProviderSession.clearMcpProviderSession(context.threadId);
+        if (options?.clearMcp !== false)
+          McpProviderSession.clearMcpProviderSession(context.threadId);
         yield* publish({
           type: "session.exited",
           ...(yield* nextEventStamp()),
           provider: PROVIDER,
           threadId: context.threadId,
-          payload: { exitKind: "graceful" },
+          payload: {
+            exitKind: options?.exitKind ?? "graceful",
+            ...(options?.reason ? { reason: options.reason } : {}),
+          },
         });
       });
 
@@ -344,8 +373,9 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             });
           }
           yield* ensureSupportedKimiVersion(input.threadId);
+          const mcp = McpProviderSession.readMcpProviderSession(input.threadId);
           const existing = sessions.get(input.threadId);
-          if (existing) yield* stopSessionInternal(existing);
+          if (existing) yield* stopSessionInternal(existing, { clearMcp: false });
 
           const scope = yield* Scope.make("sequential");
           let transferred = false;
@@ -354,7 +384,11 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           );
           const cwd = path.resolve(input.cwd.trim());
           const resumeSessionId = parseKimiResume(input.resumeCursor)?.sessionId;
-          const mcp = McpProviderSession.readMcpProviderSession(input.threadId);
+          const nativeLoggers = makeAcpNativeLoggers({
+            nativeEventLogger: options?.nativeEventLogger,
+            provider: PROVIDER,
+            threadId: input.threadId,
+          });
           const acp = yield* makeKimiAcpRuntime({
             kimiSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
@@ -362,6 +396,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
+            ...nativeLoggers,
             ...(mcp
               ? {
                   mcpServers: [
@@ -382,7 +417,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 new ProviderAdapterProcessError({
                   provider: PROVIDER,
                   threadId: input.threadId,
-                  detail: cause.message,
+                  detail: "Failed to start the Kimi ACP runtime.",
                   cause,
                 }),
             ),
@@ -544,6 +579,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             pendingApprovals,
             pendingUserInputs,
             notificationFiber: undefined,
+            stoppedSignal: yield* Deferred.make<void>(),
             supportsImages: initializedPromptSupportsImages(started.initializeResult),
             stopped: false,
           };
@@ -622,6 +658,19 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             Effect.forkIn(ownedContext.scope),
           );
           sessions.set(input.threadId, ownedContext);
+          yield* Effect.exit(acp.processExit).pipe(
+            Effect.flatMap((processExit) => {
+              if (ownedContext.stopped || sessions.get(ownedContext.threadId) !== ownedContext) {
+                return Effect.void;
+              }
+              const reason = Exit.isSuccess(processExit)
+                ? `Kimi ACP process exited with code ${processExit.value}.`
+                : "Kimi ACP process exited unexpectedly.";
+              return stopSessionInternal(ownedContext, { exitKind: "error", reason });
+            }),
+            Effect.catch(() => Effect.void),
+            Effect.forkIn(adapterScope),
+          );
           transferred = true;
           yield* publish({
             type: "session.started",
@@ -719,7 +768,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                   new ProviderAdapterRequestError({
                     provider: PROVIDER,
                     method: "session/prompt",
-                    detail: cause.message,
+                    detail: "Failed to read the Kimi prompt attachment.",
                     cause,
                   }),
               ),
@@ -765,7 +814,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", cause),
               ),
             );
-          yield* context.acp.drainEvents;
+          yield* Effect.raceFirst(context.acp.drainEvents, Deferred.await(context.stoppedSignal));
           if (
             sessions.get(input.threadId) !== context ||
             context.stopped ||
@@ -916,7 +965,9 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
         return context !== undefined && !context.stopped;
       });
     const stopAll: KimiAdapterShape["stopAll"] = () =>
-      Effect.forEach(Array.from(sessions.values()), stopSessionInternal, { discard: true });
+      Effect.forEach(Array.from(sessions.values()), (context) => stopSessionInternal(context), {
+        discard: true,
+      });
 
     yield* Effect.addFinalizer(() =>
       stopAll().pipe(

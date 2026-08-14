@@ -20,6 +20,9 @@ const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHO
 const emitAvailableCommandUpdates = process.env.T3_ACP_EMIT_AVAILABLE_COMMAND_UPDATES === "1";
 const emitAvailableCommandClearUpdates =
   process.env.T3_ACP_EMIT_AVAILABLE_COMMAND_CLEAR_UPDATES === "1";
+const emitAvailableCommandsDuringCreate =
+  process.env.T3_ACP_EMIT_AVAILABLE_COMMANDS_DURING_CREATE === "1";
+const exitAfterPrompt = process.env.T3_ACP_EXIT_AFTER_PROMPT === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
@@ -323,11 +326,24 @@ const program = Effect.gen(function* () {
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (emitAvailableCommandsDuringCreate) {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              { name: "skill:startup", description: "Available during session creation" },
+            ],
+          },
+        });
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
@@ -947,6 +963,17 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: promptResponseText ?? "hello from mock" },
         },
       });
+
+      if (exitAfterPrompt) {
+        yield* Effect.sleep("1 millis").pipe(
+          Effect.andThen(
+            Effect.sync((): void => {
+              process.exit(9);
+            }),
+          ),
+          Effect.forkDetach,
+        );
+      }
 
       return { stopReason: "end_turn" };
     }),
