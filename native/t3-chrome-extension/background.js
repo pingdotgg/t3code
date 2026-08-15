@@ -116,7 +116,12 @@ function connect() {
       hadLiveSession = false;
       connectedAt = 0;
     }
-    if (tabsToClose.length) void closeOwnedTabs(tabsToClose, groupToClear);
+    if (tabsToClose.length) {
+      for (const tabId of tabsToClose) {
+        void hideCursor(tabId);
+      }
+      void closeOwnedTabs(tabsToClose, groupToClear);
+    }
   });
 }
 
@@ -359,36 +364,145 @@ async function clickAt(tabId, x, y) {
 ///
 /// Uses the PNG exported from BubbleView in AgentCursor.swift (not a hand-traced
 /// SVG) so Chrome and desktop stay pixel-matched: same glow, fill, rim, shape.
+/// Motion mirrors the desktop overlay: slow fade-in, cubic flight with tip
+/// following path tangent, and fade-out after Computer Use tools stop (not a
+/// short idle after the last pixel move).
 const CURSOR_IMG_URL = chrome.runtime.getURL("icons/cursor-112.png");
 const CURSOR_HOTSPOT = 56; // OverlayController.hotspot — tip at centre of 112×112
+const CURSOR_FADE_IN_MS = 500;
+const CURSOR_FADE_OUT_MS = 350;
+/** Match desktop `T3_DESKTOP_AGENT_CURSOR_TASK_FADE_SECS` default (8s). */
+const CURSOR_TASK_FADE_MS = 8000;
 
 const PAINT_CURSOR_JS = `
-  (function paint(x, y, src) {
+  (function paint(x, y, src, fadeInMs, fadeOutMs, taskFadeMs, hotspot) {
     const ID = '__t3AgentCursor';
+    const easeInOut = (t) => t * t * (3 - 2 * t);
+    const bezier = (p0, p1, p2, p3, t) => {
+      const u = 1 - t;
+      return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3;
+    };
+    const bezierTan = (p0, p1, p2, p3, t) => {
+      const u = 1 - t;
+      return 3*u*u*(p1-p0) + 6*u*t*(p2-p1) + 3*t*t*(p3-p2);
+    };
+
     let el = document.getElementById(ID);
     if (!el) {
       el = document.createElement('div');
       el.id = ID;
       el.style.cssText = 'position:fixed;left:0;top:0;width:112px;height:112px;' +
-        'pointer-events:none;z-index:2147483647;opacity:0;' +
-        'transition:transform .35s cubic-bezier(.22,1.4,.36,1),opacity .28s ease;';
+        'pointer-events:none;z-index:2147483647;opacity:0;will-change:transform,opacity;' +
+        'transform-origin:' + hotspot + 'px ' + hotspot + 'px;';
       const img = document.createElement('img');
       img.src = src;
       img.width = 112;
       img.height = 112;
       img.alt = '';
       img.draggable = false;
-      img.style.display = 'block';
+      img.style.cssText = 'display:block;width:112px;height:112px;';
       el.appendChild(img);
       (document.documentElement || document.body).appendChild(el);
+      el.__t3 = { x: x, y: y, tilt: 0, arc: 1, raf: 0 };
     } else {
       const img = el.querySelector('img');
       if (img && img.src !== src) img.src = src;
     }
-    el.style.transform = 'translate(' + (x - ${CURSOR_HOTSPOT}) + 'px,' + (y - ${CURSOR_HOTSPOT}) + 'px)';
-    requestAnimationFrame(function () { el.style.opacity = '1'; });
+
+    const st = el.__t3 || (el.__t3 = { x: x, y: y, tilt: 0, arc: 1, raf: 0 });
+    if (st.raf) { cancelAnimationFrame(st.raf); st.raf = 0; }
     clearTimeout(el.__t3hide);
-    el.__t3hide = setTimeout(function () { el.style.opacity = '0'; }, 1900);
+
+    const place = (px, py, tilt) => {
+      st.x = px; st.y = py; st.tilt = tilt;
+      el.style.transform = 'translate(' + (px - hotspot) + 'px,' + (py - hotspot) +
+        'px) rotate(' + tilt + 'rad)';
+    };
+
+    const fromX = st.x;
+    const fromY = st.y;
+    const dx = x - fromX;
+    const dy = y - fromY;
+    const dist = Math.hypot(dx, dy);
+    const fresh = parseFloat(getComputedStyle(el).opacity) < 0.05;
+
+    let waitMs = 80;
+    if (fresh) {
+      place(x, y, 0);
+      el.style.transition = 'opacity ' + fadeInMs + 'ms ease-out';
+      // Force style flush so the opacity transition runs from 0.
+      void el.offsetWidth;
+      el.style.opacity = '1';
+      waitMs = fadeInMs + 40;
+    } else if (dist < 3) {
+      el.style.transition = 'opacity ' + fadeInMs + 'ms ease-out';
+      el.style.opacity = '1';
+      place(x, y, 0);
+      waitMs = 60;
+    } else {
+      el.style.transition = 'opacity 120ms linear';
+      el.style.opacity = '1';
+      st.arc *= -1;
+      const handle = Math.min(72, Math.max(22, dist * 0.18));
+      const nx = -dy / dist;
+      const ny = dx / dist;
+      let sdx, sdy;
+      if (Math.abs(st.tilt) > 0.08) {
+        sdx = Math.sin(-st.tilt);
+        sdy = -Math.cos(-st.tilt);
+      } else {
+        sdx = dx / dist;
+        sdy = dy / dist;
+      }
+      const depart = Math.min(handle, dist * 0.28);
+      const c1x = fromX + sdx * depart + nx * Math.min(36, dist * 0.10) * st.arc;
+      const c1y = fromY + sdy * depart + ny * Math.min(36, dist * 0.10) * st.arc;
+      // Approach from below so final tangent is screen-up → tip upright on land.
+      const approach = Math.min(handle * 0.85, Math.max(20, dist * 0.16));
+      const c2x = x;
+      const c2y = y + approach;
+      const duration = Math.min(0.85, Math.max(0.28, 0.20 + dist / 1100.0));
+      waitMs = Math.round(duration * 1000) + 40;
+      const t0 = performance.now();
+      const tick = (now) => {
+        const u = Math.min(1, (now - t0) / (duration * 1000));
+        const t = easeInOut(u);
+        const px = bezier(fromX, c1x, c2x, x, t);
+        const py = bezier(fromY, c1y, c2y, y, t);
+        const tx = bezierTan(fromX, c1x, c2x, x, t);
+        const ty = bezierTan(fromY, c1y, c2y, y, t);
+        let tilt = st.tilt;
+        const len = Math.hypot(tx, ty);
+        if (len > 0.001) {
+          const desired = -Math.atan2(tx, -ty);
+          let delta = desired - tilt;
+          while (delta > Math.PI) delta -= Math.PI * 2;
+          while (delta < -Math.PI) delta += Math.PI * 2;
+          tilt += delta * Math.min(1, 0.12 + t * 0.55);
+        }
+        if (u >= 1) tilt = 0;
+        place(px, py, tilt);
+        if (u < 1) {
+          st.raf = requestAnimationFrame(tick);
+        } else {
+          st.raf = 0;
+          place(x, y, 0);
+        }
+      };
+      st.raf = requestAnimationFrame(tick);
+    }
+
+    el.__t3hide = setTimeout(function () {
+      el.style.transition = 'opacity ' + fadeOutMs + 'ms ease';
+      el.style.opacity = '0';
+    }, taskFadeMs);
+
+    return {
+      ok: true,
+      waitMs: waitMs,
+      fresh: fresh,
+      dist: dist
+    };
   })
 `;
 
@@ -396,29 +510,52 @@ async function paintCursor(tabId, x, y) {
   try {
     const res = await send(tabId, "Runtime.evaluate", {
       expression:
-        `(${PAINT_CURSOR_JS})(${Number(x)}, ${Number(y)}, ${JSON.stringify(CURSOR_IMG_URL)});` +
         `(() => {` +
+        `  const r = (${PAINT_CURSOR_JS})(${Number(x)}, ${Number(y)}, ${JSON.stringify(CURSOR_IMG_URL)},` +
+        `    ${CURSOR_FADE_IN_MS}, ${CURSOR_FADE_OUT_MS}, ${CURSOR_TASK_FADE_MS}, ${CURSOR_HOTSPOT});` +
         `  const el = document.getElementById('__t3AgentCursor');` +
         `  if (!el) return { ok: false, reason: 'paint produced no element' };` +
         `  const img = el.querySelector('img');` +
-        `  const s = getComputedStyle(el);` +
-        `  return {` +
-        `    ok: true,` +
-        `    opacity: s.opacity,` +
+        `  return Object.assign({}, r, {` +
         `    hasGlow: !!(img && /cursor-112\\.png/.test(img.src)),` +
         `    darkFill: !!(img && /cursor-112\\.png/.test(img.src)),` +
         `    transform: el.style.transform || ''` +
-        `  };` +
+        `  });` +
         `})()`,
       returnByValue: true,
     });
     if (res?.exceptionDetails) {
       return { ok: false, reason: res.exceptionDetails.text || "paint evaluate failed" };
     }
-    return res?.result?.value || { ok: false, reason: "empty paint result" };
+    const value = res?.result?.value || { ok: false, reason: "empty paint result" };
+    const waitMs = Math.max(0, Math.min(1200, Number(value.waitMs) || 0));
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    return value;
   } catch (e) {
     // Decorative only — a paint failure must never fail the click.
     return { ok: false, reason: e && e.message ? e.message : String(e) };
+  }
+}
+
+async function hideCursor(tabId) {
+  try {
+    await send(tabId, "Runtime.evaluate", {
+      expression:
+        `(() => {` +
+        `  const el = document.getElementById('__t3AgentCursor');` +
+        `  if (!el) return false;` +
+        `  clearTimeout(el.__t3hide);` +
+        `  if (el.__t3 && el.__t3.raf) cancelAnimationFrame(el.__t3.raf);` +
+        `  el.style.transition = 'opacity ${CURSOR_FADE_OUT_MS}ms ease';` +
+        `  el.style.opacity = '0';` +
+        `  return true;` +
+        `})()`,
+      returnByValue: true,
+    });
+  } catch {
+    // Tab may already be gone.
   }
 }
 
