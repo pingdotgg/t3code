@@ -704,7 +704,7 @@ const mobileEndorsementRows = [
       height: 44px;
     }
 
-    /* Three stacked on the left, two on the right — keeps the center CTA clear. */
+    /* Three above the headline, two beside the CTA — keeps the copy clear. */
     .hero-float-mark.hf-claude {
       top: 44px;
       left: 10px;
@@ -712,8 +712,8 @@ const mobileEndorsementRows = [
     }
 
     .hero-float-mark.hf-grok {
-      top: 240px;
-      left: 4px;
+      top: 44px;
+      left: calc(50% - 39px);
       right: auto;
       transform: rotate(-4deg);
     }
@@ -741,8 +741,8 @@ const mobileEndorsementRows = [
 
   @media (max-width: 340px) {
     .hero-float-mark.hf-grok {
-      top: 220px;
-      left: 0;
+      top: 57px;
+      left: calc(50% - 26px);
       width: 52px;
       height: 52px;
       border-radius: 14px;
