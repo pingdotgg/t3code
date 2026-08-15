@@ -1128,7 +1128,8 @@ export interface DesktopBridge {
    * builds lack it; callers fall back to VS Code only.
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
-* Computer Use TCC / extension readiness. Optional so older desktop builds
+  /**
+   * Computer Use TCC / extension readiness. Optional so older desktop builds
    * still load the settings page without crashing.
    */
   getComputerUsePermissions?: () => Promise<DesktopComputerUsePermissionsState>;
