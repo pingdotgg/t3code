@@ -142,7 +142,8 @@ describe("WSL runtime cache", () => {
 
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
     expect(script).toContain('  [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&');
-    expect(script).toContain('  [ -f "$runtime_root/node_modules/effect/package.json" ]');
+    expect(script).toContain('  [ -f "$runtime_root/node_modules/node-pty/package.json" ]');
+    expect(script).not.toContain("node_modules/effect/package.json");
     expect(script).toContain("if runtime_is_ready; then");
     expect(script).toContain("trap 'exit 1' HUP INT TERM");
     expect(script).toContain('exec 9> "$runtime_lock"');
@@ -156,7 +157,7 @@ describe("WSL runtime cache", () => {
       "tar -xzf '/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz' -C \"$runtime_tmp\"",
     );
     expect(script).toContain('test -f "$runtime_tmp/apps/server/dist/bin.mjs"');
-    expect(script).toContain('test -f "$runtime_tmp/node_modules/effect/package.json"');
+    expect(script).toContain('test -f "$runtime_tmp/node_modules/node-pty/package.json"');
     expect(script).toContain('mv -T "$runtime_tmp" "$runtime_root"');
     expect(script).not.toContain('rm -rf "$runtime_root"');
 
