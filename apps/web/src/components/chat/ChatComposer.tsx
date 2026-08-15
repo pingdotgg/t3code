@@ -107,6 +107,12 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+import {
+  getComposerPromptLengthValidationMessage,
+  getComposerSubmissionValidationMessage,
+  submitComposerDraft,
+} from "./composerSubmission";
+import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -488,6 +494,8 @@ export interface ChatComposerHandle {
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
   };
+  /** Validate the fully composed text immediately before a provider turn starts. */
+  validateProviderInput: (providerInput: string) => boolean;
 }
 
 // --------------------------------------------------------------------------
@@ -951,6 +959,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
+  const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
+    null,
+  );
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
@@ -967,6 +979,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
+  const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
   const composerMenuOpenRef = useRef(false);
   const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
@@ -1310,6 +1323,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [prompt, promptRef]);
 
   useEffect(() => {
+    if (composerSubmissionError === null) return;
+    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    if (nextError !== composerSubmissionError) {
+      setComposerSubmissionError(nextError);
+    }
+  }, [composerSubmissionError, prompt]);
+
+  useEffect(() => {
+    setProviderInputSubmissionError(null);
+  }, [
+    composerElementContexts,
+    composerPreviewAnnotations,
+    composerReviewComments,
+    composerTerminalContexts,
+    prompt,
+    selectedModel,
+    selectedPromptEffort,
+    selectedProvider,
+  ]);
+
+  useEffect(() => {
     composerImagesRef.current = composerImages;
   }, [composerImages, composerImagesRef]);
 
@@ -1400,6 +1434,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   useEffect(() => {
     setComposerHighlightedItemId(null);
+    setComposerSubmissionError(null);
+    setProviderInputSubmissionError(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     setIsDragOverComposer(false);
@@ -1826,17 +1862,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
-      onSend(event);
+      const submission = submitComposerDraft({
+        prompt: promptRef.current,
+        submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+        event,
+        onSend: (sendEvent) => {
+          // ChatView reports its final composed-input preflight through the
+          // composer handle before its first asynchronous send step.
+          providerInputRejectedRef.current = false;
+          onSend(sendEvent);
+          return !providerInputRejectedRef.current;
+        },
+      });
+      setComposerSubmissionError(submission.validationMessage);
+      if (!submission.didDispatch) return;
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
     },
     [
       activeThreadId,
+      activePendingProgress,
       blurMobileComposerAfterSend,
       isSendDisabled,
       noProviderAvailable,
       onSend,
+      promptRef,
       shouldBlurMobileComposerOnSubmit,
     ],
   );
@@ -2590,6 +2641,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedModel,
         selectedProviderModels,
       }),
+      validateProviderInput: (providerInput: string) => {
+        const validationMessage = getComposerSubmissionValidationMessage({
+          prompt: promptRef.current,
+          providerInput,
+          submissionTarget: "provider-turn",
+        });
+        providerInputRejectedRef.current = validationMessage !== null;
+        setProviderInputSubmissionError(validationMessage);
+        return validationMessage === null;
+      },
     }),
     [
       activeThread,
@@ -3057,6 +3118,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               ) : null}
             </div>
           </div>
+
+          <ComposerPromptLengthValidation
+            message={providerInputSubmissionError ?? composerSubmissionError}
+          />
 
           {/* Bottom toolbar */}
           {isComposerCollapsedMobile ? null : activePendingApproval ? (
