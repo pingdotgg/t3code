@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream";
 
 import {
   archivedShellStreamItemFromThreadShell,
+  buildActiveShellSnapshot,
   coalesceShellApplicationEvents,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
@@ -42,6 +43,35 @@ const emptyShellSnapshot = {
   threads: [],
   archivedThreads: [],
 } as OrchestrationV2ShellSnapshot;
+
+describe("buildActiveShellSnapshot", () => {
+  it("never duplicates archived rows into the regular shell", () => {
+    const active = shellFixture({ archivedAt: null });
+    const archived = shellFixture({
+      id: ThreadId.make("thread-archived"),
+      archivedAt: "2026-07-30T00:00:00.000Z" as never,
+    });
+
+    expect(
+      buildActiveShellSnapshot({
+        projects: [],
+        threads: {
+          schemaVersion: 1,
+          snapshotSequence: 4,
+          threads: [active],
+          archivedThreads: [archived],
+        },
+        snapshotSequence: 7,
+      }),
+    ).toEqual({
+      schemaVersion: 1,
+      snapshotSequence: 7,
+      projects: [],
+      threads: [active],
+      archivedThreads: [],
+    });
+  });
+});
 
 describe("coalesceShellApplicationEvents", () => {
   it("keeps the newest event per aggregate and preserves sequence order", () => {
@@ -94,19 +124,19 @@ describe("shellStreamItemFromThreadShell", () => {
     });
   });
 
-  it("emits an archive update when the shell is archived", () => {
+  it("removes archived threads from the active-only shell", () => {
     const shell = shellFixture({ archivedAt: "2026-07-30T00:00:00.000Z" as never });
     expect(
       shellStreamItemFromThreadShell({ stored: storedThreadEvent(4, "thread-a"), shell }),
     ).toEqual({
-      kind: "thread.updated",
+      kind: "thread.removed",
       sequence: 4,
-      location: "archive",
-      thread: shell,
+      location: "active",
+      threadId: "thread-a",
     });
   });
 
-  it("emits a removal from the archive when an archived thread is deleted", () => {
+  it("emits an active-shell removal when an archived thread is deleted", () => {
     expect(
       shellStreamItemFromThreadShell({
         stored: storedThreadEvent(6, "thread-a", {
@@ -118,7 +148,7 @@ describe("shellStreamItemFromThreadShell", () => {
     ).toEqual({
       kind: "thread.removed",
       sequence: 6,
-      location: "archive",
+      location: "active",
       threadId: "thread-a",
     });
   });

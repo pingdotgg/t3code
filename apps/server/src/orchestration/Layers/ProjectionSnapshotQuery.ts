@@ -2620,6 +2620,24 @@ pending_approval_requests AS (
       ),
     );
 
+  const getProjectShellsWithoutEnrichment: ProjectionSnapshotQueryShape["getProjectShellsWithoutEnrichment"] =
+    () =>
+      listProjectRows(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getProjectShellsWithoutEnrichment:query",
+            "ProjectionSnapshotQuery.getProjectShellsWithoutEnrichment:decodeRows",
+          ),
+        ),
+        Effect.map((rows) =>
+          Arr.filterMap(rows, (row) =>
+            row.deletedAt === null
+              ? Result.succeed(mapProjectShellRow(row, null))
+              : Result.failVoid,
+          ),
+        ),
+      );
+
   const getFirstActiveThreadIdByProjectId: ProjectionSnapshotQueryShape["getFirstActiveThreadIdByProjectId"] =
     (projectId) =>
       getFirstActiveThreadIdByProject({ projectId }).pipe(
@@ -3215,6 +3233,7 @@ pending_approval_requests AS (
     getEventReplayStats,
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
+    getProjectShellsWithoutEnrichment,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
     getFullThreadDiffContext,

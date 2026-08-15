@@ -279,10 +279,9 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<OrchestrationV2ThreadProjection, ThreadManagementError>;
-  readonly getShellSnapshot: () => Effect.Effect<
-    OrchestrationV2ThreadShellSnapshot,
-    OrchestratorV2Error
-  >;
+  readonly getShellSnapshot: (options?: {
+    readonly location?: "active" | "archive";
+  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
   readonly getThreadShell: OrchestratorV2["Service"]["getThreadShell"];
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
