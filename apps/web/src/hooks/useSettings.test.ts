@@ -592,6 +592,84 @@ describe("synced plan mode", () => {
     },
   );
 
+  it("does not adopt stale shell preferences after an inactive patch settles", async () => {
+    const environmentId = EnvironmentId.make("primary");
+    const controller = createSyncedPlanModeHydrationController();
+    const previous = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    const stale = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:01:00.000Z",
+    } as const;
+    let resolvePatch!: (
+      result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>,
+    ) => void;
+    const patch = vi.fn<SyncedPlanModeHydrationInput<never>["patch"]>(
+      () =>
+        new Promise((resolve) => {
+          resolvePatch = resolve;
+        }),
+    );
+    let localValue = false;
+    const persisted: boolean[] = [];
+    const persist = (value: boolean) => {
+      localValue = value;
+      persisted.push(value);
+    };
+    const deactivate = controller.synchronize({
+      environmentId,
+      primaryEnvironmentId: environmentId,
+      clientHydrated: true,
+      clientValue: localValue,
+      live: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: previous.updatedAt,
+      patch,
+      persist,
+    });
+
+    localValue = true;
+    controller.write({
+      environmentId,
+      value: localValue,
+      serverPreferences: previous,
+      canPatch: true,
+      now: "2026-08-14T12:02:00.000Z",
+      patch,
+      persist,
+    });
+    deactivate?.();
+    resolvePatch(
+      AsyncResult.success({
+        planModeEnabled: true,
+        updatedAt: "2026-08-14T12:02:00.000Z",
+      }),
+    );
+    await Promise.resolve();
+
+    expect(persisted).toEqual([]);
+
+    controller.synchronize({
+      environmentId,
+      primaryEnvironmentId: environmentId,
+      clientHydrated: true,
+      clientValue: localValue,
+      live: true,
+      serverPreferences: stale,
+      canPatch: true,
+      now: "2026-08-14T12:03:00.000Z",
+      patch,
+      persist,
+    });
+
+    expect(localValue).toBe(true);
+    expect(persisted).toEqual([]);
+    expect(patch).toHaveBeenCalledOnce();
+  });
+
   it("keeps the latest rapid toggle when responses settle out of order", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const controller = createSyncedPlanModeHydrationController();
