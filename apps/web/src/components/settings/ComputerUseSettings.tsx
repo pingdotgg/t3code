@@ -135,11 +135,19 @@ export function ComputerUseSettings() {
     };
   }, [onDesktop, refreshPermissions]);
 
-  const openPrivacyPane = async (pane: DesktopComputerUsePrivacyPane) => {
+  const openPrivacyPane = async (pane: DesktopComputerUsePrivacyPane): Promise<boolean> => {
     const bridge = window.desktopBridge;
-    if (!bridge?.openComputerUsePrivacySettings) return;
-    await bridge.openComputerUsePrivacySettings(pane);
+    if (!bridge?.openComputerUsePrivacySettings) {
+      setPermError(BRIDGE_UNSUPPORTED_MESSAGE);
+      return false;
+    }
+    const opened = await bridge.openComputerUsePrivacySettings(pane);
+    if (!opened) {
+      setPermError("Could not open System Settings. Open Privacy & Security manually.");
+      return false;
+    }
     window.setTimeout(() => void refreshPermissions(), 1500);
+    return true;
   };
 
   const chromeStatus = permState?.chromeExtension;
@@ -434,9 +442,12 @@ export function ComputerUseSettings() {
             <Button
               type="button"
               onClick={() => {
-                const pane = permissionPrompt?.kind;
-                setPermissionPrompt(null);
-                if (pane) void openPrivacyPane(pane);
+                void (async () => {
+                  const pane = permissionPrompt?.kind;
+                  if (!pane) return;
+                  const opened = await openPrivacyPane(pane);
+                  if (opened) setPermissionPrompt(null);
+                })();
               }}
             >
               Open System Settings
