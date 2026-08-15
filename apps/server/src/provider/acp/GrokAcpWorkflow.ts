@@ -55,6 +55,12 @@ export interface GrokSubagentUpdate {
   readonly output: string | undefined;
 }
 
+export interface GrokTypedUsageSnapshot {
+  readonly totalTokens: number;
+  readonly durationMs?: number;
+  readonly toolUses?: number;
+}
+
 export interface GrokWorkflowTrackState {
   readonly seenRunIds: ReadonlySet<string>;
   readonly completedRunIds: ReadonlySet<string>;
@@ -63,6 +69,8 @@ export interface GrokWorkflowTrackState {
   readonly memberFingerprints: ReadonlyMap<string, string>;
   readonly seenSubagentIds: ReadonlySet<string>;
   readonly completedSubagentIds: ReadonlySet<string>;
+  /** Last published usage per task id so a tool-only tick cannot zero tokens. */
+  readonly usageByTaskId: ReadonlyMap<string, GrokTypedUsageSnapshot>;
 }
 
 export function emptyGrokWorkflowTrackState(): GrokWorkflowTrackState {
@@ -74,6 +82,7 @@ export function emptyGrokWorkflowTrackState(): GrokWorkflowTrackState {
     memberFingerprints: new Map(),
     seenSubagentIds: new Set(),
     completedSubagentIds: new Set(),
+    usageByTaskId: new Map(),
   };
 }
 
@@ -305,22 +314,29 @@ function agentCompletedStatus(state: string): "completed" | "failed" | "stopped"
   return "completed";
 }
 
-function typedUsageFromCounts(input: {
-  readonly tokensUsed?: number;
-  readonly durationMs?: number;
-  readonly toolCallCount?: number;
-}): Record<string, unknown> | undefined {
+function mergeTypedUsageFromCounts(
+  input: {
+    readonly tokensUsed?: number;
+    readonly durationMs?: number;
+    readonly toolCallCount?: number;
+  },
+  previous: GrokTypedUsageSnapshot | undefined,
+): GrokTypedUsageSnapshot | undefined {
   if (
     input.tokensUsed === undefined &&
     input.durationMs === undefined &&
     input.toolCallCount === undefined
   ) {
-    return undefined;
+    return previous;
   }
+  // RuntimeTaskUsage requires totalTokens. A later tool/duration-only tick
+  // must reuse the last known count; `?? 0` would replace the task-usage row.
+  const durationMs = input.durationMs ?? previous?.durationMs;
+  const toolUses = input.toolCallCount ?? previous?.toolUses;
   return {
-    totalTokens: input.tokensUsed ?? 0,
-    ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
-    ...(input.toolCallCount !== undefined ? { toolUses: input.toolCallCount } : {}),
+    totalTokens: input.tokensUsed ?? previous?.totalTokens ?? 0,
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(toolUses !== undefined ? { toolUses } : {}),
   };
 }
 
@@ -333,6 +349,7 @@ export function applyGrokWorkflowUpdate(
   const seenMemberIds = new Set(state.seenMemberIds);
   const completedMemberIds = new Set(state.completedMemberIds);
   const memberFingerprints = new Map(state.memberFingerprints);
+  const usageByTaskId = new Map(state.usageByTaskId);
   const events: Array<GrokTaskEventSpec> = [];
 
   const phases = update.phases.map((phase, index) => ({ index, title: phase.title }));
@@ -418,20 +435,23 @@ export function applyGrokWorkflowUpdate(
       seenMemberIds.add(memberId);
       events.push({ type: "task.started", payload: linkage });
     }
+    const typedUsage = mergeTypedUsageFromCounts(
+      {
+        tokensUsed: agent.tokensUsed > 0 ? agent.tokensUsed : undefined,
+        durationMs: agent.durationMs > 0 ? agent.durationMs : undefined,
+      },
+      usageByTaskId.get(memberId),
+    );
+    if (typedUsage) {
+      usageByTaskId.set(memberId, typedUsage);
+    }
     events.push({
       type: "task.progress",
       payload: {
         ...linkage,
         summary: agent.state,
         status,
-        ...(agent.tokensUsed > 0 || agent.durationMs > 0
-          ? {
-              typedUsage: {
-                totalTokens: agent.tokensUsed,
-                ...(agent.durationMs > 0 ? { durationMs: agent.durationMs } : {}),
-              },
-            }
-          : {}),
+        ...(typedUsage ? { typedUsage } : {}),
       },
     });
     if (grokWorkflowAgentIsTerminal(agent.state) && !completedMemberIds.has(memberId)) {
@@ -442,7 +462,7 @@ export function applyGrokWorkflowUpdate(
           ...linkage,
           status: agentCompletedStatus(agent.state),
           summary: agent.label,
-          ...(agent.tokensUsed > 0 ? { typedUsage: { totalTokens: agent.tokensUsed } } : {}),
+          ...(typedUsage ? { typedUsage } : {}),
         },
       });
     }
@@ -456,6 +476,7 @@ export function applyGrokWorkflowUpdate(
       seenMemberIds,
       completedMemberIds,
       memberFingerprints,
+      usageByTaskId,
     },
     events,
   };
@@ -467,6 +488,7 @@ export function applyGrokSubagentUpdate(
 ): { readonly state: GrokWorkflowTrackState; readonly events: ReadonlyArray<GrokTaskEventSpec> } {
   const seenSubagentIds = new Set(state.seenSubagentIds);
   const completedSubagentIds = new Set(state.completedSubagentIds);
+  const usageByTaskId = new Map(state.usageByTaskId);
   const events: Array<GrokTaskEventSpec> = [];
   const title = update.role ?? update.subagentId;
   const linkage = {
@@ -489,7 +511,10 @@ export function applyGrokSubagentUpdate(
       events.push({ type: "task.started", payload: linkage });
     }
     if (!completedSubagentIds.has(update.subagentId)) {
-      const typedUsage = typedUsageFromCounts(update);
+      const typedUsage = mergeTypedUsageFromCounts(update, usageByTaskId.get(update.subagentId));
+      if (typedUsage) {
+        usageByTaskId.set(update.subagentId, typedUsage);
+      }
       events.push({
         type: "task.progress",
         payload: {
@@ -507,7 +532,10 @@ export function applyGrokSubagentUpdate(
     }
     completedSubagentIds.add(update.subagentId);
     const finished = update.status ?? "completed";
-    const typedUsage = typedUsageFromCounts(update);
+    const typedUsage = mergeTypedUsageFromCounts(update, usageByTaskId.get(update.subagentId));
+    if (typedUsage) {
+      usageByTaskId.set(update.subagentId, typedUsage);
+    }
     events.push({
       type: "task.completed",
       payload: {
@@ -525,6 +553,7 @@ export function applyGrokSubagentUpdate(
       ...state,
       seenSubagentIds,
       completedSubagentIds,
+      usageByTaskId,
     },
     events,
   };

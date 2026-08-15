@@ -1569,6 +1569,46 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         return { threadId, turns: ctx.turns };
       });
 
+    const cancelActivePromptsBeforeRewind = (ctx: GrokSessionContext) =>
+      Effect.gen(function* () {
+        const activeTurnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
+        const hasLivePrompt =
+          ctx.promptsInFlight > 0 ||
+          ctx.session.status === "running" ||
+          ctx.session.status === "connecting";
+        if (!hasLivePrompt) {
+          return;
+        }
+        if (activeTurnId !== undefined) {
+          ctx.interruptedTurnIds.add(activeTurnId);
+        }
+        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+        yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
+        yield* Effect.ignore(
+          ctx.acp.cancel.pipe(
+            Effect.mapError((error) =>
+              mapAcpToAdapterError(PROVIDER, ctx.threadId, "session/cancel", error),
+            ),
+          ),
+        );
+        if (activeTurnId) {
+          yield* settlePromptInFlight(ctx.threadId, activeTurnId, ctx.acpSessionId, {
+            completedStopReason: "cancelled",
+            settleAllPrompts: true,
+          });
+          return;
+        }
+        const updatedAt = yield* nowIso;
+        ctx.promptsInFlight = 0;
+        ctx.activeTurnId = undefined;
+        const { activeTurnId: _activeTurnId, ...readySession } = ctx.session;
+        ctx.session = {
+          ...readySession,
+          status: "ready",
+          updatedAt,
+        };
+      });
+
     const rollbackThread: GrokAdapterShape["rollbackThread"] = (threadId, numTurns) =>
       withThreadLock(
         threadId,
@@ -1581,6 +1621,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               issue: "numTurns must be an integer >= 1.",
             });
           }
+          yield* cancelActivePromptsBeforeRewind(ctx);
           const promptCount = grokPromptCountForTurns(ctx.turns, numTurns);
           if (promptCount < 1) {
             return yield* new ProviderAdapterRequestError({

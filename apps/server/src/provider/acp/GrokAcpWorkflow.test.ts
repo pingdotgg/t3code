@@ -161,4 +161,41 @@ describe("GrokAcpWorkflow", () => {
       toolUses: 4,
     });
   });
+
+  it("does not let a tool-only tick zero earlier subagent tokens", () => {
+    const withTokens = parseXAiSubagentUpdate({
+      update: {
+        sessionUpdate: "subagent_progress",
+        subagent_id: "sa_1",
+        tokens_used: 90,
+      },
+    });
+    const toolsOnly = parseXAiSubagentUpdate({
+      update: {
+        sessionUpdate: "subagent_progress",
+        subagent_id: "sa_1",
+        tool_call_count: 3,
+      },
+    });
+    const finishedDurationOnly = parseXAiSubagentUpdate({
+      update: {
+        sessionUpdate: "subagent_finished",
+        subagent_id: "sa_1",
+        status: "completed",
+        duration_ms: 1200,
+      },
+    });
+    const afterTokens = applyGrokSubagentUpdate(emptyGrokWorkflowTrackState(), withTokens!);
+    const afterTools = applyGrokSubagentUpdate(afterTokens.state, toolsOnly!);
+    const afterFinish = applyGrokSubagentUpdate(afterTools.state, finishedDurationOnly!);
+    expect(afterTools.events.at(-1)?.payload.typedUsage).toEqual({
+      totalTokens: 90,
+      toolUses: 3,
+    });
+    expect(afterFinish.events[0]?.payload.typedUsage).toEqual({
+      totalTokens: 90,
+      durationMs: 1200,
+      toolUses: 3,
+    });
+  });
 });
