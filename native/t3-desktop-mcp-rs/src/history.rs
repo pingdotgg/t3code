@@ -609,11 +609,11 @@ fn path_needle_matches(page: &str, raw_needle: &str) -> bool {
 }
 
 fn normalize_path(path: &str) -> String {
-    let trimmed = path.trim_end_matches('/');
+    let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
         "/".to_string()
     } else {
-        trimmed.to_string()
+        format!("/{trimmed}")
     }
 }
 
