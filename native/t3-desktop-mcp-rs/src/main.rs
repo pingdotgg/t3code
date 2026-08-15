@@ -80,7 +80,11 @@ fn main() {
             None
         }
     };
-    let mut browser = browser::BrowserBridge::new();
+    let mut browser = if tools::browser_control_enabled() {
+        browser::BrowserBridge::new()
+    } else {
+        browser::BrowserBridge::inert()
+    };
 
     for line in stdin.lock().lines() {
         let line = match line {

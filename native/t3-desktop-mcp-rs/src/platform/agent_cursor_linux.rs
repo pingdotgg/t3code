@@ -288,6 +288,7 @@ impl Anim {
 
 struct Overlay {
     conn: RustConnection,
+    screen_num: usize,
     win: u32,
     gc: u32,
     depth: u8,
@@ -438,6 +439,7 @@ fn ui_thread(rx: Receiver<Cmd>) {
 
     let mut overlay = Overlay {
         conn,
+        screen_num,
         win,
         gc,
         depth,
@@ -774,14 +776,28 @@ fn present(overlay: &mut Overlay, alpha: f64) {
         &overlay.put_buf,
     );
 
-    // Without an ARGB visual, opaque PutImage paints a black square. Clip the
-    // window to non-transparent pixels via the Shape extension (already required
-    // for ShapeInput click-through).
-    if !overlay.argb {
+    // Without compositing (or without an ARGB visual), opaque PutImage paints a
+    // black square. Clip via Shape when needed — `argb` alone only proves the
+    // visual has an alpha channel, not that a CM is compositing it.
+    if !overlay.argb || !compositing_manager_running(&overlay.conn, overlay.screen_num) {
         apply_alpha_bounding_shape(overlay, a_scale);
     }
 
     let _ = overlay.conn.flush();
+}
+
+fn compositing_manager_running(conn: &RustConnection, screen_num: usize) -> bool {
+    let name = format!("_NET_WM_CM_S{screen_num}");
+    let Ok(atom) = conn.intern_atom(false, name.as_bytes()) else {
+        return false;
+    };
+    let Ok(atom) = atom.reply() else {
+        return false;
+    };
+    let Ok(owner) = conn.get_selection_owner(atom.atom) else {
+        return false;
+    };
+    owner.reply().is_ok_and(|reply| reply.owner != 0)
 }
 
 fn apply_alpha_bounding_shape(overlay: &mut Overlay, a_scale: f64) {

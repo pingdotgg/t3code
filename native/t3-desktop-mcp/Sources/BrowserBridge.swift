@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 // Bridge between the MCP server and the Chrome extension.
 //
@@ -97,15 +98,45 @@ enum NativeMessaging {
 
 /// Write every byte, retrying EINTR and failing on other errors / short EOF.
 func writeAll(_ fd: Int32, _ data: Data) -> Bool {
-    data.withUnsafeBytes { rawBuffer -> Bool in
+    writeAll(fd, data, deadline: nil)
+}
+
+/// Non-blocking write that respects `deadline` so a stuck peer cannot hang `call`.
+func writeAll(_ fd: Int32, _ data: Data, deadline: DispatchTime?) -> Bool {
+    let flags = fcntl(fd, F_GETFL)
+    if flags >= 0 {
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+    }
+    defer {
+        if flags >= 0 {
+            _ = fcntl(fd, F_SETFL, flags)
+        }
+    }
+    return data.withUnsafeBytes { rawBuffer -> Bool in
         guard var ptr = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
             return data.isEmpty
         }
         var remaining = data.count
         while remaining > 0 {
+            if let deadline, DispatchTime.now() >= deadline {
+                return false
+            }
             let n = Darwin.write(fd, ptr, remaining)
             if n < 0 {
                 if errno == EINTR { continue }
+                if errno == EAGAIN || errno == EWOULDBLOCK {
+                    var pollFd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                    let waitMs: Int32 = {
+                        guard let deadline else { return 1_000 }
+                        let now = DispatchTime.now().uptimeNanoseconds
+                        let end = deadline.uptimeNanoseconds
+                        if end <= now { return 0 }
+                        return Int32(min((end - now) / 1_000_000, UInt64(Int32.max)))
+                    }()
+                    let ready = poll(&pollFd, 1, waitMs)
+                    if ready <= 0 { return false }
+                    continue
+                }
                 return false
             }
             if n == 0 { return false }
@@ -370,10 +401,14 @@ final class BrowserBridge {
             outcome = result
             semaphore.signal()
         }
-        writeLock.lock()
-        let wrote = writeAll(fd, data)
-        writeLock.unlock()
+        // Release `lock` before writing so `serve` can still drain replies or a
+        // disconnect while the write waits on a full socket buffer.
         lock.unlock()
+
+        let writeDeadline = DispatchTime.now() + timeout
+        writeLock.lock()
+        let wrote = writeAll(fd, data, deadline: writeDeadline)
+        writeLock.unlock()
 
         if !wrote {
             lock.lock()
@@ -384,7 +419,7 @@ final class BrowserBridge {
             return .failure("the browser extension disconnected")
         }
 
-        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+        if semaphore.wait(timeout: writeDeadline) == .timedOut {
             lock.lock(); pending.removeValue(forKey: id); lock.unlock()
             return .failure("the extension did not respond in \(Int(timeout))s")
         }
