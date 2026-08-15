@@ -35,11 +35,12 @@ Grok Build workflows are Rhai scripts that orchestrate child agents as one backg
 CLI launches them with the `workflow` tool or `/workflow` and streams progress as
 `x.ai/session_notification` / `workflow_updated`.
 
-T3 Code now maps those updates onto the same Agents / task surface used by Claude workflows:
+T3 Code now maps those updates onto the same Agents / task surface used by Claude workflows and Codex collab children:
 
 - the run becomes a `local_workflow` task (name, objective, phases)
-- each child agent becomes a `subagent` task under that run
-- tokens reported on workflow agents are folded into thread usage
+- each child agent becomes a `subagent` task with `parentAgentId` + `timelineBypass` (not a parent-timeline row)
+- member tokens stay on the child `typedUsage` snapshot — they do not replace the thread context window
+- standalone Grok `subagent_spawned` / `subagent_progress` / `subagent_finished` updates use the same child-task path
 
 Slash commands such as `/workflow pause|resume|stop` still belong to the Grok CLI session. T3
 does not reimplement the Rhai host. It consumes the ACP notifications the host already emits.

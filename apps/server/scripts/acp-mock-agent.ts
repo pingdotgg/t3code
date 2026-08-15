@@ -299,6 +299,7 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
 const enableRewind = process.env.T3_ACP_ENABLE_REWIND === "1";
 const emitUsage = process.env.T3_ACP_EMIT_USAGE === "1";
 const emitWorkflow = process.env.T3_ACP_EMIT_WORKFLOW === "1";
+const emitSubagent = process.env.T3_ACP_EMIT_SUBAGENT === "1";
 let rewindPoints: Array<{ prompt_index: number; prompt_preview: string }> = [];
 
 function modelState(): AcpSchema.SessionModelState {
@@ -902,6 +903,19 @@ const program = Effect.gen(function* () {
         rewindPoints.push({
           prompt_index: rewindPoints.length,
           prompt_preview: typeof preview === "string" ? preview : "",
+        });
+      }
+
+      if (emitSubagent) {
+        writeJsonRpcNotification("x.ai/session_notification", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "subagent_spawned",
+            subagent_id: "sa_explore_1",
+            parent_session_id: requestedSessionId,
+            child_session_id: "child-explore-1",
+            subagent_type: "explore",
+          },
         });
       }
 

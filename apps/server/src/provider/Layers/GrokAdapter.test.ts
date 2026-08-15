@@ -1414,4 +1414,39 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("projects Grok subagent_spawned notifications as bypassed child tasks", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-subagent");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_SUBAGENT: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const started = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "task.started" && event.payload.timelineBypass === true
+          ? Deferred.succeed(started, event)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "explore", attachments: [] });
+      const event = yield* Deferred.await(started);
+      assert.equal(event.type, "task.started");
+      if (event.type === "task.started") {
+        assert.equal(event.payload.role, "explore");
+        assert.equal(event.payload.timelineBypass, true);
+        assert.equal(event.payload.taskType, "subagent");
+      }
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

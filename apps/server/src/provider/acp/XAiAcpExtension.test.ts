@@ -13,14 +13,13 @@ import {
   extractXAiAskUserQuestions,
   grokPromptCountForTurns,
   grokRewindTargetForTurnCount,
-  grokWorkflowRunStatus,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
   parseGrokRewindPoints,
-  parseXAiWorkflowUpdated,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
+import { grokWorkflowRunStatus, parseXAiWorkflowUpdated } from "./GrokAcpWorkflow.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
