@@ -618,4 +618,15 @@ describe("mergeEnvironmentSettings", () => {
 
     expect(settings.planModeEnabled).toBe(true);
   });
+
+  it("keeps a newer local Plan Mode choice visible in a read-only session", () => {
+    const settings = mergeEnvironmentSettings(
+      DEFAULT_SERVER_SETTINGS,
+      { ...DEFAULT_CLIENT_SETTINGS, planModeEnabled: false },
+      { planModeEnabled: true, updatedAt: "2026-08-14T12:00:00.000Z" },
+      false,
+    );
+
+    expect(settings.planModeEnabled).toBe(false);
+  });
 });

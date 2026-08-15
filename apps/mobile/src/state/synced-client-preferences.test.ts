@@ -6,6 +6,7 @@ import {
   createPlanModePreferenceWrite,
   createPlanModePreferenceWriteController,
   fanOutPlanModePreferencePatches,
+  nextMobileSyncedPreferencesUpdatedAt,
   reconcilePlanModePreferences,
   settlePendingPlanModePreferencePatch,
 } from "./synced-client-preferences-model";
@@ -13,6 +14,21 @@ import {
 const environmentId = (value: string) => EnvironmentId.make(value);
 
 describe("synced client preferences", () => {
+  it("bounds excessively future-skewed local stamps", () => {
+    expect(
+      nextMobileSyncedPreferencesUpdatedAt(
+        ["2026-08-14T12:05:00.001Z"],
+        "2026-08-14T12:00:00.000Z",
+      ),
+    ).toBe("2026-08-14T12:00:00.000Z");
+    expect(
+      nextMobileSyncedPreferencesUpdatedAt(
+        ["2026-08-14T12:05:00.000Z"],
+        "2026-08-14T12:00:00.000Z",
+      ),
+    ).toBe("2026-08-14T12:05:00.001Z");
+  });
+
   it("adopts the environment plan mode into the device cache on connect", () => {
     expect(
       reconcilePlanModePreferences({
@@ -253,7 +269,7 @@ describe("synced client preferences", () => {
       localPlanModeEnabled: false,
       localUpdatedAt: "2026-08-14T11:00:00.000Z",
       environments,
-      now: "2026-08-14T12:30:00.000Z",
+      now: "2026-08-14T12:59:00.000Z",
     });
     const second = reconcilePlanModePreferences({
       localPlanModeEnabled: first.localPatch?.planModeEnabled,
@@ -384,6 +400,26 @@ describe("synced client preferences", () => {
     });
 
     expect(reconciliation.environmentPatches).toEqual([]);
+  });
+
+  it("keeps a newer local choice when the environment is read-only", () => {
+    expect(
+      reconcilePlanModePreferences({
+        localPlanModeEnabled: false,
+        localUpdatedAt: "2026-08-14T12:01:00.000Z",
+        environments: [
+          {
+            environmentId: environmentId("read-only"),
+            canPatch: false,
+            preferences: {
+              planModeEnabled: true,
+              updatedAt: "2026-08-14T12:00:00.000Z",
+            },
+          },
+        ],
+        now: "2026-08-14T12:01:00.000Z",
+      }),
+    ).toEqual({ localPatch: null, environmentPatches: [] });
   });
 
   it("continues fan-out when one environment write fails", async () => {

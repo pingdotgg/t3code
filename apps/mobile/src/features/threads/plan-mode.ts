@@ -122,3 +122,11 @@ export function resolveComposerInteractionMode(input: {
     ? (input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
     : DEFAULT_PROVIDER_INTERACTION_MODE;
 }
+
+export function resolveComposerEnqueueInteractionMode(input: {
+  readonly interactionMode: ProviderInteractionMode | null | undefined;
+  readonly planModeEnabled: boolean;
+  readonly preferenceLoaded: boolean;
+}): ProviderInteractionMode | null {
+  return input.preferenceLoaded ? resolveComposerInteractionMode(input) : null;
+}

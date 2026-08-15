@@ -41,8 +41,11 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
-import { resolveComposerInteractionMode } from "../features/threads/plan-mode";
-import { usePlanModeEnabled } from "../features/threads/use-plan-mode-enabled";
+import {
+  resolveComposerEnqueueInteractionMode,
+  resolveComposerInteractionMode,
+} from "../features/threads/plan-mode";
+import { usePlanModePreferenceState } from "../features/threads/use-plan-mode-enabled";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -80,7 +83,8 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
-  const planModeEnabled = usePlanModeEnabled();
+  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } =
+    usePlanModePreferenceState();
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -148,6 +152,12 @@ export function useThreadComposerState() {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
+    const enqueueInteractionMode = resolveComposerEnqueueInteractionMode({
+      interactionMode: draft.interactionMode ?? thread.interactionMode,
+      planModeEnabled,
+      preferenceLoaded: planModePreferenceLoaded,
+    });
+    if (enqueueInteractionMode === null) return null;
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
@@ -165,10 +175,7 @@ export function useThreadComposerState() {
       attachments,
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: resolveComposerInteractionMode({
-        interactionMode: draft.interactionMode ?? thread.interactionMode,
-        planModeEnabled,
-      }),
+      interactionMode: enqueueInteractionMode,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -184,7 +191,7 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [planModeEnabled, selectedThreadDetail, selectedThreadShell]);
+  }, [planModeEnabled, planModePreferenceLoaded, selectedThreadDetail, selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {

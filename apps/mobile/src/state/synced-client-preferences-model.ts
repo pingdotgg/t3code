@@ -7,6 +7,8 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
 import type { Preferences } from "../persistence/mobile-preferences";
 
+const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
+
 export interface EnvironmentPreferenceState {
   readonly environmentId: EnvironmentId;
   readonly preferences: SyncedClientPreferences | undefined;
@@ -54,9 +56,12 @@ export function nextMobileSyncedPreferencesUpdatedAt(
   currentUpdatedAts: ReadonlyArray<string | undefined>,
   now: string,
 ): string {
+  const maximumUpdatedAt = Date.parse(now) + SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS;
   const latest = currentUpdatedAts.reduce<string | undefined>(
     (current, candidate) =>
-      candidate !== undefined && (current === undefined || candidate > current)
+      candidate !== undefined &&
+      Date.parse(candidate) <= maximumUpdatedAt &&
+      (current === undefined || candidate > current)
         ? candidate
         : current,
     undefined,
@@ -153,7 +158,11 @@ export function reconcilePlanModePreferences(input: {
     },
     undefined,
   );
+  const hasPatchableEnvironment = input.environments.some(
+    (environment) => environment.canPatch !== false,
+  );
   const boundedLocalUpdatedAt =
+    hasPatchableEnvironment &&
     input.localUpdatedAt !== undefined &&
     latestObservedEnvironmentUpdatedAt !== undefined &&
     input.localUpdatedAt > latestObservedEnvironmentUpdatedAt

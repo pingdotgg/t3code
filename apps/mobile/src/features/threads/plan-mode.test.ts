@@ -4,6 +4,7 @@ import {
   getBuiltInComposerSlashCommands,
   getPlanModeComposerSlashCommands,
   replaceCurrentComposerTrigger,
+  resolveComposerEnqueueInteractionMode,
   resolveComposerInteractionMode,
   resolveComposerSubmitInteractionMode,
   resolvePlanModeEnabled,
@@ -63,6 +64,23 @@ describe("mobile plan mode", () => {
     expect(resolveComposerInteractionMode({ interactionMode: "plan", planModeEnabled: true })).toBe(
       "plan",
     );
+  });
+
+  it("waits for the Plan Mode preference before choosing the queued mode", () => {
+    expect(
+      resolveComposerEnqueueInteractionMode({
+        interactionMode: "plan",
+        planModeEnabled: false,
+        preferenceLoaded: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveComposerEnqueueInteractionMode({
+        interactionMode: "plan",
+        planModeEnabled: true,
+        preferenceLoaded: true,
+      }),
+    ).toBe("plan");
   });
 
   describe("existing-thread submit parsing", () => {

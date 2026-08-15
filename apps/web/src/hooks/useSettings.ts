@@ -233,11 +233,12 @@ export function mergeEnvironmentSettings(
   serverSettings: ServerSettings,
   clientSettings: ClientSettings,
   syncedClientPreferences?: SyncedClientPreferences,
+  syncedPlanModeCanOverrideClient = true,
 ): UnifiedSettings {
   return {
     ...serverSettings,
     ...clientSettings,
-    ...(syncedClientPreferences?.planModeEnabled === undefined
+    ...(!syncedPlanModeCanOverrideClient || syncedClientPreferences?.planModeEnabled === undefined
       ? {}
       : { planModeEnabled: syncedClientPreferences.planModeEnabled }),
   };
@@ -246,13 +247,20 @@ export function mergeEnvironmentSettings(
 function useMergedSettings<T>(
   serverSettings: ServerSettings,
   syncedClientPreferences: SyncedClientPreferences | undefined,
+  syncedPlanModeCanOverrideClient: boolean,
   selector: ((settings: UnifiedSettings) => T) | undefined,
 ): T {
   const clientSettings = useClientSettingsValue();
 
   const merged = useMemo<UnifiedSettings>(
-    () => mergeEnvironmentSettings(serverSettings, clientSettings, syncedClientPreferences),
-    [clientSettings, serverSettings, syncedClientPreferences],
+    () =>
+      mergeEnvironmentSettings(
+        serverSettings,
+        clientSettings,
+        syncedClientPreferences,
+        syncedPlanModeCanOverrideClient,
+      ),
+    [clientSettings, serverSettings, syncedClientPreferences, syncedPlanModeCanOverrideClient],
   );
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
@@ -641,7 +649,7 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
     persist: persistSyncedPlanMode,
   });
 
-  return synced.preferences;
+  return { ...synced, canPatch } as const;
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -706,10 +714,11 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  const syncedClientPreferences = useSyncedPlanModeHydration(environmentId);
+  const synced = useSyncedPlanModeHydration(environmentId);
   return useMergedSettings(
     serverSettings ?? DEFAULT_SERVER_SETTINGS,
-    syncedClientPreferences,
+    synced.preferences,
+    synced.canPatch,
     selector,
   );
 }
@@ -719,10 +728,11 @@ export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
-  const syncedClientPreferences = useSyncedPlanModeHydration(environmentId);
+  const synced = useSyncedPlanModeHydration(environmentId);
   return useMergedSettings(
     useAtomValue(primaryServerSettingsAtom),
-    syncedClientPreferences,
+    synced.preferences,
+    synced.canPatch,
     selector,
   );
 }
