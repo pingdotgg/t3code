@@ -1669,7 +1669,7 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
 );
 
 /**
-* Build and stage the Windows/Linux desktop-control MCP server.
+ * Build and stage the Windows/Linux desktop-control MCP server.
  *
  * macOS is served by the Swift package in `native/t3-desktop-mcp`; this is the
  * Rust crate covering the other two. Both emit a binary called
