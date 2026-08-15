@@ -37,6 +37,9 @@ Examples: `mod+j`, `mod+shift+d`, `ctrl+l`, `cmd+k`.
 Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refresh`, and
 `chat.new`. Project scripts are addressable as `script.{id}.run`, for example `script.test.run`.
 
+`thread.stop` interrupts the active turn when the current thread is running. It is unassigned by
+default, so add your preferred shortcut in Settings or `keybindings.json`.
+
 `filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
