@@ -227,6 +227,13 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               next.set(registration.profile.connectionId, registration.profile);
               return next;
             });
+            if (registration.credential !== undefined) {
+              yield* Ref.update(storedCredentials, (current) => {
+                const next = new Map(current);
+                next.set(registration.target.connectionId, registration.credential!);
+                return next;
+              });
+            }
         }
       }),
     select: (target) =>

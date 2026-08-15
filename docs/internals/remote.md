@@ -169,12 +169,15 @@ returns local HTTP/WS endpoints. Disconnect closes the tunnel and stops the remo
 launcher started it; a server that was already running (marked `external`) is left running.
 
 Remote discovery checks the user-level `t3code.service` process first, then the SSH environment and
-same-user `/proc` metadata for `T3CODE_HOME` values. Each recorded runtime is accepted only when its
-PID is live and its loopback environment descriptor answers. The discovered base directory is saved
-for `t3 pair --base-dir`, so the pairing credential lands in the database the reused server actually
-reads. The launcher reuses that reported port before considering a new server. This is what prevents
-an SSH access path from creating a second logical environment beside an already-running T3 Connect
-service whose private service environment is not inherited by SSH.
+same-user `/proc` metadata for `T3CODE_HOME` values. It selects the first authoritative runtime whose
+PID is live and whose recorded origin is loopback, then waits for that runtime instead of falling
+through to a lower-priority server when it is temporarily busy. Once tunneled, the client fetches the
+environment descriptor and verifies the stable environment ID before changing routes. The discovered
+base directory is saved for `t3 pair --base-dir`, so a required pairing credential lands in the
+database the reused server actually reads. Normal reconnects and route switches reuse the stored
+bearer credential rather than writing a new pairing record. This is what prevents an SSH access path
+from creating a second logical environment beside an already-running T3 Connect service whose private
+service environment is not inherited by SSH.
 
 The desktop main process owns this because it can spawn SSH, manage prompts, write launch scripts,
 and clean up forwards. The renderer connects through the forwarded URL like any other environment and

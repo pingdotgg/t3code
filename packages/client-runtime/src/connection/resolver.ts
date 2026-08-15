@@ -195,6 +195,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
 
 const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(function* () {
   const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
@@ -218,33 +219,56 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
         actual: profile.environmentId,
       });
     }
-    const prepared = yield* ssh.prepare({
-      connectionId: target.connectionId,
-      expectedEnvironmentId: target.environmentId,
-      target: profile.target,
-    });
-    yield* profiles.put(
-      new SshConnectionProfile({
-        connectionId: profile.connectionId,
-        environmentId: profile.environmentId,
-        label: profile.label,
-        target: prepared.bootstrap.target,
-      }),
+    const prepareAndAuthorize = Effect.fn("clientRuntime.connection.broker.ssh.authorize")(
+      function* (bearerToken?: string) {
+        const prepared = yield* ssh.prepare({
+          connectionId: target.connectionId,
+          expectedEnvironmentId: target.environmentId,
+          target: profile.target,
+          ...(bearerToken === undefined ? {} : { bearerToken }),
+        });
+        yield* profiles.put(
+          new SshConnectionProfile({
+            connectionId: profile.connectionId,
+            environmentId: profile.environmentId,
+            label: profile.label,
+            target: prepared.bootstrap.target,
+          }),
+        );
+        const authorized = yield* remote.authorizeBearer({
+          expectedEnvironmentId: target.environmentId,
+          httpBaseUrl: prepared.bootstrap.httpBaseUrl,
+          wsBaseUrl: prepared.bootstrap.wsBaseUrl,
+          bearerToken: prepared.bearerToken,
+        });
+        if (bearerToken === undefined) {
+          yield* credentials.put(
+            target.connectionId,
+            new BearerConnectionCredential({ token: prepared.bearerToken }),
+          );
+        }
+        return {
+          environmentId: authorized.environmentId,
+          label: authorized.label,
+          httpBaseUrl: authorized.httpBaseUrl,
+          socketUrl: authorized.socketUrl,
+          httpAuthorization: authorized.httpAuthorization,
+          target,
+        } satisfies PreparedConnection;
+      },
     );
-    const authorized = yield* remote.authorizeBearer({
-      expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: prepared.bootstrap.httpBaseUrl,
-      wsBaseUrl: prepared.bootstrap.wsBaseUrl,
-      bearerToken: prepared.bearerToken,
-    });
-    return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
-      target,
-    } satisfies PreparedConnection;
+
+    const credential = yield* credentials.get(target.connectionId);
+    if (Option.isSome(credential) && isBearerCredential(credential.value)) {
+      return yield* prepareAndAuthorize(credential.value.token).pipe(
+        Effect.catch((error) =>
+          error._tag === "ConnectionBlockedError" && error.reason === "authentication"
+            ? credentials.remove(target.connectionId).pipe(Effect.andThen(prepareAndAuthorize()))
+            : Effect.fail(error),
+        ),
+      );
+    }
+    return yield* prepareAndAuthorize();
   });
 });
 

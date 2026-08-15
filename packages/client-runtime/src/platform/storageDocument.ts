@@ -134,6 +134,13 @@ export function registerConnectionInCatalog(
           (value) => value.connectionId,
           registration.profile,
         ),
+        credentials:
+          registration.credential === undefined
+            ? next.credentials
+            : replaceCatalogValue(next.credentials, (value) => value.connectionId, {
+                connectionId: registration.target.connectionId,
+                credential: registration.credential,
+              }),
       };
   }
 }

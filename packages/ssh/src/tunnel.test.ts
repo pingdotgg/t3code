@@ -193,7 +193,9 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), "systemctl --user show t3code.service");
     assert.include(buildRemoteLaunchScript(), 'fs.readdirSync("/proc")');
     assert.include(buildRemoteLaunchScript(), '"server-runtime.json"');
-    assert.include(buildRemoteLaunchScript(), "/.well-known/t3/environment");
+    assert.include(buildRemoteLaunchScript(), 'origin.protocol !== "http:"');
+    assert.notInclude(buildRemoteLaunchScript(), "AbortSignal.timeout(2500)");
+    assert.include(buildRemoteLaunchScript(), "Existing remote T3 server did not become ready");
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
     assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
     assert.include(buildRemoteLaunchScript(), 'wait_ready "60000"');
@@ -202,16 +204,31 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemotePairingScript(target),
-      '"$RUNNER_FILE" pair --base-dir "$PAIRING_BASE_DIR" >"$PAIR_OUTPUT_FILE"',
+      '"$RUNNER_FILE" pair --base-dir "$PAIRING_BASE_DIR" >"$PAIR_OUTPUT_FILE" 2>&1',
     );
+    assert.include(buildRemotePairingScript(target), 'if [ -z "$PAIRING_BASE_DIR" ]');
+    assert.notInclude(buildRemotePairingScript(target), '"$RUNNER_FILE" pair >');
+    assert.include(buildRemotePairingScript(target), "grep -q 'database is locked'");
+    assert.include(buildRemotePairingScript(target), 'while [ "$PAIR_ATTEMPT" -lt 5 ]');
+    assert.include(buildRemotePairingScript(target), 'RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"');
+    assert.include(buildRemotePairingScript(target), 'cat >"$RUNNER_NEXT"');
+    assert.include(buildRemotePairingScript(target), 'mv -f "$RUNNER_NEXT" "$RUNNER_FILE"');
+    assert.notInclude(buildRemotePairingScript(target), 'cat >"$RUNNER_FILE"');
+    for (const script of [
+      buildRemoteLaunchScript(),
+      buildRemotePairingScript(target),
+      buildRemoteStopScript(target),
+    ]) {
+      assert.include(script, "acquire_state_lock()");
+      assert.include(script, "release_state_lock()");
+      assert.include(script, "flock -w 120 9");
+      assert.include(script, "acquire_state_lock");
+    }
     assert.include(buildRemotePairingScript(target), 'line.startsWith("Token: ")');
     assert.include(buildRemotePairingScript(target), 'BASE_DIR_FILE="$STATE_DIR/base-dir"');
     assert.notInclude(buildRemotePairingScript(target), "server-home");
     assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
-    assert.include(
-      buildRemoteStopScript(target),
-      'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
-    );
+    assert.include(buildRemoteStopScript(target), 'if [ "$REMOTE_MANAGED" = "external" ]');
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
     assert.include(
@@ -257,6 +274,42 @@ describe("ssh tunnel scripts", () => {
         assert.doesNotThrow(() => Function(match[1]!));
       }
     }
+  });
+
+  it.effect("emits syntactically valid remote shell scripts", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      for (const script of [
+        buildRemoteLaunchScript(),
+        buildRemotePairingScript(target),
+        buildRemoteStopScript(target),
+      ]) {
+        assert.notMatch(script, /@@[A-Z0-9_]+@@/u);
+        const handle = yield* spawner.spawn(ChildProcess.make("sh", ["-n"]));
+        yield* Stream.make(new TextEncoder().encode(script)).pipe(Stream.run(handle.stdin));
+        const [stderr, exitCode] = yield* Effect.all(
+          [
+            handle.stderr.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (accumulator, chunk) => accumulator + chunk,
+              ),
+            ),
+            handle.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        assert.equal(exitCode, 0, stderr);
+      }
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -467,6 +520,84 @@ describe("ssh tunnel scripts", () => {
 
       assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
       assert.equal(tunnelKillCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("serializes pairing commands for concurrent ensures of one SSH target", () => {
+    let activePairingCommands = 0;
+    let maximumActivePairingCommands = 0;
+    let pairingCommandCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {});
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"external"}\n');
+        }
+        if (args.includes("sh")) {
+          pairingCommandCount += 1;
+          const stdout = Stream.make(
+            new TextEncoder().encode(`{"credential":"PAIR-${pairingCommandCount}"}\n`),
+          );
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(200 + pairingCommandCount),
+            stdout,
+            stderr: Stream.empty,
+            all: stdout,
+            exitCode: Effect.gen(function* () {
+              activePairingCommands += 1;
+              maximumActivePairingCommands = Math.max(
+                maximumActivePairingCommands,
+                activePairingCommands,
+              );
+              yield* Effect.yieldNow;
+              activePairingCommands -= 1;
+              return ChildProcessSpawner.ExitCode(0);
+            }),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      const results = yield* Effect.all(
+        [
+          manager.ensureEnvironment(target, { issuePairingToken: true }),
+          manager.ensureEnvironment(target, { issuePairingToken: true }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      assert.equal(pairingCommandCount, 2);
+      assert.equal(maximumActivePairingCommands, 1);
+      assert.deepEqual(results.map((result) => result.pairingToken).toSorted(), [
+        "PAIR-1",
+        "PAIR-2",
+      ]);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 });
