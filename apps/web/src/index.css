@@ -1630,12 +1630,22 @@ code {
 }
 
 .chat-markdown ul {
+  /* Reset for nested uls under a widened ol — --list-gutter is an inherited
+     custom property, so without this a task-list under a 3+ digit ordered
+     list would inherit the outer gutter instead of its own default. */
+  --list-gutter: 1.25rem;
   padding-left: 1.25rem;
   list-style-type: disc;
 }
 
+/* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
+   ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
+   last marker is 3+ digits, so item 100+ isn't clipped by list-style-position:
+   outside painting the marker past the padding box. Reset it here too so a
+   nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {
-  padding-left: 1.25rem;
+  --list-gutter: 1.25rem;
+  padding-left: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
 
@@ -1665,7 +1675,7 @@ code {
 }
 
 .chat-markdown li.task-list-item input[type="checkbox"] {
-  margin: 0 0.35em 0.15em -1.25rem;
+  margin: 0 0.35em 0.15em calc(-1 * var(--list-gutter, 1.25rem));
   vertical-align: middle;
 }
 
