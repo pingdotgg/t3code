@@ -373,6 +373,7 @@ function SnoozePopoverButton(props: {
             size="icon-micro"
             variant="ghost-muted"
             aria-label="Snooze thread"
+            title="Snooze thread"
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
           />

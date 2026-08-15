@@ -641,6 +641,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
           suppressed: boolean;
           clearCustomLabel?: boolean;
         },
+        pruneCustomLabels = false,
       ) => {
         set((state) => {
           const threadKey = terminalThreadKey(threadRef);
@@ -662,7 +663,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             ? suppression.terminalId.trim()
             : "";
           const currentLabels = state.terminalCustomLabelsByThreadKey[threadKey] ?? {};
-          const nextTerminalCustomLabelsByThreadKey =
+          let nextTerminalCustomLabelsByThreadKey =
             terminalIdToClear.length > 0 && currentLabels[terminalIdToClear] !== undefined
               ? Object.keys(currentLabels).length === 1
                 ? removeRecordEntry(state.terminalCustomLabelsByThreadKey, threadKey)
@@ -671,6 +672,26 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
                     [threadKey]: removeRecordEntry(currentLabels, terminalIdToClear),
                   }
               : state.terminalCustomLabelsByThreadKey;
+          if (pruneCustomLabels) {
+            const survivingIds = new Set(
+              selectThreadTerminalUiState(nextTerminalUiStateByThreadKey, threadRef).terminalIds,
+            );
+            const labelsForThread = nextTerminalCustomLabelsByThreadKey[threadKey] ?? {};
+            const survivingLabels = Object.fromEntries(
+              Object.entries(labelsForThread).filter(([terminalId]) =>
+                survivingIds.has(terminalId),
+              ),
+            );
+            if (Object.keys(survivingLabels).length !== Object.keys(labelsForThread).length) {
+              nextTerminalCustomLabelsByThreadKey =
+                Object.keys(survivingLabels).length > 0
+                  ? {
+                      ...nextTerminalCustomLabelsByThreadKey,
+                      [threadKey]: survivingLabels,
+                    }
+                  : removeRecordEntry(nextTerminalCustomLabelsByThreadKey, threadKey);
+            }
+          }
           if (
             nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
             nextSuppressedTerminalIdsByThreadKey === state.suppressedTerminalIdsByThreadKey &&
@@ -782,16 +803,21 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             clearCustomLabel: true,
           }),
         reconcileTerminalIds: (threadRef, nextIds) =>
-          updateTerminal(threadRef, (state, suppressedTerminalIds) => {
-            if (suppressedTerminalIds.length === 0) {
-              return reconcileThreadTerminalSessionIds(state, nextIds);
-            }
-            const suppressedIds = new Set(suppressedTerminalIds);
-            return reconcileThreadTerminalSessionIds(
-              state,
-              nextIds.filter((terminalId) => !suppressedIds.has(terminalId)),
-            );
-          }),
+          updateTerminal(
+            threadRef,
+            (state, suppressedTerminalIds) => {
+              if (suppressedTerminalIds.length === 0) {
+                return reconcileThreadTerminalSessionIds(state, nextIds);
+              }
+              const suppressedIds = new Set(suppressedTerminalIds);
+              return reconcileThreadTerminalSessionIds(
+                state,
+                nextIds.filter((terminalId) => !suppressedIds.has(terminalId)),
+              );
+            },
+            undefined,
+            true,
+          ),
         clearTerminalUiState: (threadRef) =>
           set((state) => {
             const threadKey = terminalThreadKey(threadRef);

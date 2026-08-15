@@ -968,6 +968,17 @@ function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
   return entry.turnId ? `direct:${entry.turnId}` : `direct:task:${taskId}`;
 }
 
+function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undefined {
+  if (
+    entry.activityKind !== "tool.started" &&
+    entry.activityKind !== "tool.updated" &&
+    entry.activityKind !== "tool.completed"
+  ) {
+    return undefined;
+  }
+  return entry.collapseKey ?? (entry.toolCallId ? `tool:${entry.toolCallId}` : undefined);
+}
+
 function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
@@ -984,6 +995,7 @@ function collapseDerivedWorkLogEntries(
   // own turn splintered one batch into a stream of "Kicked off N subagents"
   // rows (live-test finding, thread 7ac7ef05).
   const groupKeyByTaskId = new Map<string, string>();
+  const toolLifecycleRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
       entry.taskId !== undefined &&
@@ -1028,12 +1040,40 @@ function collapseDerivedWorkLogEntries(
       });
       continue;
     }
+    const lifecycleKey = toolLifecycleCollapseMapKey(entry);
+    if (lifecycleKey !== undefined) {
+      const matchingLifecycleIndex = toolLifecycleRowIndex.get(lifecycleKey);
+      if (matchingLifecycleIndex !== undefined) {
+        const matchingEntry = collapsed[matchingLifecycleIndex];
+        if (matchingEntry && shouldCollapseToolLifecycleEntries(matchingEntry, entry)) {
+          toolLifecycleRowIndex.delete(lifecycleKey);
+          const merged = mergeDerivedWorkLogEntries(matchingEntry, entry);
+          collapsed[matchingLifecycleIndex] = merged;
+          if (merged.activityKind !== "tool.completed") {
+            toolLifecycleRowIndex.set(lifecycleKey, matchingLifecycleIndex);
+          }
+          continue;
+        }
+        toolLifecycleRowIndex.delete(lifecycleKey);
+      }
+    }
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+      const previousIndex = collapsed.length - 1;
+      const previousKey = toolLifecycleCollapseMapKey(previous);
+      if (previousKey !== undefined) toolLifecycleRowIndex.delete(previousKey);
+      const merged = mergeDerivedWorkLogEntries(previous, entry);
+      collapsed[previousIndex] = merged;
+      const mergedKey = toolLifecycleCollapseMapKey(merged);
+      if (mergedKey !== undefined && merged.activityKind !== "tool.completed") {
+        toolLifecycleRowIndex.set(mergedKey, previousIndex);
+      }
       continue;
     }
     collapsed.push(entry);
+    if (lifecycleKey !== undefined && entry.activityKind !== "tool.completed") {
+      toolLifecycleRowIndex.set(lifecycleKey, collapsed.length - 1);
+    }
   }
   return collapsed;
 }

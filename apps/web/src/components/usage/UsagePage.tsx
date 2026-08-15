@@ -34,7 +34,7 @@ import {
   WorkspacePageHeaderEdgeControl,
 } from "../WorkspacePageContainer";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
-import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
+import { PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -99,7 +99,7 @@ export function UsagePage() {
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
       : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
   const topbarContent = (
-    <div className="flex w-full min-w-0 items-center gap-3">
+    <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem current>
           <h1>Usage</h1>
@@ -109,7 +109,7 @@ export function UsagePage() {
           <span className="truncate">{windowLabel}</span>
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      <div className="ms-auto flex shrink-0 items-center gap-3">
+      <div className="ms-auto flex min-w-0 basis-full flex-wrap items-center justify-end gap-2 sm:basis-auto">
         <SegmentedTabList aria-label="Usage metric">
           {(["cost", "tokens"] as const).map((option) => (
             <SegmentedTab
@@ -144,7 +144,9 @@ export function UsagePage() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        <WorkspacePageHeader electron={isElectron}>{topbarContent}</WorkspacePageHeader>
+        <WorkspacePageHeader electron={isElectron} className="h-auto py-2">
+          {topbarContent}
+        </WorkspacePageHeader>
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
@@ -196,10 +198,7 @@ export function UsagePage() {
                                 </span>
                               </span>
                             </span>
-                            <span
-                              className="shrink-0 text-sm font-medium tabular-nums"
-                              style={{ color: PROVIDER_COLOR[provider] }}
-                            >
+                            <span className="shrink-0 text-sm font-medium text-foreground tabular-nums">
                               {metric === "cost"
                                 ? formatUsd(totals?.costUsd ?? 0)
                                 : formatTokens(totals?.totalTokens ?? 0)}

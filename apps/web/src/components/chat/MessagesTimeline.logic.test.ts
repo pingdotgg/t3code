@@ -849,6 +849,7 @@ describe("deriveMessagesTimelineRows", () => {
             turnId: "turn-1" as never,
             label: "Ran command",
             tone: "tool" as const,
+            toolLifecycleStatus: "inProgress" as const,
           },
         },
       ],
@@ -970,6 +971,29 @@ describe("deriveMessagesTimelineRows", () => {
       "work-2",
       "work-3",
     ]);
+
+    const rowsWithLaterPlan = deriveMessagesTimelineRows({
+      ...baseInput,
+      timelineEntries: [
+        ...timelineEntries,
+        {
+          id: "plan:thread-1:turn:turn-1",
+          kind: "proposed-plan" as const,
+          createdAt: "2026-01-01T00:00:03Z",
+          proposedPlan: {
+            id: "plan:thread-1:turn:turn-1",
+            turnId: "turn-1" as never,
+            planMarkdown: "# Next steps",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-01-01T00:00:03Z",
+            updatedAt: "2026-01-01T00:00:03Z",
+          },
+        },
+      ],
+    });
+    expect(rowsWithLaterPlan.some((row) => row.kind === "work-live")).toBe(false);
+    expect(rowsWithLaterPlan.some((row) => row.kind === "proposed-plan")).toBe(true);
   });
 
   it("does not fold the session's running turn when latestTurn regresses", () => {

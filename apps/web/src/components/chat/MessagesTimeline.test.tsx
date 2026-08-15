@@ -580,17 +580,18 @@ describe("MessagesTimeline", () => {
               turnId,
               toolCallId: "call-live-tool",
               label: "Running tests",
-              command: "vp test run",
+              command: "env -C /tmp sudo -u postgres psql",
               tone: "tool",
+              toolLifecycleStatus: "inProgress",
             },
           },
         ]}
       />,
     );
 
-    expect(markup).toContain('aria-label="Expand current tool calls"');
+    expect(markup).not.toContain('aria-label="Expand current tool calls"');
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("Running vp");
+    expect(markup).toContain("Running psql");
     expect(markup).not.toContain("lucide-chevron-right");
     expect(markup).not.toContain("hover:bg-accent/20");
   });

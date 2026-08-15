@@ -769,6 +769,19 @@ describe("deriveWorkLogEntries", () => {
         },
       }),
       makeActivity({
+        id: "other-tool-start",
+        createdAt: "2026-02-23T00:00:02.500Z",
+        summary: "Other command started",
+        kind: "tool.started",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-2",
+          status: "inProgress",
+          title: "Other command",
+          data: { input: { command: "vp lint" } },
+        },
+      }),
+      makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
         summary: "Command run",
@@ -780,14 +793,33 @@ describe("deriveWorkLogEntries", () => {
           title: "Command run",
         },
       }),
+      makeActivity({
+        id: "other-tool-complete",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        summary: "Other command",
+        kind: "tool.completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-2",
+          status: "completed",
+          title: "Other command",
+        },
+      }),
     ];
 
     const entries = deriveWorkLogEntries(activities);
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({
       id: "tool-complete",
       command: "vp test run",
       toolCallId: "call-1",
+      toolLifecycleStatus: "completed",
+      sourceActivityKind: "tool.completed",
+    });
+    expect(entries[1]).toMatchObject({
+      id: "other-tool-complete",
+      command: "vp lint",
+      toolCallId: "call-2",
       toolLifecycleStatus: "completed",
       sourceActivityKind: "tool.completed",
     });

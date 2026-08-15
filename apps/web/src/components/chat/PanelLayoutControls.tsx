@@ -80,7 +80,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             >
               <PanelRightIcon
                 className={cn(
-                  "size-3.5",
+                  "size-4",
                   !rightPanelAvailable && "text-muted-foreground opacity-100",
                 )}
               />

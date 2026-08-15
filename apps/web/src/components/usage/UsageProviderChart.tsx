@@ -1,5 +1,5 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
@@ -206,6 +206,8 @@ export function UsageProviderChart({
   );
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   const { paths, series, stepX, ticks, toY } = useMemo(() => {
     if (periods.length === 0) {
@@ -256,6 +258,35 @@ export function UsageProviderChart({
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
+  const positionTooltip = useCallback(() => {
+    const plot = plotRef.current;
+    const tooltip = tooltipRef.current;
+    const hoverPosition = hoverPositionRef.current;
+    if (plot === null || tooltip === null || hoverPosition === null) return;
+
+    const gap = 12;
+    const tooltipWidth = tooltip.offsetWidth;
+    const tooltipHeight = tooltip.offsetHeight;
+    const plotWidth = plot.clientWidth;
+    const plotHeight = plot.clientHeight;
+    const preferredLeft =
+      hoverPosition.x + gap + tooltipWidth <= plotWidth
+        ? hoverPosition.x + gap
+        : hoverPosition.x - gap - tooltipWidth;
+    const preferredTop =
+      hoverPosition.y + gap + tooltipHeight <= plotHeight
+        ? hoverPosition.y + gap
+        : hoverPosition.y - gap - tooltipHeight;
+    const left = Math.min(Math.max(0, preferredLeft), Math.max(0, plotWidth - tooltipWidth));
+    const top = Math.min(Math.max(0, preferredTop), Math.max(0, plotHeight - tooltipHeight));
+    plot.style.setProperty("--usage-tooltip-left", `${left}px`);
+    plot.style.setProperty("--usage-tooltip-top", `${top}px`);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (hoverIndex !== null) positionTooltip();
+  }, [hoverIndex, positionTooltip]);
+
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const plot = plotRef.current;
@@ -266,19 +297,11 @@ export function UsageProviderChart({
       const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
       const fraction = localX / bounds.width;
       const index = Math.round(fraction * (periods.length - 1));
-      plot.style.setProperty("--usage-tooltip-x", `${localX}px`);
-      plot.style.setProperty("--usage-tooltip-y", `${localY}px`);
-      plot.style.setProperty(
-        "--usage-tooltip-shift-x",
-        localX > bounds.width * 0.65 ? "calc(-100% - 12px)" : "12px",
-      );
-      plot.style.setProperty(
-        "--usage-tooltip-shift-y",
-        localY > bounds.height * 0.55 ? "calc(-100% - 12px)" : "12px",
-      );
+      hoverPositionRef.current = { x: localX, y: localY };
+      positionTooltip();
       setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
     },
-    [periods.length],
+    [periods.length, positionTooltip],
   );
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
@@ -310,7 +333,10 @@ export function UsageProviderChart({
           ref={plotRef}
           className="relative h-56 flex-1"
           onMouseMove={handleMove}
-          onMouseLeave={() => setHoverIndex(null)}
+          onMouseLeave={() => {
+            hoverPositionRef.current = null;
+            setHoverIndex(null);
+          }}
         >
           <svg
             className="h-full w-full"
@@ -366,12 +392,11 @@ export function UsageProviderChart({
 
           {hoveredPeriod === undefined ? null : (
             <div
-              className="pointer-events-none absolute z-10 min-w-36 rounded-xl border border-border/50 bg-background/65 px-2.5 py-2 text-xs shadow-lg backdrop-blur-xl backdrop-saturate-150 will-change-transform"
+              ref={tooltipRef}
+              className="pointer-events-none absolute z-10 min-w-36 max-w-full rounded-xl border border-border/50 bg-background/65 px-2.5 py-2 text-xs shadow-lg backdrop-blur-xl backdrop-saturate-150"
               style={{
-                left: "var(--usage-tooltip-x, 0px)",
-                top: "var(--usage-tooltip-y, 0px)",
-                transform:
-                  "translate(var(--usage-tooltip-shift-x, 12px), var(--usage-tooltip-shift-y, 12px))",
+                left: "var(--usage-tooltip-left, 0px)",
+                top: "var(--usage-tooltip-top, 0px)",
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>

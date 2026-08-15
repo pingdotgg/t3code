@@ -3,8 +3,7 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { ClaudeAI, type Icon, OpenAI } from "../Icons";
 
 /**
- * Stable reading and stack order. Codex sits at the base of each chart bar and
- * Claude Code stacks above it, matching the legend, tables, and hover rows.
+ * Stable provider reading order across summaries, tables, and hover rows.
  */
 export const PROVIDER_ORDER: readonly UsageProviderKind[] = ["codex", "claude"];
 

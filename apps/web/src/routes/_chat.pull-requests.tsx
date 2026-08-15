@@ -1189,6 +1189,7 @@ function PullRequestsRouteView() {
   const linkedSelectionMatchesSurface =
     linkedSelection !== null &&
     selectedPullRequestSurface !== null &&
+    linkedSelection.environmentId === selectedPullRequestSurface.environmentId &&
     linkedSelection.projectId === selectedPullRequestSurface.projectId &&
     linkedSelection.repository === selectedPullRequestSurface.repository &&
     linkedSelection.number === selectedPullRequestSurface.number;

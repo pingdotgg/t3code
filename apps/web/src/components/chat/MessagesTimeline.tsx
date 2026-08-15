@@ -1456,7 +1456,6 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     <button
       type="button"
       className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={row.expanded ? "Collapse current tool calls" : "Expand current tool calls"}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
@@ -2160,18 +2159,55 @@ function workEntryPreview(
     : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
 }
 
-const LIVE_COMMAND_PREVIEW_LIMIT = 80;
+type CommandWrapper = "env" | "sudo";
+
+const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<string>> = {
+  env: new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]),
+  sudo: new Set(["-C", "--close-from", "-D", "--chdir", "-g", "--group", "-u", "--user"]),
+};
+
+const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
+  env: new Set(["-0", "--null", "-i", "--ignore-environment", "--debug"]),
+  sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-n", "-S"]),
+};
 
 function commandProgramName(command: string): string | null {
   const tokens = command.trim().split(/\s+/);
   let index = 0;
+  let wrapper: CommandWrapper | null = null;
 
   while (index < tokens.length) {
     const token = tokens[index]?.replace(/^["']|["']$/g, "");
     if (!token) return null;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token) || token === "env" || token === "sudo") {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
       index += 1;
       continue;
+    }
+    if (token === "env" || token === "sudo") {
+      wrapper = token;
+      index += 1;
+      continue;
+    }
+    if (wrapper !== null && token === "--") {
+      wrapper = null;
+      index += 1;
+      continue;
+    }
+    if (wrapper !== null && token.startsWith("-")) {
+      if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token)) {
+        if (tokens[index + 1] === undefined) return null;
+        index += 2;
+        continue;
+      }
+      if (
+        COMMAND_WRAPPER_FLAGS[wrapper].has(token) ||
+        /^--[^=]+=/.test(token) ||
+        (/^-[A-Za-z].+/.test(token) && !token.startsWith("--"))
+      ) {
+        index += 1;
+        continue;
+      }
+      return null;
     }
     return token.split(/[\\/]/).at(-1) || null;
   }
@@ -2187,9 +2223,7 @@ function liveWorkEntryLabel(
   if (command) {
     const program = commandProgramName(command);
     if (program) return `Running ${program}`;
-    if (command.length > LIVE_COMMAND_PREVIEW_LIMIT || command.includes("\n")) {
-      return "Running command";
-    }
+    return "Running command";
   }
 
   return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
@@ -2200,14 +2234,16 @@ function buildToolCallExpandedBody(
   workspaceRoot: string | undefined,
 ): string | null {
   const command = workEntry.rawCommand?.trim() || workEntry.command?.trim();
-  if (command) return command;
-
   const blocks: string[] = [];
+  if (command) {
+    blocks.push(command);
+  }
   if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
     blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
   }
-  if (workEntry.detail?.trim()) {
-    blocks.push(workEntry.detail.trim());
+  const detail = workEntry.detail?.trim();
+  if (detail && detail !== command) {
+    blocks.push(detail);
   }
   const changedFiles = workEntry.changedFiles ?? [];
   if (changedFiles.length > 0) {
@@ -2439,6 +2475,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         role: "button" as const,
         tabIndex: 0 as const,
         "aria-label": displayText,
+        "aria-expanded": expanded,
         onClick: () => setExpanded((v) => !v),
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.key === "Enter" || e.key === " ") {

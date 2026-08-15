@@ -78,7 +78,7 @@ const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 const TERMINAL_SIDEBAR_DEFAULT_WIDTH = 144;
-const TERMINAL_SIDEBAR_MIN_WIDTH = 96;
+const TERMINAL_SIDEBAR_MIN_WIDTH = 144;
 const TERMINAL_SIDEBAR_MAX_WIDTH = 320;
 const TERMINAL_SIDEBAR_WIDTH_STORAGE_KEY = "t3code:terminal-sidebar-width";
 
@@ -1186,6 +1186,12 @@ export default function ThreadTerminalDrawer({
   }, []);
 
   useEffect(() => {
+    cancelTerminalRenameRef.current = false;
+    setRenamingTerminalId(null);
+    setTerminalRenameDraft("");
+  }, [threadRef.environmentId, threadRef.threadId]);
+
+  useEffect(() => {
     onHeightChangeRef.current = onHeightChange;
   }, [onHeightChange]);
 
@@ -1575,6 +1581,7 @@ export default function ThreadTerminalDrawer({
                               }}
                               onKeyDown={(event) => {
                                 event.stopPropagation();
+                                if (event.nativeEvent.isComposing) return;
                                 if (event.key === "Enter") {
                                   event.preventDefault();
                                   finishTerminalRename();

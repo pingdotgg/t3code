@@ -638,6 +638,9 @@ export function deriveMessagesTimelineRows(input: {
     input.isWorking &&
     index >= activeTurnHeaderIndex &&
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
+  const isVisibleActiveToolEntry = (entry: WorkLogEntry) =>
+    workLogEntryIsToolLike(entry) &&
+    (entry.toolLifecycleStatus === "inProgress" || !workEntryIndicatesToolNeutralStatus(entry));
   const activeEntries = input.isWorking
     ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
     : [];
@@ -647,9 +650,7 @@ export function deriveMessagesTimelineRows(input: {
         return entry.message.role === "assistant" && (entry.message.text?.trim().length ?? 0) > 0;
       }
       if (entry.kind === "work") {
-        return (
-          entry.entry.agentSpawn === undefined && !workEntryIndicatesToolNeutralStatus(entry.entry)
-        );
+        return entry.entry.agentSpawn === undefined && isVisibleActiveToolEntry(entry.entry);
       }
       if (entry.kind === "turn-plan") return true;
       return false;
@@ -669,13 +670,13 @@ export function deriveMessagesTimelineRows(input: {
     if (!entry) continue;
     const isVisibleTurnContent =
       (entry.kind === "message" && entry.message.role === "user") ||
+      entry.kind === "proposed-plan" ||
       (entryBelongsToActiveTurn(entry, index) &&
         ((entry.kind === "message" && entry.message.role === "assistant") ||
           entry.kind === "turn-plan" ||
           (entry.kind === "work" &&
             entry.entry.agentSpawn === undefined &&
-            !workEntryIndicatesToolNeutralStatus(entry.entry) &&
-            workLogEntryIsToolLike(entry.entry))));
+            isVisibleActiveToolEntry(entry.entry))));
     hasLaterTurnContent[index] = isVisibleTurnContent || hasLaterTurnContent[index + 1] === true;
   }
 
@@ -689,7 +690,7 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       continue;
     }
-    if (workEntryIndicatesToolNeutralStatus(entry.entry) || !workLogEntryIsToolLike(entry.entry)) {
+    if (!isVisibleActiveToolEntry(entry.entry)) {
       continue;
     }
 
@@ -709,13 +710,8 @@ export function deriveMessagesTimelineRows(input: {
         break;
       }
       batchEntryIds.push(nextEntry.id);
-      if (
-        !workEntryIndicatesToolNeutralStatus(nextEntry.entry) &&
-        workLogEntryIsToolLike(nextEntry.entry)
-      ) {
+      if (isVisibleActiveToolEntry(nextEntry.entry)) {
         latestToolEntry = nextEntry;
-      }
-      if (!workEntryIndicatesToolNeutralStatus(nextEntry.entry)) {
         visibleBatchEntries.push(nextEntry.entry);
       }
       cursor += 1;

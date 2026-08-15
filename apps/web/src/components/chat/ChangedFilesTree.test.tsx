@@ -25,8 +25,7 @@ describe("ChangedFilesCard", () => {
     expect(markup).toContain("whitespace-nowrap");
     expect(markup).toContain('class="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-1');
     expect(markup).toContain('class="flex shrink-0 items-center gap-1 whitespace-nowrap');
-    expect(markup).toContain('class="hidden sm:inline">Open diff</span>');
-    expect(markup).not.toContain("@[24rem]/changed-files:inline");
+    expect(markup).toContain('class="hidden @[24rem]/changed-files:inline">Open diff</span>');
     expect(markup).toContain('class="flex shrink-0 items-center gap-1.5"');
     expect(markup).toContain("!size-[22px]");
     expect(markup).toContain("size-3");
