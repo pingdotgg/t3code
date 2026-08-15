@@ -89,36 +89,6 @@ fn grim_capture(output: Option<&str>) -> Result<Vec<u8>> {
     Ok(result.stdout)
 }
 
-/// How many displays `grim_capture(None)` may stand in for when xcap fails.
-///
-/// All-outputs grim is a single image — only display index 0 is valid unless
-/// xcap can still enumerate monitors (in which case the index must be in range,
-/// and we only use grim for index 0 to avoid returning the wrong screen).
-fn wayland_grim_index_ok(index: usize) -> Result<()> {
-    let monitor_len = std::panic::catch_unwind(|| Monitor::all().map(|m| m.len()).unwrap_or(0))
-        .unwrap_or(0);
-    if monitor_len == 0 {
-        // Synthetic single Wayland output advertised by `list_displays`.
-        if index != 0 {
-            return Err(DesktopError::new(format!(
-                "display {index} does not exist — call list_displays (1 attached via wlr-screencopy)"
-            )));
-        }
-        return Ok(());
-    }
-    if index >= monitor_len {
-        return Err(DesktopError::new(format!(
-            "display {index} does not exist — call list_displays ({monitor_len} attached)"
-        )));
-    }
-    if index != 0 {
-        return Err(DesktopError::new(format!(
-            "display {index} capture failed on Wayland — grim all-outputs fallback only covers display 0"
-        )));
-    }
-    Ok(())
-}
-
 pub fn list_displays() -> Result<String> {
     match guarded("display enumeration", list_displays_inner) {
         Ok(text) => Ok(text),
@@ -159,22 +129,7 @@ fn list_displays_inner() -> Result<String> {
 }
 
 pub fn capture_display(index: usize, max_width: u32) -> Result<Vec<u8>> {
-    match guarded("display capture", || capture_display_inner(index, max_width)) {
-        Ok(png) => Ok(png),
-        Err(error) if on_wayland() => {
-            // An out-of-range index must not fall back to grim's all-outputs capture.
-            if error.0.contains("does not exist") {
-                return Err(error);
-            }
-            wayland_grim_index_ok(index)?;
-            let png = grim_capture(None).map_err(|_| error)?;
-            // Re-encode so max_width applies to this path too.
-            let image = image::load_from_memory(&png)
-                .map_err(|error| DesktopError::new(format!("grim returned an unreadable PNG: {error}")))?;
-            encode_png(image.to_rgba8(), max_width)
-        }
-        Err(error) => Err(error),
-    }
+    guarded("display capture", || capture_display_inner(index, max_width))
 }
 
 fn capture_display_inner(index: usize, max_width: u32) -> Result<Vec<u8>> {

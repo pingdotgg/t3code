@@ -29,7 +29,7 @@ fn grouped_windows() -> Result<Vec<Group>> {
     let mut groups: HashMap<u32, Group> = HashMap::new();
     for window in windows {
         let pid = window.pid().unwrap_or(0);
-        if pid == 0 || window.is_minimized().unwrap_or(false) {
+        if pid == 0 {
             continue;
         }
         // Some compositors report zero-sized shadow windows; they are not

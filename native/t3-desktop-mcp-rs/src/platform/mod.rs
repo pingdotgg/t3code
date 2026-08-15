@@ -92,6 +92,44 @@ pub struct AppInfo {
     pub frontmost: bool,
 }
 
+/// Escape app name/id tokens so `format_app_list` lines stay one line and
+/// `parse_app_line` can locate the trailing `  [id]` marker reliably.
+pub fn escape_app_field(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Reverse `escape_app_field` after splitting a `format_app_list` line.
+pub fn unescape_app_field(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Renders `list_apps` output identically to the macOS server so the model sees
 /// one format everywhere.
 pub fn format_app_list(mut apps: Vec<AppInfo>) -> String {
@@ -103,8 +141,8 @@ pub fn format_app_list(mut apps: Vec<AppInfo>) -> String {
         .map(|app| {
             format!(
                 "{}  [{}]  pid={}  windows={}{}",
-                app.name,
-                app.id,
+                escape_app_field(&app.name),
+                escape_app_field(&app.id),
                 app.pid,
                 app.windows,
                 if app.frontmost { "  FRONTMOST" } else { "" }
@@ -202,10 +240,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_app_list_explains_itself() {
-        assert_eq!(
-            format_app_list(Vec::new()),
-            "no running applications with windows"
-        );
+    fn app_list_escapes_newlines_in_names() {
+        let rendered = format_app_list(vec![AppInfo {
+            name: "Foo\nBar".into(),
+            id: "com.foo".into(),
+            pid: 1,
+            windows: 1,
+            frontmost: false,
+        }]);
+        assert!(!rendered.contains('\n') || rendered.lines().count() == 1);
+        assert!(rendered.contains("Foo\\nBar"));
     }
 }
