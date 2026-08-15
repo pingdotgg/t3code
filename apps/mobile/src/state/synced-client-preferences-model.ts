@@ -297,13 +297,17 @@ export function createPlanModePreferenceWriteController() {
 
   return {
     create(input: Parameters<typeof createPlanModePreferenceWrite>[0]) {
+      const persistedUpdatedAt = input.currentUpdatedAtByField?.planModeEnabled;
+      const currentUpdatedAt =
+        latestRequestedUpdatedAt === undefined ||
+        (persistedUpdatedAt !== undefined && persistedUpdatedAt > latestRequestedUpdatedAt)
+          ? persistedUpdatedAt
+          : latestRequestedUpdatedAt;
       const write = createPlanModePreferenceWrite({
         ...input,
         currentUpdatedAtByField: {
           ...input.currentUpdatedAtByField,
-          ...(latestRequestedUpdatedAt === undefined
-            ? {}
-            : { planModeEnabled: latestRequestedUpdatedAt }),
+          ...(currentUpdatedAt === undefined ? {} : { planModeEnabled: currentUpdatedAt }),
         },
       });
       latestRequestedUpdatedAt =

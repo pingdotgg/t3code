@@ -168,6 +168,27 @@ describe("synced client preferences", () => {
     ).toBeNull();
   });
 
+  it("advances past a local clock reconciled after the previous write", () => {
+    const controller = createPlanModePreferenceWriteController();
+    const environment = environmentId("environment-1");
+    controller.create({
+      value: true,
+      connectedEnvironmentIds: [environment],
+      now: "2026-08-14T12:00:00.000Z",
+    });
+
+    const write = controller.create({
+      value: false,
+      connectedEnvironmentIds: [environment],
+      currentUpdatedAtByField: { planModeEnabled: "2026-08-14T12:05:00.000Z" },
+      now: "2026-08-14T12:01:00.000Z",
+    });
+
+    expect(write.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled).toBe(
+      "2026-08-14T12:05:00.001Z",
+    );
+  });
+
   it("settles a multi-environment toggle from only the first response", () => {
     const controller = createPlanModePreferenceWriteController();
     const write = controller.create({
