@@ -24,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -40,6 +41,9 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2ThreadResumeResponse = Schema.decodeUnknownEffect(
+  EffectCodexSchema.V2ThreadResumeResponse,
+);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -52,6 +56,13 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_THREAD_RESUME_TIMEOUT = "30 seconds" as const;
+// A child can settle while a wait request is in flight. Two consecutive empty
+// completions absorb that race; a third provider-confirmed empty result is a
+// liveness failure. Do not gate this on collabChildLiveTurnsRef: that map is a
+// deliberately conservative Stop target cache and can contain stale entries.
+const EMPTY_COLLAB_WAIT_INTERRUPT_THRESHOLD = 3;
+const EMPTY_COLLAB_WAIT_INTERRUPT_TIMEOUT = "5 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -239,6 +250,37 @@ function makeCodexServerNotification<M extends CodexRpc.ServerNotificationMethod
   params: CodexRpc.ServerNotificationParamsByMethod[M],
 ): CodexServerNotification {
   return { method, params } as CodexServerNotification;
+}
+
+interface EmptyCollabWaitGuardState {
+  readonly turnId: TurnId | null;
+  readonly completedWaits: number;
+  readonly interruptRequested: boolean;
+}
+
+function isCompletedEmptyCollabWait(notification: CodexServerNotification): boolean {
+  if (notification.method !== "item/completed") {
+    return false;
+  }
+  const item = notification.params.item;
+  return (
+    item.type === "collabAgentToolCall" &&
+    item.tool === "wait" &&
+    item.status === "completed" &&
+    item.receiverThreadIds.length === 0 &&
+    Object.keys(item.agentsStates).length === 0
+  );
+}
+
+function isMeaningfulItemCompletion(notification: CodexServerNotification): boolean {
+  if (notification.method !== "item/completed") {
+    return false;
+  }
+  const item = notification.params.item;
+  if (item.type === "reasoning") {
+    return false;
+  }
+  return !isCompletedEmptyCollabWait(notification);
 }
 
 function normalizeCodexModelSlug(
@@ -448,6 +490,12 @@ type CodexThreadOpenResponse =
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
 interface CodexThreadOpenClient {
+  readonly raw: {
+    readonly request: (
+      method: string,
+      payload?: unknown,
+    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+  };
   readonly request: <M extends CodexThreadOpenMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
@@ -475,22 +523,53 @@ export const openCodexThread = (input: {
     return input.client.request("thread/start", startParams);
   }
 
-  return input.client
+  const resume = input.client.raw
     .request("thread/resume", {
       threadId: resumeThreadId,
       ...startParams,
+      // T3 owns and renders its own projected timeline. Asking Codex to
+      // serialize the provider's entire legacy turn history makes large
+      // threads block session startup even after Codex reports them idle.
+      excludeTurns: true,
     })
     .pipe(
-      Effect.catchIf(isRecoverableThreadResumeError, (error) =>
-        Effect.logWarning("codex app-server thread resume fell back to fresh start", {
-          threadId: input.threadId,
-          requestedRuntimeMode: input.runtimeMode,
-          resumeThreadId,
-          recoverable: true,
-          cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+      Effect.flatMap((response) =>
+        decodeV2ThreadResumeResponse(response).pipe(
+          Effect.mapError((error) =>
+            CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+              "decode-response-payload",
+              error,
+              { method: "thread/resume" },
+            ),
+          ),
+        ),
+      ),
+      Effect.timeoutOption(CODEX_THREAD_RESUME_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32000,
+                errorMessage: `thread/resume timed out after ${CODEX_THREAD_RESUME_TIMEOUT}`,
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
       ),
     );
+
+  return resume.pipe(
+    Effect.catchIf(isRecoverableThreadResumeError, (error) =>
+      Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+        threadId: input.threadId,
+        requestedRuntimeMode: input.runtimeMode,
+        resumeThreadId,
+        recoverable: true,
+        cause: error,
+      }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+    ),
+  );
 };
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
@@ -928,6 +1007,11 @@ export const makeCodexSessionRuntime = (
       updatedAt: sessionCreatedAt,
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
+    const emptyCollabWaitGuardRef = yield* Ref.make<EmptyCollabWaitGuardState>({
+      turnId: null,
+      completedWaits: 0,
+      interruptRequested: false,
+    });
     const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
@@ -1252,10 +1336,10 @@ export const makeCodexSessionRuntime = (
         const payload = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
+        const notificationProviderThreadId = readNotificationThreadId(notification);
         const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return providerConversationId
-            ? collabReceiverTurns.get(providerConversationId)
+          return notificationProviderThreadId
+            ? collabReceiverTurns.get(notificationProviderThreadId)
             : undefined;
         })();
 
@@ -1279,11 +1363,10 @@ export const makeCodexSessionRuntime = (
         // root's own early notifications flowing during session open.
         const suppressRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
         const foreignConversation = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
           return (
-            providerConversationId !== undefined &&
+            notificationProviderThreadId !== undefined &&
             suppressRootId !== undefined &&
-            providerConversationId !== suppressRootId
+            notificationProviderThreadId !== suppressRootId
           );
         })();
         if (
@@ -1324,6 +1407,76 @@ export const makeCodexSessionRuntime = (
           }
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
+        }
+
+        const session = yield* Ref.get(sessionRef);
+        const activeTurnId = childParentTurnId ?? route.turnId ?? session.activeTurnId ?? null;
+        const providerThreadId = currentProviderThreadId(session);
+        const completedEmptyCollabWait = isCompletedEmptyCollabWait(notification);
+        const rootConversation =
+          notificationProviderThreadId === undefined ||
+          notificationProviderThreadId === providerThreadId;
+        if (
+          completedEmptyCollabWait &&
+          rootConversation &&
+          activeTurnId !== null &&
+          providerThreadId !== undefined
+        ) {
+          const shouldInterrupt = yield* Ref.modify(emptyCollabWaitGuardRef, (current) => {
+            if (current.turnId === activeTurnId && current.interruptRequested) {
+              return [false, current] as const;
+            }
+            const completedWaits = current.turnId === activeTurnId ? current.completedWaits + 1 : 1;
+            const interruptRequested = completedWaits >= EMPTY_COLLAB_WAIT_INTERRUPT_THRESHOLD;
+            return [
+              interruptRequested,
+              {
+                turnId: activeTurnId,
+                completedWaits,
+                interruptRequested,
+              },
+            ] as const;
+          });
+          if (shouldInterrupt) {
+            const interruptExit = yield* client
+              .request("turn/interrupt", {
+                threadId: providerThreadId,
+                turnId: activeTurnId,
+              })
+              .pipe(Effect.timeout(EMPTY_COLLAB_WAIT_INTERRUPT_TIMEOUT), Effect.exit);
+            if (Exit.isFailure(interruptExit)) {
+              yield* Ref.set(emptyCollabWaitGuardRef, {
+                turnId: activeTurnId,
+                completedWaits: 0,
+                interruptRequested: false,
+              });
+              yield* Effect.logWarning("Failed to interrupt an empty collaboration-wait loop.", {
+                threadId: options.threadId,
+                turnId: activeTurnId,
+                cause: interruptExit.cause,
+              });
+            } else {
+              yield* emitEvent({
+                kind: "notification",
+                threadId: options.threadId,
+                turnId: activeTurnId,
+                method: "process/stderr",
+                message:
+                  "Interrupted a stalled Codex turn after three completed collaboration waits reported no active agents.",
+              });
+            }
+          }
+        } else if (
+          completedEmptyCollabWait ||
+          notification.method === "turn/started" ||
+          notification.method === "turn/completed" ||
+          isMeaningfulItemCompletion(notification)
+        ) {
+          yield* Ref.set(emptyCollabWaitGuardRef, {
+            turnId: activeTurnId,
+            completedWaits: 0,
+            interruptRequested: false,
+          });
         }
 
         let requestId: ApprovalRequestId | undefined;

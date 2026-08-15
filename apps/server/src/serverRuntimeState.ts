@@ -2,6 +2,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
@@ -152,6 +154,123 @@ export const readPersistedServerRuntimeState = (path: string) =>
             cause: error,
           }),
           Effect.as(Option.none<PersistedServerRuntimeState>()),
+        ),
+    }),
+  );
+
+export const clearPersistedServerRuntimeStateIfOwned = (input: {
+  readonly path: string;
+  readonly state: Pick<PersistedServerRuntimeState, "pid" | "startedAt">;
+}): Effect.Effect<void, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const observed = yield* readPersistedServerRuntimeState(input.path);
+    if (
+      Option.isNone(observed) ||
+      observed.value.pid !== input.state.pid ||
+      observed.value.startedAt !== input.state.startedAt
+    ) {
+      return;
+    }
+
+    const nonce = yield* Random.nextInt;
+    const capturedPath = `${input.path}.clearing-${process.pid}-${nonce.toString(36)}`;
+    const captured = yield* fs.rename(input.path, capturedPath).pipe(
+      Effect.as(true),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(false)
+            : Effect.fail(
+                new ServerRuntimeStateError({
+                  operation: "clear",
+                  statePath: input.path,
+                  cause,
+                }),
+              ),
+      }),
+    );
+    if (!captured) {
+      return;
+    }
+
+    const current = yield* readPersistedServerRuntimeState(capturedPath);
+    const ownsCapturedState =
+      Option.isSome(current) &&
+      current.value.pid === input.state.pid &&
+      current.value.startedAt === input.state.startedAt;
+
+    if (!ownsCapturedState) {
+      const restoreCapturedState = (
+        linkCause: PlatformError.PlatformError,
+      ): Effect.Effect<void, ServerRuntimeStateError> =>
+        fs.readFileString(capturedPath).pipe(
+          Effect.mapError(
+            (restoreCause) =>
+              new ServerRuntimeStateError({
+                operation: "clear",
+                statePath: input.path,
+                cause: { linkCause, restoreCause },
+              }),
+          ),
+          Effect.flatMap((contents) =>
+            fs
+              .writeFileString(input.path, contents, {
+                flag: "wx",
+                mode: 0o600,
+              })
+              .pipe(
+                Effect.catchTags({
+                  PlatformError: (restoreCause) =>
+                    restoreCause.reason._tag === "AlreadyExists"
+                      ? Effect.void
+                      : Effect.fail(
+                          new ServerRuntimeStateError({
+                            operation: "clear",
+                            statePath: input.path,
+                            cause: { linkCause, restoreCause },
+                          }),
+                        ),
+                }),
+              ),
+          ),
+        );
+
+      yield* fs.link(capturedPath, input.path).pipe(
+        Effect.catchTags({
+          PlatformError: (linkCause) => {
+            if (linkCause.reason._tag === "AlreadyExists") {
+              return Effect.void;
+            }
+            // Some filesystems do not support hard links. Preserve the same
+            // no-clobber contract with an exclusive create so a concurrent
+            // replacement writer always wins. The captured file stays in
+            // place unless this durable fallback completes.
+            return restoreCapturedState(linkCause);
+          },
+        }),
+      );
+    }
+
+    yield* fs.remove(capturedPath, { force: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerRuntimeStateError({
+            operation: "clear",
+            statePath: input.path,
+            cause,
+          }),
+      ),
+    );
+  }).pipe(
+    Effect.catchTags({
+      ServerRuntimeStateError: (error) =>
+        Effect.logWarning(error.message).pipe(
+          Effect.annotateLogs({
+            operation: error.operation,
+            statePath: error.statePath,
+            cause: error,
+          }),
         ),
     }),
   );

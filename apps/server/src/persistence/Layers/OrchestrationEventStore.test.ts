@@ -120,4 +120,50 @@ layer("OrchestrationEventStore", (it) => {
       }
     }),
   );
+
+  it.effect("durably appends 20 concurrent task events through one store", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+
+      const appended = yield* Effect.forEach(
+        Array.from({ length: 20 }, (_, index) => index),
+        (index) =>
+          eventStore.append({
+            type: "project.created",
+            eventId: EventId.make(`evt-concurrent-${index}`),
+            aggregateKind: "project",
+            aggregateId: ProjectId.make(`project-concurrent-${index}`),
+            occurredAt: now,
+            commandId: CommandId.make(`cmd-concurrent-${index}`),
+            causationEventId: null,
+            correlationId: CommandId.make(`cmd-concurrent-${index}`),
+            metadata: {
+              adapterKey: "codex",
+            },
+            payload: {
+              projectId: ProjectId.make(`project-concurrent-${index}`),
+              title: `Concurrent Project ${index}`,
+              workspaceRoot: `/tmp/project-concurrent-${index}`,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: now,
+              updatedAt: now,
+            },
+          }),
+        { concurrency: "unbounded" },
+      );
+
+      assert.equal(appended.length, 20);
+      assert.equal(new Set(appended.map((event) => event.sequence)).size, 20);
+
+      const rows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS "count"
+        FROM orchestration_events
+        WHERE event_id LIKE 'evt-concurrent-%'
+      `;
+      assert.equal(rows[0]?.count, 20);
+    }),
+  );
 });

@@ -140,6 +140,8 @@ SSH launch is a desktop feature because it needs local process and SSH access. O
 
 The desktop SSH launcher connects with a non-interactive `sh` session, writes a small launcher script under `~/.t3/ssh-launch/<host-key>/`, starts or reuses a remote T3 server, and forwards the remote loopback port back to your desktop.
 
+When the launcher discovers a server that is already managed by the remote host, it records that server as externally owned and only reconnects to it. A brief service restart can make an SSH connection attempt fail, but the launcher will not start a competing server. To intentionally transfer ownership to the desktop app, first disconnect the SSH environment, then stop and disable the host-managed T3 service before reconnecting.
+
 The remote host must have a compatible Node.js runtime. T3 Code uses the server package's `engines.node` requirement:
 
 ```text

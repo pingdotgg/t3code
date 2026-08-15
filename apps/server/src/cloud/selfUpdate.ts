@@ -15,6 +15,8 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as TurnAdmissionGate from "../orchestration/TurnAdmissionGate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -52,6 +54,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const execPath = yield* HostProcessExecutablePath;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const turnAdmissionGate = yield* TurnAdmissionGate.TurnAdmissionGate;
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -60,6 +64,21 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     cause === undefined
       ? new ServerSelfUpdateError({ reason })
       : new ServerSelfUpdateError({ reason, cause });
+  const refuseActiveWork = (activeWorkCount: number) =>
+    Effect.fail(
+      failWith(
+        `T3 Code cannot update while ${activeWorkCount} ${activeWorkCount === 1 ? "thread is" : "threads are"} still working. Let the work finish or stop it, then retry.`,
+      ),
+    );
+  const ensureNoActiveWork = () =>
+    projectionSnapshotQuery.getUpdateAdmissionSnapshot().pipe(
+      Effect.mapError((cause) =>
+        failWith("Could not verify that every thread is idle before updating T3 Code.", cause),
+      ),
+      Effect.flatMap(({ activeThreadIds }) =>
+        activeThreadIds.length === 0 ? Effect.void : refuseActiveWork(activeThreadIds.length),
+      ),
+    );
 
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
@@ -79,6 +98,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     if (!isExactServiceVersion(targetVersion)) {
       return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
     }
+    yield* ensureNoActiveWork();
     if (yield* Ref.getAndSet(inFlight, true)) {
       return yield* failWith("A server update is already in progress.");
     }
@@ -169,18 +189,25 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       );
 
       yield* reportProgress("installing");
-      const updateId = yield* launcher
-        .requestUpdate({ targetVersion, dbPath: serverConfig.dbPath })
-        .pipe(
-          Effect.mapError((error) =>
-            failWith(
-              error._tag === "ServiceLauncherRejectedError"
-                ? error.reason
-                : "Could not ask the service launcher to activate the prepared update.",
-              error,
-            ),
-          ),
-        );
+      // A new turn can begin while the candidate runtime is downloading, so
+      // verify the handoff boundary as well as the initial update request.
+      const updateId = yield* turnAdmissionGate.commitUpdateHandoff(
+        Effect.gen(function* () {
+          yield* ensureNoActiveWork();
+          return yield* launcher
+            .requestUpdate({ targetVersion, dbPath: serverConfig.dbPath })
+            .pipe(
+              Effect.mapError((error) =>
+                failWith(
+                  error._tag === "ServiceLauncherRejectedError"
+                    ? error.reason
+                    : "Could not ask the service launcher to activate the prepared update.",
+                  error,
+                ),
+              ),
+            );
+        }),
+      );
 
       yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
         updateId,

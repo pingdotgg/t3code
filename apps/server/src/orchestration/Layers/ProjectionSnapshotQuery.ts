@@ -720,6 +720,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listPendingTurnStartThreadIds = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadIdLookupRowSchema,
+    execute: () =>
+      sql`
+        SELECT DISTINCT turns.thread_id AS "threadId"
+        FROM projection_turns AS turns
+        INNER JOIN projection_threads AS threads
+          ON threads.thread_id = turns.thread_id
+        WHERE turns.turn_id IS NULL
+          AND turns.state = 'pending'
+          AND turns.pending_message_id IS NOT NULL
+          AND turns.checkpoint_turn_count IS NULL
+          AND threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        ORDER BY turns.thread_id ASC
+      `,
+  });
+
   const listArchivedLatestTurnRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionLatestTurnDbRowSchema,
@@ -2128,6 +2147,79 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const getUpdateAdmissionSnapshot: ProjectionSnapshotQueryShape["getUpdateAdmissionSnapshot"] =
+    () =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const threadRows = yield* listActiveThreadRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listThreads:query",
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listThreads:decodeRows",
+                ),
+              ),
+            );
+            const sessionRows = yield* listActiveThreadSessionRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listThreadSessions:query",
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listThreadSessions:decodeRows",
+                ),
+              ),
+            );
+            const latestTurnRows = yield* listActiveLatestTurnRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listLatestTurns:query",
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listLatestTurns:decodeRows",
+                ),
+              ),
+            );
+            const pendingTurnStartRows = yield* listPendingTurnStartThreadIds(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listPendingTurnStarts:query",
+                  "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:listPendingTurnStarts:decodeRows",
+                ),
+              ),
+            );
+
+            const activeThreadIds = new Set<ThreadId>();
+            for (const row of sessionRows) {
+              if (row.status === "starting" || row.status === "running") {
+                activeThreadIds.add(row.threadId);
+              }
+            }
+            for (const row of latestTurnRows) {
+              if (row.state === "running") {
+                activeThreadIds.add(row.threadId);
+              }
+            }
+            for (const row of pendingTurnStartRows) {
+              activeThreadIds.add(row.threadId);
+            }
+            for (const row of threadRows) {
+              const liveness = threadBackgroundLiveness.getThreadBackgroundLiveness(row.threadId);
+              if (liveness === "working" || liveness === "monitoring") {
+                activeThreadIds.add(row.threadId);
+              }
+            }
+
+            return { activeThreadIds: Array.from(activeThreadIds).sort() };
+          }),
+        )
+        .pipe(
+          Effect.mapError((error) => {
+            if (isPersistenceError(error)) {
+              return error;
+            }
+            return toPersistenceSqlError(
+              "ProjectionSnapshotQuery.getUpdateAdmissionSnapshot:transaction",
+            )(error);
+          }),
+        );
+
   const searchThreads: ProjectionSnapshotQueryShape["searchThreads"] = Effect.fn(
     "ProjectionSnapshotQuery.searchThreads",
   )(function* (input) {
@@ -2672,6 +2764,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     searchThreads,
     getSnapshotSequence,
     getCounts,
+    getUpdateAdmissionSnapshot,
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,

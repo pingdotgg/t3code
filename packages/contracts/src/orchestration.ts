@@ -950,11 +950,22 @@ export const ClientOrchestrationCommand = Schema.Union([
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
+/**
+ * Correlates a durable session lifecycle write with the exact pending user
+ * message whose provider delivery is about to begin.
+ */
+export const ThreadTurnStartDelivery = Schema.Struct({
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+});
+export type ThreadTurnStartDelivery = typeof ThreadTurnStartDelivery.Type;
+
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  turnStartDelivery: Schema.optional(ThreadTurnStartDelivery),
   createdAt: IsoDateTime,
 });
 
@@ -1007,6 +1018,25 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnStartRecoveryFailCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn-start.recovery-fail"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
+  detail: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnStartDeliveryAcknowledgeCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn-start.delivery-acknowledge"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -1030,6 +1060,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadTurnStartRecoveryFailCommand,
+  ThreadTurnStartDeliveryAcknowledgeCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
 ]);
@@ -1071,6 +1103,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.turn-start-recovery-failed",
+  "thread.turn-start-delivery-acknowledged",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1230,9 +1264,20 @@ export const ThreadMessageSentPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+/**
+ * Marks turn-start intents emitted by a server that durably records a
+ * correlated delivery marker before invoking a provider. A reactor may replay
+ * only events carrying this protocol after a restart; older events have an
+ * ambiguous provider-side delivery boundary and must be failed visibly rather
+ * than duplicated.
+ */
+export const TURN_START_DELIVERY_PROTOCOL = 2 as const;
+const PersistedTurnStartDeliveryProtocol = Schema.Literals([1, TURN_START_DELIVERY_PROTOCOL]);
+
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  deliveryProtocol: Schema.optional(PersistedTurnStartDeliveryProtocol),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -1282,6 +1327,7 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
   session: OrchestrationSession,
+  turnStartDelivery: Schema.optional(ThreadTurnStartDelivery),
 });
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
@@ -1303,6 +1349,21 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
 export const ThreadActivityAppendedPayload = Schema.Struct({
   threadId: ThreadId,
   activity: OrchestrationThreadActivity,
+});
+
+export const ThreadTurnStartRecoveryFailedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
+  detail: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadTurnStartDeliveryAcknowledgedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+  createdAt: IsoDateTime,
 });
 
 export const OrchestrationEventMetadata = Schema.Struct({
@@ -1471,6 +1532,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-start-recovery-failed"),
+    payload: ThreadTurnStartRecoveryFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-start-delivery-acknowledged"),
+    payload: ThreadTurnStartDeliveryAcknowledgedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

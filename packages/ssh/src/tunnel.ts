@@ -54,7 +54,8 @@ const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
-const REMOTE_READY_TIMEOUT_MS = 15_000;
+export const REMOTE_READY_TIMEOUT_MS = 180_000;
+export const REMOTE_LAUNCH_COMMAND_TIMEOUT_MS = 240_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
@@ -455,10 +456,6 @@ trap cleanup_runner_next EXIT
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
-RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
-  RUNNER_CHANGED=1
-fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
 if ! ensure_remote_node_path; then
@@ -483,6 +480,26 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
+is_descendant_or_same() {
+  CHILD_PID="$1"
+  ANCESTOR_PID="$2"
+  case "$CHILD_PID:$ANCESTOR_PID" in
+    *[!0-9:]*|:*) return 1 ;;
+  esac
+  CURRENT_PID="$CHILD_PID"
+  WALK_COUNT=0
+  while [ "$WALK_COUNT" -lt 64 ]; do
+    if [ "$CURRENT_PID" = "$ANCESTOR_PID" ]; then
+      return 0
+    fi
+    CURRENT_PID="$(ps -o ppid= -p "$CURRENT_PID" 2>/dev/null | tr -d '[:space:]')"
+    case "$CURRENT_PID" in
+      ''|0|1|*[!0-9]*) return 1 ;;
+    esac
+    WALK_COUNT=$((WALK_COUNT + 1))
+  done
+  return 1
+}
 resolve_default_runtime_port() {
   node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
 const fs = require("node:fs");
@@ -505,24 +522,74 @@ try {
 }
 NODE
 }
+service_is_installed() {
+  command -v systemctl >/dev/null 2>&1 && systemctl --user cat t3code.service >/dev/null 2>&1
+}
+adopt_runtime_as_external() {
+  ADOPT_INFO="$1"
+  ADOPT_PORT="\${ADOPT_INFO#* }"
+  REMOTE_PORT="$ADOPT_PORT"
+  if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
+    printf 'Installed T3 service did not become ready on 127.0.0.1:%s; refusing to start a competing SSH server.\\n' "$ADOPT_PORT" >&2
+    exit 1
+  fi
+  REMOTE_PID=""
+  REMOTE_MANAGED="external"
+  rm -f "$PID_FILE"
+  printf '%s\\n' "$ADOPT_PORT" >"$PORT_FILE"
+  printf 'external\\n' >"$MANAGED_FILE"
+}
+start_and_adopt_installed_service() {
+  if ! systemctl --user start t3code.service; then
+    printf 'Failed to start installed t3code.service; refusing to start a competing SSH server.\\n' >&2
+    exit 1
+  fi
+  SERVICE_WAIT_COUNT=0
+  SERVICE_RUNTIME_INFO=""
+  while [ "$SERVICE_WAIT_COUNT" -lt 150 ]; do
+    SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    if [ -n "$SERVICE_RUNTIME_INFO" ]; then
+      break
+    fi
+    SERVICE_WAIT_COUNT=$((SERVICE_WAIT_COUNT + 1))
+    sleep 0.1
+  done
+  if [ -z "$SERVICE_RUNTIME_INFO" ]; then
+    printf 'Installed t3code.service started but did not advertise a live runtime; refusing to start a competing SSH server.\\n' >&2
+    exit 1
+  fi
+  adopt_runtime_as_external "$SERVICE_RUNTIME_INFO"
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
+DEFAULT_RUNTIME_IS_MANAGED=0
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -n "$DEFAULT_RUNTIME_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null && is_descendant_or_same "$DEFAULT_RUNTIME_PID" "$REMOTE_PID"; then
+  DEFAULT_RUNTIME_IS_MANAGED=1
+  REMOTE_PID="$DEFAULT_RUNTIME_PID"
+  REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+  printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+fi
+if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$DEFAULT_RUNTIME_IS_MANAGED" -eq 0 ]; then
+  PREVIOUS_REMOTE_PORT="$REMOTE_PORT"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
-      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
-      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
-        kill "$PID_TO_STOP" 2>/dev/null || true
-        wait_for_pid_exit "$PID_TO_STOP"
+      if [ -n "$REMOTE_PID" ] && [ -n "$PREVIOUS_REMOTE_PORT" ] && [ "$PREVIOUS_REMOTE_PORT" != "$DEFAULT_REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+        kill "$REMOTE_PID" 2>/dev/null || true
+        wait_for_pid_exit "$REMOTE_PID"
+        if kill -0 "$REMOTE_PID" 2>/dev/null; then
+          printf 'Managed SSH T3 server pid %s did not terminate; refusing to adopt a different owner.\\n' "$REMOTE_PID" >&2
+          exit 1
+        fi
       fi
       REMOTE_PID=""
       REMOTE_PORT="$DEFAULT_REMOTE_PORT"
@@ -537,27 +604,31 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_MANAGED="external"
     fi
   else
-    REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-    REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
-    REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+    printf 'A live T3 runtime owns 127.0.0.1:%s but is not ready; refusing to start a competing SSH server. Retry after the owning runtime recovers or disconnect it explicitly.\\n' "$DEFAULT_REMOTE_PORT" >&2
+    exit 1
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
-  if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    REMOTE_PID=""
-    REMOTE_PORT=""
-    REMOTE_MANAGED=""
-  fi
-elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
+  if [ -z "$REMOTE_PORT" ]; then
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   elif ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    printf 'External T3 server did not become ready on 127.0.0.1:%s; refusing to replace it with a managed SSH server. Disconnect the SSH environment to clear external ownership.\\n' "$REMOTE_PORT" >&2
+    exit 1
+  fi
+elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+  if ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    if [ "$DEFAULT_RUNTIME_IS_MANAGED" -eq 0 ]; then
+      printf 'Stored managed SSH pid %s is live, but runtime ownership cannot be verified; refusing to signal it. Disconnect the owning process or clear the stale SSH environment state.\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
+    if kill -0 "$REMOTE_PID" 2>/dev/null; then
+      printf 'Managed SSH T3 server pid %s did not terminate; refusing to start or adopt another owner.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -566,6 +637,11 @@ else
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
+fi
+if [ -z "$REMOTE_PORT" ]; then
+  if service_is_installed; then
+    start_and_adopt_installed_service
+  fi
 fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
@@ -583,8 +659,31 @@ if [ -z "$REMOTE_PORT" ]; then
     tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
+    if kill -0 "$REMOTE_PID" 2>/dev/null; then
+      printf 'New managed SSH T3 server pid %s failed readiness and did not terminate; preserving ownership state.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     exit 1
+  fi
+  STARTED_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+  if [ -n "$STARTED_RUNTIME_INFO" ]; then
+    STARTED_RUNTIME_PID="\${STARTED_RUNTIME_INFO%% *}"
+    STARTED_RUNTIME_PORT="\${STARTED_RUNTIME_INFO#* }"
+    if is_descendant_or_same "$STARTED_RUNTIME_PID" "$REMOTE_PID"; then
+      REMOTE_PID="$STARTED_RUNTIME_PID"
+      REMOTE_PORT="$STARTED_RUNTIME_PORT"
+      printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    else
+      kill "$REMOTE_PID" 2>/dev/null || true
+      wait_for_pid_exit "$REMOTE_PID"
+      if kill -0 "$REMOTE_PID" 2>/dev/null; then
+        printf 'New managed SSH T3 server pid %s did not terminate after a different runtime became active; refusing dual ownership.\\n' "$REMOTE_PID" >&2
+        exit 1
+      fi
+      adopt_runtime_as_external "$STARTED_RUNTIME_INFO"
+    fi
   fi
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
@@ -605,20 +704,134 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 
 export const REMOTE_STOP_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+DEFAULT_SERVER_HOME="$HOME/.t3"
+DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
-REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
-REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  kill "$REMOTE_PID" 2>/dev/null || true
+wait_for_pid_exit() {
+  PID_TO_WAIT="$1"
   WAIT_COUNT=0
-  while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
+}
+is_descendant_or_same() {
+  CHILD_PID="$1"
+  ANCESTOR_PID="$2"
+  case "$CHILD_PID:$ANCESTOR_PID" in
+    *[!0-9:]*|:*) return 1 ;;
+  esac
+  CURRENT_PID="$CHILD_PID"
+  WALK_COUNT=0
+  while [ "$WALK_COUNT" -lt 64 ]; do
+    if [ "$CURRENT_PID" = "$ANCESTOR_PID" ]; then
+      return 0
+    fi
+    CURRENT_PID="$(ps -o ppid= -p "$CURRENT_PID" 2>/dev/null | tr -d '[:space:]')"
+    case "$CURRENT_PID" in
+      ''|0|1|*[!0-9]*) return 1 ;;
+    esac
+    WALK_COUNT=$((WALK_COUNT + 1))
+  done
+  return 1
+}
+resolve_default_runtime_port() {
+  node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
+const fs = require("node:fs");
+const runtimePath = process.argv[2] ?? "";
+try {
+  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
+  const pid = Number(runtime.pid);
+  const port = Number(runtime.port);
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) process.exit(1);
+  const origin = new URL(String(runtime.origin ?? ""));
+  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) process.exit(1);
+  process.kill(pid, 0);
+  process.stdout.write(\`\${pid} \${port}\`);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+wait_ready() {
+  node - "$REMOTE_PORT" "$1" "@@T3_READY_PROBE_TIMEOUT_MS@@" <<'NODE'
+@@T3_WAIT_READY_SCRIPT@@
+NODE
+}
+service_is_installed() {
+  command -v systemctl >/dev/null 2>&1 && systemctl --user cat t3code.service >/dev/null 2>&1
+}
+adopt_runtime_as_external() {
+  ADOPT_INFO="$1"
+  ADOPT_PORT="\${ADOPT_INFO#* }"
+  REMOTE_PORT="$ADOPT_PORT"
+  if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
+    printf 'Installed T3 service did not become ready on 127.0.0.1:%s after SSH disconnect.\\n' "$ADOPT_PORT" >&2
+    exit 1
+  fi
+  rm -f "$PID_FILE"
+  printf '%s\\n' "$ADOPT_PORT" >"$PORT_FILE"
+  printf 'external\\n' >"$MANAGED_FILE"
+}
+start_and_adopt_installed_service() {
+  if ! systemctl --user start t3code.service; then
+    printf 'Failed to start installed t3code.service after SSH disconnect.\\n' >&2
+    exit 1
+  fi
+  SERVICE_WAIT_COUNT=0
+  SERVICE_RUNTIME_INFO=""
+  while [ "$SERVICE_WAIT_COUNT" -lt 150 ]; do
+    SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    if [ -n "$SERVICE_RUNTIME_INFO" ]; then
+      break
+    fi
+    SERVICE_WAIT_COUNT=$((SERVICE_WAIT_COUNT + 1))
+    sleep 0.1
+  done
+  if [ -z "$SERVICE_RUNTIME_INFO" ]; then
+    printf 'Installed t3code.service started but did not advertise a live runtime after SSH disconnect.\\n' >&2
+    exit 1
+  fi
+  adopt_runtime_as_external "$SERVICE_RUNTIME_INFO"
+}
+REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+STOPPED_SSH_MANAGED=0
+if [ "$REMOTE_MANAGED" = "managed" ]; then
+  STOPPED_SSH_MANAGED=1
+  REMOTE_PID_CONFIRMED=0
+  RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+  if [ -n "$RUNTIME_INFO" ] && [ -n "$REMOTE_PID" ]; then
+    RUNTIME_PID="\${RUNTIME_INFO%% *}"
+    if is_descendant_or_same "$RUNTIME_PID" "$REMOTE_PID"; then
+      REMOTE_PID="$RUNTIME_PID"
+      REMOTE_PID_CONFIRMED=1
+    fi
+  fi
+  if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+    if [ "$REMOTE_PID_CONFIRMED" -eq 0 ]; then
+      printf 'Stored managed SSH pid %s is live, but runtime ownership cannot be verified; refusing to signal it during disconnect.\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+    if kill -0 "$REMOTE_PID" 2>/dev/null; then
+      printf 'Managed SSH T3 server pid %s did not terminate after explicit disconnect; refusing to start another owner.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
+  fi
 fi
 rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+if [ "$STOPPED_SSH_MANAGED" -eq 1 ]; then
+  REMAINING_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+  if [ -n "$REMAINING_RUNTIME_INFO" ]; then
+    adopt_runtime_as_external "$REMAINING_RUNTIME_INFO"
+  elif service_is_installed; then
+    start_and_adopt_installed_service
+  fi
+fi
 printf '{"stopped":true}\\n'
 `;
 
@@ -678,6 +891,9 @@ export function buildRemotePairingScript(
 export function buildRemoteStopScript(target: DesktopSshEnvironmentTarget): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     T3_STATE_KEY: remoteStateKey(target),
+    T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
+    T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
+    T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
   });
 }
 
@@ -705,6 +921,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-s", "--", remoteStateKey(target)],
       stdin: buildRemoteLaunchScript(runner),
+      timeoutMs: REMOTE_LAUNCH_COMMAND_TIMEOUT_MS,
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1360,9 +1577,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ),
     );
     tunnels.set(input.key, tunnelEntry);
-    const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fileSystemService = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
       entryScope,
       Effect.gen(function* () {
@@ -1376,33 +1590,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           remotePort: tunnelEntry.remotePort,
         });
         tunnels.delete(tunnelEntry.key);
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-        yield* Effect.all(
-          [
-            tunnelEntry.process.kill({
-              killSignal: "SIGTERM",
-              forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-            }),
-            stopRemoteServer(
-              tunnelEntry.target,
-              authSecret === null
-                ? {
-                    batchMode: "yes",
-                    interactiveAuth: false,
-                  }
-                : {
-                    authSecret,
-                    batchMode: "no",
-                    interactiveAuth: true,
-                  },
-            ).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-              Effect.provideService(FileSystem.FileSystem, fileSystemService),
-              Effect.provideService(Path.Path, pathService),
-            ),
-          ],
-          { concurrency: "unbounded" },
-        ).pipe(Effect.ignore);
+        yield* tunnelEntry.process
+          .kill({
+            killSignal: "SIGTERM",
+            forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+          })
+          .pipe(Effect.ignore);
         yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
           ...sshTargetLogFields(tunnelEntry.target),
           key: tunnelEntry.key,
@@ -1578,13 +1771,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       yield* closeTunnelEntry(entry);
     }
     yield* cancelPendingTunnelEntry(key, resolvedTarget);
-    if (entry === null) {
-      yield* runWithSshAuth({
-        key,
-        target: resolvedTarget,
-        operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
-      });
-    }
+    yield* runWithSshAuth({
+      key,
+      target: resolvedTarget,
+      operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
+    });
     yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
       ...sshTargetLogFields(resolvedTarget),
       key,

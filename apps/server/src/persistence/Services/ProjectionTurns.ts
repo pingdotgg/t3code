@@ -72,6 +72,8 @@ export type ProjectionTurnById = typeof ProjectionTurnById.Type;
 export const ProjectionPendingTurnStart = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
+  deliverySequence: Schema.NullOr(NonNegativeInt),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   requestedAt: IsoDateTime,
@@ -93,6 +95,23 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
+
+export const MarkProjectionPendingTurnDeliveryInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+  deliverySequence: NonNegativeInt,
+});
+export type MarkProjectionPendingTurnDeliveryInput =
+  typeof MarkProjectionPendingTurnDeliveryInput.Type;
+
+export const SettleProjectionPendingTurnStartInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
+});
+export type SettleProjectionPendingTurnStartInput =
+  typeof SettleProjectionPendingTurnStartInput.Type;
 
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -127,6 +146,32 @@ export interface ProjectionTurnRepositoryShape {
   readonly getPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /**
+   * Lists every pending-start placeholder for durable provider-intent
+   * reconciliation. Rows are ordered by event sequence when available, with
+   * legacy rows first so they are terminalized deterministically.
+   */
+  readonly listPendingTurnStarts: () => Effect.Effect<
+    ReadonlyArray<ProjectionPendingTurnStart>,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Marks the exact current pending request as having crossed the durable
+   * pre-provider delivery boundary. Stale markers cannot alter newer requests.
+   */
+  readonly markPendingTurnDeliveryStarted: (
+    input: MarkProjectionPendingTurnDeliveryInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * Deletes the pending-start placeholder only when all correlation fields
+   * still match. Returns false when a newer request has replaced it.
+   */
+  readonly settlePendingTurnStartIfMatches: (
+    input: SettleProjectionPendingTurnStartInput,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
 
   /**
    * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.

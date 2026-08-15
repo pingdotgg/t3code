@@ -10,12 +10,15 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -33,6 +36,7 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as TurnAdmissionGate from "../TurnAdmissionGate.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -46,20 +50,42 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-async function createOrchestrationSystem() {
+async function createOrchestrationSystem(
+  options: {
+    readonly decorateEventStore?: (
+      eventStore: OrchestrationEventStoreShape,
+    ) => OrchestrationEventStoreShape;
+    readonly eventStore?: OrchestrationEventStoreShape;
+    readonly projectionPipeline?: OrchestrationProjectionPipelineShape;
+  } = {},
+) {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
+  const eventStoreLayer =
+    options.eventStore !== undefined
+      ? Layer.succeed(OrchestrationEventStore, options.eventStore)
+      : options.decorateEventStore === undefined
+        ? OrchestrationEventStoreLive
+        : Layer.effect(
+            OrchestrationEventStore,
+            Effect.map(OrchestrationEventStore, options.decorateEventStore),
+          ).pipe(Layer.provide(OrchestrationEventStoreLive));
+  const projectionPipelineLayer =
+    options.projectionPipeline === undefined
+      ? OrchestrationProjectionPipelineLive
+      : Layer.succeed(OrchestrationProjectionPipeline, options.projectionPipeline);
   const orchestrationLayer = Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(projectionPipelineLayer),
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
+    Layer.provideMerge(TurnAdmissionGate.layer),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(eventStoreLayer),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
     Layer.provide(SqlitePersistenceMemory),
@@ -69,8 +95,12 @@ async function createOrchestrationSystem() {
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
+  const turnAdmissionGate = await runtime.runPromise(
+    Effect.service(TurnAdmissionGate.TurnAdmissionGate),
+  );
   return {
     engine,
+    turnAdmissionGate,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
@@ -174,6 +204,7 @@ describe("OrchestrationEngine", () => {
     let fullSnapshotReadCount = 0;
 
     const layer = OrchestrationEngineLive.pipe(
+      Layer.provide(TurnAdmissionGate.layer),
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
           getCommandReadModel: () => Effect.succeed(commandReadModel),
@@ -199,6 +230,7 @@ describe("OrchestrationEngine", () => {
           getSnapshotSequence: () =>
             Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
+          getUpdateAdmissionSnapshot: () => Effect.succeed({ activeThreadIds: [] }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -299,6 +331,198 @@ describe("OrchestrationEngine", () => {
     const readModelA = await system.readModel();
     const readModelB = await system.readModel();
     expect(readModelB).toEqual(readModelA);
+    await system.dispose();
+  });
+
+  it("serializes update handoff with turn admission and closes admission after acceptance", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine, turnAdmissionGate } = system;
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-update-gate-create"),
+        projectId: asProjectId("project-update-gate"),
+        title: "Update Gate Project",
+        workspaceRoot: "/tmp/project-update-gate",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-update-gate-create"),
+        threadId: ThreadId.make("thread-update-gate"),
+        projectId: asProjectId("project-update-gate"),
+        title: "Update Gate Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      Effect.gen(function* () {
+        const handoffEntered = yield* Deferred.make<void>();
+        const acceptHandoff = yield* Deferred.make<void>();
+        const handoffFiber = yield* Effect.forkChild(
+          turnAdmissionGate.commitUpdateHandoff(
+            Deferred.succeed(handoffEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(acceptHandoff)),
+              Effect.as("launcher-id"),
+            ),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(handoffEntered);
+
+        const turnFiber = yield* Effect.forkChild(
+          Effect.result(
+            engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-turn-update-gate"),
+              threadId: ThreadId.make("thread-update-gate"),
+              message: {
+                messageId: asMessageId("msg-update-gate"),
+                role: "user",
+                text: "must not be admitted into the retiring process",
+                attachments: [],
+              },
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              runtimeMode: "approval-required",
+              createdAt,
+            }),
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+        expect(turnFiber.pollUnsafe()).toBeUndefined();
+
+        yield* Deferred.succeed(acceptHandoff, undefined);
+        expect(yield* Fiber.join(handoffFiber)).toBe("launcher-id");
+        const turnResult = yield* Fiber.join(turnFiber);
+        expect(Result.isFailure(turnResult)).toBe(true);
+        if (Result.isFailure(turnResult)) {
+          expect(turnResult.failure.message).toContain("activating an update");
+        }
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual(["project.created", "thread.created"]);
+    await system.dispose();
+  });
+
+  it("keeps queued turn admission held when the requesting fiber disconnects", async () => {
+    const appendEntered = await Effect.runPromise(Deferred.make<void>());
+    const releaseAppend = await Effect.runPromise(Deferred.make<void>());
+    const system = await createOrchestrationSystem({
+      decorateEventStore: (eventStore) => ({
+        ...eventStore,
+        append: (event) =>
+          event.type === "thread.turn-start-requested"
+            ? Deferred.succeed(appendEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseAppend)),
+                Effect.andThen(eventStore.append(event)),
+              )
+            : eventStore.append(event),
+      }),
+    });
+    const { engine, turnAdmissionGate } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-disconnected-turn-create"),
+        projectId: asProjectId("project-disconnected-turn"),
+        title: "Disconnected Turn Project",
+        workspaceRoot: "/tmp/project-disconnected-turn",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-disconnected-turn-create"),
+        threadId: ThreadId.make("thread-disconnected-turn"),
+        projectId: asProjectId("project-disconnected-turn"),
+        title: "Disconnected Turn Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      Effect.gen(function* () {
+        const requestingFiber = yield* Effect.forkChild(
+          engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-turn-disconnected-requester"),
+            threadId: ThreadId.make("thread-disconnected-turn"),
+            message: {
+              messageId: asMessageId("msg-disconnected-requester"),
+              role: "user",
+              text: "persist even if this request disconnects",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt,
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(appendEntered);
+        yield* Fiber.interrupt(requestingFiber);
+
+        const handoffEntered = yield* Deferred.make<void>();
+        const handoffFiber = yield* Effect.forkChild(
+          turnAdmissionGate.commitUpdateHandoff(
+            Deferred.succeed(handoffEntered, undefined).pipe(Effect.as("launcher-id")),
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+        expect(yield* Deferred.isDone(handoffEntered)).toBe(false);
+
+        yield* Deferred.succeed(releaseAppend, undefined);
+        yield* Deferred.await(handoffEntered);
+        expect(yield* Fiber.join(handoffFiber)).toBe("launcher-id");
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toContain("thread.turn-start-requested");
     await system.dispose();
   });
 
@@ -820,6 +1044,7 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(TurnAdmissionGate.layer),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -925,23 +1150,13 @@ describe("OrchestrationEngine", () => {
       },
     };
 
-    const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
-        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-        Layer.provide(ThreadBackgroundLiveness.layer),
-        Layer.provide(ThreadPlanProgress.layer),
-        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
-        Layer.provide(OrchestrationEventStoreLive),
-        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-        Layer.provide(RepositoryIdentityResolver.layer),
-        Layer.provide(SqlitePersistenceMemory),
-        Layer.provide(NodeServices.layer),
-      ),
-    );
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const system = await createOrchestrationSystem({
+      projectionPipeline: flakyProjectionPipeline,
+    });
+    const { engine } = system;
     const createdAt = now();
 
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "project.create",
         commandId: CommandId.make("cmd-project-atomic-create"),
@@ -955,7 +1170,7 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-atomic-create"),
@@ -989,11 +1204,11 @@ describe("OrchestrationEngine", () => {
       createdAt,
     };
 
-    await expect(runtime.runPromise(engine.dispatch(turnStartCommand))).rejects.toThrow(
+    await expect(system.run(engine.dispatch(turnStartCommand))).rejects.toThrow(
       "projection failed",
     );
 
-    const eventsAfterFailure = await runtime.runPromise(
+    const eventsAfterFailure = await system.run(
       Stream.runCollect(engine.readEvents(0)).pipe(
         Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
       ),
@@ -1003,10 +1218,10 @@ describe("OrchestrationEngine", () => {
       "thread.created",
     ]);
 
-    const retryResult = await runtime.runPromise(engine.dispatch(turnStartCommand));
+    const retryResult = await system.run(engine.dispatch(turnStartCommand));
     expect(retryResult.sequence).toBe(4);
 
-    const eventsAfterRetry = await runtime.runPromise(
+    const eventsAfterRetry = await system.run(
       Stream.runCollect(engine.readEvents(0)).pipe(
         Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
       ),
@@ -1021,7 +1236,7 @@ describe("OrchestrationEngine", () => {
       eventsAfterRetry.filter((event) => event.commandId === turnStartCommand.commandId),
     ).toHaveLength(2);
 
-    await runtime.dispose();
+    await system.dispose();
   });
 
   it("reconciles command state when append persists but projection fails", async () => {
@@ -1070,23 +1285,14 @@ describe("OrchestrationEngine", () => {
       },
     };
 
-    const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
-        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-        Layer.provide(ThreadBackgroundLiveness.layer),
-        Layer.provide(ThreadPlanProgress.layer),
-        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
-        Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
-        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-        Layer.provide(RepositoryIdentityResolver.layer),
-        Layer.provide(SqlitePersistenceMemory),
-        Layer.provide(NodeServices.layer),
-      ),
-    );
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const system = await createOrchestrationSystem({
+      eventStore: nonTransactionalStore,
+      projectionPipeline: flakyProjectionPipeline,
+    });
+    const { engine } = system;
     const createdAt = now();
 
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "project.create",
         commandId: CommandId.make("cmd-project-sync-create"),
@@ -1100,7 +1306,7 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-sync-create"),
@@ -1120,7 +1326,7 @@ describe("OrchestrationEngine", () => {
     );
 
     await expect(
-      runtime.runPromise(
+      system.run(
         engine.dispatch({
           type: "thread.archive",
           commandId: CommandId.make("cmd-thread-archive-sync-fail"),
@@ -1130,7 +1336,7 @@ describe("OrchestrationEngine", () => {
     ).rejects.toThrow("projection failed");
 
     await expect(
-      runtime.runPromise(
+      system.run(
         engine.dispatch({
           type: "thread.archive",
           commandId: CommandId.make("cmd-thread-archive-sync-retry"),
@@ -1139,7 +1345,7 @@ describe("OrchestrationEngine", () => {
       ),
     ).rejects.toThrow("already archived");
 
-    await runtime.dispose();
+    await system.dispose();
   });
 
   it("fails command dispatch when command invariants are violated", async () => {

@@ -1,5 +1,6 @@
 import {
   EventId,
+  TURN_START_DELIVERY_PROTOCOL,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -973,6 +974,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
@@ -1180,6 +1182,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           session: command.session,
+          ...(command.turnStartDelivery !== undefined
+            ? { turnStartDelivery: command.turnStartDelivery }
+            : {}),
         },
       };
       // Only a session coming alive is activity worth waking a settled thread
@@ -1241,11 +1246,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const existingMessage = thread.messages.find(
+        (message) => message.id === command.messageId && message.role === "assistant",
+      );
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1258,7 +1266,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.messageId,
           role: "assistant",
-          text: "",
+          // Completion is a self-contained convergence event. A client may
+          // resume between the final text delta and this event; carrying the
+          // projected text prevents that boundary from producing an empty
+          // assistant row until the next full snapshot.
+          text: existingMessage?.text ?? "",
           turnId: command.turnId ?? null,
           streaming: false,
           createdAt: command.createdAt,
@@ -1389,6 +1401,41 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       return [unsettledEvent, activityAppendedEvent];
     }
+
+    case "thread.turn-start.recovery-fail":
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-start-recovery-failed",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          requestSequence: command.requestSequence,
+          detail: command.detail,
+          createdAt: command.createdAt,
+        },
+      };
+
+    case "thread.turn-start.delivery-acknowledge":
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-start-delivery-acknowledged",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          requestSequence: command.requestSequence,
+          createdAt: command.createdAt,
+        },
+      };
 
     default: {
       command satisfies never;

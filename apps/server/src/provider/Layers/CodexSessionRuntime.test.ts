@@ -2,7 +2,9 @@ import * as NodeAssert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { describe } from "vite-plus/test";
 import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -393,24 +395,96 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("resumes without loading legacy turns", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      const resumed = {
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        cwd: "/tmp/project",
+        model: "gpt-5.3-codex",
+        modelProvider: "openai",
+        sandbox: { type: "dangerFullAccess" },
+        thread: {
+          cliVersion: "0.146.0",
+          createdAt: 1_776_470_400,
+          cwd: "/tmp/project",
+          ephemeral: false,
+          id: "resumed-thread",
+          modelProvider: "openai",
+          preview: "",
+          sessionId: "session-1",
+          source: "appServer",
+          status: { type: "idle" },
+          turns: [],
+          updatedAt: 1_776_470_400,
+        },
+      };
+      const client = {
+        raw: {
+          request: (method: string, payload?: unknown) => {
+            calls.push({ method, payload });
+            return Effect.succeed(resumed);
+          },
+        },
+        request: <M extends "thread/start" | "thread/resume">(
+          _method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) =>
+          Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          ),
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "resumed-thread",
+      });
+
+      NodeAssert.equal(opened.thread.id, "resumed-thread");
+      NodeAssert.deepStrictEqual(calls, [
+        {
+          method: "thread/resume",
+          payload: {
+            threadId: "resumed-thread",
+            cwd: "/tmp/project",
+            approvalPolicy: "never",
+            sandbox: "danger-full-access",
+            approvalsReviewer: "user",
+            model: "gpt-5.3-codex",
+            excludeTurns: true,
+          },
+        },
+      ]);
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          calls.push({ method, payload });
-          if (method === "thread/resume") {
+        raw: {
+          request: (method: string, payload?: unknown) => {
+            calls.push({ method: method as "thread/start" | "thread/resume", payload });
             return Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "thread not found",
               }),
             );
-          }
+          },
+        },
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
           return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
         },
       };
@@ -430,12 +504,30 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
+      NodeAssert.deepStrictEqual(calls[0]?.payload, {
+        threadId: "stale-thread",
+        cwd: "/tmp/project",
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        approvalsReviewer: "user",
+        model: "gpt-5.3-codex",
+        excludeTurns: true,
+      });
     }),
   );
 
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
+        raw: {
+          request: () =>
+            Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "timed out waiting for server",
+              }),
+            ),
+        },
         request: <M extends "thread/start" | "thread/resume">(
           method: M,
           _payload: CodexRpc.ClientRequestParamsByMethod[M],
@@ -467,5 +559,39 @@ describe("openCodexThread", () => {
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
     }),
+  );
+
+  it.effect("bounds a resume RPC that never settles", () =>
+    Effect.gen(function* () {
+      const client = {
+        raw: {
+          request: () => Effect.never,
+        },
+        request: <M extends "thread/start" | "thread/resume">(
+          _method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) =>
+          Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          ),
+      };
+
+      const fiber = yield* Effect.forkScoped(
+        openCodexThread({
+          client,
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode: "full-access",
+          cwd: "/tmp/project",
+          requestedModel: "gpt-5.3-codex",
+          serviceTier: undefined,
+          resumeThreadId: "stale-thread",
+        }),
+      );
+      yield* TestClock.adjust("30 seconds");
+      const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(error.errorMessage, "thread/resume timed out after 30 seconds");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });

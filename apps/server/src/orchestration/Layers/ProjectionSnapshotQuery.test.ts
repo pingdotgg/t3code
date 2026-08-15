@@ -30,7 +30,7 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(val
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -709,6 +709,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
         yield* sql`DELETE FROM projection_projects`;
         yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_thread_sessions`;
         yield* sql`DELETE FROM projection_turns`;
 
         yield* sql`
@@ -806,14 +807,105 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-03-01T00:00:10.000Z',
             NULL,
             '2026-03-01T00:00:11.000Z'
-          )
+        )
       `;
+
+        yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-first',
+          NULL,
+          'pending-message-1',
+          NULL,
+          NULL,
+          NULL,
+          'pending',
+          '2026-03-01T00:00:12.000Z',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
+        yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_instance_id,
+          provider_session_id,
+          provider_thread_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES (
+          'thread-first',
+          'starting',
+          'codex',
+          NULL,
+          NULL,
+          NULL,
+          'full-access',
+          NULL,
+          NULL,
+          '2026-03-01T00:00:13.000Z'
+        )
+      `;
+
+        const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+        backgroundLiveness.recordTaskLiveness({
+          threadId: "thread-first",
+          taskId: "background-task-1",
+          taskType: "subagent",
+          status: "running",
+          kind: "started",
+        });
+        backgroundLiveness.recordTaskLiveness({
+          threadId: "thread-second",
+          taskId: "background-task-2",
+          taskType: "subagent",
+          status: "running",
+          kind: "started",
+        });
 
         const counts = yield* snapshotQuery.getCounts();
         assert.deepEqual(counts, {
           projectCount: 2,
           threadCount: 3,
         });
+
+        const updateAdmissionSnapshot = yield* snapshotQuery.getUpdateAdmissionSnapshot();
+        assert.deepEqual(updateAdmissionSnapshot.activeThreadIds, [
+          ThreadId.make("thread-first"),
+          ThreadId.make("thread-second"),
+        ]);
+
+        yield* sql`DELETE FROM projection_thread_sessions`;
+        backgroundLiveness.clearThreadLiveness("thread-first");
+        backgroundLiveness.clearThreadLiveness("thread-second");
+        assert.deepEqual((yield* snapshotQuery.getUpdateAdmissionSnapshot()).activeThreadIds, [
+          ThreadId.make("thread-first"),
+        ]);
 
         const project = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/workspace");
         assert.equal(project._tag, "Some");
@@ -832,6 +924,69 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           assert.equal(firstThreadId.value, ThreadId.make("thread-first"));
         }
       }),
+  );
+
+  it.effect("excludes archived and deleted pending starts from update admission", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json,
+          scripts_json, created_at, updated_at, deleted_at
+        ) VALUES (
+          'project-admission', 'Admission Project', '/tmp/admission',
+          '{"provider":"codex","model":"gpt-5-codex"}', '[]',
+          '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, branch, worktree_path, latest_turn_id,
+          latest_user_message_at, pending_approval_count, pending_user_input_count,
+          has_actionable_proposed_plan, created_at, updated_at, archived_at, deleted_at
+        ) VALUES
+          ('thread-live-pending', 'project-admission', 'Live pending',
+           '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+           NULL, NULL, NULL, NULL, 0, 0, 0,
+           '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z', NULL, NULL),
+          ('thread-archived-pending', 'project-admission', 'Archived pending',
+           '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+           NULL, NULL, NULL, NULL, 0, 0, 0,
+           '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z',
+           '2026-08-09T00:00:01.000Z', NULL),
+          ('thread-deleted-pending', 'project-admission', 'Deleted pending',
+           '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+           NULL, NULL, NULL, NULL, 0, 0, 0,
+           '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z', NULL,
+           '2026-08-09T00:00:01.000Z')
+      `;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, pending_message_id, source_proposed_plan_thread_id,
+          source_proposed_plan_id, assistant_message_id, state, requested_at,
+          started_at, completed_at, checkpoint_turn_count, checkpoint_ref,
+          checkpoint_status, checkpoint_files_json
+        ) VALUES
+          ('thread-live-pending', NULL, 'message-live', NULL, NULL, NULL, 'pending',
+           '2026-08-09T00:00:00.000Z', NULL, NULL, NULL, NULL, NULL, '[]'),
+          ('thread-archived-pending', NULL, 'message-archived', NULL, NULL, NULL, 'pending',
+           '2026-08-09T00:00:00.000Z', NULL, NULL, NULL, NULL, NULL, '[]'),
+          ('thread-deleted-pending', NULL, 'message-deleted', NULL, NULL, NULL, 'pending',
+           '2026-08-09T00:00:00.000Z', NULL, NULL, NULL, NULL, NULL, '[]')
+      `;
+
+      assert.deepEqual((yield* snapshotQuery.getUpdateAdmissionSnapshot()).activeThreadIds, [
+        ThreadId.make("thread-live-pending"),
+      ]);
+    }),
   );
 
   it.effect("reads single-thread checkpoint context without hydrating unrelated threads", () =>

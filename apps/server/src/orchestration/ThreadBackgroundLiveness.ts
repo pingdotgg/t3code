@@ -5,9 +5,10 @@
  * The turn can settle while native background work runs on (subagent fleets,
  * workflow runs, Monitor watch loops); the shell previously showed nothing.
  * Ingestion records task lifecycle transitions and the shell query reads the
- * derived state at mapping time — no persistence, no migration. After a
- * server restart the registry is empty until new task events arrive, which
- * matches reality: orphaned background work is not live.
+ * derived state at mapping time. Provider ingestion rehydrates the latest
+ * persisted task lifecycle rows during startup only long enough to identify
+ * and reconcile orphaned work; live state remains in memory and needs no new
+ * persistence format or migration.
  *
  * "monitoring" is reserved for watch loops (monitor tasks and background
  * shells) when they are the ONLY live work; any agent work presents as
