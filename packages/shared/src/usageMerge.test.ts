@@ -8,7 +8,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  isUsageContractMergeCompatible,
+  mergeUsage,
+  resolveExpectedUsageContractVersion,
+  USAGE_MERGE_COMPATIBLE_SINCE,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -140,7 +146,68 @@ describe("mergeUsage", () => {
     ]);
   });
 
-  it("excludes an environment reporting an older contract version", () => {
+  it("reports duplicate sources only for the focused provider", () => {
+    const sharedClaude = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/home/theo/.claude",
+    };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([bucket()], [sharedClaude])),
+        environment(
+          "env-b",
+          summary(
+            [bucket(), bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 })],
+            [sharedClaude, { provider: "codex", hostId: "mac", homePath: "/home/theo/.codex" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+      { provider: "codex" },
+    );
+
+    expect(merged.costUsd).toBe(4);
+    expect(merged.duplicateSources).toEqual([]);
+  });
+
+  it("includes older compatible contract versions when merging all environments", () => {
+    // Nightly remotes often ship v3 (Claude+Codex) while a local client is on
+    // v5 (Grok+OpenCode). All-environments must sum the overlapping fields.
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ costUsd: 10 }), bucket({ provider: "grok", model: "grok-4.5", costUsd: 3 })],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "grok", hostId: "mac", homePath: "/a/.grok" },
+            ],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 7 })],
+            [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }],
+            USAGE_MERGE_COMPATIBLE_SINCE,
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(20);
+    expect(merged.staleEnvironments).toEqual([]);
+    expect([...merged.contributingEnvironments].sort()).toEqual(["env-a", "env-b"]);
+    expect(merged.providers.map((provider) => provider.provider).sort()).toEqual([
+      "claude",
+      "grok",
+    ]);
+  });
+
+  it("still excludes versions below the compatible floor", () => {
     const merged = mergeUsage(
       [
         environment(
@@ -150,9 +217,9 @@ describe("mergeUsage", () => {
         environment(
           "env-b",
           summary(
-            [bucket()],
+            [bucket({ costUsd: 7 })],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 1,
+            USAGE_MERGE_COMPATIBLE_SINCE - 1,
           ),
         ),
       ],
@@ -161,6 +228,101 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.staleEnvironments).toEqual(["env-b"]);
+  });
+
+  it("still excludes newer-than-client versions from All", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary([bucket()], [{ provider: "claude", hostId: "mac", homePath: "/a" }]),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 7 })],
+            [{ provider: "claude", hostId: "linux", homePath: "/b" }],
+            USAGE_CONTRACT_VERSION + 1,
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.staleEnvironments).toEqual(["env-b"]);
+  });
+
+  it("keeps an isolated older environment when the expected version matches it", () => {
+    // Single-env view passes the remote's own contract version so a nightly
+    // server still shows Claude/Codex usage against a newer local client.
+    const older = environment(
+      "env-b",
+      summary(
+        [bucket({ costUsd: 7 })],
+        [{ provider: "claude", hostId: "linux", homePath: "/b" }],
+        USAGE_CONTRACT_VERSION - 2,
+      ),
+    );
+    const expected = resolveExpectedUsageContractVersion({
+      environmentFilter: "env-b",
+      answered: [older],
+      clientContractVersion: USAGE_CONTRACT_VERSION,
+    });
+    const merged = mergeUsage([older], expected);
+
+    expect(expected).toBe(USAGE_CONTRACT_VERSION - 2);
+    expect(merged.costUsd).toBe(7);
+    expect(merged.staleEnvironments).toEqual([]);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
+  });
+
+  it("uses the client contract version as the All-environments ceiling", () => {
+    const older = environment(
+      "env-b",
+      summary(
+        [bucket({ costUsd: 7 })],
+        [{ provider: "claude", hostId: "linux", homePath: "/b" }],
+        USAGE_MERGE_COMPATIBLE_SINCE,
+      ),
+    );
+    expect(
+      resolveExpectedUsageContractVersion({
+        environmentFilter: "all",
+        answered: [older],
+        clientContractVersion: USAGE_CONTRACT_VERSION,
+      }),
+    ).toBe(USAGE_CONTRACT_VERSION);
+    expect(
+      isUsageContractMergeCompatible(USAGE_MERGE_COMPATIBLE_SINCE, USAGE_CONTRACT_VERSION),
+    ).toBe(true);
+  });
+
+  it("narrows the merge to one provider when focused", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ costUsd: 10 }),
+              bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 }),
+            ],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+      { provider: "codex" },
+    );
+
+    expect(merged.costUsd).toBe(4);
+    expect(merged.providers.map((provider) => provider.provider)).toEqual(["codex"]);
+    expect(merged.models).toHaveLength(1);
+    expect(merged.models[0]?.model).toBe("gpt-5.6-sol");
   });
 
   it("derives provider shares and cost quality", () => {
@@ -280,5 +442,62 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+
+  it("isolates one environment when the client filters before merge", () => {
+    // The usage page keeps the All-environments merge by default and narrows
+    // to a single environment by passing only that summary into mergeUsage.
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-b",
+          summary(
+            [bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 })],
+            [{ provider: "codex", hostId: "linux", homePath: "/b/.codex" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(4);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
+    expect(merged.providers.map((provider) => provider.provider)).toEqual(["codex"]);
+  });
+
+  it("keeps grok buckets in the merge", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "grok", model: "grok-4.5", costUsd: 3 })],
+            [{ provider: "grok", hostId: "mac", homePath: "/a/.grok/sessions" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(3);
+    expect(merged.providers[0]?.provider).toBe("grok");
+  });
+
+  it("keeps opencode buckets in the merge", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "opencode", model: "gpt-5.4", costUsd: 2 })],
+            [{ provider: "opencode", hostId: "mac", homePath: "/a/.local/share/opencode" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(2);
+    expect(merged.providers[0]?.provider).toBe("opencode");
   });
 });

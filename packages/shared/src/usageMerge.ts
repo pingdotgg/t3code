@@ -107,7 +107,10 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  * provider's buckets dropped. Environments are sorted by id so the winner does
  * not change between renders.
  */
-function claimSources(environments: readonly EnvironmentUsage[]): {
+function claimSources(
+  environments: readonly EnvironmentUsage[],
+  providerFilter?: UsageProviderKind,
+): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
   readonly duplicates: readonly string[];
 } {
@@ -119,6 +122,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
       if (source.status === "missing") continue;
+      if (providerFilter !== undefined && source.fingerprint.provider !== providerFilter) continue;
       const key = fingerprintKey(source.fingerprint);
       if (ownerByFingerprint.has(key)) {
         duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
@@ -135,11 +139,13 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
 function ownedContribution(
   environment: EnvironmentUsage,
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
+  providerFilter?: UsageProviderKind,
 ): { readonly buckets: readonly UsageBucket[]; readonly sessions: number } {
   const ownedProviders = new Set<UsageProviderKind>();
   let sessions = 0;
   for (const source of environment.summary.sources) {
     if (source.status === "missing") continue;
+    if (providerFilter !== undefined && source.fingerprint.provider !== providerFilter) continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       ownedProviders.add(source.fingerprint.provider);
@@ -190,29 +196,96 @@ const EMPTY_MERGED: MergedUsage = {
 };
 
 /**
+ * Oldest contract version whose UsageSummary wire shape is still a readable
+ * subset of the current client.
+ *
+ * Compatibility history (keep in sync when bumping USAGE_CONTRACT_VERSION):
+ * - 3: Claude + Codex only; daily buckets
+ * - 4: hourly resolution (`sinceTime` / `untilTime` / `hourStart`); Claude + Codex
+ * - 5: adds Grok + OpenCode provider kinds (additive; older summaries omit them)
+ *
+ * All-environments merge accepts versions in
+ * `[USAGE_MERGE_COMPATIBLE_SINCE, clientVersion]`. Exact equality was too
+ * strict: nightlies on v3 were dropped from totals while single-env view
+ * still showed them. Versions below this floor (or above the client) stay
+ * stale — do not widen this without confirming the bucket shape still merges.
+ */
+export const USAGE_MERGE_COMPATIBLE_SINCE = 3 as const;
+
+/**
+ * Which contract version the merge should treat as the client ceiling.
+ *
+ * Cross-environment totals use the client's version and then accept older
+ * compatible summaries via {@link isUsageContractMergeCompatible}. Isolating
+ * one environment is different: the user asked to inspect that machine, so
+ * pin to whatever version it reported (as long as the summary decoded) rather
+ * than blanking the page because the local client is ahead of a nightly.
+ */
+export function resolveExpectedUsageContractVersion(input: {
+  readonly environmentFilter: "all" | string;
+  readonly answered: readonly EnvironmentUsage[];
+  readonly clientContractVersion: number;
+}): number {
+  if (input.environmentFilter !== "all" && input.answered.length === 1) {
+    return input.answered[0]!.summary.contractVersion;
+  }
+  return input.clientContractVersion;
+}
+
+/**
+ * Whether a summary's contract version can contribute to a merge keyed by
+ * `expectedContractVersion` (the client ceiling for All, or the env's own
+ * version for a single-environment view).
+ *
+ * - Exact match always wins (single-env pin, or same-version peers).
+ * - Older versions are accepted only when they fall in the documented
+ *   compatible window below the expected/client ceiling — so All can sum
+ *   v3 Claude/Codex remotes with a v5 local client without inventing
+ *   providers the older server never reported.
+ * - Newer-than-expected summaries stay out of All (shape unknown).
+ */
+export function isUsageContractMergeCompatible(
+  summaryVersion: number,
+  expectedContractVersion: number,
+): boolean {
+  if (summaryVersion === expectedContractVersion) return true;
+  return summaryVersion >= USAGE_MERGE_COMPATIBLE_SINCE && summaryVersion < expectedContractVersion;
+}
+
+export interface MergeUsageOptions {
+  /** When set, only buckets/sources for this provider contribute. */
+  readonly provider?: UsageProviderKind;
+}
+
+/**
  * Merges every connected environment's summary.
  *
- * `expectedContractVersion` guards against an environment running older server
- * code: rather than blocking the page, its data is excluded and its id is
+ * `expectedContractVersion` is the compatibility ceiling (usually the client
+ * contract version for All, or the selected env's version for single-env).
+ * Summaries outside {@link isUsageContractMergeCompatible} are excluded and
  * reported so the UI can say coverage is partial.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,
+  options: MergeUsageOptions = {},
 ): MergedUsage {
   if (environments.length === 0) return EMPTY_MERGED;
 
+  const providerFilter = options.provider;
   const current: EnvironmentUsage[] = [];
   const staleEnvironments: EnvironmentId[] = [];
   for (const environment of environments) {
-    if (environment.summary.contractVersion === expectedContractVersion) {
+    if (
+      isUsageContractMergeCompatible(environment.summary.contractVersion, expectedContractVersion)
+    ) {
       current.push(environment);
     } else {
       staleEnvironments.push(environment.environmentId);
     }
   }
 
-  const { ownerByFingerprint, duplicates } = claimSources(current);
+  const { ownerByFingerprint, duplicates } = claimSources(current, providerFilter);
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -258,6 +331,7 @@ export function mergeUsage(
     const { buckets, sessions: environmentSessions } = ownedContribution(
       environment,
       ownerByFingerprint,
+      providerFilter,
     );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
     sessions += environmentSessions;

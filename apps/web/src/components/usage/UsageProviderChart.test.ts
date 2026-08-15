@@ -85,6 +85,8 @@ describe("buildDayColumns", () => {
     expect(first?.bands).toEqual([
       { provider: "codex", value: 10 },
       { provider: "claude", value: 20 },
+      { provider: "grok", value: 0 },
+      { provider: "opencode", value: 0 },
     ]);
   });
 
@@ -93,6 +95,12 @@ describe("buildDayColumns", () => {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+
+  it("can plot a single focused provider", () => {
+    const columns = buildDayColumns(days, byDay, "cost", ["claude"]);
+    expect(columns.map((column) => column.total)).toEqual([20, 0, 5]);
+    expect(columns[0]?.bands).toEqual([{ provider: "claude", value: 20 }]);
   });
 });
 
