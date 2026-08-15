@@ -77,18 +77,20 @@ export class ComputerHistoryManager extends Context.Service<
     readonly ensureDaemon: (
       stateDir: string,
       settings: ComputerHistorySettings,
-    ) => Effect.Effect<void>;
-    readonly stopDaemon: () => Effect.Effect<void>;
+    ) => Effect.Effect<void, ComputerHistoryOperationError>;
+    readonly stopDaemon: () => Effect.Effect<void, ComputerHistoryOperationError>;
     readonly getStatus: (
       stateDir: string,
       settings: ComputerHistorySettings,
-    ) => Effect.Effect<ComputerHistoryStatus>;
-    readonly getTimeline: (stateDir: string) => Effect.Effect<ComputerHistoryTimeline>;
+    ) => Effect.Effect<ComputerHistoryStatus, ComputerHistoryOperationError>;
+    readonly getTimeline: (
+      stateDir: string,
+    ) => Effect.Effect<ComputerHistoryTimeline, ComputerHistoryOperationError>;
     readonly clear: (
       stateDir: string,
       scope: ComputerHistoryClearScope,
       settings: ComputerHistorySettings,
-    ) => Effect.Effect<ComputerHistoryTimeline>;
+    ) => Effect.Effect<ComputerHistoryTimeline, ComputerHistoryOperationError>;
     readonly removeMemory: (
       stateDir: string,
       path: string,
@@ -244,7 +246,7 @@ export const make = Effect.gen(function* () {
             operation: "ensureDaemon",
             cause,
           }),
-      }).pipe(Effect.orDie),
+      }),
     stopDaemon: () =>
       Effect.tryPromise({
         try: () => stopDaemonImpl(),
@@ -253,7 +255,7 @@ export const make = Effect.gen(function* () {
             operation: "stopDaemon",
             cause,
           }),
-      }).pipe(Effect.orDie),
+      }),
     getStatus: (stateDir, settings) =>
       Effect.tryPromise({
         try: async () => {
@@ -285,7 +287,7 @@ export const make = Effect.gen(function* () {
             operation: "getStatus",
             cause,
           }),
-      }).pipe(Effect.orDie),
+      }),
     getTimeline: (stateDir) =>
       Effect.tryPromise({
         try: () => listTimeline(resolveComputerHistoryRoot(stateDir)),
@@ -294,7 +296,7 @@ export const make = Effect.gen(function* () {
             operation: "getTimeline",
             cause,
           }),
-      }).pipe(Effect.orDie),
+      }),
     clear: (stateDir, scope, settings) =>
       Effect.tryPromise({
         try: () =>
@@ -306,7 +308,7 @@ export const make = Effect.gen(function* () {
             operation: "clear",
             cause,
           }),
-      }).pipe(Effect.orDie),
+      }),
     removeMemory: (stateDir, path, settings) =>
       Effect.tryPromise({
         try: () =>

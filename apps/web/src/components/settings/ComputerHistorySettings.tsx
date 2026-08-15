@@ -135,7 +135,7 @@ function ExclusionList({
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    className="size-5 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
                     disabled={disabled}
                     aria-label={`Remove ${item}`}
                     onClick={() => onChange(items.filter((entry) => entry !== item))}
