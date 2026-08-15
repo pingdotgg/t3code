@@ -112,6 +112,10 @@ export interface BoardSessionCardProps {
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
   readonly laneId: BoardLaneId;
+  readonly workflowLabel: string;
+  readonly boardStateId: string;
+  readonly boardStateLabel: string;
+  readonly draggable: boolean;
   readonly lanes: ReadonlyArray<BoardLane>;
   readonly projectTitle: string;
   readonly environmentLabel: string;
@@ -171,6 +175,10 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     threadRef,
     thread,
     laneId,
+    workflowLabel,
+    boardStateId,
+    boardStateLabel,
+    draggable,
     lanes,
     projectTitle,
     environmentLabel,
@@ -192,9 +200,9 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     [snoozeMenuOpen, timestampFormat],
   );
   const showSnoozeButton = snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
-  const isLifecycleLane = isBoardLifecycleLaneId(laneId);
-  const isSnoozedLane = laneId === SNOOZED_BOARD_LANE_ID;
-  const isSettledLane = laneId === SETTLED_BOARD_LANE_ID;
+  const isLifecycleState = isBoardLifecycleLaneId(boardStateId);
+  const isSnoozedState = boardStateId === SNOOZED_BOARD_LANE_ID;
+  const isSettledState = boardStateId === SETTLED_BOARD_LANE_ID;
 
   const [renaming, setRenaming] = useState<{
     readonly title: string;
@@ -299,6 +307,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     transition,
   } = useSortable({
     id: cardKey,
+    disabled: !draggable,
   });
   const setCardNodeRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -458,23 +467,25 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           "relative flex min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm",
           appearance.borderClass,
           appearance.surfaceClass,
-          isLifecycleLane && "border-border/60 bg-muted/35 text-muted-foreground",
+          isLifecycleState && "border-border/60 bg-muted/35 text-muted-foreground",
           isFocused && "ring-1 ring-primary/40",
           (isDraggingSelf || props.isDragging) && "opacity-60",
         )}
-        style={isLifecycleLane ? undefined : { height: `${effectiveHeight}px` }}
+        style={isLifecycleState ? undefined : { height: `${effectiveHeight}px` }}
         onContextMenu={handleContextMenu}
       >
         <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
-          <button
-            type="button"
-            {...listeners}
-            {...attributes}
-            aria-label={`Drag ${thread.title}`}
-            className="mt-0.5 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:bg-accent hover:text-muted-foreground active:cursor-grabbing pointer-coarse:p-1.5"
-          >
-            <GripVerticalIcon className="size-3.5" />
-          </button>
+          {draggable ? (
+            <button
+              type="button"
+              {...listeners}
+              {...attributes}
+              aria-label={`Drag ${thread.title}`}
+              className="mt-0.5 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:bg-accent hover:text-muted-foreground active:cursor-grabbing pointer-coarse:p-1.5"
+            >
+              <GripVerticalIcon className="size-3.5" />
+            </button>
+          ) : null}
           <div className="min-w-0 flex-1">
             {renaming ? (
               <input
@@ -497,24 +508,44 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 {thread.title}
               </p>
             )}
-            <p className="truncate text-[10px] text-muted-foreground/60">
-              {projectTitle}
-              {thread.branch ? ` · ${thread.branch}` : ""}
-            </p>
+            <div className="flex min-w-0 items-center gap-1 overflow-hidden text-[9px] text-muted-foreground/75">
+              <span
+                data-board-dimension="project"
+                className="max-w-28 truncate rounded bg-muted px-1 py-0.5"
+                title={`Project: ${projectTitle}`}
+              >
+                {projectTitle}
+              </span>
+              <span
+                data-board-dimension="workflow"
+                className="max-w-24 truncate rounded bg-muted px-1 py-0.5"
+                title={`Workflow: ${workflowLabel}`}
+              >
+                {workflowLabel}
+              </span>
+              <span
+                data-board-dimension="state"
+                className="max-w-20 truncate rounded bg-muted px-1 py-0.5"
+                title={`State: ${boardStateLabel}`}
+              >
+                {boardStateLabel}
+              </span>
+            </div>
             <p
               className="truncate text-[10px] text-muted-foreground/60"
-              title={`${environmentLabel} · ${environmentConnection.phase}`}
+              title={`${environmentLabel} · ${environmentConnection.phase}${thread.branch ? ` · ${thread.branch}` : ""}`}
             >
               {environmentLabel}
               {environmentConnection.phase === "connected"
                 ? ""
                 : ` · ${environmentConnection.phase}`}
+              {thread.branch ? ` · ${thread.branch}` : ""}
             </p>
           </div>
-          {isLifecycleLane ? null : (
+          {isLifecycleState ? null : (
             <BoardStatusIcon status={visualStatus} appearance={appearance} />
           )}
-          {(!isLifecycleLane && showSnoozeButton) || props.snoozeDropRequest ? (
+          {(!isLifecycleState && showSnoozeButton) || props.snoozeDropRequest ? (
             <Menu open={snoozeMenuOpen} onOpenChange={handleSnoozeMenuOpenChange}>
               <MenuTrigger
                 render={
@@ -540,7 +571,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
               </MenuPopup>
             </Menu>
           ) : null}
-          {isSnoozedLane && snoozeSupported ? (
+          {isSnoozedState && snoozeSupported ? (
             <Button
               size="icon-xs"
               variant="ghost"
@@ -550,7 +581,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             >
               <AlarmClockOffIcon className="size-3.5" />
             </Button>
-          ) : isSettledLane && settlementSupported ? (
+          ) : isSettledState && settlementSupported ? (
             <Button
               size="icon-xs"
               variant="ghost"
@@ -583,7 +614,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           </Button>
         </header>
 
-        {isLifecycleLane ? null : (
+        {isLifecycleState ? null : (
           <>
             {(isNearViewport || isFocused) && !expanded ? (
               <BoardCardChatSurface

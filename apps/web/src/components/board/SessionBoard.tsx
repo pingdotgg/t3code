@@ -9,23 +9,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { rectSortingStrategy, SortableContext } from "@dnd-kit/sortable";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import {
-  canSnooze,
-  effectiveSettled,
-  type ChangeRequestStateLike,
-} from "@t3tools/client-runtime/state/thread-settled";
-import {
-  type AtomCommandResult,
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import type { ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
 import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -45,15 +36,23 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
-import { useComposerDraftStore } from "../../composerDraftStore.ts";
+import {
+  DraftId,
+  composerDraftHasUserContent,
+  finalizePromotedDraftThreadByRef,
+  markPromotedDraftThreadByRef,
+  useComposerDraftStore,
+  type DraftSessionState,
+} from "../../composerDraftStore.ts";
 import {
   type BoardLane,
   type BoardLaneDraft,
   type BoardLaneId,
-  SETTLED_BOARD_LANE_ID,
-  SNOOZED_BOARD_LANE_ID,
+  type BoardOrganizationColumns,
+  type BoardOrganizationRows,
   clampBoardLaneWidth,
   BOARD_LANE_MAX_WIDTH,
   BOARD_LANE_MIN_WIDTH,
@@ -64,20 +63,33 @@ import {
 } from "../../board/boardLaneStore.ts";
 import {
   isBoardFixedLaneId,
-  isBoardLifecycleLaneId,
+  isBoardWorkflowLane,
+  boardLaneLabel,
   orderBoardLanes,
   resolveBoardLane,
 } from "../../board/boardLanes.ts";
+import {
+  BOARD_STATE_BY_ID,
+  BOARD_STATES,
+  boardStateDimensionKey,
+  buildBoardRows,
+  resolveBoardThreadState,
+  type BoardStateId,
+} from "../../board/boardOrganization.ts";
 import { selectProjectGroupingSettings } from "../../logicalProject.ts";
 import { ensureLocalApi } from "../../localApi.ts";
 import { useProjectScopeStore } from "../../projectScopeStore.ts";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping.ts";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments.ts";
-import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities.ts";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadDetail,
+  useThreadShells,
+} from "../../state/entities.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { useNowMinute } from "../../hooks/useNowMinute.ts";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread.ts";
-import { useThreadActions } from "../../hooks/useThreadActions.ts";
 import { Button } from "../ui/button.tsx";
 import { Input } from "../ui/input.tsx";
 import {
@@ -88,19 +100,19 @@ import {
   PopoverTrigger,
 } from "../ui/popover.tsx";
 import { SidebarInset } from "../ui/sidebar.tsx";
-import { Switch } from "../ui/switch.tsx";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { BoardChangeRequestStateReporter, BoardSessionCard } from "./BoardSessionCard.tsx";
+import { BoardDraftCard } from "./BoardDraftCard.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
-import { stackedThreadToast, toastManager } from "../ui/toast.tsx";
+import { threadHasStarted } from "../ChatView.logic.ts";
 import {
   boardLaneGridTemplateColumns,
   boardLaneHeaderDroppableId,
   boardProjectKey,
-  buildProjectSwimlanes,
   groupEntriesByLane,
   laneArchiveIntent,
   laneIdForName,
@@ -108,44 +120,61 @@ import {
   reorderLaneUpdates,
   resolveBoardLaneDrop,
   reorderBoardLaneKeys,
+  rowKeyFromSwimlaneDroppableId,
   resolveBoardFocusAction,
   resolveBoardScrollTarget,
   resolveBoardThreadVisibility,
-  shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
 /** Group bands stick directly under the lane header row. */
 const BOARD_HEADER_HEIGHT = "3.25rem";
-const COLLAPSED_LIFECYCLE_LANE_WIDTH = 56;
 /** The rule that makes a lane read as one column down the whole scroll. */
 const BOARD_COLUMN_RULE_CLASS = "border-l border-border/40 first:border-l-0";
 
-interface PlacedThread {
+interface PlacedEntryBase {
   readonly ref: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly key: string;
-  readonly thread: SidebarThreadSummary;
   readonly laneId: BoardLaneId;
   readonly workflowLaneId: BoardLaneId;
+  readonly boardStateId: BoardStateId;
   readonly environmentLabel: string;
-  readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly projectKey: string;
   readonly projectTitle: string;
   readonly laneColumnKey: string;
   readonly createdAt: string;
 }
 
-interface BoardLaneColumn {
-  readonly key: string;
-  readonly lane: BoardLane;
+interface PlacedThread extends PlacedEntryBase {
+  readonly kind: "thread";
+  readonly thread: SidebarThreadSummary;
+  readonly environmentConnection: EnvironmentConnectionPresentation;
 }
 
-interface BoardSnoozeDropRequest {
-  readonly threadKey: string;
-  readonly nonce: number;
-  readonly unsettleAfterSnooze: boolean;
+interface PlacedDraft extends PlacedEntryBase {
+  readonly kind: "draft";
+  readonly draftId: DraftId;
+  readonly draft: DraftSessionState;
 }
+
+type PlacedEntry = PlacedThread | PlacedDraft;
+
+interface WorkflowBoardColumn {
+  readonly kind: "workflow";
+  readonly key: string;
+  readonly lane: BoardLane;
+  readonly label: string;
+}
+
+interface StateBoardColumn {
+  readonly kind: "state";
+  readonly key: string;
+  readonly stateId: BoardStateId;
+  readonly label: string;
+}
+
+type BoardColumn = WorkflowBoardColumn | StateBoardColumn;
 
 type LaneDraft = BoardLaneDraft;
 
@@ -175,7 +204,6 @@ export function SessionBoard() {
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const projectScopeKey = useProjectScopeStore((state) => state.projectScopeKey);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
-  const [snoozeDropRequest, setSnoozeDropRequest] = useState<BoardSnoozeDropRequest | null>(null);
   const [changeRequestResolutionByKey, setChangeRequestResolutionByKey] = useState<
     ReadonlyMap<
       string,
@@ -190,14 +218,28 @@ export function SessionBoard() {
   const expandedDraft = useComposerDraftStore((state) =>
     expandedTarget?.kind === "draft" ? state.getDraftSession(expandedTarget.draftId) : null,
   );
+  const draftThreadsByThreadKey = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
+  const investedDraftIds = useComposerDraftStore(
+    useShallow((state) =>
+      Object.entries(state.draftThreadsByThreadKey)
+        .filter(
+          ([draftId, draft]) =>
+            draft.promotedTo == null &&
+            composerDraftHasUserContent(state.draftsByThreadKey[draftId]),
+        )
+        .map(([draftId]) => draftId)
+        .toSorted(),
+    ),
+  );
+  const clearDraftThread = useComposerDraftStore((state) => state.clearDraftThread);
   const handleNewThread = useNewThreadHandler();
-  const groupByProject = useBoardLaneStore((state) => state.groupByProject);
-  const setGroupByProject = useBoardLaneStore((state) => state.setGroupByProject);
+  const organization = useBoardLaneStore((state) => state.organization);
+  const setOrganizationColumns = useBoardLaneStore((state) => state.setOrganizationColumns);
+  const setOrganizationRows = useBoardLaneStore((state) => state.setOrganizationRows);
   const lanes = useBoardLaneStore((state) => state.lanes);
   const placementByThreadKey = useBoardLaneStore((state) => state.placementByThreadKey);
   const laneEntryByThreadKey = useBoardLaneStore((state) => state.laneEntryByThreadKey);
   const orderByLaneId = useBoardLaneStore((state) => state.orderByLaneId);
-  const collapsedLifecycleLaneIds = useBoardLaneStore((state) => state.collapsedLifecycleLaneIds);
   const setPlacement = useBoardLaneStore((state) => state.setPlacement);
   const recordLaneEntry = useBoardLaneStore((state) => state.recordLaneEntry);
   const setLaneOrder = useBoardLaneStore((state) => state.setLaneOrder);
@@ -206,10 +248,6 @@ export function SessionBoard() {
   const archiveLane = useBoardLaneStore((state) => state.archiveLane);
   const laneWidthsByKey = useBoardLaneStore((state) => state.byLaneColumnKey);
   const setLaneWidth = useBoardLaneStore((state) => state.setWidth);
-  const toggleLifecycleLaneCollapsed = useBoardLaneStore(
-    (state) => state.toggleLifecycleLaneCollapsed,
-  );
-  const { settleThread, unsettleThread, unsnoozeThread } = useThreadActions();
   const [draggingLaneWidth, setDraggingLaneWidth] = useState<{
     readonly key: string;
     readonly widthPx: number;
@@ -268,12 +306,29 @@ export function SessionBoard() {
     [environments],
   );
 
-  const boardLanes = useMemo<ReadonlyArray<BoardLaneColumn>>(() => {
-    return orderBoardLanes(lanes).map((lane) => ({
-      key: laneColumnKey(lane.id),
-      lane,
-    }));
-  }, [lanes]);
+  const workflowLanes = useMemo(() => orderBoardLanes(lanes).filter(isBoardWorkflowLane), [lanes]);
+  const workflowColumns = useMemo<ReadonlyArray<WorkflowBoardColumn>>(
+    () =>
+      workflowLanes.map((lane) => ({
+        kind: "workflow",
+        key: laneColumnKey(lane.id),
+        lane,
+        label: lane.name,
+      })),
+    [workflowLanes],
+  );
+  const boardColumns = useMemo<ReadonlyArray<BoardColumn>>(
+    () =>
+      organization.columns === "workflow"
+        ? workflowColumns
+        : BOARD_STATES.map((state) => ({
+            kind: "state" as const,
+            key: boardStateDimensionKey(state.id),
+            stateId: state.id,
+            label: state.label,
+          })),
+    [organization.columns, workflowColumns],
+  );
 
   const boardGridTemplateColumns = useMemo(() => {
     const widths =
@@ -284,17 +339,15 @@ export function SessionBoard() {
             [draggingLaneWidth.key]: { widthPx: draggingLaneWidth.widthPx },
           };
     return boardLaneGridTemplateColumns(
-      boardLanes.map((column) => ({ key: column.key, laneId: column.lane.id })),
+      boardColumns.map((column) => ({ key: column.key, laneId: column.key })),
       Object.fromEntries(
-        boardLanes.map((column) => [
+        boardColumns.map((column) => [
           column.key,
-          collapsedLifecycleLaneIds.includes(column.lane.id)
-            ? COLLAPSED_LIFECYCLE_LANE_WIDTH
-            : (widths[column.key]?.widthPx ?? selectBoardLaneWidth(widths, column.key)),
+          widths[column.key]?.widthPx ?? selectBoardLaneWidth(widths, column.key),
         ]),
       ),
     );
-  }, [boardLanes, collapsedLifecycleLaneIds, draggingLaneWidth, laneWidthsByKey]);
+  }, [boardColumns, draggingLaneWidth, laneWidthsByKey]);
 
   const handleCreateLane = useCallback(
     async (draft: LaneDraft) => {
@@ -407,8 +460,8 @@ export function SessionBoard() {
     [changeRequestResolutionByKey, changeRequestSourceKeyByThreadKey],
   );
 
-  const { placed, nextSnoozeWakeAtMs } = useMemo<{
-    readonly placed: ReadonlyArray<PlacedThread>;
+  const { placedThreads, nextSnoozeWakeAtMs } = useMemo<{
+    readonly placedThreads: ReadonlyArray<PlacedThread>;
     readonly nextSnoozeWakeAtMs: number | null;
   }>(() => {
     // Inactivity settlement is minute-granular. Snoozes get an exact wake
@@ -418,7 +471,7 @@ export function SessionBoard() {
     const now = new Date().toISOString();
     let nextWakeAtMs = Number.POSITIVE_INFINITY;
     return {
-      placed: threads
+      placedThreads: threads
         .map<PlacedThread | null>((thread) => {
           const ref = scopeThreadRef(thread.environmentId, thread.id);
           const key = scopedThreadKey(ref);
@@ -441,22 +494,23 @@ export function SessionBoard() {
             lanes,
           );
           if (workflowLaneId === null) return null;
-          const laneId =
-            visibility === "snoozed"
-              ? SNOOZED_BOARD_LANE_ID
-              : visibility === "settled"
-                ? SETTLED_BOARD_LANE_ID
-                : workflowLaneId;
-          const columnKey = laneColumnKey(laneId);
+          const boardStateId = resolveBoardThreadState(thread, visibility);
+          if (boardStateId === null) return null;
+          const columnKey =
+            organization.columns === "workflow"
+              ? laneColumnKey(workflowLaneId)
+              : boardStateDimensionKey(boardStateId);
           const physicalProjectKey = boardProjectKey(thread.environmentId, thread.projectId);
           const projectGroup = projectGroupByPhysicalKey.get(physicalProjectKey);
           return {
+            kind: "thread",
             ref,
             environmentId: thread.environmentId,
             key,
             thread,
-            laneId,
+            laneId: workflowLaneId,
             workflowLaneId,
+            boardStateId,
             environmentLabel:
               environmentById.get(thread.environmentId)?.label ?? thread.environmentId,
             environmentConnection: environmentById.get(thread.environmentId)?.connection ?? {
@@ -468,12 +522,7 @@ export function SessionBoard() {
             projectTitle:
               projectGroup?.projectTitle ?? projectTitleById.get(physicalProjectKey) ?? "Project",
             laneColumnKey: columnKey,
-            createdAt:
-              visibility === "snoozed"
-                ? (thread.snoozedAt ?? thread.createdAt)
-                : visibility === "settled"
-                  ? (thread.settledAt ?? thread.createdAt)
-                  : thread.createdAt,
+            createdAt: thread.createdAt,
           };
         })
         .filter((entry): entry is PlacedThread => entry !== null),
@@ -484,6 +533,7 @@ export function SessionBoard() {
     changeRequestStateForThread,
     environmentById,
     lanes,
+    organization.columns,
     settlementNow,
     placementByThreadKey,
     projectGroupByPhysicalKey,
@@ -493,6 +543,66 @@ export function SessionBoard() {
     threads,
   ]);
 
+  const serverThreadKeySet = useMemo(
+    () => new Set(placedThreads.map((entry) => entry.key)),
+    [placedThreads],
+  );
+  const placedDrafts = useMemo<ReadonlyArray<PlacedDraft>>(() => {
+    const entries: PlacedDraft[] = [];
+    const investedDraftIdSet = new Set(investedDraftIds);
+    for (const [rawDraftId, draft] of Object.entries(draftThreadsByThreadKey)) {
+      if (draft.promotedTo != null || !investedDraftIdSet.has(rawDraftId)) continue;
+      const draftId = DraftId.make(rawDraftId);
+      const ref = scopeThreadRef(draft.environmentId, draft.threadId);
+      const key = scopedThreadKey(ref);
+      // Once the server shell exists it owns this identity. A promotion
+      // reconciler below removes the draft after the real thread has started.
+      if (serverThreadKeySet.has(key)) continue;
+      const workflowLaneId = resolveBoardLane(
+        selectBoardPlacement(placementByThreadKey, ref),
+        lanes,
+      );
+      if (workflowLaneId === null) continue;
+      const physicalProjectKey = boardProjectKey(draft.environmentId, draft.projectId);
+      const projectGroup = projectGroupByPhysicalKey.get(physicalProjectKey);
+      entries.push({
+        kind: "draft",
+        draftId,
+        draft,
+        ref,
+        environmentId: draft.environmentId,
+        key,
+        laneId: workflowLaneId,
+        workflowLaneId,
+        boardStateId: "draft",
+        environmentLabel: environmentById.get(draft.environmentId)?.label ?? draft.environmentId,
+        projectKey: projectGroup?.projectKey ?? physicalProjectKey,
+        projectTitle:
+          projectGroup?.projectTitle ?? projectTitleById.get(physicalProjectKey) ?? "Project",
+        laneColumnKey:
+          organization.columns === "workflow"
+            ? laneColumnKey(workflowLaneId)
+            : boardStateDimensionKey("draft"),
+        createdAt: draft.createdAt,
+      });
+    }
+    return entries;
+  }, [
+    draftThreadsByThreadKey,
+    environmentById,
+    investedDraftIds,
+    lanes,
+    organization.columns,
+    placementByThreadKey,
+    projectGroupByPhysicalKey,
+    projectTitleById,
+    serverThreadKeySet,
+  ]);
+
+  const placed = useMemo<ReadonlyArray<PlacedEntry>>(
+    () => [...placedThreads, ...placedDrafts],
+    [placedDrafts, placedThreads],
+  );
   const orderedPlaced = useMemo(
     () => orderBoardLaneEntries(placed, laneEntryByThreadKey, orderByLaneId),
     [laneEntryByThreadKey, orderByLaneId, placed],
@@ -500,7 +610,8 @@ export function SessionBoard() {
 
   useEffect(() => {
     for (const entry of placed) {
-      const expectedSourceKey = changeRequestSourceKeyByThreadKey.get(entry.key);
+      const expectedSourceKey =
+        entry.kind === "thread" ? changeRequestSourceKeyByThreadKey.get(entry.key) : undefined;
       if (
         expectedSourceKey !== undefined &&
         changeRequestResolutionByKey.get(entry.key)?.sourceKey !== expectedSourceKey
@@ -509,9 +620,7 @@ export function SessionBoard() {
       }
       const current = laneEntryByThreadKey[entry.key];
       if (current?.laneId === entry.laneId) continue;
-      // Implicit Triage has creation time as its natural arrival and needs no
-      // local write. Lifecycle entries use their server timestamp on first
-      // sight; later derived transitions use the local observation time.
+      // Implicit Triage has creation time as its natural arrival and needs no local write.
       if (
         current === undefined &&
         entry.laneId === entry.workflowLaneId &&
@@ -519,15 +628,7 @@ export function SessionBoard() {
       ) {
         continue;
       }
-      const lifecycleEnteredAt =
-        current === undefined
-          ? entry.laneId === SNOOZED_BOARD_LANE_ID
-            ? entry.thread.snoozedAt
-            : entry.laneId === SETTLED_BOARD_LANE_ID
-              ? entry.thread.settledAt
-              : null
-          : null;
-      recordLaneEntry(entry.ref, entry.laneId, lifecycleEnteredAt ?? undefined);
+      recordLaneEntry(entry.ref, entry.laneId);
     }
   }, [
     changeRequestResolutionByKey,
@@ -553,24 +654,10 @@ export function SessionBoard() {
     return counts;
   }, [orderedPlaced]);
 
-  const swimlanes = useMemo(() => {
-    if (groupByProject) return buildProjectSwimlanes(orderedPlaced, projectScopeKey);
-    const scopedEntries =
-      projectScopeKey === null
-        ? orderedPlaced
-        : orderedPlaced.filter((entry) => entry.projectKey === projectScopeKey);
-    return buildProjectSwimlanes(
-      scopedEntries.map((entry) => ({
-        ...entry,
-        projectKey: "__board__",
-        projectTitle: "All sessions",
-      })),
-      null,
-    );
-  }, [groupByProject, orderedPlaced, projectScopeKey]);
-
-  const hideSwimlaneProjectHeader =
-    !groupByProject || shouldHideSwimlaneProjectHeader(projectScopeKey);
+  const boardRows = useMemo(
+    () => buildBoardRows(orderedPlaced, organization.rows, projectScopeKey),
+    [orderedPlaced, organization.rows, projectScopeKey],
+  );
 
   const toggleSwimlaneCollapsed = useCallback((projectKey: string) => {
     setCollapsedProjectKeys((current) => {
@@ -683,12 +770,11 @@ export function SessionBoard() {
       return;
     }
 
-    if (collapsedLifecycleLaneIds.includes(entry.laneId)) {
-      toggleLifecycleLaneCollapsed(entry.laneId);
-      return;
-    }
-    if (collapsedProjectKeys.has(entry.projectKey)) {
-      toggleSwimlaneCollapsed(entry.projectKey);
+    const entryRow = boardRows.find((row) =>
+      row.entries.some((candidate) => candidate.key === entry.key),
+    );
+    if (entryRow !== undefined && collapsedProjectKeys.has(entryRow.key)) {
+      toggleSwimlaneCollapsed(entryRow.key);
       return;
     }
 
@@ -754,12 +840,12 @@ export function SessionBoard() {
     return () => cancelAnimationFrame(frame);
   }, [
     clearFocusRequest,
-    collapsedLifecycleLaneIds,
+    boardRows,
     collapsedProjectKeys,
     focusRequest,
+    organization.rows,
     setExpandedThread,
     setFocusedThreadKey,
-    toggleLifecycleLaneCollapsed,
     toggleSwimlaneCollapsed,
   ]);
 
@@ -782,28 +868,10 @@ export function SessionBoard() {
     setDraggingKey(String(event.active.id));
   }, []);
 
-  const runLifecycleCommand = useCallback(
-    async (title: string, command: () => Promise<AtomCommandResult<unknown, unknown>>) => {
-      const result = await command();
-      if (result._tag === "Success") return true;
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title,
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-      return false;
-    },
-    [],
-  );
-
   const handleDragEnd = useCallback(
-    async (event: DragEndEvent) => {
+    (event: DragEndEvent) => {
       setDraggingKey(null);
+      if (organization.columns !== "workflow") return;
       const { active, over } = event;
       if (!over) return;
 
@@ -811,99 +879,51 @@ export function SessionBoard() {
         activeId: String(active.id),
         overId: String(over.id),
         entries: orderedPlaced,
-        columns: boardLanes,
+        columns: workflowColumns,
       });
       if (drop === null) return;
       const { entry, target, overEntry } = drop;
       const targetLaneId = target.lane.id;
-      const sourceIsLifecycle = isBoardLifecycleLaneId(entry.laneId);
-      const targetIsLifecycle = isBoardLifecycleLaneId(targetLaneId);
-
-      if (entry.laneId !== targetLaneId && (sourceIsLifecycle || targetIsLifecycle)) {
-        if (targetLaneId === SNOOZED_BOARD_LANE_ID) {
-          const supportsSnooze =
-            serverConfigs.get(entry.environmentId)?.environment.capabilities.threadSnooze === true;
-          if (!supportsSnooze || !canSnooze(entry.thread, { now: new Date().toISOString() })) {
-            toastManager.add({
-              type: "warning",
-              title: supportsSnooze
-                ? "This session cannot be snoozed right now"
-                : "Snooze is unavailable for this environment",
-            });
-            return;
-          }
-          setSnoozeDropRequest((current) => ({
-            threadKey: entry.key,
-            nonce: (current?.nonce ?? 0) + 1,
-            unsettleAfterSnooze: entry.laneId === SETTLED_BOARD_LANE_ID,
-          }));
-          return;
-        }
-
-        if (targetLaneId === SETTLED_BOARD_LANE_ID) {
-          const supportsSettlement =
-            serverConfigs.get(entry.environmentId)?.environment.capabilities.threadSettlement ===
-            true;
-          if (!supportsSettlement) {
-            toastManager.add({
-              type: "warning",
-              title: "Settlement is unavailable for this environment",
-            });
-            return;
-          }
-          if (
-            entry.laneId === SNOOZED_BOARD_LANE_ID &&
-            !(await runLifecycleCommand("Failed to wake thread", () => unsnoozeThread(entry.ref)))
-          ) {
-            return;
-          }
-          await runLifecycleCommand("Failed to settle thread", () => settleThread(entry.ref));
-          return;
-        }
-
-        if (entry.laneId === SNOOZED_BOARD_LANE_ID) {
-          const wasAlsoSettled = effectiveSettled(entry.thread, {
-            now: settlementNow,
-            autoSettleAfterDays,
-            changeRequestState: changeRequestStateForThread(entry.key),
-          });
-          if (
-            !(await runLifecycleCommand("Failed to wake thread", () => unsnoozeThread(entry.ref)))
-          ) {
-            return;
-          }
-          if (
-            wasAlsoSettled &&
-            !(await runLifecycleCommand("Failed to un-settle thread", () =>
-              unsettleThread(entry.ref),
-            ))
-          ) {
-            return;
-          }
-        } else if (
-          entry.laneId === SETTLED_BOARD_LANE_ID &&
-          !(await runLifecycleCommand("Failed to un-settle thread", () =>
-            unsettleThread(entry.ref),
-          ))
-        ) {
-          return;
-        }
-        setPlacement(entry.ref, targetLaneId);
+      const sourceRow = boardRows.find((row) =>
+        row.entries.some((candidate) => candidate.key === entry.key),
+      );
+      const targetRowKey =
+        overEntry === null
+          ? rowKeyFromSwimlaneDroppableId(String(over.id))
+          : boardRows.find((row) =>
+              row.entries.some((candidate) => candidate.key === overEntry.key),
+            )?.key;
+      if (
+        sourceRow !== undefined &&
+        targetRowKey !== null &&
+        targetRowKey !== undefined &&
+        targetRowKey !== "board-lane-header" &&
+        targetRowKey !== sourceRow.key
+      ) {
         return;
       }
 
       if (overEntry !== null) {
-        const sameVisibleGroup = !groupByProject || overEntry.projectKey === entry.projectKey;
+        const sameVisibleGroup =
+          organization.rows === "none" ||
+          (organization.rows === "project"
+            ? overEntry.projectKey === entry.projectKey
+            : overEntry.boardStateId === entry.boardStateId);
         if (sameVisibleGroup) {
           const targetEntries = orderedPlaced.filter(
             (candidate) =>
               candidate.laneId === targetLaneId &&
-              (!groupByProject || candidate.projectKey === entry.projectKey),
+              (organization.rows === "none" ||
+                (organization.rows === "project"
+                  ? candidate.projectKey === entry.projectKey
+                  : candidate.boardStateId === entry.boardStateId)),
           );
           const translated = active.rect.current.translated;
           const insertAfter =
             translated !== null &&
-            translated.top + translated.height / 2 > over.rect.top + over.rect.height / 2;
+            (Math.abs(translated.top - over.rect.top) < over.rect.height / 2
+              ? translated.left + translated.width / 2 > over.rect.left + over.rect.width / 2
+              : translated.top + translated.height / 2 > over.rect.top + over.rect.height / 2);
           const scopedOrder = reorderBoardLaneKeys({
             orderedKeys: targetEntries.map((candidate) => candidate.key),
             activeKey: entry.key,
@@ -941,21 +961,30 @@ export function SessionBoard() {
       setLaneOrder(targetLaneId, [entry.key, ...laneOrder]);
     },
     [
-      autoSettleAfterDays,
-      boardLanes,
-      changeRequestStateForThread,
-      groupByProject,
-      settlementNow,
       orderedPlaced,
-      runLifecycleCommand,
-      serverConfigs,
+      boardRows,
+      organization.columns,
+      organization.rows,
       setLaneOrder,
       setPlacement,
-      settleThread,
-      unsnoozeThread,
-      unsettleThread,
+      workflowColumns,
     ],
   );
+
+  const draftPromotionPairs = useMemo(() => {
+    const refsByKey = new Map(
+      threads.map((thread) => {
+        const ref = scopeThreadRef(thread.environmentId, thread.id);
+        return [scopedThreadKey(ref), ref] as const;
+      }),
+    );
+    return Object.entries(draftThreadsByThreadKey).flatMap(([rawDraftId, draft]) => {
+      const ref = refsByKey.get(
+        scopedThreadKey(scopeThreadRef(draft.environmentId, draft.threadId)),
+      );
+      return ref === undefined ? [] : [{ draftId: DraftId.make(rawDraftId), threadRef: ref }];
+    });
+  }, [draftThreadsByThreadKey, threads]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -966,6 +995,13 @@ export function SessionBoard() {
           workspacePath={group.workspacePath}
           threads={group.threads}
           onChangeRequestState={handleChangeRequestState}
+        />
+      ))}
+      {draftPromotionPairs.map((pair) => (
+        <BoardDraftPromotionReconciler
+          key={pair.draftId}
+          draftId={pair.draftId}
+          threadRef={pair.threadRef}
         />
       ))}
       <header
@@ -979,18 +1015,31 @@ export function SessionBoard() {
           <span className="hidden sm:inline">Session board</span>
         </h1>
         <p className="hidden text-xs text-muted-foreground/70 sm:block">
-          Every card is the live session itself. Drag to set its lane.
+          Live sessions and drafts. Drag in Workflow columns to set a lane.
         </p>
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            <span className="hidden sm:inline">Group projects</span>
-            <Switch
-              checked={groupByProject}
-              onCheckedChange={setGroupByProject}
-              aria-label="Group board by project"
-            />
-          </label>
-          <NewLanePopover lanes={lanes} onCreate={handleCreateLane} />
+          <BoardOrganizationSelect
+            label="Columns"
+            value={organization.columns}
+            items={[
+              { value: "workflow", label: "Workflow" },
+              { value: "state", label: "State" },
+            ]}
+            onValueChange={(value) => setOrganizationColumns(value as BoardOrganizationColumns)}
+          />
+          <BoardOrganizationSelect
+            label="Rows"
+            value={organization.rows}
+            items={[
+              { value: "project", label: "Project" },
+              { value: "state", label: "State" },
+              { value: "none", label: "None" },
+            ]}
+            onValueChange={(value) => setOrganizationRows(value as BoardOrganizationRows)}
+          />
+          {organization.columns === "workflow" ? (
+            <NewLanePopover lanes={lanes} onCreate={handleCreateLane} />
+          ) : null}
         </div>
       </header>
 
@@ -1017,51 +1066,55 @@ export function SessionBoard() {
                 height: BOARD_HEADER_HEIGHT,
               }}
             >
-              {boardLanes.map((column) => (
-                <LaneHeaderCell
-                  key={column.key}
-                  droppableId={boardLaneHeaderDroppableId(column.key)}
-                  lane={column.lane}
-                  lanes={lanes}
-                  collapsed={collapsedLifecycleLaneIds.includes(column.lane.id)}
-                  memberCount={laneMemberCountByKey.get(column.key) ?? 0}
-                  widthPx={
-                    draggingLaneWidth?.key === column.key
-                      ? draggingLaneWidth.widthPx
-                      : selectBoardLaneWidth(laneWidthsByKey, column.key)
-                  }
-                  onResizePointerDown={(event) =>
-                    handleLaneResizePointerDown(
-                      column.key,
-                      selectBoardLaneWidth(laneWidthsByKey, column.key),
-                      event,
-                    )
-                  }
-                  onResizeKeyDown={(event) =>
-                    handleLaneResizeKeyDown(
-                      column.key,
-                      selectBoardLaneWidth(laneWidthsByKey, column.key),
-                      event,
-                    )
-                  }
-                  onUpdate={handleUpdateLane}
-                  onReorder={handleReorderLane}
-                  onArchive={handleArchiveLane}
-                  onToggleCollapsed={() => toggleLifecycleLaneCollapsed(column.lane.id)}
-                />
-              ))}
+              {boardColumns.map((column) => {
+                const widthPx =
+                  draggingLaneWidth?.key === column.key
+                    ? draggingLaneWidth.widthPx
+                    : selectBoardLaneWidth(laneWidthsByKey, column.key);
+                const resizeProps = {
+                  widthPx,
+                  onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) =>
+                    handleLaneResizePointerDown(column.key, widthPx, event),
+                  onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) =>
+                    handleLaneResizeKeyDown(column.key, widthPx, event),
+                };
+                return column.kind === "workflow" ? (
+                  <LaneHeaderCell
+                    key={column.key}
+                    droppableId={boardLaneHeaderDroppableId(column.key)}
+                    lane={column.lane}
+                    lanes={lanes}
+                    memberCount={laneMemberCountByKey.get(column.key) ?? 0}
+                    {...resizeProps}
+                    onUpdate={handleUpdateLane}
+                    onReorder={handleReorderLane}
+                    onArchive={handleArchiveLane}
+                  />
+                ) : (
+                  <StateHeaderCell
+                    key={column.key}
+                    stateId={column.stateId}
+                    label={column.label}
+                    memberCount={laneMemberCountByKey.get(column.key) ?? 0}
+                    {...resizeProps}
+                  />
+                );
+              })}
             </div>
 
-            {swimlanes.map((swimlane) => {
-              const collapsed = collapsedProjectKeys.has(swimlane.projectKey);
-              const bySwimlaneLaneColumn = groupEntriesByLane(
-                swimlane.entries,
-                boardLanes.map((column) => column.key),
+            {boardRows.map((row) => {
+              const collapsed = collapsedProjectKeys.has(row.key);
+              const byRowColumn = groupEntriesByLane(
+                row.entries,
+                boardColumns.map((column) => column.key),
               );
+              const showRowHeader =
+                row.grouping !== "none" &&
+                !(row.grouping === "project" && projectScopeKey !== null);
 
               return (
-                <Fragment key={swimlane.projectKey}>
-                  {hideSwimlaneProjectHeader ? null : (
+                <Fragment key={row.key}>
+                  {showRowHeader ? (
                     <div
                       // Opaque, not translucent: it sticks over live cards, and
                       // a blurred strip would repaint them on every scroll tick.
@@ -1072,61 +1125,54 @@ export function SessionBoard() {
                       <button
                         type="button"
                         className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
-                        onClick={() => toggleSwimlaneCollapsed(swimlane.projectKey)}
+                        onClick={() => toggleSwimlaneCollapsed(row.key)}
                       >
                         {collapsed ? (
                           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
                         ) : (
                           <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
                         )}
-                        <span className="truncate text-xs font-medium">
-                          {swimlane.projectTitle}
-                        </span>
+                        <span className="truncate text-xs font-medium">{row.label}</span>
                         <span className="shrink-0 text-[11px] text-muted-foreground/70">
-                          {swimlane.sessionCount}{" "}
-                          {swimlane.sessionCount === 1 ? "session" : "sessions"}
+                          {row.entryCount} {row.entryCount === 1 ? "card" : "cards"}
                         </span>
                       </button>
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        className="mr-2 shrink-0"
-                        aria-label={`New thread in ${swimlane.projectTitle}`}
-                        title={`New thread in ${swimlane.projectTitle}`}
-                        onClick={() => {
-                          const projectRef = projectRefByGroupKey.get(swimlane.projectKey);
-                          if (projectRef !== undefined) void handleNewThread(projectRef);
-                        }}
-                      >
-                        <SquarePenIcon className="size-3.5" />
-                      </Button>
+                      {row.grouping === "project" ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="mr-2 shrink-0"
+                          aria-label={`New thread in ${row.label}`}
+                          title={`New thread in ${row.label}`}
+                          onClick={() => {
+                            const projectRef = projectRefByGroupKey.get(row.value);
+                            if (projectRef !== undefined) void handleNewThread(projectRef);
+                          }}
+                        >
+                          <SquarePenIcon className="size-3.5" />
+                        </Button>
+                      ) : null}
                     </div>
-                  )}
-                  {collapsed && !hideSwimlaneProjectHeader ? null : (
+                  ) : null}
+                  {collapsed && showRowHeader ? null : (
                     <div
                       className="grid"
                       style={{
                         gridTemplateColumns: boardGridTemplateColumns,
                       }}
                     >
-                      {boardLanes.map((column) => (
+                      {boardColumns.map((column) => (
                         <LaneDropCell
-                          key={`${swimlane.projectKey}:${column.key}`}
-                          droppableId={swimlaneColumnDroppableId(swimlane.projectKey, column.key)}
-                          lane={column.lane}
+                          key={`${row.key}:${column.key}`}
+                          droppableId={swimlaneColumnDroppableId(row.key, column.key)}
+                          column={column}
                           lanes={lanes}
-                          entries={bySwimlaneLaneColumn.get(column.key) ?? []}
+                          entries={byRowColumn.get(column.key) ?? []}
                           draggingKey={draggingKey}
-                          collapsed={collapsedLifecycleLaneIds.includes(column.lane.id)}
+                          draggable={organization.columns === "workflow"}
                           changeRequestStateForThread={changeRequestStateForThread}
-                          snoozeDropRequest={snoozeDropRequest}
-                          onSnoozeDropRequestHandled={(threadKey, nonce) =>
-                            setSnoozeDropRequest((current) =>
-                              current?.threadKey === threadKey && current.nonce === nonce
-                                ? null
-                                : current,
-                            )
-                          }
+                          onExpandDraft={(draftId) => setExpandedTarget({ kind: "draft", draftId })}
+                          onDiscardDraft={clearDraftThread}
                         />
                       ))}
                     </div>
@@ -1153,6 +1199,64 @@ export function SessionBoard() {
         />
       ) : null}
     </SidebarInset>
+  );
+}
+
+function BoardDraftPromotionReconciler(props: {
+  readonly draftId: DraftId;
+  readonly threadRef: ScopedThreadRef;
+}) {
+  const thread = useThreadDetail(props.threadRef);
+  const expandedTarget = useBoardFocusStore((state) => state.expandedTarget);
+  const setExpandedTarget = useBoardFocusStore((state) => state.setExpanded);
+
+  useEffect(() => {
+    markPromotedDraftThreadByRef(props.threadRef);
+  }, [props.threadRef]);
+
+  useEffect(() => {
+    if (!threadHasStarted(thread)) return;
+    if (expandedTarget?.kind === "draft" && expandedTarget.draftId === props.draftId) {
+      setExpandedTarget({ kind: "thread", threadKey: scopedThreadKey(props.threadRef) });
+    }
+    finalizePromotedDraftThreadByRef(props.threadRef);
+  }, [expandedTarget, props.draftId, props.threadRef, setExpandedTarget, thread]);
+
+  return null;
+}
+
+function BoardOrganizationSelect(props: {
+  readonly label: string;
+  readonly value: string;
+  readonly items: ReadonlyArray<{ readonly value: string; readonly label: string }>;
+  readonly onValueChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+      <span className="hidden sm:inline">{props.label}</span>
+      <Select
+        value={props.value}
+        items={props.items}
+        onValueChange={(value) => {
+          if (value !== null) props.onValueChange(value);
+        }}
+      >
+        <SelectTrigger
+          size="xs"
+          className="w-20 sm:w-24"
+          aria-label={`Board ${props.label.toLowerCase()}`}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectPopup alignItemWithTrigger={false} align="end">
+          {props.items.map((item) => (
+            <SelectItem key={item.value} value={item.value}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </label>
   );
 }
 
@@ -1386,11 +1490,68 @@ function LaneFields({
  * The single header for a lane. There is one per lane for the whole board, not
  * one per project group, so the count it shows is the lane's total.
  */
+function StateHeaderCell(props: {
+  readonly stateId: BoardStateId;
+  readonly label: string;
+  readonly memberCount: number;
+  readonly widthPx: number;
+  readonly onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  readonly onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <div
+      data-board-state={props.stateId}
+      className={cn(
+        "relative flex min-w-0 flex-col justify-center px-3 py-2",
+        BOARD_COLUMN_RULE_CLASS,
+        (props.stateId === "snoozed" || props.stateId === "settled") &&
+          "bg-muted/45 text-muted-foreground",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">{props.label}</span>
+        <span className="text-[11px] text-muted-foreground/70">{props.memberCount}</span>
+      </div>
+      <p className="truncate text-[11px] text-muted-foreground/60">Runtime presentation state</p>
+      <LaneResizeHandle
+        label={props.label}
+        widthPx={props.widthPx}
+        onPointerDown={props.onResizePointerDown}
+        onKeyDown={props.onResizeKeyDown}
+      />
+    </div>
+  );
+}
+
+function LaneResizeHandle(props: {
+  readonly label: string;
+  readonly widthPx: number;
+  readonly onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  readonly onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onPointerDown={props.onPointerDown}
+      onKeyDown={props.onKeyDown}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${props.label} column. Use arrow keys to resize.`}
+      aria-valuemin={BOARD_LANE_MIN_WIDTH}
+      aria-valuemax={BOARD_LANE_MAX_WIDTH}
+      aria-valuenow={props.widthPx}
+      title={`Column width: ${props.widthPx}px`}
+      className="group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6"
+    >
+      <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
+    </button>
+  );
+}
+
 function LaneHeaderCell({
   droppableId,
   lane,
   lanes,
-  collapsed,
   memberCount,
   widthPx,
   onResizePointerDown,
@@ -1398,12 +1559,10 @@ function LaneHeaderCell({
   onUpdate,
   onReorder,
   onArchive,
-  onToggleCollapsed,
 }: {
   readonly droppableId: string;
   readonly lane: BoardLane;
   readonly lanes: ReadonlyArray<BoardLane>;
-  readonly collapsed: boolean;
   readonly memberCount: number;
   readonly widthPx: number;
   readonly onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -1411,10 +1570,8 @@ function LaneHeaderCell({
   readonly onUpdate: (laneId: BoardLaneId, draft: LaneDraft) => Promise<boolean>;
   readonly onReorder: (laneId: BoardLaneId, direction: "up" | "down") => Promise<void>;
   readonly onArchive: (laneId: BoardLaneId, memberCount: number) => Promise<boolean>;
-  readonly onToggleCollapsed: () => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: droppableId });
-  const isLifecycle = isBoardLifecycleLaneId(lane.id);
   return (
     <div
       ref={setNodeRef}
@@ -1422,68 +1579,34 @@ function LaneHeaderCell({
       className={cn(
         "relative flex min-w-0 flex-col justify-center px-3 py-2",
         BOARD_COLUMN_RULE_CLASS,
-        isLifecycle && "bg-muted/45 text-muted-foreground",
         isOver && "bg-accent/40",
       )}
     >
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={onToggleCollapsed}
-          aria-label={`Expand ${lane.name} lane`}
-          title={`${lane.name} (${memberCount})`}
-          className="flex h-full w-full items-center justify-center"
-        >
-          <ChevronRightIcon className="size-4" />
-          <span className="sr-only">{memberCount} sessions</span>
-        </button>
-      ) : (
-        <>
-          <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-xs font-medium" title={lane.name}>
-              {lane.name}
-            </span>
-            <span className="ml-auto text-[11px] text-muted-foreground/70">{memberCount}</span>
-            {isLifecycle ? (
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label={`Collapse ${lane.name} lane`}
-                onClick={onToggleCollapsed}
-              >
-                <ChevronDownIcon className="size-3.5" />
-              </Button>
-            ) : isBoardFixedLaneId(lane.id) ? null : (
-              <LaneEditorPopover
-                lane={lane}
-                lanes={lanes}
-                memberCount={memberCount}
-                onUpdate={onUpdate}
-                onReorder={onReorder}
-                onArchive={onArchive}
-              />
-            )}
-          </div>
-          <p className="truncate text-[11px] text-muted-foreground/60" title={lane.description}>
-            {lane.description}
-          </p>
-          <button
-            type="button"
-            onPointerDown={onResizePointerDown}
-            onKeyDown={onResizeKeyDown}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={`Resize ${lane.name} lane. Use arrow keys to resize.`}
-            aria-valuemin={BOARD_LANE_MIN_WIDTH}
-            aria-valuemax={BOARD_LANE_MAX_WIDTH}
-            aria-valuenow={widthPx}
-            title={`Lane width: ${widthPx}px`}
-            className="group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6"
-          >
-            <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
-          </button>
-        </>
-      )}
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-xs font-medium" title={lane.name}>
+          {lane.name}
+        </span>
+        <span className="ml-auto text-[11px] text-muted-foreground/70">{memberCount}</span>
+        {isBoardFixedLaneId(lane.id) ? null : (
+          <LaneEditorPopover
+            lane={lane}
+            lanes={lanes}
+            memberCount={memberCount}
+            onUpdate={onUpdate}
+            onReorder={onReorder}
+            onArchive={onArchive}
+          />
+        )}
+      </div>
+      <p className="truncate text-[11px] text-muted-foreground/60" title={lane.description}>
+        {lane.description}
+      </p>
+      <LaneResizeHandle
+        label={lane.name}
+        widthPx={widthPx}
+        onPointerDown={onResizePointerDown}
+        onKeyDown={onResizeKeyDown}
+      />
     </div>
   );
 }
@@ -1491,26 +1614,26 @@ function LaneHeaderCell({
 /** One lane's slice of one project group: the drop target and its cards. */
 function LaneDropCell({
   droppableId,
-  lane,
+  column,
   lanes,
   entries,
   draggingKey,
-  collapsed,
+  draggable,
   changeRequestStateForThread,
-  snoozeDropRequest,
-  onSnoozeDropRequestHandled,
+  onExpandDraft,
+  onDiscardDraft,
 }: {
   readonly droppableId: string;
-  readonly lane: BoardLane;
+  readonly column: BoardColumn;
   readonly lanes: ReadonlyArray<BoardLane>;
-  readonly entries: ReadonlyArray<PlacedThread>;
+  readonly entries: ReadonlyArray<PlacedEntry>;
   readonly draggingKey: string | null;
-  readonly collapsed: boolean;
+  readonly draggable: boolean;
   readonly changeRequestStateForThread: (threadKey: string) => ChangeRequestStateLike | null;
-  readonly snoozeDropRequest: BoardSnoozeDropRequest | null;
-  readonly onSnoozeDropRequestHandled: (threadKey: string, nonce: number) => void;
+  readonly onExpandDraft: (draftId: DraftId) => void;
+  readonly onDiscardDraft: (draftId: DraftId) => void;
 }) {
-  const { isOver, setNodeRef } = useDroppable({ id: droppableId });
+  const { isOver, setNodeRef } = useDroppable({ id: droppableId, disabled: !draggable });
 
   return (
     // Not a bounded scroll region: this cell sits in a content-sized grid row
@@ -1518,45 +1641,61 @@ function LaneDropCell({
     // than its content.
     <div
       ref={setNodeRef}
-      data-lane={lane.id}
+      data-board-column={column.key}
       className={cn(
-        "min-h-16 min-w-0 space-y-2 p-2",
+        "min-h-16 min-w-0 p-2",
         BOARD_COLUMN_RULE_CLASS,
-        isBoardLifecycleLaneId(lane.id) && "bg-muted/25",
+        column.kind === "state" &&
+          (column.stateId === "snoozed" || column.stateId === "settled") &&
+          "bg-muted/25",
         isOver && "bg-accent/40",
       )}
     >
-      <SortableContext
-        items={entries.map((entry) => entry.key)}
-        strategy={verticalListSortingStrategy}
+      <div
+        className="grid min-w-0 justify-items-start gap-2"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))",
+        }}
       >
-        {collapsed
-          ? null
-          : entries.map((entry) => (
-              <BoardSessionCard
-                key={entry.key}
-                cardKey={entry.key}
-                threadRef={entry.ref}
-                thread={entry.thread}
-                laneId={entry.laneId}
-                lanes={lanes}
-                projectTitle={entry.projectTitle}
-                environmentLabel={entry.environmentLabel}
-                environmentConnection={entry.environmentConnection}
-                isDragging={draggingKey === entry.key}
-                changeRequestState={changeRequestStateForThread(entry.key)}
-                snoozeDropRequest={
-                  snoozeDropRequest?.threadKey === entry.key
-                    ? {
-                        nonce: snoozeDropRequest.nonce,
-                        unsettleAfterSnooze: snoozeDropRequest.unsettleAfterSnooze,
-                      }
-                    : null
-                }
-                onSnoozeDropRequestHandled={(nonce) => onSnoozeDropRequestHandled(entry.key, nonce)}
-              />
-            ))}
-      </SortableContext>
+        <SortableContext items={entries.map((entry) => entry.key)} strategy={rectSortingStrategy}>
+          {entries.map((entry) => (
+            <div key={entry.key} className="w-full max-w-[428px] min-w-0">
+              {entry.kind === "thread" ? (
+                <BoardSessionCard
+                  cardKey={entry.key}
+                  threadRef={entry.ref}
+                  thread={entry.thread}
+                  laneId={entry.laneId}
+                  workflowLabel={boardLaneLabel(entry.workflowLaneId, lanes)}
+                  boardStateId={entry.boardStateId}
+                  boardStateLabel={BOARD_STATE_BY_ID[entry.boardStateId].label}
+                  draggable={draggable}
+                  lanes={lanes}
+                  projectTitle={entry.projectTitle}
+                  environmentLabel={entry.environmentLabel}
+                  environmentConnection={entry.environmentConnection}
+                  isDragging={draggingKey === entry.key}
+                  changeRequestState={changeRequestStateForThread(entry.key)}
+                />
+              ) : (
+                <BoardDraftCard
+                  cardKey={entry.key}
+                  draftId={entry.draftId}
+                  title="Draft"
+                  projectTitle={entry.projectTitle}
+                  workflowLabel={boardLaneLabel(entry.workflowLaneId, lanes)}
+                  boardStateLabel={BOARD_STATE_BY_ID.draft.label}
+                  environmentLabel={entry.environmentLabel}
+                  branch={entry.draft.branch}
+                  draggable={draggable}
+                  onExpand={onExpandDraft}
+                  onDiscard={onDiscardDraft}
+                />
+              )}
+            </div>
+          ))}
+        </SortableContext>
+      </div>
     </div>
   );
 }

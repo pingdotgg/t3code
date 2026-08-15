@@ -6,6 +6,7 @@ import {
   BOARD_LANE_DEFAULT_WIDTH,
   BOARD_LANE_MAX_WIDTH,
   BOARD_LANE_MIN_WIDTH,
+  DEFAULT_BOARD_ORGANIZATION,
   DEFAULT_BOARD_LANES,
   orderBoardLaneEntries,
   selectBoardLaneWidth,
@@ -26,7 +27,7 @@ beforeEach(() => {
     orderByLaneId: {},
     byLaneColumnKey: {},
     collapsedLifecycleLaneIds: [],
-    groupByProject: true,
+    organization: DEFAULT_BOARD_ORGANIZATION,
   });
 });
 
@@ -44,6 +45,8 @@ describe("boardLaneStore", () => {
   });
 
   it("setWidth clamps to the min/max lane width", () => {
+    expect(BOARD_LANE_MAX_WIDTH).toBe(1316);
+
     useBoardLaneStore.getState().setWidth(laneA, BOARD_LANE_MIN_WIDTH - 100);
     expect(selectBoardLaneWidth(useBoardLaneStore.getState().byLaneColumnKey, laneA)).toBe(
       BOARD_LANE_MIN_WIDTH,
@@ -234,11 +237,12 @@ describe("boardLaneStore", () => {
     expect(useBoardLaneStore.getState().collapsedLifecycleLaneIds).toEqual(["settled"]);
   });
 
-  it("persists local lanes, placements, widths, and project grouping", () => {
+  it("persists local lanes, placements, widths, and board organization", () => {
     const store = useBoardLaneStore.getState();
     store.setPlacement(firstThread, "triage");
     store.setWidth(laneA, 420);
-    store.setGroupByProject(false);
+    store.setOrganizationColumns("state");
+    store.setOrganizationRows("none");
 
     const persisted = useBoardLaneStore.persist
       .getOptions()
@@ -248,7 +252,7 @@ describe("boardLaneStore", () => {
       laneEntryByThreadKey?: unknown;
       orderByLaneId?: unknown;
       collapsedLifecycleLaneIds?: unknown;
-      groupByProject?: boolean;
+      organization?: unknown;
     };
     expect(persisted.lanes).toEqual(DEFAULT_BOARD_LANES);
     expect(persisted.placementByThreadKey).toEqual({ "env-a:thread-1": "triage" });
@@ -257,7 +261,85 @@ describe("boardLaneStore", () => {
     });
     expect(persisted.orderByLaneId).toEqual({});
     expect(persisted.collapsedLifecycleLaneIds).toEqual([]);
-    expect(persisted.groupByProject).toBe(false);
+    expect(persisted.organization).toEqual({ columns: "state", rows: "none" });
+  });
+
+  it("resolves organization conflicts in favor of the axis selected last", () => {
+    const store = useBoardLaneStore.getState();
+
+    store.setOrganizationRows("state");
+    expect(useBoardLaneStore.getState().organization).toEqual({
+      columns: "workflow",
+      rows: "state",
+    });
+
+    store.setOrganizationColumns("state");
+    expect(useBoardLaneStore.getState().organization).toEqual({
+      columns: "state",
+      rows: "project",
+    });
+
+    store.setOrganizationRows("state");
+    expect(useBoardLaneStore.getState().organization).toEqual({
+      columns: "workflow",
+      rows: "state",
+    });
+  });
+
+  it.each([
+    { groupByProject: true, rows: "project" },
+    { groupByProject: false, rows: "none" },
+  ] as const)("migrates version four project grouping", ({ groupByProject, rows }) => {
+    const persistApi = useBoardLaneStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+      };
+    };
+
+    expect(
+      persistApi.getOptions().migrate(
+        {
+          lanes: DEFAULT_BOARD_LANES,
+          collapsedLifecycleLaneIds: ["snoozed"],
+          groupByProject,
+        },
+        4,
+      ),
+    ).toEqual({
+      lanes: DEFAULT_BOARD_LANES,
+      collapsedLifecycleLaneIds: ["snoozed"],
+      organization: { columns: "workflow", rows },
+    });
+  });
+
+  it("normalizes malformed and state-by-state organization to the default", () => {
+    const persistApi = useBoardLaneStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useBoardLaneStore.getState>,
+        ) => ReturnType<typeof useBoardLaneStore.getState>;
+      };
+    };
+
+    for (const organization of [
+      { columns: "state", rows: "state" },
+      { columns: "missing", rows: "project" },
+      null,
+    ]) {
+      const merged = persistApi
+        .getOptions()
+        .merge({ organization }, useBoardLaneStore.getInitialState());
+      expect(merged.organization).toEqual(DEFAULT_BOARD_ORGANIZATION);
+    }
+
+    const valid = persistApi
+      .getOptions()
+      .merge(
+        { organization: { columns: "workflow", rows: "state" } },
+        useBoardLaneStore.getInitialState(),
+      );
+    expect(valid.organization).toEqual({ columns: "workflow", rows: "state" });
   });
 
   it("migrates the old environment-scoped store without importing server organization", () => {
@@ -287,7 +369,7 @@ describe("boardLaneStore", () => {
     expect(mergedState.laneEntryByThreadKey).toEqual({});
     expect(mergedState.orderByLaneId).toEqual({});
     expect(mergedState.collapsedLifecycleLaneIds).toEqual([]);
-    expect(mergedState.groupByProject).toBe(false);
+    expect(mergedState.organization).toEqual({ columns: "workflow", rows: "none" });
     expect(mergedState.byLaneColumnKey).toEqual({ '["env-a","triage"]': { widthPx: 460 } });
   });
 
@@ -305,10 +387,13 @@ describe("boardLaneStore", () => {
     };
 
     expect(persistApi.getOptions().migrate(versionTwoState, 2)).toEqual({
-      ...versionTwoState,
+      lanes: DEFAULT_BOARD_LANES,
+      placementByThreadKey: { "env-a:thread-1": "ready" },
+      byLaneColumnKey: { ready: { widthPx: 440 } },
       laneEntryByThreadKey: {},
       orderByLaneId: {},
       collapsedLifecycleLaneIds: [],
+      organization: { columns: "workflow", rows: "none" },
     });
   });
 

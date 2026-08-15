@@ -6,10 +6,10 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "../lib/storage";
 
 const BOARD_LANE_STORAGE_KEY = "t3code:board-lanes:v1";
-const BOARD_LANE_STORAGE_VERSION = 4;
+const BOARD_LANE_STORAGE_VERSION = 5;
 
 export const BOARD_LANE_MIN_WIDTH = 260;
-export const BOARD_LANE_MAX_WIDTH = 720;
+export const BOARD_LANE_MAX_WIDTH = 1316;
 export const BOARD_LANE_DEFAULT_WIDTH = 380;
 
 export type BoardLaneId = string;
@@ -155,6 +155,24 @@ export interface BoardLaneDraft {
   readonly order: number;
 }
 
+export type BoardOrganization =
+  | {
+      readonly columns: "workflow";
+      readonly rows: "project" | "state" | "none";
+    }
+  | {
+      readonly columns: "state";
+      readonly rows: "project" | "none";
+    };
+
+export type BoardOrganizationColumns = BoardOrganization["columns"];
+export type BoardOrganizationRows = BoardOrganization["rows"];
+
+export const DEFAULT_BOARD_ORGANIZATION: BoardOrganization = Object.freeze({
+  columns: "workflow",
+  rows: "project",
+});
+
 interface BoardLaneStoreState {
   readonly lanes: ReadonlyArray<BoardLane>;
   /**
@@ -170,7 +188,7 @@ interface BoardLaneStoreState {
   readonly orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>>;
   readonly byLaneColumnKey: Record<string, BoardLaneState>;
   readonly collapsedLifecycleLaneIds: ReadonlyArray<BoardLaneId>;
-  readonly groupByProject: boolean;
+  readonly organization: BoardOrganization;
   readonly setPlacement: (ref: ScopedThreadRef, laneId: BoardLaneId) => void;
   readonly recordLaneEntry: (ref: ScopedThreadRef, laneId: BoardLaneId, enteredAt?: string) => void;
   readonly setLaneOrder: (laneId: BoardLaneId, orderedThreadKeys: ReadonlyArray<string>) => void;
@@ -180,7 +198,8 @@ interface BoardLaneStoreState {
   readonly setWidth: (laneColumnKey: string, widthPx: number) => void;
   readonly removeLane: (laneColumnKey: string) => void;
   readonly toggleLifecycleLaneCollapsed: (laneId: BoardLaneId) => void;
-  readonly setGroupByProject: (groupByProject: boolean) => void;
+  readonly setOrganizationColumns: (columns: BoardOrganizationColumns) => void;
+  readonly setOrganizationRows: (rows: BoardOrganizationRows) => void;
 }
 
 export function clampBoardLaneWidth(widthPx: number): number {
@@ -389,6 +408,18 @@ function normalizePersistedByLaneColumnKey(
   return byLaneColumnKey;
 }
 
+function normalizeBoardOrganization(value: unknown): BoardOrganization {
+  if (typeof value !== "object" || value === null) return DEFAULT_BOARD_ORGANIZATION;
+  const { columns, rows } = value as Partial<Record<keyof BoardOrganization, unknown>>;
+  if (columns === "workflow" && (rows === "project" || rows === "state" || rows === "none")) {
+    return { columns, rows };
+  }
+  if (columns === "state" && (rows === "project" || rows === "none")) {
+    return { columns, rows };
+  }
+  return DEFAULT_BOARD_ORGANIZATION;
+}
+
 /**
  * The pre-local-board store only held column widths and an environment picker.
  * Preserve the harmless presentation preferences but intentionally discard the
@@ -422,17 +453,31 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
           orderByLaneId: {},
         }
       : versionTwoState;
-  if (!isUntouchedLegacyDefaultLanes(versionThreeState?.lanes)) {
-    return { ...versionThreeState, collapsedLifecycleLaneIds: [] };
-  }
+  const versionFourState =
+    version >= 4
+      ? versionThreeState
+      : !isUntouchedLegacyDefaultLanes(versionThreeState?.lanes)
+        ? { ...versionThreeState, collapsedLifecycleLaneIds: [] }
+        : {
+            ...versionThreeState,
+            lanes: DEFAULT_BOARD_LANES,
+            placementByThreadKey: remapLegacyDefaultPlacement(
+              versionThreeState?.placementByThreadKey,
+            ),
+            laneEntryByThreadKey: remapLegacyDefaultLaneEntries(
+              versionThreeState?.laneEntryByThreadKey,
+            ),
+            orderByLaneId: remapLegacyDefaultLaneKeyedState(versionThreeState?.orderByLaneId),
+            byLaneColumnKey: remapLegacyDefaultLaneKeyedState(versionThreeState?.byLaneColumnKey),
+            collapsedLifecycleLaneIds: [],
+          };
+  const { groupByProject, ...versionFiveState } = versionFourState ?? {};
   return {
-    ...versionThreeState,
-    lanes: DEFAULT_BOARD_LANES,
-    placementByThreadKey: remapLegacyDefaultPlacement(versionThreeState?.placementByThreadKey),
-    laneEntryByThreadKey: remapLegacyDefaultLaneEntries(versionThreeState?.laneEntryByThreadKey),
-    orderByLaneId: remapLegacyDefaultLaneKeyedState(versionThreeState?.orderByLaneId),
-    byLaneColumnKey: remapLegacyDefaultLaneKeyedState(versionThreeState?.byLaneColumnKey),
-    collapsedLifecycleLaneIds: [],
+    ...versionFiveState,
+    organization: {
+      columns: "workflow",
+      rows: groupByProject === false ? "none" : "project",
+    },
   };
 }
 
@@ -486,7 +531,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
       orderByLaneId: {},
       byLaneColumnKey: {},
       collapsedLifecycleLaneIds: [],
-      groupByProject: true,
+      organization: DEFAULT_BOARD_ORGANIZATION,
       setPlacement: (ref, laneId) =>
         set((state) => {
           if (isLifecycleBoardLaneId(laneId) || !state.lanes.some((lane) => lane.id === laneId)) {
@@ -606,8 +651,32 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
               : [...state.collapsedLifecycleLaneIds, laneId],
           };
         }),
-      setGroupByProject: (groupByProject) =>
-        set((state) => (state.groupByProject === groupByProject ? state : { groupByProject })),
+      setOrganizationColumns: (columns) =>
+        set((state) => {
+          const rows =
+            columns === "state" && state.organization.rows === "state"
+              ? "project"
+              : state.organization.rows;
+          if (state.organization.columns === columns && state.organization.rows === rows) {
+            return state;
+          }
+          return {
+            organization:
+              columns === "state"
+                ? { columns, rows: rows === "state" ? "project" : rows }
+                : { columns, rows },
+          };
+        }),
+      setOrganizationRows: (rows) =>
+        set((state) => {
+          const columns = rows === "state" ? "workflow" : state.organization.columns;
+          if (state.organization.columns === columns && state.organization.rows === rows) {
+            return state;
+          }
+          return {
+            organization: rows === "state" ? { columns: "workflow", rows } : { columns, rows },
+          };
+        }),
     }),
     {
       name: BOARD_LANE_STORAGE_KEY,
@@ -623,7 +692,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         orderByLaneId: state.orderByLaneId,
         byLaneColumnKey: state.byLaneColumnKey,
         collapsedLifecycleLaneIds: state.collapsedLifecycleLaneIds,
-        groupByProject: state.groupByProject,
+        organization: state.organization,
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as {
@@ -632,7 +701,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
           laneEntryByThreadKey?: unknown;
           orderByLaneId?: unknown;
           collapsedLifecycleLaneIds?: unknown;
-          groupByProject?: unknown;
+          organization?: unknown;
         } | null;
         const lanes = normalizeLanes(persisted?.lanes);
         return {
@@ -648,10 +717,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
           collapsedLifecycleLaneIds: normalizeCollapsedLifecycleLaneIds(
             persisted?.collapsedLifecycleLaneIds,
           ),
-          groupByProject:
-            typeof persisted?.groupByProject === "boolean"
-              ? persisted.groupByProject
-              : currentState.groupByProject,
+          organization: normalizeBoardOrganization(persisted?.organization),
         };
       },
     },

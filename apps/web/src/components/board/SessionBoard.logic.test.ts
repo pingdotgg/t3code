@@ -19,6 +19,7 @@ import {
   nextLaneOrder,
   reorderLaneUpdates,
   reorderBoardLaneKeys,
+  rowKeyFromSwimlaneDroppableId,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
   resolveBoardScrollTarget,
@@ -359,11 +360,13 @@ describe("swimlaneColumnDroppableId", () => {
   it("round-trips lane column keys for drag and drop targets", () => {
     const droppableId = swimlaneColumnDroppableId("env:alpha", laneKeys[1]);
     expect(laneColumnKeyFromSwimlaneDroppableId(droppableId)).toBe(laneKeys[1]);
+    expect(rowKeyFromSwimlaneDroppableId(droppableId)).toBe("env:alpha");
   });
 
   it("makes the continuous lane header a real drop target", () => {
     const droppableId = boardLaneHeaderDroppableId(laneKeys[1]);
     expect(laneColumnKeyFromSwimlaneDroppableId(droppableId)).toBe(laneKeys[1]);
+    expect(rowKeyFromSwimlaneDroppableId(droppableId)).toBe("board-lane-header");
   });
 });
 

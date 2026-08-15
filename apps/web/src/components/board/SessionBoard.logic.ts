@@ -156,6 +156,18 @@ export function laneColumnKeyFromSwimlaneDroppableId(droppableId: string): strin
   return null;
 }
 
+export function rowKeyFromSwimlaneDroppableId(droppableId: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(droppableId);
+    if (Array.isArray(parsed) && parsed[0] === "board-swimlane" && typeof parsed[1] === "string") {
+      return parsed[1];
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /** A local lane accepts cards from every connected environment. */
 export function resolveBoardLaneDrop<
   Entry extends { readonly key: string; readonly laneColumnKey: string },
