@@ -18,6 +18,7 @@ import { serverEnvironment } from "./server";
 import { environmentSession } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 import {
+  createPlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWriteController,
   hasPlanModePreferenceReconciliationAttempted,
@@ -27,7 +28,6 @@ import {
 
 const connectedEnvironmentPreferenceStatesAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
-  const localPreferences = get(mobilePreferencesAtom);
   const presentations = get(environmentPresentations.presentationsAtom);
   const states = [...presentations.entries()].map(([environmentId, presentation]) => {
     const shell = get(environmentShell.stateValueAtom(environmentId));
@@ -41,29 +41,15 @@ const connectedEnvironmentPreferenceStatesAtom = Atom.make((get) => {
         session.scopes?.includes(AuthOrchestrationOperateScope) === true,
     };
   });
-  const reconciliationKey = JSON.stringify({
-    local: AsyncResult.isSuccess(localPreferences)
-      ? [
-          localPreferences.value.planModeEnabled,
-          localPreferences.value.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
-            localPreferences.value.syncedClientPreferencesUpdatedAt,
-        ]
-      : null,
-    environments: states
-      .map(({ environmentId, connectionState, shell, canPatch }) => {
-        const preferences =
-          shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
-        return [
-          environmentId,
-          connectionState,
-          shell.status,
-          canPatch,
-          preferences?.planModeEnabled,
-          getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
-        ];
-      })
-      .sort(([left], [right]) => String(left).localeCompare(String(right))),
-  });
+  const reconciliationKey = createPlanModePreferenceReconciliationKey(
+    states.map(({ environmentId, connectionState, shell }) => ({
+      environmentId,
+      connectionState,
+      shellStatus: shell.status,
+      preferences:
+        shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
+    })),
+  );
   return {
     connectionsLoaded: catalog.isReady,
     connectedEnvironmentIds: states

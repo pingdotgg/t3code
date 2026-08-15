@@ -4,6 +4,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  createPlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWrite,
   createPlanModePreferenceWriteController,
@@ -89,6 +90,51 @@ describe("synced client preferences", () => {
     ).toBe(true);
   });
 
+  it("keeps send gating open while an unrelated environment reconnects", () => {
+    const liveEnvironment = {
+      environmentId: environmentId("live"),
+      connectionState: "connected",
+      shellStatus: "live",
+      preferences: {
+        planModeEnabled: true,
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
+    } as const;
+    const connectingKey = createPlanModePreferenceReconciliationKey([
+      liveEnvironment,
+      {
+        environmentId: environmentId("flapping"),
+        connectionState: "connecting",
+        shellStatus: "cached",
+        preferences: undefined,
+      },
+    ]);
+    const reconnectingKey = createPlanModePreferenceReconciliationKey([
+      liveEnvironment,
+      {
+        environmentId: environmentId("flapping"),
+        connectionState: "reconnecting",
+        shellStatus: "cached",
+        preferences: undefined,
+      },
+    ]);
+
+    expect(
+      hasPlanModePreferenceReconciliationAttempted([
+        liveEnvironment,
+        { connectionState: "reconnecting", shellStatus: "cached" },
+      ]),
+    ).toBe(true);
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 2,
+        currentKey: reconnectingKey,
+        appliedKey: connectingKey,
+      }),
+    ).toBe(true);
+  });
+
   it("does not accept a stale live shell while its environment is reconnecting", () => {
     expect(
       hasPlanModePreferenceReconciliationAttempted([
@@ -97,11 +143,31 @@ describe("synced client preferences", () => {
     ).toBe(false);
   });
 
-  it("allows the device fallback after an offline reconciliation attempt", () => {
+  it("uses the device fallback after the first offline reconciliation attempt", () => {
+    const offlineState = {
+      environmentId: environmentId("offline"),
+      connectionState: "offline",
+      shellStatus: "cached",
+      preferences: undefined,
+    } as const;
+    const offlineKey = createPlanModePreferenceReconciliationKey([offlineState]);
+
+    expect(hasPlanModePreferenceReconciliationAttempted([offlineState])).toBe(true);
     expect(
-      hasPlanModePreferenceReconciliationAttempted([
-        { connectionState: "offline", shellStatus: "cached" },
-      ]),
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: offlineKey,
+        appliedKey: null,
+      }),
+    ).toBe(false);
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: offlineKey,
+        appliedKey: offlineKey,
+      }),
     ).toBe(true);
   });
 

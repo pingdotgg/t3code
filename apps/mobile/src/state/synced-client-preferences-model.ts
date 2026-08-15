@@ -47,6 +47,29 @@ export interface LocalSyncedClientPreferencesPatch {
   readonly updatedAtByField: SyncedClientPreferencesUpdatedAtByField;
 }
 
+export function createPlanModePreferenceReconciliationKey(
+  states: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly connectionState: EnvironmentConnectionPhase;
+    readonly shellStatus: EnvironmentShellStatus;
+    readonly preferences: SyncedClientPreferences | undefined;
+  }>,
+): string {
+  return JSON.stringify(
+    states
+      .filter(
+        ({ connectionState, shellStatus }) =>
+          connectionState === "connected" && shellStatus === "live",
+      )
+      .map(({ environmentId, preferences }) => [
+        environmentId,
+        preferences?.planModeEnabled,
+        getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
+      ])
+      .sort(([left], [right]) => String(left).localeCompare(String(right))),
+  );
+}
+
 export function isPlanModePreferenceReconciliationReady(input: {
   readonly connectionsLoaded: boolean;
   readonly environmentCount: number;
@@ -65,12 +88,17 @@ export function hasPlanModePreferenceReconciliationAttempted(
     readonly shellStatus: EnvironmentShellStatus;
   }>,
 ): boolean {
-  return states.every(
-    ({ connectionState, shellStatus }) =>
-      (connectionState === "connected" && shellStatus === "live") ||
-      connectionState === "available" ||
-      connectionState === "error" ||
-      connectionState === "offline",
+  return (
+    states.some(
+      ({ connectionState, shellStatus }) =>
+        connectionState === "connected" && shellStatus === "live",
+    ) ||
+    states.every(
+      ({ connectionState }) =>
+        connectionState === "available" ||
+        connectionState === "error" ||
+        connectionState === "offline",
+    )
   );
 }
 
