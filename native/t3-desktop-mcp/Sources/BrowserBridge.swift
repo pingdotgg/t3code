@@ -48,6 +48,9 @@ enum BridgeOutcome {
 // MARK: - Length-prefixed framing (Chrome side)
 
 enum NativeMessaging {
+    /// Chrome native messaging rejects messages larger than 1 MiB.
+    static let maxPayloadBytes = 1_048_576
+
     /// Read exactly `count` bytes, treating an empty read as EOF and a short
     /// non-empty read as a fragment to keep accumulating.
     private static func readExact(_ handle: FileHandle, count: Int) -> Data? {
@@ -77,6 +80,13 @@ enum NativeMessaging {
     }
 
     static func write(_ handle: FileHandle, _ payload: Data) {
+        guard payload.count <= maxPayloadBytes else {
+            fputs(
+                "t3-desktop-mcp: native messaging payload exceeds \(maxPayloadBytes) bytes\n",
+                stderr
+            )
+            return
+        }
         var lengthLE = UInt32(payload.count).littleEndian
         var framed = Data()
         withUnsafeBytes(of: &lengthLE) { framed.append(contentsOf: $0) }
@@ -215,6 +225,8 @@ final class BrowserBridge {
     private let lock = NSLock()
     private var nextID = 0
     private var pending: [Int: (BridgeOutcome) -> Void] = [:]
+    /// Serializes newline-delimited JSON writes so concurrent `call`s cannot interleave.
+    private let writeLock = NSLock()
 
     var isConnected: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -358,9 +370,12 @@ final class BrowserBridge {
             outcome = result
             semaphore.signal()
         }
+        writeLock.lock()
+        let wrote = writeAll(fd, data)
+        writeLock.unlock()
         lock.unlock()
 
-        if !writeAll(fd, data) {
+        if !wrote {
             lock.lock()
             if clientFD == fd && connectionGeneration == generation {
                 pending.removeValue(forKey: id)

@@ -43,6 +43,7 @@ static FADE_TARGET_GEN: AtomicU64 = AtomicU64::new(0);
 static FADE_DEADLINE_MS: AtomicU64 = AtomicU64::new(0);
 static FADE_WATCHER_STARTED: AtomicBool = AtomicBool::new(false);
 static CMD_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
+static UI_LIVE: AtomicBool = AtomicBool::new(false);
 
 enum Cmd {
     Move { x: f64, y: f64, press: bool },
@@ -187,6 +188,9 @@ fn task_fade_grace() -> Duration {
 }
 
 fn move_and_wait(x: f64, y: f64, press: bool) {
+    if !UI_LIVE.load(Ordering::Relaxed) {
+        return;
+    }
     let wait = {
         let mut last = LAST_POINT.lock().unwrap_or_else(|e| e.into_inner());
         let micros = travel_wait_micros(*last, x, y);
@@ -448,6 +452,7 @@ fn ui_thread(rx: Receiver<Cmd>) {
         put_buf: Vec::new(),
     };
     let mut state = Anim::new();
+    UI_LIVE.store(true, Ordering::Relaxed);
 
     loop {
         let tick_start = Instant::now();

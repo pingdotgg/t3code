@@ -49,7 +49,11 @@ final class AgentCursor {
     private var lastPoint: CGPoint?
     /// Bumped to cancel a pending post-task fade when another tools/call starts.
     private var taskHideGeneration: UInt64 = 0
+    private static var desktopToolDepth: Int = 0
     private var taskHideWork: DispatchWorkItem?
+    /// Bumped on each `ensureRunning` so a prior attempt's timeout cannot tear
+    /// down a later startup on the same socket path.
+    private var startupGeneration: UInt64 = 0
 
     /// Show the agent pointer at a screen point, starting the overlay if needed.
     ///
@@ -92,10 +96,13 @@ final class AgentCursor {
     func noteDesktopToolStarted() {
         guard agentCursorEnabled else { return }
         lock.lock()
+        defer { lock.unlock() }
+        let depth = Self.desktopToolDepth
+        Self.desktopToolDepth = depth + 1
+        guard depth == 0 else { return }
         taskHideGeneration += 1
         taskHideWork?.cancel()
         taskHideWork = nil
-        lock.unlock()
     }
 
     /// A Computer Use `tools/call` finished. If nothing else starts soon, the
@@ -104,11 +111,12 @@ final class AgentCursor {
     func noteDesktopToolFinished() {
         guard agentCursorEnabled else { return }
         lock.lock()
+        defer { lock.unlock() }
+        guard Self.desktopToolDepth > 0 else { return }
+        Self.desktopToolDepth -= 1
+        guard Self.desktopToolDepth == 0 else { return }
         // Only schedule if the pointer was actually used for this task.
-        guard lastPoint != nil else {
-            lock.unlock()
-            return
-        }
+        guard lastPoint != nil else { return }
         taskHideGeneration += 1
         let generation = taskHideGeneration
         taskHideWork?.cancel()
@@ -121,7 +129,6 @@ final class AgentCursor {
         }
         taskHideWork = work
         let delay = Self.taskFadeGraceSeconds()
-        lock.unlock()
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: work)
     }
 
@@ -213,6 +220,8 @@ final class AgentCursor {
         // under /var/folders/... plus a UUID blows past that and bind() fails,
         // which is why the overlay never started from the MCP server.
         let path = "/tmp/t3ac-\(getpid()).sock"
+        startupGeneration &+= 1
+        let generation = startupGeneration
         guard startListening(at: path) else {
             fputs("t3-desktop-mcp: agent cursor: could not listen on \(path)\n", stderr)
             pending.removeAll()
@@ -254,7 +263,9 @@ final class AgentCursor {
             guard let self else { return }
             self.lock.lock()
             defer { self.lock.unlock() }
-            if self.connection == nil, self.process?.isRunning != true, self.socketPath == path {
+            if self.connection == nil, self.process?.isRunning != true,
+               self.socketPath == path, self.startupGeneration == generation
+            {
                 fputs("t3-desktop-mcp: agent cursor: NSWorkspace timed out; falling back to Process\n", stderr)
                 self.launchViaProcess(executable: executable, socketPath: path)
             }
@@ -266,7 +277,7 @@ final class AgentCursor {
             guard let self else { return }
             self.lock.lock()
             defer { self.lock.unlock() }
-            if self.connection == nil, self.socketPath == path {
+            if self.connection == nil, self.socketPath == path, self.startupGeneration == generation {
                 fputs("t3-desktop-mcp: agent cursor: overlay never connected; resetting\n", stderr)
                 self.tearDownLocked()
             }

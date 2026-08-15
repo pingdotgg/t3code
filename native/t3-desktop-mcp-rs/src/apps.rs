@@ -86,6 +86,11 @@ pub fn list_apps() -> Result<Vec<AppInfo>> {
 /// because silently driving the wrong window is worse than asking again.
 pub fn resolve_pid(query: &str) -> Result<u32> {
     let query = query.trim();
+    if query.is_empty() {
+        return Err(DesktopError::new(
+            "app query is empty — call list_apps, or pass a numeric pid",
+        ));
+    }
     if let Ok(pid) = query.parse::<u32>() {
         return Ok(pid);
     }
@@ -150,5 +155,11 @@ mod tests {
     fn an_unmatched_name_points_at_list_apps() {
         let error = resolve_pid("definitely-not-running-xyzzy").unwrap_err().0;
         assert!(error.contains("list_apps"), "unhelpful: {error}");
+    }
+
+    #[test]
+    fn whitespace_only_query_does_not_resolve_to_the_sole_app() {
+        let error = resolve_pid("   ").unwrap_err().0;
+        assert!(error.contains("empty"), "unhelpful: {error}");
     }
 }

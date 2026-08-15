@@ -32,9 +32,17 @@ const SERVER_VERSION: &str = "0.1.0";
 struct DesktopToolGuard;
 
 #[cfg(any(windows, target_os = "linux"))]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(any(windows, target_os = "linux"))]
+static DESKTOP_TOOL_DEPTH: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(any(windows, target_os = "linux"))]
 impl DesktopToolGuard {
     fn enter() -> Self {
-        platform::agent_cursor::AgentCursor::shared().note_desktop_tool_started();
+        if DESKTOP_TOOL_DEPTH.fetch_add(1, Ordering::SeqCst) == 0 {
+            platform::agent_cursor::AgentCursor::shared().note_desktop_tool_started();
+        }
         Self
     }
 }
@@ -42,7 +50,9 @@ impl DesktopToolGuard {
 #[cfg(any(windows, target_os = "linux"))]
 impl Drop for DesktopToolGuard {
     fn drop(&mut self) {
-        platform::agent_cursor::AgentCursor::shared().note_desktop_tool_finished();
+        if DESKTOP_TOOL_DEPTH.fetch_sub(1, Ordering::SeqCst) == 1 {
+            platform::agent_cursor::AgentCursor::shared().note_desktop_tool_finished();
+        }
     }
 }
 
@@ -88,7 +98,18 @@ fn main() {
         let request: Value = match serde_json::from_str(trimmed) {
             Ok(value) => value,
             Err(error) => {
-                eprintln!("t3-desktop-mcp: ignoring malformed JSON: {error}");
+                eprintln!("t3-desktop-mcp: malformed JSON: {error}");
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": {
+                        "code": -32700,
+                        "message": format!("Parse error: {error}")
+                    }
+                });
+                if writeln!(stdout, "{response}").is_err() || stdout.flush().is_err() {
+                    break;
+                }
                 continue;
             }
         };
