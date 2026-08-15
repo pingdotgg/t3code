@@ -28,7 +28,6 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   codexRateLimitWindowLabel,
   codexRemainingPercent,
-  formatClaudeResetTimestamp,
   formatStatusTimestampWithTimeZone,
 } from "./StatusPage.logic";
 
@@ -61,16 +60,15 @@ function StatusEmptyState({
 }
 
 function RateLimitRow({
-  window,
-  fallbackLabel,
+  label,
+  usedPercent,
+  resetTimestamp,
 }: {
-  readonly window: ServerProviderCodexRateLimitWindow;
-  readonly fallbackLabel: string;
+  readonly label: string;
+  readonly usedPercent: number;
+  readonly resetTimestamp: string | null;
 }) {
-  const remaining = codexRemainingPercent(window.usedPercent);
-  const reset = formatResetTimestamp(window.resetsAt);
-  const durationLabel = codexRateLimitWindowLabel(window.windowDurationMins);
-  const label = durationLabel === "Rate limit" ? fallbackLabel : durationLabel;
+  const remaining = codexRemainingPercent(usedPercent);
 
   return (
     <div className="rounded-lg border border-border/60 bg-background/35 px-3 py-3">
@@ -91,43 +89,9 @@ function RateLimitRow({
           style={{ width: `${remaining}%` }}
         />
       </div>
-      {reset ? <p className="mt-2 text-[11px] text-muted-foreground">Resets {reset}</p> : null}
-    </div>
-  );
-}
-
-function ClaudeRateLimitRow({
-  label,
-  window,
-}: {
-  readonly label: string;
-  readonly window: ServerProviderClaudeRateLimitWindow;
-}) {
-  const used = Math.max(0, Math.min(100, window.usedPercent));
-  const reset = window.resetsAt
-    ? formatClaudeResetTimestamp(window.resetsAt, label === "Weekly limit")
-    : null;
-
-  return (
-    <div className="rounded-lg border border-border/60 bg-background/35 px-3 py-3">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="tabular-nums text-foreground">{used}% used</span>
-      </div>
-      <div
-        aria-label={`${label}: ${used}% used`}
-        className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
-        role="progressbar"
-        aria-valuemax={100}
-        aria-valuemin={0}
-        aria-valuenow={used}
-      >
-        <div
-          className="h-full rounded-full bg-primary transition-[width]"
-          style={{ width: `${used}%` }}
-        />
-      </div>
-      {reset ? <p className="mt-2 text-[11px] text-muted-foreground">Resets {reset}</p> : null}
+      {resetTimestamp ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">Resets {resetTimestamp}</p>
+      ) : null}
     </div>
   );
 }
@@ -142,7 +106,7 @@ function CodexRateLimitsCard({
   const rateLimits = provider.codexStatus?.rateLimits;
 
   return (
-    <Card className="gap-0 rounded-xl border-border/70 bg-card/35 p-4 shadow-none">
+    <Card className="gap-0 rounded-xl border-border/70 bg-card/35 p-4 shadow-none before:rounded-[calc(var(--radius-xl)-1px)]">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           {showProviderLabel ? (
@@ -162,10 +126,26 @@ function CodexRateLimitsCard({
             <span className="text-[11px] text-muted-foreground">{rateLimits.limitName}</span>
           ) : null}
           {rateLimits.primary ? (
-            <RateLimitRow window={rateLimits.primary} fallbackLabel="Primary limit" />
+            <RateLimitRow
+              label={
+                codexRateLimitWindowLabel(rateLimits.primary.windowDurationMins) === "Rate limit"
+                  ? "Primary limit"
+                  : codexRateLimitWindowLabel(rateLimits.primary.windowDurationMins)
+              }
+              usedPercent={rateLimits.primary.usedPercent}
+              resetTimestamp={formatResetTimestamp(rateLimits.primary.resetsAt)}
+            />
           ) : null}
           {rateLimits.secondary ? (
-            <RateLimitRow window={rateLimits.secondary} fallbackLabel="Secondary limit" />
+            <RateLimitRow
+              label={
+                codexRateLimitWindowLabel(rateLimits.secondary.windowDurationMins) === "Rate limit"
+                  ? "Secondary limit"
+                  : codexRateLimitWindowLabel(rateLimits.secondary.windowDurationMins)
+              }
+              usedPercent={rateLimits.secondary.usedPercent}
+              resetTimestamp={formatResetTimestamp(rateLimits.secondary.resetsAt)}
+            />
           ) : null}
         </div>
       ) : (
@@ -187,7 +167,7 @@ function ClaudeRateLimitsCard({
   const rateLimits = provider.claudeStatus?.rateLimits;
 
   return (
-    <Card className="gap-0 rounded-xl border-border/70 bg-card/35 p-4 shadow-none">
+    <Card className="gap-0 rounded-xl border-border/70 bg-card/35 p-4 shadow-none before:rounded-[calc(var(--radius-xl)-1px)]">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           {showProviderLabel ? (
@@ -204,10 +184,26 @@ function ClaudeRateLimitsCard({
       {rateLimits?.currentSession || rateLimits?.currentWeek ? (
         <div className="mt-4 flex flex-col gap-2">
           {rateLimits.currentSession ? (
-            <ClaudeRateLimitRow label="Current session" window={rateLimits.currentSession} />
+            <RateLimitRow
+              label="Current session"
+              usedPercent={rateLimits.currentSession.usedPercent}
+              resetTimestamp={
+                rateLimits.currentSession.resetsAt
+                  ? formatStatusTimestampWithTimeZone(rateLimits.currentSession.resetsAt)
+                  : null
+              }
+            />
           ) : null}
           {rateLimits.currentWeek ? (
-            <ClaudeRateLimitRow label="Weekly limit" window={rateLimits.currentWeek} />
+            <RateLimitRow
+              label="Weekly limit"
+              usedPercent={rateLimits.currentWeek.usedPercent}
+              resetTimestamp={
+                rateLimits.currentWeek.resetsAt
+                  ? formatStatusTimestampWithTimeZone(rateLimits.currentWeek.resetsAt)
+                  : null
+              }
+            />
           ) : null}
           {rateLimits.currentWeekPromo ? (
             <p className="text-xs text-muted-foreground">{rateLimits.currentWeekPromo}</p>
@@ -282,7 +278,7 @@ export function StatusPage() {
         {!isElectron ? (
           <header
             className={cn(
-              "workspace-topbar px-3 transition-[padding-left] duration-200 ease-linear sm:px-5",
+              "workspace-topbar px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
@@ -293,7 +289,7 @@ export function StatusPage() {
         ) : (
           <div
             className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
+              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >

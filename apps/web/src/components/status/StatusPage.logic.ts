@@ -92,17 +92,6 @@ export function formatStatusTimestamp(value: string): string {
   });
 }
 
-const BRASILIA_TIME_ZONES = new Set([
-  "America/Araguaina",
-  "America/Bahia",
-  "America/Belem",
-  "America/Fortaleza",
-  "America/Maceio",
-  "America/Recife",
-  "America/Sao_Paulo",
-  "America/Santarem",
-]);
-
 function formatUtcOffset(date: Date): string {
   const offsetMinutes = -date.getTimezoneOffset();
   const sign = offsetMinutes >= 0 ? "+" : "-";
@@ -113,10 +102,7 @@ function formatUtcOffset(date: Date): string {
 }
 
 function formatStatusTimeZone(date: Date): string {
-  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offset = formatUtcOffset(date);
-  if (BRASILIA_TIME_ZONES.has(timeZone) && offset === "-3") return "BRT-3";
-
   const zoneName = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
     .formatToParts(date)
     .find((part) => part.type === "timeZoneName")?.value;
@@ -129,40 +115,4 @@ export function formatStatusTimestampWithTimeZone(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return `${formatStatusTimestamp(value)} (${formatStatusTimeZone(date)})`;
-}
-
-function formatClaudeClock(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((result, part) => {
-      if (part.type !== "literal") result[part.type] = part.value;
-      return result;
-    }, {});
-  const minute = parts.minute === "00" ? "" : `:${parts.minute}`;
-  return `${parts.hour ?? ""}${minute}${(parts.dayPeriod ?? "").toLowerCase()}`;
-}
-
-/** Format Claude Code's compact reset labels using the browser's local zone. */
-export function formatClaudeResetTimestamp(value: string, alwaysShowDate = false): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const clock = formatClaudeClock(date, timeZone);
-  const hoursUntilReset = (date.getTime() - Date.now()) / (60 * 60 * 1000);
-  const label =
-    alwaysShowDate || hoursUntilReset > 24
-      ? `${new Intl.DateTimeFormat("en-US", {
-          timeZone,
-          month: "short",
-          day: "numeric",
-        }).format(date)}, ${clock}`
-      : clock;
-
-  return `${label} (${timeZone})`;
 }
