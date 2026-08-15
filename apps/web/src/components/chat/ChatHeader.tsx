@@ -24,6 +24,7 @@ import {
 } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import ProjectScriptsControl, {
@@ -279,11 +280,11 @@ export const ChatHeader = memo(function ChatHeader({
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <button
-                        type="button"
+                      <Button
+                        size="icon-micro"
+                        variant="ghost-muted"
                         aria-label={`Open ${activeProjectName} on GitHub`}
                         onClick={openGitHubRepository}
-                        className="inline-flex shrink-0 cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       />
                     }
                   >
