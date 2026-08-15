@@ -67,6 +67,7 @@ import {
   setPendingConnectionError,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
+import { vcsEnvironment } from "../../state/vcs";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -81,6 +82,7 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
+import { resolveProjectThreadWorkspaceSelection } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -124,6 +126,7 @@ type NewTaskFlowContextValue = {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
+  readonly isGitRepo: boolean;
   readonly workspaceMode: WorkspaceMode;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
@@ -348,6 +351,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const gitStatus = useEnvironmentQuery(
+    selectedProject !== null && selectedProject.workspaceRoot.length > 0
+      ? vcsEnvironment.status({
+          environmentId: selectedProject.environmentId,
+          input: { cwd: selectedProject.workspaceRoot },
+        })
+      : null,
+  );
+  // Match web/desktop: assume git only while status is unresolved so the
+  // composer controls do not flicker away during the initial query.
+  const isGitRepo = gitStatus.data?.isRepo ?? true;
   // While a queued pending task is being edited its draft lives under a key
   // scoped to the queued message, so per-project new-task drafts stay intact.
   const selectedProjectDraftKey = editingPendingTask
@@ -387,9 +401,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projectSetting: selectedProject?.defaultThreadEnvMode,
     projectFilePending: t3ProjectFileQuery.isPending,
   });
-  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
-  const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
-  const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
+  const workspaceSelection = resolveProjectThreadWorkspaceSelection({
+    isGitRepo,
+    environmentMode: selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode,
+    branch: selectedProjectDraft.workspaceSelection?.branch ?? null,
+    worktreePath: selectedProjectDraft.workspaceSelection?.worktreePath ?? null,
+  });
+  const workspaceMode = workspaceSelection.environmentMode;
+  const selectedBranchName = workspaceSelection.branch;
+  const selectedWorktreePath = workspaceSelection.worktreePath;
   // Keep the user's explicit choice separate from the resolved display value:
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
@@ -530,12 +550,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const debouncedBranchQuery = useDebouncedValue(branchQuery, BRANCH_SEARCH_DEBOUNCE_MS);
   const branchTarget = useMemo(
     () => ({
-      environmentId: selectedProject?.environmentId ?? null,
+      environmentId: isGitRepo ? (selectedProject?.environmentId ?? null) : null,
       // `|| null` also skips the stand-in project's empty workspaceRoot.
-      cwd: selectedProject?.workspaceRoot || null,
+      cwd: isGitRepo ? selectedProject?.workspaceRoot || null : null,
       query: debouncedBranchQuery,
     }),
-    [debouncedBranchQuery, selectedProject?.environmentId, selectedProject?.workspaceRoot],
+    [debouncedBranchQuery, isGitRepo, selectedProject?.environmentId, selectedProject?.workspaceRoot],
   );
   const branchState = usePaginatedBranches(branchTarget);
   const branchSearchIsDebouncing = branchQuery.trim() !== debouncedBranchQuery.trim();
@@ -725,12 +745,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const refreshBranches = branchState.refresh;
   const loadMoreBranches = branchState.loadNext;
   const loadBranches = useCallback(() => {
-    if (!selectedProject) {
+    if (!selectedProject || !isGitRepo) {
       return;
     }
     setPendingConnectionError(null);
     refreshBranches();
-  }, [refreshBranches, selectedProject]);
+  }, [isGitRepo, refreshBranches, selectedProject]);
 
   useEffect(() => {
     if (
@@ -824,10 +844,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (text.length === 0 || !draftModelSelection) {
         return null;
       }
-      const workspaceSelection = draft.workspaceSelection;
-      // Fall back to the resolved mode (server default) so queued tasks drain
+      // Fall back to the resolved default mode so queued tasks drain
       // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      const workspaceSelection = resolveProjectThreadWorkspaceSelection({
+        isGitRepo,
+        environmentMode: draft.workspaceSelection?.mode ?? workspaceMode,
+        branch: draft.workspaceSelection?.branch ?? null,
+        worktreePath: draft.workspaceSelection?.worktreePath ?? null,
+      });
+      const mode = workspaceSelection.environmentMode;
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back
@@ -859,12 +884,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
-          branch: workspaceSelection?.branch ?? null,
-          worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+          branch: workspaceSelection.branch,
+          worktreePath: mode === "worktree" ? null : workspaceSelection.worktreePath,
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
           // drain with the same origin mode the composer displayed.
-          ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
+          ...((draft.workspaceSelection?.startFromOrigin ?? startFromOrigin)
             ? { startFromOrigin: true }
             : {}),
         },
@@ -874,6 +899,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       editingPendingProject,
       editingPendingTask,
+      isGitRepo,
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
@@ -981,6 +1007,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedEnvironmentId,
       selectedProjectKey,
       selectedModelKey,
+      isGitRepo,
       workspaceMode,
       selectedBranchName,
       selectedWorktreePath,
@@ -1049,6 +1076,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       finishEditingPendingTask,
       interactionMode,
+      isGitRepo,
       planModeEnabled,
       loadBranches,
       loadMoreBranches,

@@ -32,6 +32,31 @@ export const ProjectThreadCreationValidationError = Schema.Union([
 ]);
 export type ProjectThreadCreationValidationError = typeof ProjectThreadCreationValidationError.Type;
 
+export function resolveProjectThreadWorkspaceSelection(input: {
+  readonly isGitRepo: boolean;
+  readonly environmentMode: "local" | "worktree";
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+}): {
+  readonly environmentMode: "local" | "worktree";
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+} {
+  if (input.isGitRepo) {
+    return {
+      environmentMode: input.environmentMode,
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+    };
+  }
+
+  return {
+    environmentMode: "local",
+    branch: null,
+    worktreePath: null,
+  };
+}
+
 export function validateProjectThreadCreation(input: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
