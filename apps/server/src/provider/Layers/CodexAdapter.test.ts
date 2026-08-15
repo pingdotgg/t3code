@@ -1150,6 +1150,68 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       });
     }),
   );
+
+  it.effect("keeps interacted sub-agent activity liveness-neutral after completion", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+      const child = "child-thread-fixture-1";
+      const linkage = {
+        agentThreadId: child,
+        agentPath: "/root/mock_worker",
+        nickname: "mock_worker",
+        role: "worker",
+      };
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-turn-started"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/turnStarted",
+        payload: linkage,
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-collab-turn-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "collabAgent/turnCompleted",
+        payload: {
+          ...linkage,
+          turn: { id: "child-turn-fixture-1", status: "completed", items: [] },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-collab-interacted"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        method: "collabAgent/activity",
+        payload: { ...linkage, activityKind: "interacted" },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-collab-closed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:03.000Z",
+        method: "collabAgent/closed",
+        payload: linkage,
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) => (event.type === "task.updated" ? event.payload.status : event.type)),
+        ["running", "idle", "interrupted"],
+      );
+    }),
+  );
 });
 
 const scopedLifecycleRuntimeFactory = makeScopedRuntimeFactory();
