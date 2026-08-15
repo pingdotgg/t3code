@@ -42,8 +42,10 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ComputerHistoryService from "../../computerHistory/service.ts";
 import { makeResolveEnabledDesktopMcp } from "../../desktopControl/desktopMcpLaunch.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -322,6 +324,7 @@ export function makeCursorAdapter(
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const crypto = yield* Crypto.Crypto;
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -984,6 +987,14 @@ export function makeCursorAdapter(
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
+          const computerHistoryContext =
+            yield* ComputerHistoryService.loadComputerHistoryContextProvided(
+              serverConfig,
+              serverSettings,
+            );
+          if (computerHistoryContext) {
+            promptParts.push({ type: "text", text: computerHistoryContext });
+          }
           if (input.input?.trim()) {
             promptParts.push({ type: "text", text: input.input.trim() });
           }
@@ -1019,7 +1030,10 @@ export function makeCursorAdapter(
             }
           }
 
-          if (promptParts.length === 0) {
+          if (
+            promptParts.length === 0 ||
+            (!input.input?.trim() && (!input.attachments || input.attachments.length === 0))
+          ) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
               operation: "sendTurn",

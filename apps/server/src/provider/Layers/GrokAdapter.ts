@@ -34,8 +34,10 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ComputerHistoryService from "../../computerHistory/service.ts";
 import { makeResolveEnabledDesktopMcp } from "../../desktopControl/desktopMcpLaunch.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -233,6 +235,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const crypto = yield* Crypto.Crypto;
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -974,6 +977,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               });
 
               const text = input.input?.trim();
+              const computerHistoryContext =
+                yield* ComputerHistoryService.loadComputerHistoryContextProvided(
+                  serverConfig,
+                  serverSettings,
+                );
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
@@ -1008,11 +1016,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   }),
               );
               const promptParts: Array<EffectAcpSchema.ContentBlock> = [
+                ...(computerHistoryContext
+                  ? [{ type: "text" as const, text: computerHistoryContext }]
+                  : []),
                 ...(text ? [{ type: "text" as const, text }] : []),
                 ...imagePromptParts,
               ];
 
-              if (promptParts.length === 0) {
+              if (promptParts.length === 0 || (!text && imagePromptParts.length === 0)) {
                 return yield* new ProviderAdapterValidationError({
                   provider: PROVIDER,
                   operation: "sendTurn",

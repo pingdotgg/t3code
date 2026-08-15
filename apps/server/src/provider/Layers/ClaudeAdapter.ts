@@ -74,8 +74,10 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ComputerHistoryService from "../../computerHistory/service.ts";
 import { makeResolveEnabledDesktopMcp } from "../../desktopControl/desktopMcpLaunch.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -1258,10 +1260,15 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
     readonly boundInstanceId: ProviderInstanceId;
+    readonly computerHistoryContext?: string;
   },
 ) {
   const text = buildPromptText(input, dependencies.boundInstanceId);
   const sdkContent: Array<Record<string, unknown>> = [];
+
+  if (dependencies.computerHistoryContext) {
+    sdkContent.push({ type: "text", text: dependencies.computerHistoryContext });
+  }
 
   if (text.length > 0) {
     sdkContent.push({ type: "text", text });
@@ -1660,6 +1667,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
@@ -4466,10 +4474,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
+    const computerHistoryContext = yield* ComputerHistoryService.loadComputerHistoryContextProvided(
+      serverConfig,
+      serverSettings,
+    );
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
+      ...(computerHistoryContext ? { computerHistoryContext } : {}),
     });
 
     yield* Queue.offer(context.promptQueue, {

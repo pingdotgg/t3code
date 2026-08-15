@@ -1,5 +1,5 @@
 /**
- * Computer History server helpers: context injection for providers and a
+ * Computer History server helpers: context injection for all providers and a
  * background summarization loop when running in desktop mode.
  */
 import * as Effect from "effect/Effect";
@@ -32,6 +32,21 @@ export const loadComputerHistoryContext = Effect.fn("computerHistory.loadContext
   if (!markdown) return undefined;
   return buildComputerHistoryContextBlock(markdown);
 });
+
+/**
+ * Adapter-local load: capture `ServerConfig` / `ServerSettingsService` at
+ * construction so `sendTurn` keeps `R = never` while every provider can inject
+ * the same Computer History block.
+ */
+export const loadComputerHistoryContextProvided = (
+  serverConfig: ServerConfig.ServerConfig["Service"],
+  serverSettings: ServerSettings.ServerSettingsService["Service"],
+) =>
+  loadComputerHistoryContext().pipe(
+    Effect.provideService(ServerConfig.ServerConfig, serverConfig),
+    Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+    Effect.orElseSucceed((): string | undefined => undefined),
+  );
 
 export const syncComputerHistoryControl = Effect.fn("computerHistory.syncControl")(function* () {
   const config = yield* ServerConfig.ServerConfig;

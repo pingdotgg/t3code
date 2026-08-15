@@ -23,11 +23,8 @@ import {
   isComputerUseMcpApproval,
   isMcpToolApproval,
   isRecoverableThreadResumeError,
-<<<<<<< HEAD
   makeMemoryConsolidationNotificationFilter,
-=======
   mcpApprovalRequestKind,
->>>>>>> a279d4081 (feat(codex): surface Computer Use and MCP tool approvals; Windows native bridge)
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);

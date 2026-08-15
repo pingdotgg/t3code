@@ -1879,13 +1879,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
-    // Load via the Effect-owned helper. Capture ServerConfig/ServerSettings at
-    // adapter construction (same pattern as makeResolveEnabledDesktopMcp) so
-    // sendTurn keeps R = never.
-    const computerHistoryContext = yield* ComputerHistoryService.loadComputerHistoryContext().pipe(
-      Effect.provideService(ServerConfig, serverConfig),
-      Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
-      Effect.orElseSucceed(() => undefined),
+    const computerHistoryContext = yield* ComputerHistoryService.loadComputerHistoryContextProvided(
+      serverConfig,
+      serverSettings,
     );
     return yield* session.runtime
       .sendTurn({
