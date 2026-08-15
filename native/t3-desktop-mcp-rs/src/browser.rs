@@ -69,17 +69,21 @@ pub struct BrowserBridge {
     outgoing: Arc<Mutex<Option<SendHalf>>>,
     replies: Receiver<Value>,
     next_id: AtomicU64,
+    /// Bumped on every accept so disconnect sentinels from a prior host are ignored.
+    connection_gen: Arc<AtomicU64>,
 }
 
 impl BrowserBridge {
     pub fn new() -> Self {
         let outgoing: Arc<Mutex<Option<SendHalf>>> = Arc::new(Mutex::new(None));
+        let connection_gen = Arc::new(AtomicU64::new(0));
         let (sender, replies) = channel();
-        spawn_listener(Arc::clone(&outgoing), sender);
+        spawn_listener(Arc::clone(&outgoing), Arc::clone(&connection_gen), sender);
         Self {
             outgoing,
             replies,
             next_id: AtomicU64::new(1),
+            connection_gen,
         }
     }
 
@@ -147,6 +151,7 @@ impl BrowserBridge {
     fn dispatch(&mut self, command: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = json!({ "id": id, "command": command, "params": params });
+        let gen_at_send = self.connection_gen.load(Ordering::SeqCst);
 
         {
             let mut guard = self
@@ -163,7 +168,8 @@ impl BrowserBridge {
         }
 
         // Replies carry the originating id, so a slow answer to an earlier call
-        // cannot be mistaken for this one's.
+        // cannot be mistaken for this one's. Disconnect sentinels are scoped to
+        // connection_gen so a prior host drop cannot fail a call on the new socket.
         let deadline = std::time::Instant::now() + CALL_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -175,7 +181,11 @@ impl BrowserBridge {
                 .recv_timeout(remaining)
                 .map_err(|_| format!("browser_{command} timed out waiting for the extension"))?;
             if reply.get("disconnected").and_then(Value::as_bool) == Some(true) {
-                return Err("the extension disconnected".to_string());
+                let reply_gen = reply.get("connectionGen").and_then(Value::as_u64);
+                if reply_gen == Some(gen_at_send) {
+                    return Err("the extension disconnected".to_string());
+                }
+                continue;
             }
             if reply.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
@@ -199,7 +209,11 @@ impl Default for BrowserBridge {
 }
 
 /// Accept the native host and pump its replies onto `sender`.
-fn spawn_listener(outgoing: Arc<Mutex<Option<SendHalf>>>, sender: Sender<Value>) {
+fn spawn_listener(
+    outgoing: Arc<Mutex<Option<SendHalf>>>,
+    connection_gen: Arc<AtomicU64>,
+    sender: Sender<Value>,
+) {
     std::thread::spawn(move || {
         #[cfg(unix)]
         let path = bridge_socket_path();
@@ -229,6 +243,9 @@ fn spawn_listener(outgoing: Arc<Mutex<Option<SendHalf>>>, sender: Sender<Value>)
         loop {
             let Ok(stream) = listener.accept() else { continue };
             let (recv, send) = stream.split();
+            // New generation: prior disconnect sentinels become stale and are
+            // ignored by dispatch (they carry the old connectionGen).
+            let generation = connection_gen.fetch_add(1, Ordering::SeqCst) + 1;
             if let Ok(mut guard) = outgoing.lock() {
                 *guard = Some(send);
             }
@@ -245,12 +262,13 @@ fn spawn_listener(outgoing: Arc<Mutex<Option<SendHalf>>>, sender: Sender<Value>)
 
             // The host went away; drop the writer so `call` reports honestly,
             // and wake any in-flight `dispatch` wait instead of letting it sit
-            // until CALL_TIMEOUT.
+            // until CALL_TIMEOUT. Tag with this connection's generation.
             if let Ok(mut guard) = outgoing.lock() {
                 *guard = None;
             }
             let _ = sender.send(json!({
                 "disconnected": true,
+                "connectionGen": generation,
                 "ok": false,
                 "error": "the extension disconnected",
             }));

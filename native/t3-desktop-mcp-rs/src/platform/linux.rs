@@ -868,14 +868,18 @@ impl Desktop for LinuxDesktop {
 
     fn resolve_pid(&mut self, app: &str) -> Result<u32> {
         // Prefer AT-SPI's application list (same names `list_apps` shows when
-        // a11y is up) before falling back to xcap window grouping.
-        if let Ok(applications) = self.applications()
-            && let Ok((_, _, pid)) = match_application(&applications, app)
-            && pid != 0
-        {
-            return Ok(pid);
+        // a11y is up). Ambiguous exact matches must stay errors — falling through
+        // to xcap can pick the wrong process. Only fall back when a11y is down
+        // or the name is simply absent from the bus.
+        match self.applications() {
+            Ok(applications) => match match_application(&applications, app) {
+                Ok((_, _, pid)) if pid != 0 => Ok(pid),
+                Ok((_, _, 0)) => apps::resolve_pid(app),
+                Err(error) if error.0.contains("matches several apps") => Err(error),
+                Err(_) => apps::resolve_pid(app),
+            },
+            Err(_) => apps::resolve_pid(app),
         }
-        apps::resolve_pid(app)
     }
 
     fn get_app_state(&mut self, app: &str, max_depth: usize, max_elements: usize) -> Result<String> {
