@@ -821,7 +821,14 @@ const probeClaudeCapabilities = (
           cwd,
         }),
       });
-      const init = await q.initializationResult();
+      const init = await Promise.race([
+        q.initializationResult(),
+        new Promise<undefined>((resolve) => {
+          // @effect-diagnostics-next-line globalTimers:off - Promise.race needs a native timer.
+          globalThis.setTimeout(resolve, CAPABILITIES_PROBE_TIMEOUT_MS);
+        }),
+      ]);
+      if (!init) return undefined;
       const claudeStatus = await Promise.race([
         q
           .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
@@ -855,7 +862,7 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS + CLAUDE_USAGE_LOOKUP_TIMEOUT_MS + 2_000),
     Effect.result,
     Effect.map((result) => {
       if (Result.isFailure(result)) return undefined;
