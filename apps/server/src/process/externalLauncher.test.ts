@@ -311,6 +311,45 @@ it.effect("launches Antigravity through its bundle even when agy is on PATH", ()
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// `:<digits>` is also a legal path suffix, so an existing path must reach
+// `open` unchanged and only a nonexistent one loses its position suffix.
+it.effect("keeps an existing bundle launch target that ends in a colon suffix", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const homeDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mac-home-" });
+    yield* fileSystem.makeDirectory(path.join(homeDir, "Applications", "Zed.app"), {
+      recursive: true,
+    });
+    const openPath = path.join(binDir, "open");
+    yield* fileSystem.writeFileString(openPath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(openPath, 0o755);
+    const workspace = path.join(binDir, "project:2026");
+    yield* fileSystem.makeDirectory(workspace);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "zed", cwd: workspace });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "darwin",
+          env: { PATH: binDir, HOME: homeDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "open");
+    assert.deepEqual(spawned.args, ["-a", "Zed", workspace]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // Without the bundle the PATH `agy` is the standalone CLI, so the launch must
 // fail as not-installed instead of spawning the wrong program.
 it.effect("fails an Antigravity launch on macOS when only the agy command is on PATH", () =>

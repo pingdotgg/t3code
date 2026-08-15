@@ -425,11 +425,19 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       }
       // `open` resolves its argument as a filesystem path, so a `:line` or
       // `:line:column` suffix from a file link must come off first. The
-      // position is lost; `open -a` has no way to forward it.
-      const openTarget = Option.match(parseTargetPathAndPosition(input.cwd), {
-        onNone: () => input.cwd,
-        onSome: ({ path: parsedPath }) => parsedPath,
-      });
+      // position is lost; `open -a` has no way to forward it. A path that
+      // exists as written stays untouched: `:<digits>` is also a legal
+      // file name suffix.
+      const fileSystem = yield* FileSystem.FileSystem;
+      const targetExists = yield* fileSystem
+        .exists(input.cwd)
+        .pipe(Effect.orElseSucceed(() => false));
+      const openTarget = targetExists
+        ? input.cwd
+        : Option.match(parseTargetPathAndPosition(input.cwd), {
+            onNone: () => input.cwd,
+            onSome: ({ path: parsedPath }) => parsedPath,
+          });
       return Option.some<EditorLaunch>({
         editor: editorDef.id,
         target: input.cwd,
