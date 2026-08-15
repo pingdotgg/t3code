@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   clearHistory,
+  computerHistoryResourcesDir,
   defaultCodexHome,
   deleteMemory,
   ensureComputerHistoryLayout,
@@ -45,6 +46,7 @@ export class ComputerHistoryOperationError extends Schema.TaggedErrorClass<Compu
       "getTimeline",
       "clear",
       "removeMemory",
+      "revealMemory",
     ]),
     cause: Schema.Defect(),
   },
@@ -96,7 +98,10 @@ export class ComputerHistoryManager extends Context.Service<
       path: string,
       settings: ComputerHistorySettings,
     ) => Effect.Effect<ComputerHistoryTimeline, ComputerHistoryOperationError>;
-    readonly revealMemory: (path: string) => Effect.Effect<boolean>;
+    readonly revealMemory: (
+      stateDir: string,
+      path: string,
+    ) => Effect.Effect<boolean, ComputerHistoryOperationError>;
     readonly currentRoot: () => Effect.Effect<string | null>;
   }
 >()("ComputerHistoryManager") {}
@@ -109,6 +114,17 @@ export const make = Effect.gen(function* () {
     generation: 0,
     rootPath: null,
     stopping: null,
+  };
+
+  // Serialize ensure/stop so a stale status poll cannot respawn after disable.
+  let ensureChain: Promise<void> = Promise.resolve();
+  const enqueueEnsure = (task: () => Promise<void>): Promise<void> => {
+    const run = ensureChain.then(task, task);
+    ensureChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   };
 
   const stopDaemonImpl = async (): Promise<void> => {
@@ -240,7 +256,7 @@ export const make = Effect.gen(function* () {
   return ComputerHistoryManager.of({
     ensureDaemon: (stateDir, settings) =>
       Effect.tryPromise({
-        try: () => ensureDaemonImpl(stateDir, settings),
+        try: () => enqueueEnsure(() => ensureDaemonImpl(stateDir, settings)),
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "ensureDaemon",
@@ -251,7 +267,7 @@ export const make = Effect.gen(function* () {
     // Do not pipe Effect.orDie here; bootstrap and quit must stay non-defecting.
     stopDaemon: () =>
       Effect.tryPromise({
-        try: () => stopDaemonImpl(),
+        try: () => enqueueEnsure(() => stopDaemonImpl()),
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "stopDaemon",
@@ -323,11 +339,25 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       }),
-    revealMemory: (path) =>
-      Effect.sync(() => {
-        if (!NodeFs.existsSync(path)) return false;
-        shell.showItemInFolder(path);
-        return true;
+    revealMemory: (stateDir, path) =>
+      Effect.tryPromise({
+        try: async () => {
+          const root = resolveComputerHistoryRoot(stateDir);
+          const resourcesDir = computerHistoryResourcesDir(root);
+          const resolved = NodePath.resolve(path);
+          const resourcesRoot = NodePath.resolve(resourcesDir);
+          if (resolved !== resourcesRoot && !resolved.startsWith(resourcesRoot + NodePath.sep)) {
+            return false;
+          }
+          if (!NodeFs.existsSync(resolved)) return false;
+          shell.showItemInFolder(resolved);
+          return true;
+        },
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "revealMemory",
+            cause,
+          }),
       }),
     currentRoot: () => Effect.sync(() => state.rootPath),
   });
