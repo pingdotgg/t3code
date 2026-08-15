@@ -414,6 +414,40 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
+    const macAppName = platform === "darwin" ? macAppNameOf(editorDef) : undefined;
+    const macBundleLaunch = Effect.gen(function* () {
+      if (macAppName === undefined) {
+        return Option.none<EditorLaunch>();
+      }
+      const macEnv = yield* readMacAppLookupEnv;
+      if (Option.isNone(yield* resolveMacAppBundle(macAppName, macEnv))) {
+        return Option.none<EditorLaunch>();
+      }
+      // `open` resolves its argument as a filesystem path, so a `:line` or
+      // `:line:column` suffix from a file link must come off first. The
+      // position is lost; `open -a` has no way to forward it.
+      const openTarget = Option.match(parseTargetPathAndPosition(input.cwd), {
+        onNone: () => input.cwd,
+        onSome: ({ path: parsedPath }) => parsedPath,
+      });
+      return Option.some<EditorLaunch>({
+        editor: editorDef.id,
+        target: input.cwd,
+        command: "open",
+        args: ["-a", macAppName, openTarget],
+      });
+    });
+
+    // For macRequiresAppBundle editors the PATH command name is also owned by
+    // a standalone non-IDE tool, so the bundle launch comes first: resolving
+    // the command could spawn the wrong program.
+    if ("macRequiresAppBundle" in editorDef && editorDef.macRequiresAppBundle) {
+      const bundleLaunch = yield* macBundleLaunch;
+      if (Option.isSome(bundleLaunch)) {
+        return bundleLaunch.value;
+      }
+    }
+
     const command = yield* resolveAvailableCommand(editorDef.commands, env);
     if (Option.isSome(command)) {
       return {
@@ -424,17 +458,9 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       };
     }
 
-    const macAppName = platform === "darwin" ? macAppNameOf(editorDef) : undefined;
-    if (macAppName !== undefined) {
-      const macEnv = yield* readMacAppLookupEnv;
-      if (Option.isSome(yield* resolveMacAppBundle(macAppName, macEnv))) {
-        return {
-          editor: editorDef.id,
-          target: input.cwd,
-          command: "open",
-          args: ["-a", macAppName, input.cwd],
-        };
-      }
+    const bundleLaunch = yield* macBundleLaunch;
+    if (Option.isSome(bundleLaunch)) {
+      return bundleLaunch.value;
     }
 
     return {
