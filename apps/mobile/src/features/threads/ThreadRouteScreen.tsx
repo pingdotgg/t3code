@@ -271,6 +271,12 @@ function ThreadRouteContent(
   }, [pendingStopCommandId, selectedThreadDetail, stopThreadGuard]);
 
   useEffect(() => {
+    return () => {
+      stopThreadGuard.resolve();
+    };
+  }, [stopThreadGuard]);
+
+  useEffect(() => {
     if (
       fileInspector.supported &&
       selectedThreadCwd === null &&
@@ -307,8 +313,6 @@ function ThreadRouteContent(
   useFocusEffect(
     useCallback(() => {
       return () => {
-        stopThreadGuard.resolve();
-        setPendingStopCommandId(null);
         if (props.renderInspector === undefined) {
           // Inspectors are contextual to this chat destination. Clear the
           // hidden chat copy after a native push so returning from Files,
@@ -316,7 +320,7 @@ function ThreadRouteContent(
           setInspectorSelection(null);
         }
       };
-    }, [props.renderInspector, stopThreadGuard]),
+    }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const routeConnectionState =

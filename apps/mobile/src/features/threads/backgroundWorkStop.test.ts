@@ -267,7 +267,7 @@ describe("backgroundWorkStopConfirmation", () => {
     }
   });
 
-  it("cancels the pending timeout when the route cleanup resolves the guard", async () => {
+  it("keeps Stop pending while the route stays mounted and cancels it on unmount", async () => {
     vi.useFakeTimers();
     try {
       const onTimeout = vi.fn();
@@ -277,8 +277,14 @@ describe("backgroundWorkStopConfirmation", () => {
       });
 
       await expect(guard.run(async () => undefined)).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(2_999);
+
+      expect(guard.isInFlight()).toBe(true);
+      expect(onTimeout).not.toHaveBeenCalled();
+
+      // Nested routes blur this screen without running its unmount cleanup.
       guard.resolve();
-      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(1);
 
       expect(onTimeout).not.toHaveBeenCalled();
       expect(guard.isInFlight()).toBe(false);
