@@ -355,7 +355,7 @@ function SidebarTrigger({
       {unreadCount !== undefined && unreadCount > 0 ? (
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-semibold tabular-nums text-destructive-foreground shadow-xs"
+          className="pointer-events-none absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-semibold tabular-nums text-white shadow-xs"
           data-testid="sidebar-unread-badge"
         >
           {unreadCount > 9 ? "9+" : unreadCount}
