@@ -21,7 +21,8 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Switch } from "../ui/switch";
-import { AgentCursorIcon, BraveIcon, ChromeIcon, EdgeIcon, FirefoxIcon } from "./browserBrandIcons";
+import { AgentCursorIcon, ChromeIcon } from "./browserBrandIcons";
+import { ComputerUseMoreBrowsers } from "./ComputerUseMoreBrowsers";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -29,7 +30,6 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 
 /** Shown when the desktop host lacks the Computer Use permissions bridge API. */
 const BRIDGE_UNSUPPORTED_MESSAGE = "Update T3 Code to check Computer Use permissions";
@@ -104,7 +104,6 @@ export function ComputerUseSettings() {
   const defaults = DEFAULT_UNIFIED_SETTINGS.desktopControl;
   const onDesktop = isDesktopHost();
   const [manageOpen, setManageOpen] = useState(false);
-  const [moreBrowsersOpen, setMoreBrowsersOpen] = useState(false);
   const [permissionPrompt, setPermissionPrompt] = useState<DesktopComputerUsePermission | null>(
     null,
   );
@@ -306,50 +305,7 @@ export function ComputerUseSettings() {
           }
         />
 
-        <Collapsible open={moreBrowsersOpen} onOpenChange={setMoreBrowsersOpen}>
-          <SettingsRow
-            title={<RowTitle icon={<EdgeIcon className="size-5" />}>More browsers</RowTitle>}
-            description="Set up the same extension in other Chromium browsers."
-            control={
-              <CollapsibleTrigger
-                render={<Button type="button" variant="outline" size="sm" />}
-                aria-controls="computer-use-more-browsers"
-              >
-                {moreBrowsersOpen ? "Hide" : "Show"}
-              </CollapsibleTrigger>
-            }
-          >
-            <CollapsiblePanel id="computer-use-more-browsers">
-              <div className="mt-2 space-y-3 rounded-xl bg-muted/20 px-3 py-3">
-                <div className="flex items-center gap-3">
-                  <EdgeIcon className="size-6" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">Microsoft Edge</p>
-                    <p className="text-[13px] text-muted-foreground">
-                      Load the unpacked extension from edge://extensions
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <BraveIcon className="size-6" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">Brave</p>
-                    <p className="text-[13px] text-muted-foreground">
-                      Same extension via brave://extensions
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 opacity-70">
-                  <FirefoxIcon className="size-6" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">Firefox</p>
-                    <p className="text-[13px] text-muted-foreground">Not supported yet</p>
-                  </div>
-                </div>
-              </div>
-            </CollapsiblePanel>
-          </SettingsRow>
-        </Collapsible>
+        <ComputerUseMoreBrowsers />
       </SettingsSection>
 
       {onDesktop ? (
