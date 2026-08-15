@@ -1734,6 +1734,28 @@ describe("composerDraftStore sticky composer settings", () => {
       modelSelectionExplicit: true,
     });
   });
+
+  it("does not let a project-default seed replace an explicit picker choice", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-explicit-survives-seed");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      explicit: true,
+    });
+    store.setModelSelection(threadRef, modelSelection(CURSOR_DRIVER, "grok-4"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      activeProvider: "claudeAgent",
+      modelSelectionExplicit: true,
+    });
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+  });
 });
 
 describe("composerDraftStore provider-scoped option updates", () => {

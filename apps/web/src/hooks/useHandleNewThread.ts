@@ -171,14 +171,15 @@ export function useNewThreadHandler() {
         carryModelSelection,
       });
       const applyModelSeed = (draftTarget: DraftId, seedOptions?: { sticky?: boolean }) => {
+        if (getComposerDraft(draftTarget)?.modelSelectionExplicit === true) {
+          return;
+        }
         if (seedOptions?.sticky === true && modelSeed.applySticky) {
           applyStickyState(draftTarget);
         }
         if (modelSeed.modelSelection) {
           // Complete snapshot: absent options mean "no options", not "keep
-          // whatever sticky state or a stale draft already wrote". New-thread
-          // reuse of an empty draft is a fresh start, so this also replaces a
-          // picker-only choice (`modelSelectionExplicit`) with the pin.
+          // whatever sticky state or a stale draft already wrote".
           setModelSelection(draftTarget, modelSeed.modelSelection, {
             replaceOptions: true,
             explicit: false,

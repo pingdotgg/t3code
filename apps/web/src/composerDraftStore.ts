@@ -453,8 +453,8 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
       /**
        * True when this write is the user's picker choice. False when seeding
-       * from a project default (clears a leftover sticky pick). Omitted
-       * leaves the existing flag alone.
+       * from a project default. Omitted leaves the existing flag alone.
+       * A non-explicit seed does not replace an existing picker choice.
        */
       explicit?: boolean;
     },
@@ -2765,6 +2765,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             const base = existing ?? createEmptyThreadDraft();
+            if (opts?.explicit === false && base.modelSelectionExplicit === true) {
+              return state;
+            }
             const nextMap = { ...base.modelSelectionByProvider };
             if (normalized) {
               const current = nextMap[normalized.instanceId];
