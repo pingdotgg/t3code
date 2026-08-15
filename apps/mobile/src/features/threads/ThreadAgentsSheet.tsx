@@ -1,6 +1,7 @@
 import {
   formatSubagentTokenCount,
   isActiveSubagentStatus,
+  isTerminalSubagentStatus,
   type AgentPanelWorkflowGroup,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -79,18 +80,18 @@ function AgentsAndroidColdStartHeader() {
 function AgentDetailAndroidColdStartHeader() {
   const navigation = useNavigation();
   const route = useRoute<ThreadAgentDetailRoute>();
-  const action = agentDetailColdStartRosterAction({
-    canGoBack: false,
-    environmentId: route.params.environmentId,
-    threadId: route.params.threadId,
-    replaceWithRoster: (params) =>
-      navigation.dispatch(StackActions.replace("ThreadAgents", params)),
-  });
   return (
     <AndroidHeaderIconButton
-      accessibilityLabel={action?.accessibilityLabel ?? "Go to Agents roster"}
+      accessibilityLabel="Go to Agents roster"
       icon="person.3"
-      onPress={action?.onPress}
+      onPress={() =>
+        navigation.dispatch(
+          StackActions.replace("ThreadAgents", {
+            environmentId: route.params.environmentId,
+            threadId: route.params.threadId,
+          }),
+        )
+      }
     />
   );
 }
@@ -255,13 +256,7 @@ const WorkflowHeader = memo(function WorkflowHeader(props: {
     ...props.group.phases.flatMap((phase) => phase.members),
     ...props.group.unphasedMembers,
   ];
-  const settledCount = members.filter(
-    (member) =>
-      member.status === "completed" ||
-      member.status === "failed" ||
-      member.status === "cancelled" ||
-      member.status === "interrupted",
-  ).length;
+  const settledCount = members.filter((member) => isTerminalSubagentStatus(member.status)).length;
   return (
     <View className="flex-row items-center gap-2 border-b border-border px-1 pb-2 pt-1">
       <AgentStatusDot status={props.group.workflow.status} />

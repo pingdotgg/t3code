@@ -191,9 +191,7 @@ export function make(
       drop(input.threadId, input.taskId);
       return;
     }
-    // A subagent's internal non-agent work (its own shells/monitors) is
-    // covered by the owning agent's liveness. Nested agents fall through:
-    // they can outlive their parent (review finding).
+    // Nested agents can outlive their parents; only their internal work is covered.
     if (
       input.agentId !== undefined &&
       (taskType === undefined || MONITOR_TASK_TYPES.has(taskType))

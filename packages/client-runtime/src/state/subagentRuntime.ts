@@ -19,6 +19,20 @@
  */
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
+import {
+  capSubagentRoster,
+  deriveSubagentBatchCounts,
+  isActiveSubagentStatus,
+  type FoldedSubagentActivitiesWithBatchCounts,
+  type FoldSubagentActivitiesOptions,
+} from "./subagentBatches.ts";
+
+export type {
+  FoldedSubagentActivitiesWithBatchCounts,
+  FoldSubagentActivitiesOptions,
+} from "./subagentBatches.ts";
+export { isActiveSubagentStatus } from "./subagentBatches.ts";
+
 export type RuntimeSubagentStatus =
   | "pending"
   | "running"
@@ -100,15 +114,8 @@ export function isTerminalSubagentStatus(status: RuntimeSubagentStatus): boolean
   return TERMINAL_STATUSES.has(status);
 }
 
-/** Active = the user may still need to care while it runs. Idle is settled-ish
- * but resumable; waiting counts as active because it needs the user. */
-export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
-}
-
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
-const ROSTER_LIMIT = 100;
 
 /**
  * True when this activity's payload does NOT belong on the Agents surface.
@@ -474,117 +481,13 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
  * session left a panel full of "Working" agents while the sidebar showed
  * nothing). Idle is preserved — a resumable Codex child stays resumable.
  */
-interface SubagentBatchCount {
-  readonly totalCount: number;
-  readonly workingCount: number;
-  readonly failedCount: number;
-  readonly stoppedCount: number;
-  readonly idleCount: number;
-  readonly completedCount: number;
-}
-
-export interface FoldedSubagentActivitiesWithBatchCounts {
-  /** Full roster for virtualized timeline clients. */
-  readonly agents: ReadonlyArray<RuntimeSubagent>;
-  /** Every recognized task identity. */
-  readonly agentTaskIds: ReadonlySet<string>;
-  /** Spawn-batch identity for every recognized task activity. */
-  readonly batchKeyByActivityId: ReadonlyMap<string, string>;
-  /** Uncapped activation-aware status counts keyed by the spawn-batch ids used by clients. */
-  readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
-}
-
-export interface FoldSubagentActivitiesOptions {
-  readonly sessionLive?: boolean;
-}
-
-function subagentBatchKey(agent: MutableAgent, turnId: string | null): string {
-  if (agent.kind === "workflow") {
-    return `wf:${agent.id}`;
-  }
-  if (agent.kind === "workflow_agent") {
-    const workflowMarker = agent.id.indexOf(":wf:");
-    const workflowId =
-      agent.parentAgentId ?? (workflowMarker === -1 ? agent.id : agent.id.slice(0, workflowMarker));
-    return `wf:${workflowId}`;
-  }
-  return turnId ? `direct:${turnId}` : `direct:task:${agent.id}`;
-}
-
-function deriveSubagentBatchCounts(
-  agents: ReadonlyMap<string, MutableAgent>,
-  activityActivations: ReadonlyMap<string, readonly [MutableAgent, number]>,
-): {
-  readonly batchKeyByActivityId: ReadonlyMap<string, string>;
-  readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
-} {
-  const batchKeyByActivityId = new Map<string, string>();
-  const statusesByBatch = new Map<string, Map<string, RuntimeSubagentStatus>>();
-  for (const agent of agents.values()) {
-    for (const [activationIndex, activation] of agent.activations.entries()) {
-      const key = subagentBatchKey(agent, activation.turnId);
-      const statuses = statusesByBatch.get(key) ?? new Map<string, RuntimeSubagentStatus>();
-      statusesByBatch.set(key, statuses);
-      if (agent.kind !== "workflow") {
-        const memberKey =
-          agent.kind === "workflow_agent" ? agent.id : `${agent.id}:${activationIndex}`;
-        statuses.set(memberKey, activation.status);
-      }
-    }
-  }
-
-  for (const [activityId, [agent, activationIndex]] of activityActivations) {
-    const activation = agent.activations[activationIndex];
-    if (activation) {
-      batchKeyByActivityId.set(activityId, subagentBatchKey(agent, activation.turnId));
-    }
-  }
-
-  const batchCounts = new Map<string, SubagentBatchCount>();
-  for (const [key, statuses] of statusesByBatch) {
-    const count = {
-      totalCount: 0,
-      workingCount: 0,
-      failedCount: 0,
-      stoppedCount: 0,
-      idleCount: 0,
-      completedCount: 0,
-    };
-    for (const status of statuses.values()) {
-      count.totalCount += 1;
-      if (isActiveSubagentStatus(status)) count.workingCount += 1;
-      if (status === "failed") count.failedCount += 1;
-      if (status === "cancelled" || status === "interrupted") count.stoppedCount += 1;
-      if (status === "idle") count.idleCount += 1;
-      if (status === "completed") count.completedCount += 1;
-    }
-    batchCounts.set(key, count);
-  }
-  return { batchKeyByActivityId, batchCounts };
-}
-
 export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
 ): ReadonlyArray<RuntimeSubagent> {
-  const agents = foldSubagentActivitiesWithBatchCounts(activities, options).agents;
-  if (agents.length <= ROSTER_LIMIT) {
-    return agents;
-  }
-  // Prefer live, then waiting/idle, then newest settled.
-  const rank = (agent: RuntimeSubagent): number =>
-    isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
-  return agents
-    .slice()
-    .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, ROSTER_LIMIT);
+  return capSubagentRoster(foldSubagentActivitiesWithBatchCounts(activities, options).agents);
 }
 
-/**
- * Additive detailed fold for timeline clients that need exact spawn-batch
- * counts and a virtualized full roster. The simpler fold keeps the existing
- * web-facing cap.
- */
 export function foldSubagentActivitiesWithBatchCounts(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
@@ -818,7 +721,7 @@ export function foldSubagentActivitiesWithBatchCounts(
 
   const agentTaskIds = new Set(agents.keys());
   const { batchKeyByActivityId, batchCounts } = deriveSubagentBatchCounts(
-    agents,
+    agents.values(),
     activityActivations,
   );
 

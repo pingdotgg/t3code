@@ -2799,9 +2799,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
           const liveTaskActivityIds = new Set<string>();
           if (cursor === null) {
-            for (const agent of threadBackgroundLiveness.getThreadLiveAgentAnchors(
-              String(threadId),
-            )) {
+            for (const agent of threadBackgroundLiveness.getThreadLiveAgentAnchors(threadId)) {
               if (liveTaskActivityIds.size >= THREAD_DETAIL_LIVE_AGENT_ANCHOR_LIMIT) {
                 break;
               }

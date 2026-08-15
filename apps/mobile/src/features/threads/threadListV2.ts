@@ -147,14 +147,7 @@ export function resolveThreadListV2Status(
   if (thread.session?.status === "error") {
     return "failed";
   }
-  const backgroundLiveness = resolveThreadBackgroundLiveness(thread);
-  if (backgroundLiveness === "working") {
-    return "working";
-  }
-  if (backgroundLiveness === "monitoring") {
-    return "monitoring";
-  }
-  return "ready";
+  return resolveThreadBackgroundLiveness(thread) ?? "ready";
 }
 
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not

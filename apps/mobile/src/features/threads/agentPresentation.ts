@@ -8,7 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
-import { memoizedFoldSubagentActivities } from "../../lib/threadActivity";
+import { memoizedFoldSubagentActivities } from "../../lib/threadAgentActivity";
 
 const STATUS_LABELS: Record<RuntimeSubagent["status"], string> = {
   pending: "Working",

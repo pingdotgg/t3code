@@ -370,39 +370,39 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const appendProviderInterruptResolutionActivity = (input: {
+  const appendProviderInterruptResolutionActivity = Effect.fn(
+    "appendProviderInterruptResolutionActivity",
+  )(function* (input: {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
     readonly outcome: "interrupted" | "work-changed" | "no-session" | "interrupt-failed";
     readonly turnId: TurnId | null;
     readonly createdAt: string;
-  }) =>
-    Effect.all({
+  }) {
+    const { commandId, eventId } = yield* Effect.all({
       commandId: serverCommandId("provider-interrupt-resolution-activity"),
       eventId: serverEventId(),
-    }).pipe(
-      Effect.flatMap(({ commandId, eventId }) =>
-        orchestrationEngine.dispatch({
-          type: "thread.activity.append",
-          commandId,
-          threadId: input.threadId,
-          activity: {
-            id: eventId,
-            tone: "info",
-            kind: "provider.turn.interrupt.resolved",
-            summary: "Stop request resolved",
-            payload: {
-              requestId: input.requestId,
-              outcome: input.outcome,
-              timelineBypass: true,
-            },
-            turnId: input.turnId,
-            createdAt: input.createdAt,
-          },
-          createdAt: input.createdAt,
-        }),
-      ),
-    );
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId,
+      threadId: input.threadId,
+      activity: {
+        id: eventId,
+        tone: "info",
+        kind: "provider.turn.interrupt.resolved",
+        summary: "Stop request resolved",
+        payload: {
+          requestId: input.requestId,
+          outcome: input.outcome,
+          timelineBypass: true,
+        },
+        turnId: input.turnId,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+  });
 
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
@@ -1225,31 +1225,30 @@ const make = Effect.gen(function* () {
         : thread.session !== null
           ? thread.session.activeTurnId
           : (decidedGuard?.actualTurnId ?? null);
-    const publishOutcome = (
+    const publishOutcome = Effect.fn("publishProviderInterruptOutcome")(function* (
       outcome: "interrupted" | "work-changed" | "no-session" | "interrupt-failed",
-    ) =>
-      Effect.gen(function* () {
-        if (event.commandId !== null && thread !== undefined) {
-          yield* appendProviderInterruptResolutionActivity({
-            threadId: event.payload.threadId,
-            requestId: event.commandId,
-            outcome,
-            turnId: actualTurnId,
-            createdAt: event.payload.createdAt,
-          });
-        }
-        yield* receiptBus.publish({
-          type: "provider.turn.interrupt.resolved",
+    ) {
+      if (event.commandId !== null && thread !== undefined) {
+        yield* appendProviderInterruptResolutionActivity({
           threadId: event.payload.threadId,
-          commandId: event.commandId,
+          requestId: event.commandId,
           outcome,
-          ...(event.payload.expectedTurnId !== undefined
-            ? { expectedTurnId: event.payload.expectedTurnId }
-            : {}),
-          actualTurnId,
+          turnId: actualTurnId,
           createdAt: event.payload.createdAt,
         });
+      }
+      yield* receiptBus.publish({
+        type: "provider.turn.interrupt.resolved",
+        threadId: event.payload.threadId,
+        commandId: event.commandId,
+        outcome,
+        ...(event.payload.expectedTurnId !== undefined
+          ? { expectedTurnId: event.payload.expectedTurnId }
+          : {}),
+        actualTurnId,
+        createdAt: event.payload.createdAt,
       });
+    });
     if (!thread) {
       if (hasGuard) {
         return yield* publishOutcome("no-session");
@@ -1278,7 +1277,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Web omits guards and keeps the legacy session-scoped provider call.
+    // Unguarded web requests retain session-scoped interrupt behavior.
     if (!hasGuard) {
       yield* providerService.interruptTurn({ threadId: event.payload.threadId });
       return;

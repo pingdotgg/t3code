@@ -141,22 +141,10 @@ export function resolveThreadStatus(
   }
 
   const backgroundLiveness = resolveThreadBackgroundLiveness(thread);
-  if (backgroundLiveness === "working") {
+  if (backgroundLiveness !== null) {
     return {
-      kind: "working",
-      label: "Working",
-      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
-      textClassName: "text-sky-700 dark:text-sky-300",
-      iconColor: "#0a84ff",
-      iconBackground: "rgba(10,132,255,0.22)",
-      pulse: false,
-    };
-  }
-
-  if (backgroundLiveness === "monitoring") {
-    return {
-      kind: "monitoring",
-      label: "Monitoring",
+      kind: backgroundLiveness,
+      label: backgroundLiveness === "working" ? "Working" : "Monitoring",
       pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
       textClassName: "text-sky-700 dark:text-sky-300",
       iconColor: "#0a84ff",

@@ -1409,9 +1409,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.turn-interrupt-requested": {
-          // Conditional interrupts settle only after the reactor confirms the
-          // provider-session precondition. Avoid optimistically marking a
-          // turn interrupted when newer work may be left running.
+          // Guarded interrupts settle after provider-session confirmation.
           if (
             event.payload.expectedTurnId !== undefined ||
             event.payload.expectedSessionUpdatedAt !== undefined

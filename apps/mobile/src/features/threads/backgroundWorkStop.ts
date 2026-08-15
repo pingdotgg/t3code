@@ -16,7 +16,6 @@ interface BackgroundWorkStopGuardOptions {
 }
 
 interface PendingBackgroundWorkStop {
-  readonly commandId: CommandId;
   timeout: ReturnType<typeof setTimeout> | null;
 }
 
@@ -48,9 +47,9 @@ export function createBackgroundWorkStopGuard(
       if (pending !== null) {
         return false;
       }
-      const attempt: PendingBackgroundWorkStop = { commandId, timeout: null };
+      const attempt: PendingBackgroundWorkStop = { timeout: null };
       pending = attempt;
-      onPendingCommandChange(attempt.commandId);
+      onPendingCommandChange(commandId);
       attempt.timeout = setTimeout(() => {
         if (pending !== attempt) {
           return;
