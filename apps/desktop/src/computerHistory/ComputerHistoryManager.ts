@@ -18,7 +18,6 @@ import {
   deleteMemory,
   ensureComputerHistoryLayout,
   listTimeline,
-  readControlFile,
   readStatusFile,
   resolveComputerHistoryRoot,
   writeControlFile,
@@ -292,14 +291,14 @@ export const make = Effect.gen(function* () {
   };
 
   const mergePatchSettingsImpl = async (
-    stateDir: string,
+    _stateDir: string,
     persisted: ComputerHistorySettings,
     patch: Partial<ComputerHistorySettings>,
   ): Promise<ComputerHistorySettings> => {
-    const root = resolveComputerHistoryRoot(stateDir);
-    const control = await readControlFile(root);
     const base = lastMergedSettings ?? persisted;
-    const enabled = patch.enabled ?? control?.enabled ?? base.enabled;
+    // Never resurrect `enabled` from control.json — the server may rewrite that
+    // file from stale ServerSettings while a disable patch is in flight.
+    const enabled = patch.enabled ?? base.enabled;
     const merged = {
       ...base,
       ...patch,
