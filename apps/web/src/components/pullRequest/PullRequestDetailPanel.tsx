@@ -1137,8 +1137,14 @@ export function PullRequestDetailPanel({
             <>
               <Menu>
                 <MenuTrigger
-                  className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                  aria-label="More pull request actions"
+                  render={
+                    <Button
+                      aria-label="More pull request actions"
+                      className="size-6"
+                      size="icon-xs"
+                      variant="ghost-muted"
+                    />
+                  }
                 >
                   <MoreHorizontalIcon className="size-4" />
                 </MenuTrigger>

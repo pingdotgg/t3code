@@ -37,6 +37,8 @@ brew install --cask t3-code
 
 Arch Linux:
 
+Stable:
+
 ```bash
 yay -S t3code-bin
 ```
@@ -49,6 +51,11 @@ may take a little longer while that runtime is extracted. Later launches reuse t
 copy so startup does not depend on reading application files through `/mnt/c`. After a successful
 launch, T3 Code keeps the current runtime and one previous version for rollback and removes older
 runtime caches automatically.
+Nightly:
+
+```bash
+yay -S t3code-nightly-bin
+```
 
 ## Providers
 
