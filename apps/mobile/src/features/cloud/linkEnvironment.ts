@@ -30,6 +30,7 @@ import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
 import { authClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
+import { canReceiveAgentAwarenessPush } from "../agent-awareness/capabilities";
 import * as MobilePreferences from "../../persistence/mobile-preferences";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import { resolveCloudPublicConfig } from "./publicConfig";
@@ -358,6 +359,27 @@ export function linkEnvironmentToCloudWithPreference(
       .pipe(
         Effect.mapError(cloudEnvironmentLinkError("Could not configure environment relay access.")),
       );
+
+    // Relay credentials alone do not make an environment emit anything:
+    // agent-activity publishing is a separate opt-in that defaults to off, so a
+    // mobile-linked environment stays silent and no Live Activity or push can
+    // ever arrive. Deliberately not gated on `liveActivitiesEnabled` — the
+    // relay falls back to plain alert pushes when Live Activities are off but
+    // notifications are on, and that path needs publishing just as much.
+    if (canReceiveAgentAwarenessPush()) {
+      yield* environmentClient.connect
+        .preferences({
+          headers: { authorization: `Bearer ${localBearerToken}` },
+          payload: { publishAgentActivity: true },
+        })
+        .pipe(
+          Effect.mapError(
+            cloudEnvironmentLinkError(
+              "Could not enable agent activity publishing on the environment.",
+            ),
+          ),
+        );
+    }
   });
 }
 
