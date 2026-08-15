@@ -6,7 +6,7 @@ import * as Order from "effect/Order";
 export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly latestUserMessageAt?: string | null;
+  readonly latestUserMessageAt?: string | null | undefined;
   readonly messages?: ReadonlyArray<{
     readonly createdAt: string;
     readonly role: string;

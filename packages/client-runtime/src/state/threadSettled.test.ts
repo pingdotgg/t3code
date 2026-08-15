@@ -12,8 +12,6 @@ import {
   changeRequestAutoSettles,
   effectiveSettled,
   hasQueuedTurnStart,
-  threadLastActivityAt,
-  type ChangeRequestStateLike,
 } from "./threadSettled.ts";
 
 const NOW = "2026-04-10T00:00:00.000Z";
@@ -83,168 +81,36 @@ function makeShell(input: {
   };
 }
 
-describe("threadLastActivityAt", () => {
-  it("returns the latest real user or turn activity and ignores thread/session updates", () => {
-    const shell = makeShell({ activityAt: null, sessionStatus: "running" });
-    const withActivity: OrchestrationThreadShell = {
-      ...shell,
-      latestUserMessageAt: "2026-04-04T00:00:00.000Z",
-      latestTurn: {
-        turnId: TurnId.make("turn-1"),
-        state: "completed",
-        requestedAt: "2026-04-03T00:00:00.000Z",
-        startedAt: "2026-04-05T00:00:00.000Z",
-        completedAt: "2026-04-06T00:00:00.000Z",
-        assistantMessageId: null,
-      },
-    };
-
-    expect(threadLastActivityAt(withActivity)).toBe("2026-04-06T00:00:00.000Z");
-    expect(threadLastActivityAt(shell)).toBeNull();
-  });
-});
-
 describe("effectiveSettled", () => {
+  // The server authors settled state; the client reads the override and only
+  // holds back blocked-on-you / live-session shells whose auto-unsettle event
+  // has not arrived yet.
   const overrideCases = [null, "settled", "active"] as const;
-  const changeRequestStates = [undefined, "open", "merged"] as const;
-  const inactivityCases = [
-    ["fresh", FRESH],
-    ["stale", STALE],
-    ["no-activity", null],
-  ] as const;
   const runningCases = [false, true] as const;
   const pendingCases = [undefined, "approval", "user-input"] as const;
   const truthTable = overrideCases.flatMap((settledOverride) =>
-    changeRequestStates.flatMap((changeRequestState) =>
-      inactivityCases.flatMap(([inactivity, activityAt]) =>
-        runningCases.flatMap((running) =>
-          pendingCases.map((pending) => ({
-            settledOverride,
-            changeRequestState,
-            inactivity,
-            activityAt,
-            running,
-            pending,
-            // Settled iff nothing blocks (pending work / live session) AND
-            // the override says settled, or (with no override) a merged PR
-            // or staleness auto-settles. The "active" pin suppresses both
-            // auto signals, and an open PR suppresses the inactivity path:
-            // a thread with a PR out for review is never done, however quiet.
-            expected:
-              pending === undefined &&
-              !running &&
-              (settledOverride === "settled" ||
-                (settledOverride === null &&
-                  (changeRequestState === "merged" ||
-                    (changeRequestState !== "open" && inactivity === "stale")))),
-          })),
-        ),
-      ),
+    runningCases.flatMap((running) =>
+      pendingCases.map((pending) => ({
+        settledOverride,
+        running,
+        pending,
+        expected: pending === undefined && !running && settledOverride === "settled",
+      })),
     ),
   );
 
   it.each(truthTable)(
-    "override=$settledOverride pr=$changeRequestState inactivity=$inactivity running=$running pending=$pending",
-    ({ settledOverride, changeRequestState, activityAt, running, pending, expected }) => {
+    "override=$settledOverride running=$running pending=$pending",
+    ({ settledOverride, running, pending, expected }) => {
       const shell = makeShell({
         settledOverride,
-        activityAt,
+        activityAt: FRESH,
         ...(running ? { sessionStatus: "running" as const } : {}),
         ...(pending === undefined ? {} : { pending }),
       });
-      const changeRequestOptions =
-        changeRequestState === undefined
-          ? {}
-          : { changeRequestState: changeRequestState as ChangeRequestStateLike };
-
-      expect(
-        effectiveSettled(shell, {
-          now: NOW,
-          autoSettleAfterDays: 3,
-          ...changeRequestOptions,
-        }),
-      ).toBe(expected);
+      expect(effectiveSettled(shell)).toBe(expected);
     },
   );
-
-  it("treats closed change requests like merged ones", () => {
-    const shell = makeShell({ activityAt: null });
-    expect(
-      effectiveSettled(shell, {
-        now: NOW,
-        autoSettleAfterDays: null,
-        changeRequestState: "closed",
-      }),
-    ).toBe(true);
-  });
-
-  it("settles immediately when a change request merges or closes", () => {
-    const recentlyActive = makeShell({ activityAt: "2026-04-09T23:59:59.999Z" });
-    for (const changeRequestState of ["merged", "closed"] as const) {
-      expect(
-        effectiveSettled(recentlyActive, {
-          now: NOW,
-          autoSettleAfterDays: null,
-          changeRequestState,
-        }),
-      ).toBe(true);
-    }
-  });
-
-  it("can keep a merged change request active", () => {
-    const recentlyActive = makeShell({ activityAt: "2026-04-09T23:59:59.999Z" });
-    expect(
-      effectiveSettled(recentlyActive, {
-        now: NOW,
-        autoSettleAfterDays: null,
-        autoSettleOnMerge: false,
-        changeRequestState: "merged",
-      }),
-    ).toBe(false);
-
-    expect(
-      effectiveSettled(recentlyActive, {
-        now: NOW,
-        autoSettleAfterDays: null,
-        autoSettleOnMerge: false,
-        changeRequestState: "closed",
-      }),
-    ).toBe(true);
-  });
-
-  it("never auto-settles a stale thread with an open change request", () => {
-    const stale = makeShell({ activityAt: STALE });
-    expect(
-      effectiveSettled(stale, {
-        now: NOW,
-        autoSettleAfterDays: 3,
-        changeRequestState: "open",
-      }),
-    ).toBe(false);
-    // An explicit user settle still wins: open PR only blocks the auto path.
-    const settled = makeShell({ settledOverride: "settled", activityAt: STALE });
-    expect(
-      effectiveSettled(settled, {
-        now: NOW,
-        autoSettleAfterDays: 3,
-        changeRequestState: "open",
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps an explicitly un-settled merged-PR thread active", () => {
-    const shell = makeShell({
-      settledOverride: "active",
-      activityAt: "2026-04-09T23:59:59.999Z",
-    });
-    expect(
-      effectiveSettled(shell, {
-        now: NOW,
-        autoSettleAfterDays: null,
-        changeRequestState: "merged",
-      }),
-    ).toBe(false);
-  });
 
   it("never settles a starting session, even with a settled override", () => {
     const shell = makeShell({
@@ -252,68 +118,28 @@ describe("effectiveSettled", () => {
       activityAt: STALE,
       sessionStatus: "starting",
     });
-    expect(
-      effectiveSettled(shell, {
-        now: NOW,
-        autoSettleAfterDays: 3,
-        changeRequestState: "merged",
-      }),
-    ).toBe(false);
+    expect(effectiveSettled(shell)).toBe(false);
   });
 
-  it("keeps a new turn active from queued through starting and running", () => {
-    const requestedAt = "2026-04-09T12:00:00.000Z";
-    const transitionNow = "2026-04-09T12:00:30.000Z";
-    const base = makeShell({
-      settledOverride: null,
-      activityAt: STALE,
-    });
-    const queued: OrchestrationThreadShell = {
+  it("keeps a settled thread active while a newer user message awaits the server's unsettle", () => {
+    // Between a new user message landing and the server's auto-unsettle
+    // projection arriving, the shell still carries the stale override. A
+    // message newer than settledAt marks that window; one older than
+    // settledAt was already adjudicated by the settle itself.
+    const base = makeShell({ settledOverride: "settled", activityAt: null });
+    const reactivated = {
       ...base,
-      latestUserMessageAt: requestedAt,
-      latestTurn: null,
-      session: null,
+      settledAt: "2026-04-09T12:00:00.000Z",
+      latestUserMessageAt: "2026-04-09T12:00:30.000Z",
     };
-    const starting: OrchestrationThreadShell = {
-      ...queued,
-      session: {
-        threadId: queued.id,
-        status: "starting",
-        providerName: "Codex",
-        runtimeMode: "full-access",
-        activeTurnId: null,
-        lastError: null,
-        updatedAt: requestedAt,
-      },
+    expect(effectiveSettled(reactivated)).toBe(false);
+
+    const adjudicated = {
+      ...base,
+      settledAt: "2026-04-09T12:00:30.000Z",
+      latestUserMessageAt: "2026-04-09T12:00:00.000Z",
     };
-    const running: OrchestrationThreadShell = {
-      ...starting,
-      session: {
-        ...starting.session!,
-        status: "running",
-        activeTurnId: TurnId.make("turn-new"),
-      },
-    };
-
-    for (const shell of [queued, starting, running]) {
-      expect(
-        effectiveSettled(shell, {
-          now: transitionNow,
-          autoSettleAfterDays: 3,
-          changeRequestState: "merged",
-        }),
-      ).toBe(false);
-    }
-  });
-
-  it("uses a strict inactivity boundary and honors a null threshold", () => {
-    const boundary = makeShell({
-      activityAt: "2026-04-07T00:00:00.000Z",
-    });
-    const stale = makeShell({ activityAt: STALE });
-
-    expect(effectiveSettled(boundary, { now: NOW, autoSettleAfterDays: 3 })).toBe(false);
-    expect(effectiveSettled(stale, { now: NOW, autoSettleAfterDays: null })).toBe(false);
+    expect(effectiveSettled(adjudicated)).toBe(true);
   });
 });
 
@@ -412,51 +238,8 @@ describe("canSettle", () => {
     };
     const justAfter = "2026-04-09T12:00:30.000Z";
     expect(canSettle(queued, { now: justAfter })).toBe(false);
-    // effectiveSettled must agree: queued work never auto-settles either,
-    // even with a merged PR.
-    expect(
-      effectiveSettled(queued, {
-        now: justAfter,
-        autoSettleAfterDays: 3,
-        changeRequestState: "merged",
-      }),
-    ).toBe(false);
     // Past the window the message is a failed/stale start: settleable again.
     expect(canSettle(queued, { now: NOW })).toBe(true);
-  });
-
-  it("lets a server-accepted settle overrule the clock-derived queued blocker", () => {
-    // The settle action ran with wall-clock `now` (past the grace window);
-    // the list partition re-evaluates with a minute-floored `now` that is
-    // still INSIDE the window. settledAt >= message time proves the server
-    // already adjudicated this exact message, so the row must not snap back
-    // to active until the coarser clock catches up.
-    const messageAt = "2026-04-09T12:00:00.000Z";
-    const flooredNow = "2026-04-09T12:01:00.000Z";
-    const base = makeShell({ settledOverride: "settled", activityAt: null });
-    const settledAfterMessage = {
-      ...base,
-      latestUserMessageAt: messageAt,
-      settledAt: "2026-04-09T12:02:10.000Z",
-    };
-    expect(hasQueuedTurnStart(settledAfterMessage, { now: flooredNow })).toBe(true);
-    expect(effectiveSettled(settledAfterMessage, { now: flooredNow, autoSettleAfterDays: 3 })).toBe(
-      true,
-    );
-
-    // A message NEWER than settledAt is genuinely new work: still blocked
-    // until the server's auto-unsettle lands.
-    const messageAfterSettle = {
-      ...base,
-      latestUserMessageAt: "2026-04-09T12:03:00.000Z",
-      settledAt: "2026-04-09T12:02:10.000Z",
-    };
-    expect(
-      effectiveSettled(messageAfterSettle, {
-        now: "2026-04-09T12:03:30.000Z",
-        autoSettleAfterDays: 3,
-      }),
-    ).toBe(false);
   });
 
   it("agrees with effectiveSettled's blockers for explicitly settled shells", () => {
@@ -468,6 +251,6 @@ describe("canSettle", () => {
       pending: "user-input",
     });
     expect(canSettle(blocked, { now: NOW })).toBe(false);
-    expect(effectiveSettled(blocked, { now: NOW, autoSettleAfterDays: 3 })).toBe(false);
+    expect(effectiveSettled(blocked)).toBe(false);
   });
 });

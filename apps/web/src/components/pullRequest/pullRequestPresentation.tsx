@@ -185,10 +185,10 @@ export function pullRequestChecksState(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  const statuses = checks.map((check) => check.status);
-  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
-  if (statuses.includes("pending")) return "pending";
-  return statuses.includes("success") ? "passing" : null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending")) return "pending";
+  return statuses.has("success") ? "passing" : null;
 }
 
 export function PullRequestActorAvatar({

@@ -311,8 +311,8 @@ export function matchesPullRequestFilters(
   filters: PullRequestListFilters,
   viewer?: string | null,
 ): boolean {
-  const labels = entry.labels.map((label) => label.name.trim().toLowerCase());
-  const holds = (label: string) => labels.includes(label.trim().toLowerCase());
+  const labels = new Set(entry.labels.map((label) => label.name.trim().toLowerCase()));
+  const holds = (label: string) => labels.has(label.trim().toLowerCase());
   return (
     (filters.draft === undefined || entry.isDraft === (filters.draft === "only")) &&
     (filters.review === undefined ||

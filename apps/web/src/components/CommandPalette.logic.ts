@@ -166,7 +166,7 @@ export type BuildThreadActionItemsThread = Pick<
   | "worktreePath"
 > & {
   updatedAt: string;
-  latestUserMessageAt?: string | null;
+  latestUserMessageAt?: string | null | undefined;
 };
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {

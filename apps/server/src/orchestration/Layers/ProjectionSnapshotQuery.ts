@@ -1578,6 +1578,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 pinnedAt: row.pinnedAt,
                 pinOrderKey: row.pinOrderKey ?? null,
                 titleRegeneration: mapTitleRegeneration(row),
+                latestUserMessageAt: row.latestUserMessageAt,
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
@@ -1785,6 +1786,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
+                  // The command read model never hydrates message bodies, so
+                  // the decider reads this stamp instead of thread.messages.
+                  latestUserMessageAt: row.latestUserMessageAt,
                   deletedAt: row.deletedAt,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
@@ -2466,6 +2470,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
+        latestUserMessageAt: threadRow.value.latestUserMessageAt,
         deletedAt: null,
         messages: messageRows.map((row) => {
           const message = {

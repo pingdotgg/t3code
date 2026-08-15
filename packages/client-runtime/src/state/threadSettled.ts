@@ -3,7 +3,13 @@ import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
-/** Returns whether the change request state settles the thread immediately. */
+/**
+ * Whether a PR state settles its thread under the configured merge rule
+ * (thread environment's threadAutoSettleOnMerge; closed always settles).
+ * Display-only on clients — the server sweep applies the same rule when it
+ * actually settles; the UI uses this to suppress signals (like the Woke
+ * pill) on work that is about to be adjudicated done.
+ */
 export function changeRequestAutoSettles(
   state: ChangeRequestStateLike | null | undefined,
   autoSettleOnMerge = true,
@@ -12,28 +18,6 @@ export function changeRequestAutoSettles(
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-
-export function threadLastActivityAt(shell: OrchestrationThreadShell): string | null {
-  const candidates = [
-    shell.latestUserMessageAt,
-    shell.latestTurn?.requestedAt,
-    shell.latestTurn?.startedAt,
-    shell.latestTurn?.completedAt,
-  ];
-  let latest: string | null = null;
-  let latestTimestamp = Number.NEGATIVE_INFINITY;
-
-  for (const candidate of candidates) {
-    if (candidate === null || candidate === undefined) continue;
-    const timestamp = Date.parse(candidate);
-    if (timestamp > latestTimestamp) {
-      latest = candidate;
-      latestTimestamp = timestamp;
-    }
-  }
-
-  return latest;
-}
 
 /**
  * A queued turn start lives for at most this long: session adoption takes
@@ -224,69 +208,39 @@ export function threadWokeAt(
 }
 
 /**
- * Settled resolution over the server-backed settled lifecycle. Activity
- * blockers (pending approval/user-input, a live session, an unadjudicated
- * queued turn) are checked first and hold a thread active regardless of any
- * override. Past the blockers, the explicit user override (thread.settle /
- * thread.unsettle commands, projected into settledOverride + settledAt)
- * wins in both directions; without one, a thread can auto-settle on a
- * merged PR, always settles on a closed PR, or settles on inactivity past
- * the window. An open PR blocks the inactivity path entirely. The server
- * un-settles on real activity (user message, session start, approval/
- * user-input request), so an override never goes stale silently.
+ * Settled resolution: the server is the single author of settled state.
+ * The override IS the classification — the server settles (user command or
+ * the auto-settle sweep: inactivity window, merged/closed PR) and un-settles
+ * on real activity (user message, session start, approval/user-input
+ * request), so clients never re-derive it. The client-side guards only
+ * cover the beat between activity landing and the server's auto-unsettle
+ * event arriving: blocked-on-you work and live sessions stay visible under
+ * a stale override, and a user message newer than settledAt (a queued turn
+ * start the server has not adjudicated yet) keeps the thread active. All
+ * guards compare shell data to shell data — no wall clock.
  */
 export function effectiveSettled(
-  shell: OrchestrationThreadShell,
-  options: {
-    readonly now: string;
-    readonly autoSettleAfterDays: number | null;
-    readonly autoSettleOnMerge?: boolean;
-    readonly changeRequestState?: ChangeRequestStateLike | null;
-  },
+  shell: Pick<
+    OrchestrationThreadShell,
+    | "settledOverride"
+    | "settledAt"
+    | "latestUserMessageAt"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "session"
+  >,
 ): boolean {
-  // Blocked work must remain visible even when a user explicitly settled it.
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
-  if (hasQueuedTurnStart(shell, { now: options.now })) {
-    // The queued-turn blocker alone is forgivable: it is clock-derived, and
-    // list callers pass a coarser `now` than the settle action used. When
-    // the server already adjudicated the queued message by accepting a
-    // settle after it (settledAt stamps server accept time), trust that
-    // ruling — otherwise a settle near the grace boundary leaves the row
-    // pinned active until the caller's clock ticks over. A message NEWER
-    // than settledAt is genuinely new work and keeps the block until the
-    // server's auto-unsettle lands.
-    const serverAdjudicated =
-      shell.settledOverride === "settled" &&
-      shell.settledAt !== null &&
-      shell.latestUserMessageAt !== null &&
-      Date.parse(shell.settledAt) >= Date.parse(shell.latestUserMessageAt);
-    if (!serverAdjudicated) return false;
+  if (shell.settledOverride !== "settled") return false;
+  if (
+    shell.settledAt !== null &&
+    shell.latestUserMessageAt !== null &&
+    Date.parse(shell.latestUserMessageAt) > Date.parse(shell.settledAt)
+  ) {
+    return false;
   }
-  if (shell.settledOverride === "settled") return true;
-  // "active" is the explicit keep-active pin: it suppresses auto-settle
-  // until real activity clears it server-side.
-  if (shell.settledOverride === "active") return false;
-  if (changeRequestAutoSettles(options.changeRequestState, options.autoSettleOnMerge !== false)) {
-    return true;
-  }
-  // An open PR is unfinished business regardless of how long the thread has
-  // been quiet: review can take days, and hiding the thread would bury the
-  // work waiting on it. A configured merge, a close, or an explicit user
-  // settle resolves it.
-  if (options.changeRequestState === "open") return false;
-  if (options.autoSettleAfterDays === null) return false;
-
-  const lastActivityAt = threadLastActivityAt(shell);
-  if (lastActivityAt === null) return false;
-
-  // threadLastActivityAt only returns candidates whose Date.parse beat
-  // -Infinity, so this parse is a real number; a malformed `now` yields NaN,
-  // the comparison is false, and the thread stays active (never a surprise
-  // auto-settle on bad input).
-  return (
-    Date.parse(lastActivityAt) < Date.parse(options.now) - options.autoSettleAfterDays * DAY_MS
-  );
+  return true;
 }
 
 const HOUR_MS = 60 * 60 * 1_000;

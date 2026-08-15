@@ -68,11 +68,9 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
+  it("defaults to the current sidebar", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
-    expect(settings.sidebarAutoSettleOnMerge).toBe(true);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -91,25 +89,32 @@ describe("ClientSettings sidebar", () => {
       true,
     );
   });
+});
+
+describe("ServerSettings thread auto-settle", () => {
+  it("defaults to a three-day auto-settle threshold", () => {
+    expect(decodeServerSettings({}).threadAutoSettleAfterDays).toBe(3);
+  });
 
   it("allows auto-settle by inactivity to be disabled", () => {
     expect(
-      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
+      decodeServerSettings({ threadAutoSettleAfterDays: null }).threadAutoSettleAfterDays,
     ).toBeNull();
   });
 
-  it("allows auto-settle on merge to be disabled", () => {
-    expect(decodeClientSettings({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge).toBe(
+  it("defaults auto-settle on merge to enabled and allows disabling it", () => {
+    expect(decodeServerSettings({}).threadAutoSettleOnMerge).toBe(true);
+    expect(decodeServerSettings({ threadAutoSettleOnMerge: false }).threadAutoSettleOnMerge).toBe(
       false,
     );
     expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge,
+      decodeServerSettingsPatch({ threadAutoSettleOnMerge: false }).threadAutoSettleOnMerge,
     ).toBe(false);
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettings({ threadAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ threadAutoSettleAfterDays: value })).toThrow();
   });
 });
 

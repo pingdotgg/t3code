@@ -397,6 +397,11 @@ export const OrchestrationThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // Newest user-message time, survives the capped/unhydrated `messages`
+  // array: the engine's command read model boots threads with no message
+  // bodies, and the decider needs this stamp for settle invariants and the
+  // settledAt derivation. Optional for pre-existing payloads.
+  latestUserMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -688,6 +693,8 @@ const ThreadSettleCommand = Schema.Struct({
   type: Schema.Literal("thread.settle"),
   commandId: CommandId,
   threadId: ThreadId,
+  // No settledAt here: the decider derives it from the thread's last
+  // activity (see decider.ts), so callers cannot forge shelf ordering.
 });
 
 const ThreadUnsettleCommand = Schema.Struct({

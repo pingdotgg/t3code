@@ -944,29 +944,17 @@ describe("sortSettledThreadsForSidebar", () => {
     expect(sorted.map((thread) => thread.id)).toEqual(["settled-last", "settled-first"]);
   });
 
-  it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
+  it("falls back to updatedAt when settledAt is missing (malformed/legacy rows)", () => {
+    // The server stamps settledAt on every settle, so a missing stamp only
+    // arises from legacy or malformed data; updatedAt keeps such rows in a
+    // sane spot rather than sinking them to the bottom.
     const sorted = sortSettledThreadsForSidebar([
-      settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
+      settled({ id: "legacy-old", updatedAt: "2026-03-09T08:00:00.000Z" }),
       settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
-      settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
+      settled({ id: "legacy-recent", updatedAt: "2026-03-09T11:00:00.000Z" }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["auto-recent", "explicit", "auto-old"]);
-  });
-
-  it("counts a turn completion as activity for auto-settled threads", () => {
-    // The message came in before the other thread's, but its turn finished
-    // after: completion time is the real "work ended" moment.
-    const sorted = sortSettledThreadsForSidebar([
-      settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
-      settled({
-        id: "completed-later",
-        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
-        latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:30:00.000Z" }),
-      }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["completed-later", "message-only"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["legacy-recent", "explicit", "legacy-old"]);
   });
 
   it("breaks timestamp ties by id so the order is stable", () => {
