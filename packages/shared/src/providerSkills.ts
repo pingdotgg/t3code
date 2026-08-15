@@ -30,10 +30,11 @@ export function normalizeProviderSkillWorkspacePath(cwd: string): string {
 }
 
 function normalizePosixSkillWorkspacePath(value: string): string {
-  // Treat backslash as separator so mixed forms from Codex / cross-host paths match.
-  const withForward = value.replaceAll("\\", "/");
-  const absolute = withForward.startsWith("/");
-  const segments = withForward.split("/");
+  // Backslash is a legal filename character on POSIX, so it stays part of the
+  // segment: `/projects/foo\bar` must not collapse onto `/projects/foo/bar`.
+  // Windows forms are routed to the Windows normalizer before we get here.
+  const absolute = value.startsWith("/");
+  const segments = value.split("/");
   const stack: string[] = [];
 
   for (const segment of segments) {
@@ -74,7 +75,11 @@ function normalizeWindowsSkillWorkspacePath(value: string): string {
       continue;
     }
     if (segment === "..") {
-      if (stack.length > 0 && stack[stack.length - 1] !== "") {
+      // `..` never escapes the root: `\\server\share` (two empties + host +
+      // share) and a drive letter are floors, so `C:\..\project` stays
+      // `c:\project` and keeps matching the server's resolved path.
+      const rootLength = unc ? 4 : /^[A-Za-z]:$/.test(stack[0] ?? "") ? 1 : 0;
+      if (stack.length > rootLength) {
         stack.pop();
       }
       continue;

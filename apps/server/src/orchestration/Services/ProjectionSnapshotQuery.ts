@@ -62,7 +62,7 @@ export interface ProjectionSnapshotQueryShape {
    * Read only active project roots and thread worktrees for infrastructure
    * that needs workspace-aware behavior without hydrating the shell.
    */
-  readonly getActiveWorkspaceCwds?: () => Effect.Effect<
+  readonly getActiveWorkspaceCwds: () => Effect.Effect<
     ReadonlyArray<string>,
     ProjectionRepositoryError
   >;

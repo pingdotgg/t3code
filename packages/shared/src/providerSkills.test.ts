@@ -18,7 +18,24 @@ function skill(name: string, sourceCwd?: string): ServerProviderSkill {
 describe("normalizeProviderSkillWorkspacePath", () => {
   it("strips trailing separators", () => {
     expect(normalizeProviderSkillWorkspacePath("/tmp/project/")).toBe("/tmp/project");
-    expect(normalizeProviderSkillWorkspacePath("/tmp/project\\")).toBe("/tmp/project");
+  });
+
+  it("keeps backslashes as POSIX filename characters", () => {
+    // A backslash is legal in a POSIX name, so these are two distinct
+    // workspaces and must not share a skill bag.
+    expect(normalizeProviderSkillWorkspacePath("/projects/foo\\bar")).toBe("/projects/foo\\bar");
+    expect(normalizeProviderSkillWorkspacePath("/projects/foo\\bar")).not.toBe(
+      normalizeProviderSkillWorkspacePath("/projects/foo/bar"),
+    );
+  });
+
+  it("keeps the root when collapsing `..` on Windows paths", () => {
+    expect(normalizeProviderSkillWorkspacePath("C:\\..\\project")).toBe(
+      normalizeProviderSkillWorkspacePath("C:\\project"),
+    );
+    expect(normalizeProviderSkillWorkspacePath("\\\\server\\share\\..\\app")).toBe(
+      normalizeProviderSkillWorkspacePath("\\\\server\\share\\app"),
+    );
   });
 
   it("collapses mid-path separators and dot segments", () => {

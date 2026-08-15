@@ -76,15 +76,20 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const path = yield* Path.Path;
   const resolvedEnvironment = environment ?? process.env;
   const projectCwds = normalizeSkillWorkspaceCwds(path, cwd);
-  const configDirPath = yield* resolveClaudeConfigDirPath(
-    config,
-    resolvedEnvironment,
-    projectCwds[0],
-  );
 
-  const roots: SkillDiscoveryRoot[] = [
-    { directory: path.join(configDirPath, "skills"), scope: "user" },
-  ];
+  // A relative CLAUDE_CONFIG_DIR resolves against each spawned CLI's own cwd,
+  // so every workspace can contribute a distinct user root. Absolute values
+  // (the common case) collapse to a single root here.
+  const configSkillDirs = new Set<string>();
+  for (const configCwd of projectCwds.length > 0 ? projectCwds : [undefined]) {
+    const configDirPath = yield* resolveClaudeConfigDirPath(config, resolvedEnvironment, configCwd);
+    configSkillDirs.add(path.join(configDirPath, "skills"));
+  }
+
+  const roots: SkillDiscoveryRoot[] = [...configSkillDirs].map((directory) => ({
+    directory,
+    scope: "user",
+  }));
 
   for (const projectCwd of projectCwds) {
     const gitRoot = yield* resolveGitRootPath(projectCwd);

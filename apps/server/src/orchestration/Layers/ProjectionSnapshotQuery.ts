@@ -2080,9 +2080,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         }),
       );
 
-  const getActiveWorkspaceCwds: NonNullable<
-    ProjectionSnapshotQueryShape["getActiveWorkspaceCwds"]
-  > = () =>
+  const getActiveWorkspaceCwds: ProjectionSnapshotQueryShape["getActiveWorkspaceCwds"] = () =>
     sql
       .withTransaction(
         Effect.all([

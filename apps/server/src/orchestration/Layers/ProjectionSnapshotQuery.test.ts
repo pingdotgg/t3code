@@ -383,7 +383,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
       ]);
 
-      const activeWorkspaceCwds = yield* snapshotQuery.getActiveWorkspaceCwds!();
+      const activeWorkspaceCwds = yield* snapshotQuery.getActiveWorkspaceCwds();
       assert.deepEqual(activeWorkspaceCwds, ["/tmp/project-1"]);
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();

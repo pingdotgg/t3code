@@ -34,34 +34,13 @@ export const resolveSkillWorkspaceCwds: Effect.Effect<
   const resolved = new Set<string>();
   resolved.add(path.resolve(serverConfig.cwd));
 
-  if (projection.getActiveWorkspaceCwds) {
-    const workspaceCwds = yield* projection
-      .getActiveWorkspaceCwds()
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-    for (const workspaceCwd of workspaceCwds) {
-      const trimmed = workspaceCwd.trim();
-      if (trimmed.length > 0) {
-        resolved.add(path.resolve(trimmed));
-      }
-    }
-    return [...resolved];
-  }
-
-  // Compatibility fallback for lightweight/test query implementations.
-  const shell = yield* projection.getShellSnapshot().pipe(Effect.orElseSucceed(() => null));
-
-  if (shell) {
-    for (const project of shell.projects) {
-      const root = project.workspaceRoot.trim();
-      if (root.length > 0) {
-        resolved.add(path.resolve(root));
-      }
-    }
-    for (const thread of shell.threads) {
-      const worktree = thread.worktreePath?.trim() ?? "";
-      if (worktree.length > 0) {
-        resolved.add(path.resolve(worktree));
-      }
+  const workspaceCwds = yield* projection
+    .getActiveWorkspaceCwds()
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  for (const workspaceCwd of workspaceCwds) {
+    const trimmed = workspaceCwd.trim();
+    if (trimmed.length > 0) {
+      resolved.add(path.resolve(trimmed));
     }
   }
 

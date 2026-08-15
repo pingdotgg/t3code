@@ -302,6 +302,41 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("resolves a relative CLAUDE_CONFIG_DIR for every workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const workspaceA = path.join(tempDir, "workspace-a");
+      const workspaceB = path.join(tempDir, "workspace-b");
+
+      // Each spawned CLI resolves the relative value against its own cwd, so
+      // both config dirs are real user roots — not just the first workspace's.
+      yield* writeSkill(
+        path.join(workspaceA, "relative-config", "skills"),
+        "skill-a",
+        ["---", "name: skill-a", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspaceB, "relative-config", "skills"),
+        "skill-b",
+        ["---", "name: skill-b", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: "" }, [workspaceA, workspaceB], {
+        CLAUDE_CONFIG_DIR: "relative-config",
+      });
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope]),
+        [
+          ["skill-a", "user"],
+          ["skill-b", "user"],
+        ],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
