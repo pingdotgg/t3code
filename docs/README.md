@@ -35,6 +35,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)
+- [Fork-to-upstream development](./internals/upstream-development.md)
 
 ### Runbooks
 
