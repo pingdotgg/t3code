@@ -2738,6 +2738,58 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+
+  effectIt.effect("evaluates by value even when the caller asks for a remote object", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const evaluateParams: Array<Record<string, unknown>> = [];
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method !== "Runtime.evaluate") return undefined;
+          evaluateParams.push(params ?? {});
+          // CDP only populates `result.value` for a by-value evaluation; asking
+          // for a handle instead yields an objectId and no value at all.
+          return params?.["returnByValue"] === true
+            ? { result: { value: { alpha: 1 } } }
+            : { result: { objectId: "remote-1", type: "object" } };
+        });
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_return_by_value");
+        yield* manager.registerWebview("tab_return_by_value", 42);
+
+        const value = yield* manager.automationEvaluate("tab_return_by_value", {
+          expression: "({ alpha: 1 })",
+          returnByValue: false,
+        });
+
+        expect(evaluateParams.at(-1)?.["returnByValue"]).toBe(true);
+        expect(value).toEqual({ alpha: 1 });
+      }),
+    ),
+  );
 });
 
 describe("PreviewOperationError", () => {
