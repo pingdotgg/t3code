@@ -10,6 +10,8 @@ import {
   type SyncedClientPreferencesUpdatedAtByField,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 
 import type { Preferences } from "../persistence/mobile-preferences";
 
@@ -43,6 +45,33 @@ export interface LocalSyncedClientPreferencesState {
 export interface LocalSyncedClientPreferencesPatch {
   readonly values: SyncedClientPreferencesPatch;
   readonly updatedAtByField: SyncedClientPreferencesUpdatedAtByField;
+}
+
+export function isPlanModePreferenceReconciliationReady(input: {
+  readonly connectionsLoaded: boolean;
+  readonly environmentCount: number;
+  readonly currentKey: string;
+  readonly appliedKey: string | null;
+}): boolean {
+  return (
+    input.connectionsLoaded &&
+    (input.environmentCount === 0 || input.appliedKey === input.currentKey)
+  );
+}
+
+export function hasPlanModePreferenceReconciliationAttempted(
+  states: ReadonlyArray<{
+    readonly connectionState: EnvironmentConnectionPhase;
+    readonly shellStatus: EnvironmentShellStatus;
+  }>,
+): boolean {
+  return states.every(
+    ({ connectionState, shellStatus }) =>
+      (connectionState === "connected" && shellStatus === "live") ||
+      connectionState === "available" ||
+      connectionState === "error" ||
+      connectionState === "offline",
+  );
 }
 
 type MutableSyncedClientPreferencesPatch = {

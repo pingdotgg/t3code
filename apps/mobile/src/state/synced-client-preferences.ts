@@ -6,7 +6,9 @@ import {
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo } from "react";
 
+import { environmentCatalog } from "../connection/catalog";
 import { environmentShell } from "./shell";
+import { environmentPresentations } from "./presentation";
 import {
   mobilePreferencesAtom,
   persistReconciledMobilePreferencesAtom,
@@ -15,53 +17,91 @@ import {
 import { serverEnvironment } from "./server";
 import { environmentSession } from "./session";
 import { useAtomCommand } from "./use-atom-command";
-import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 import {
   createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWriteController,
+  hasPlanModePreferenceReconciliationAttempted,
+  isPlanModePreferenceReconciliationReady,
   reconcilePlanModePreferences,
 } from "./synced-client-preferences-model";
 
-function useConnectedEnvironmentPreferenceStates() {
-  const { connectedEnvironments } = useRemoteConnectionStatus();
-  const connectedEnvironmentIds = useMemo(
-    () =>
-      connectedEnvironments
-        .filter((environment) => environment.connectionState === "connected")
-        .map((environment) => environment.environmentId),
-    [connectedEnvironments],
-  );
-  const statesAtom = useMemo(
-    () =>
-      Atom.make((get) =>
-        connectedEnvironmentIds.map((environmentId) => ({
+const connectedEnvironmentPreferenceStatesAtom = Atom.make((get) => {
+  const catalog = get(environmentCatalog.catalogValueAtom);
+  const localPreferences = get(mobilePreferencesAtom);
+  const presentations = get(environmentPresentations.presentationsAtom);
+  const states = [...presentations.entries()].map(([environmentId, presentation]) => {
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    const session = get(environmentSession.sessionStateValueAtom(environmentId));
+    return {
+      environmentId,
+      connectionState: presentation.connection.phase,
+      shell,
+      canPatch:
+        session?.authenticated === true &&
+        session.scopes?.includes(AuthOrchestrationOperateScope) === true,
+    };
+  });
+  const reconciliationKey = JSON.stringify({
+    local: AsyncResult.isSuccess(localPreferences)
+      ? [
+          localPreferences.value.planModeEnabled,
+          localPreferences.value.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
+            localPreferences.value.syncedClientPreferencesUpdatedAt,
+        ]
+      : null,
+    environments: states
+      .map(({ environmentId, connectionState, shell, canPatch }) => {
+        const preferences =
+          shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
+        return [
           environmentId,
-          shell: get(environmentShell.stateValueAtom(environmentId)),
-          session: get(environmentSession.sessionStateValueAtom(environmentId)),
-        })),
-      ),
-    [connectedEnvironmentIds],
-  );
-  const states = useAtomValue(statesAtom).map(({ environmentId, shell, session }) => ({
-    environmentId,
-    shell,
-    canPatch:
-      session?.authenticated === true &&
-      session.scopes?.includes(AuthOrchestrationOperateScope) === true,
-  }));
+          connectionState,
+          shell.status,
+          canPatch,
+          preferences?.planModeEnabled,
+          getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
+        ];
+      })
+      .sort(([left], [right]) => String(left).localeCompare(String(right))),
+  });
   return {
+    connectionsLoaded: catalog.isReady,
     connectedEnvironmentIds: states
-      .filter((state) => state.canPatch)
+      .filter((state) => state.connectionState === "connected" && state.canPatch)
       .map((state) => state.environmentId),
+    reconciliationKey,
     states,
   } as const;
+}).pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:connected-environment-states"));
+
+function useConnectedEnvironmentPreferenceStates() {
+  return useAtomValue(connectedEnvironmentPreferenceStatesAtom);
+}
+
+const planModePreferenceReconciledKeyAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:preferences:plan-mode-reconciled-key"),
+);
+
+export function usePlanModePreferenceReconciliationReady(): boolean {
+  const appliedKey = useAtomValue(planModePreferenceReconciledKeyAtom);
+  const { connectionsLoaded, reconciliationKey, states } =
+    useConnectedEnvironmentPreferenceStates();
+  return isPlanModePreferenceReconciliationReady({
+    connectionsLoaded,
+    environmentCount: states.length,
+    currentKey: reconciliationKey,
+    appliedKey,
+  });
 }
 
 export function useSyncedClientPreferences(): void {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const persistReconciledPreferences = useAtomSet(persistReconciledMobilePreferencesAtom);
-  const { states } = useConnectedEnvironmentPreferenceStates();
+  const { connectionsLoaded, reconciliationKey, states } =
+    useConnectedEnvironmentPreferenceStates();
+  const setReconciledKey = useAtomSet(planModePreferenceReconciledKeyAtom);
   const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
     label: "synced client preferences reconciliation",
     reportFailure: false,
@@ -74,7 +114,9 @@ export function useSyncedClientPreferences(): void {
   useEffect(() => () => reconciliationController.reset(), [reconciliationController]);
 
   useEffect(() => {
-    const liveStates = states.filter(({ shell }) => shell.status === "live");
+    const liveStates = states.filter(
+      ({ connectionState, shell }) => connectionState === "connected" && shell.status === "live",
+    );
     reconciliationController.setActiveEnvironmentIds(
       liveStates.filter(({ canPatch }) => canPatch).map(({ environmentId }) => environmentId),
     );
@@ -88,7 +130,24 @@ export function useSyncedClientPreferences(): void {
           : undefined;
       reconciliationController.observe(environmentId, updatedAt);
     }
-    if (!AsyncResult.isSuccess(preferencesResult) || liveStates.length === 0) return;
+    if (!connectionsLoaded || states.length === 0) {
+      setReconciledKey(null);
+      return;
+    }
+    if (!AsyncResult.isSuccess(preferencesResult)) return;
+    const reconciliationAttempted = hasPlanModePreferenceReconciliationAttempted(
+      states.map(({ connectionState, shell }) => ({
+        connectionState,
+        shellStatus: shell.status,
+      })),
+    );
+    if (!reconciliationAttempted) return;
+    if (liveStates.length === 0) {
+      // A loaded catalog with only terminal offline states has no server value
+      // to apply. The device value governs until an environment reconnects.
+      setReconciledKey(reconciliationKey);
+      return;
+    }
     const reconciliation = reconcilePlanModePreferences({
       localPlanModeEnabled: preferencesResult.value.planModeEnabled,
       localUpdatedAt:
@@ -114,12 +173,16 @@ export function useSyncedClientPreferences(): void {
           }),
       });
     }
+    setReconciledKey(reconciliationKey);
   }, [
+    connectionsLoaded,
     patchPreferences,
     persistReconciledPreferences,
     preferencesResult,
+    reconciliationKey,
     reconciliationController,
     savePreferences,
+    setReconciledKey,
     states,
   ]);
 }

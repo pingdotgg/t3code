@@ -91,7 +91,7 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
           versions,
         });
         return MobilePreferencesStore.pipe(
-          Effect.flatMap((store) => store.savePatch(normalizedPatch)),
+          Effect.flatMap((store) => store.savePatch(patch)),
           Effect.tap((saved) =>
             Effect.sync(() => {
               get.set(confirmedPreferencesAtom, saved);

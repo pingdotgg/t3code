@@ -8,6 +8,8 @@ import {
   createPlanModePreferenceWrite,
   createPlanModePreferenceWriteController,
   createSyncedClientPreferencesWrite,
+  hasPlanModePreferenceReconciliationAttempted,
+  isPlanModePreferenceReconciliationReady,
   nextMobileSyncedPreferencesUpdatedAt,
   reconcilePlanModePreferences,
   reconcileSyncedClientPreferences,
@@ -42,6 +44,66 @@ describe("synced client preferences", () => {
     };
     return { schedule, scheduled };
   };
+
+  it("uses the device preference immediately when the loaded catalog has no environments", () => {
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 0,
+        currentKey: "[]",
+        appliedKey: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("waits for catalog hydration before applying the no-environment fallback", () => {
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: false,
+        environmentCount: 0,
+        currentKey: "[]",
+        appliedKey: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("waits for an environment reconciliation to apply", () => {
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: "current",
+        appliedKey: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("opens gating after the current environment reconciliation applies", () => {
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: "current",
+        appliedKey: "current",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not accept a stale live shell while its environment is reconnecting", () => {
+    expect(
+      hasPlanModePreferenceReconciliationAttempted([
+        { connectionState: "reconnecting", shellStatus: "live" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("allows the device fallback after an offline reconciliation attempt", () => {
+    expect(
+      hasPlanModePreferenceReconciliationAttempted([
+        { connectionState: "offline", shellStatus: "cached" },
+      ]),
+    ).toBe(true);
+  });
 
   it("bounds excessively future-skewed local stamps", () => {
     expect(

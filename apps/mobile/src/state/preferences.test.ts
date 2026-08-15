@@ -334,4 +334,84 @@ describe("mobile preferences state", () => {
       registry.dispose();
     }),
   );
+
+  it.effect("does not persist a failed preference stamp through a concurrent write", () =>
+    Effect.gen(function* () {
+      const failedStamp = "2026-08-15T12:01:00.000Z";
+      const firstSaveStarted = deferred<void>();
+      const releaseFirstSave = deferred<void>();
+      let saveCount = 0;
+      let persisted: Preferences = {
+        baseFontSize: 16,
+        planModeEnabled: false,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-15T12:00:00.000Z",
+        },
+      };
+      const state = makePreferencesState({
+        load: Effect.succeed(persisted),
+        savePatch: (patch) =>
+          Effect.gen(function* () {
+            saveCount += 1;
+            if (saveCount === 1) {
+              yield* Effect.sync(firstSaveStarted.resolve);
+              yield* Effect.promise(() => releaseFirstSave.promise);
+              return yield* Effect.fail(
+                new MobilePreferencesSaveError({ cause: new Error("write failed") }),
+              );
+            }
+            persisted = {
+              ...persisted,
+              ...patch,
+              ...(patch.syncedClientPreferencesUpdatedAtByField === undefined
+                ? {}
+                : {
+                    syncedClientPreferencesUpdatedAtByField: {
+                      ...persisted.syncedClientPreferencesUpdatedAtByField,
+                      ...patch.syncedClientPreferencesUpdatedAtByField,
+                    },
+                  }),
+            };
+            return persisted;
+          }),
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: { planModeEnabled: failedStamp },
+      });
+      yield* Effect.promise(() => firstSaveStarted.promise);
+      registry.set(state.updatePreferencesAtom, {
+        baseFontSize: 18,
+        syncedClientPreferencesUpdatedAtByField: {
+          appearanceMode: "2026-08-15T12:02:00.000Z",
+        },
+      });
+      releaseFirstSave.resolve();
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(saveCount).toBe(2);
+          expect(persisted).toEqual({
+            baseFontSize: 18,
+            planModeEnabled: false,
+            syncedClientPreferencesUpdatedAtByField: {
+              planModeEnabled: "2026-08-15T12:00:00.000Z",
+              appearanceMode: "2026-08-15T12:02:00.000Z",
+            },
+          });
+        }),
+      );
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
 });
