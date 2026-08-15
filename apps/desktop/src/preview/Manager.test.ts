@@ -2202,6 +2202,7 @@ describe("PreviewManager", () => {
           getTitle: () => "Example",
           isLoading: () => false,
           isFocused: () => true,
+          focus: vi.fn(),
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
           on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
@@ -2235,6 +2236,44 @@ describe("PreviewManager", () => {
 
         listeners.get("did-start-navigation")?.({}, "https://example.com/next", false, true);
         expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  // `isFocused()` reports true for the attached view even while the app
+  // renderer still owns the keystrokes, so guarding the focus call on it left
+  // annotation shortcuts — including Escape — dead until the user clicked
+  // inside the page.
+  effectIt.effect("focuses the guest when element picking starts even if it reports focus", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const focus = vi.fn();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isFocused: () => true,
+          focus,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          once: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+          send: vi.fn(),
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+        } as never);
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        expect(focus).toHaveBeenCalled();
       }),
     ),
   );
