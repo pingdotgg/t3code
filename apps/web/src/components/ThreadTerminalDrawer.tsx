@@ -33,7 +33,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { cn, isWindowsPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -150,6 +150,49 @@ function terminalFontOptions(family: string, size: number): { family?: string; s
   return trimmed.length > 0 ? { family: trimmed, size } : { size };
 }
 
+let windowsTerminalPaletteCache: GhosttyColor[] | null = null;
+function getWindowsTerminalPalette(): GhosttyColor[] {
+  if (windowsTerminalPaletteCache) return windowsTerminalPaletteCache;
+  const colors: GhosttyColor[] = [];
+  // 0-15: Campbell palette (Windows default)
+  const CAMPBELL = [
+    { r: 12, g: 12, b: 12 },       // Black
+    { r: 197, g: 15, b: 31 },      // Red
+    { r: 19, g: 161, b: 14 },      // Green
+    { r: 193, g: 156, b: 0 },      // Yellow
+    { r: 0, g: 55, b: 218 },       // Blue
+    { r: 136, g: 23, b: 152 },     // Magenta
+    { r: 58, g: 150, b: 221 },     // Cyan
+    { r: 204, g: 204, b: 204 },    // White
+    { r: 118, g: 118, b: 118 },    // Bright Black
+    { r: 231, g: 72, b: 86 },      // Bright Red
+    { r: 22, g: 198, b: 12 },      // Bright Green
+    { r: 249, g: 241, b: 165 },    // Bright Yellow
+    { r: 59, g: 120, b: 255 },     // Bright Blue
+    { r: 180, g: 0, b: 158 },      // Bright Magenta
+    { r: 97, g: 214, b: 214 },     // Bright Cyan
+    { r: 242, g: 242, b: 242 },    // Bright White
+  ];
+  colors.push(...CAMPBELL);
+
+  // 16-231: 6x6x6 color cube
+  const v = [0, 95, 135, 175, 215, 255];
+  for (let i = 0; i < 216; i++) {
+    const r = v[Math.floor(i / 36)]!;
+    const g = v[Math.floor((i % 36) / 6)]!;
+    const b = v[i % 6]!;
+    colors.push({ r, g, b });
+  }
+
+  // 232-255: Grayscale
+  for (let i = 0; i < 24; i++) {
+    const c = 8 + i * 10;
+    colors.push({ r: c, g: c, b: c });
+  }
+  windowsTerminalPaletteCache = colors;
+  return colors;
+}
+
 export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
   const isDark = document.documentElement.classList.contains("dark");
   const fallbackBackground = isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)";
@@ -181,6 +224,9 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     "--terminal-selection-background",
     isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
   );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+  const platform = (window.navigator as any).userAgentData?.platform || window.navigator.platform;
+  const isWindows = isWindowsPlatform(platform);
   return {
     background: parseTerminalColor(
       terminalBackground,
@@ -195,6 +241,7 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
       isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
     ),
     selectionBackground: terminalSelection,
+    ...(isWindows ? { palette: getWindowsTerminalPalette() } : {}),
   };
 }
 

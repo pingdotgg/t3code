@@ -69,6 +69,7 @@ export interface GhosttyTheme {
   readonly cursor: GhosttyColor;
   /** CSS color the renderer overlays on selected cells; not sent to Ghostty. */
   readonly selectionBackground?: string;
+  readonly palette?: ReadonlyArray<GhosttyColor>;
 }
 
 export interface GhosttyCell {
@@ -363,6 +364,16 @@ export class GhosttyTerminalCore {
       this.runtime.call("ghostty_terminal_set", this.terminal, option, color);
     }
     this.runtime.free(color, 3);
+
+    if (theme.palette && theme.palette.length === 256) {
+      const palettePtr = this.runtime.alloc(256 * 3);
+      for (let i = 0; i < 256; i++) {
+        const c = theme.palette[i]!;
+        this.runtime.bytes(palettePtr + i * 3, 3).set([c.r, c.g, c.b]);
+      }
+      this.runtime.call("ghostty_terminal_set", this.terminal, 14, palettePtr);
+      this.runtime.free(palettePtr, 256 * 3);
+    }
   }
 
   scroll(deltaRows: number): void {
