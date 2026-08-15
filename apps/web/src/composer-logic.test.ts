@@ -8,21 +8,93 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
-  shouldSubmitComposerOnEnter,
+  resolveComposerEnterAction,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-describe("shouldSubmitComposerOnEnter", () => {
+describe("resolveComposerEnterAction", () => {
   it("submits plain Enter on desktop", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: false })).toBe(true);
+    expect(
+      resolveComposerEnterAction({
+        isMobileViewport: false,
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      }),
+    ).toBe("send");
+  });
+
+  it("submits to a new thread with Alt+Enter on desktop", () => {
+    expect(
+      resolveComposerEnterAction({
+        isMobileViewport: false,
+        shiftKey: false,
+        altKey: true,
+        ctrlKey: false,
+        metaKey: false,
+      }),
+    ).toBe("send-new-thread");
   });
 
   it("inserts a newline for plain Enter on mobile", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: true, shiftKey: false })).toBe(false);
+    expect(
+      resolveComposerEnterAction({
+        isMobileViewport: true,
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      }),
+    ).toBeNull();
   });
 
   it("inserts a newline for Shift+Enter", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+    expect(
+      resolveComposerEnterAction({
+        isMobileViewport: false,
+        shiftKey: true,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("inserts a newline for Alt+Shift+Enter", () => {
+    expect(
+      resolveComposerEnterAction({
+        isMobileViewport: false,
+        shiftKey: true,
+        altKey: true,
+        ctrlKey: false,
+        metaKey: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not submit with Ctrl+Alt+Enter", () => {
+    expect(
+      resolveComposerEnterAction({
+        isMobileViewport: false,
+        shiftKey: false,
+        altKey: true,
+        ctrlKey: true,
+        metaKey: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not submit with Meta+Alt+Enter", () => {
+    expect(
+      resolveComposerEnterAction({
+        isMobileViewport: false,
+        shiftKey: false,
+        altKey: true,
+        ctrlKey: false,
+        metaKey: true,
+      }),
+    ).toBeNull();
   });
 });
 

@@ -203,6 +203,7 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  type DraftThreadState,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -257,6 +258,7 @@ import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayo
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
+  resolveDefaultWorktreeBaseBranch,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -306,8 +308,8 @@ import {
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
-  cloneComposerImageForRetry,
   deriveLockedProvider,
+  prepareComposerImagesForRetry,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
@@ -325,6 +327,7 @@ import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
   AlertDialog,
@@ -1215,6 +1218,10 @@ function ChatViewContent(props: ChatViewProps) {
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const listVcsRefs = useAtomQueryRunner(vcsEnvironment.listRefs, {
+    reportDefect: false,
     reportFailure: false,
   });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
@@ -4883,6 +4890,7 @@ function ChatViewContent(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    destination: "current" | "new-thread" = "current",
   ) => {
     e?.preventDefault();
     const notifyDirectAnnotationAttached = () => {
@@ -4975,7 +4983,12 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
-    if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
+    if (
+      destination === "current" &&
+      !directAnnotation &&
+      showPlanFollowUpPrompt &&
+      activeProposedPlan
+    ) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -5033,24 +5046,166 @@ function ChatViewContent(props: ChatViewProps) {
       );
       return;
     }
-    const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+
+    const composerImagesSnapshot = [...composerImages];
+    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+    const composerElementContextsSnapshot = [...composerElementContexts];
+    const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+    const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const restoreComposerSnapshot = (previewsOwnedByOptimisticMessage: boolean): boolean => {
+      const composerDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (
+        promptRef.current.length > 0 ||
+        composerImagesRef.current.length > 0 ||
+        composerTerminalContextsRef.current.length > 0 ||
+        composerElementContextsRef.current.length > 0 ||
+        (composerDraft?.previewAnnotations.length ?? 0) > 0 ||
+        (composerDraft?.reviewComments.length ?? 0) > 0
+      ) {
+        if (!previewsOwnedByOptimisticMessage) {
+          for (const image of composerImagesSnapshot) {
+            revokeBlobPreviewUrl(image.previewUrl);
+          }
+        }
+        return false;
+      }
+      promptRef.current = promptForSend;
+      const retryComposerImages = prepareComposerImagesForRetry(composerImagesSnapshot, {
+        previewsOwnedByOptimisticMessage,
+      });
+      composerImagesRef.current = retryComposerImages;
+      composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+      composerElementContextsRef.current = composerElementContextsSnapshot;
+      setComposerDraftPrompt(composerDraftTarget, promptForSend);
+      addComposerDraftImages(composerDraftTarget, retryComposerImages);
+      setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+      setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
+      setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
+      setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+      composerRef.current?.resetCursorState({
+        cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+        prompt: promptForSend,
+        detectTrigger: true,
+      });
+      return true;
+    };
+
+    let newThreadDraft: DraftThreadState | null = null;
+    let newThreadDraftId: DraftId | null = null;
+    if (destination === "new-thread") {
+      sendInFlightRef.current = true;
+      // Start destination selection while the source is still invested, then
+      // clear before awaiting: clearing earlier can reuse the source draft,
+      // while clearing later can erase text typed during the await.
+      const newDraftResultPromise = settlePromise(() =>
+        handleNewThread(scopeProjectRef(activeProject.environmentId, activeProject.id), {
+          navigate: false,
+        }),
+      );
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const newDraftResult = await newDraftResultPromise;
+      if (newDraftResult._tag === "Success" && newDraftResult.value) {
+        newThreadDraftId = newDraftResult.value.draftId;
+        newThreadDraft = useComposerDraftStore.getState().getDraftSession(newThreadDraftId);
+      }
+      if (!newThreadDraft) {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        restoreComposerSnapshot(false);
+        const error =
+          newDraftResult._tag === "Failure"
+            ? squashAtomCommandFailure(newDraftResult)
+            : "The new thread draft could not be created.";
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start a new thread",
+            description:
+              error instanceof Error ? error.message : "The new thread draft could not be created.",
+          }),
+        );
+        return;
+      }
+    }
+
+    if (
+      isGitRepo &&
+      newThreadDraft &&
+      newThreadDraftId &&
+      newThreadDraft.envMode === "worktree" &&
+      !newThreadDraft.worktreePath &&
+      !newThreadDraft.branch
+    ) {
+      const refsResult = await listVcsRefs({
+        environmentId: newThreadDraft.environmentId,
+        input: { cwd: activeProject.workspaceRoot, limit: 100 },
+      });
+      const refs = refsResult._tag === "Success" ? refsResult.value.refs : [];
+      const currentGitBranch =
+        gitStatusQuery.data?.refName ?? refs.find((ref) => ref.current)?.name ?? null;
+      const baseBranch = resolveDefaultWorktreeBaseBranch({ refs, currentGitBranch });
+      const latestNewThreadDraft = useComposerDraftStore
+        .getState()
+        .getDraftSession(newThreadDraftId);
+      if (
+        latestNewThreadDraft?.envMode === "worktree" &&
+        !latestNewThreadDraft.worktreePath &&
+        !latestNewThreadDraft.branch &&
+        baseBranch
+      ) {
+        setDraftThreadContext(newThreadDraftId, { branch: baseBranch });
+      }
+      newThreadDraft =
+        useComposerDraftStore.getState().getDraftSession(newThreadDraftId) ?? newThreadDraft;
+    }
+
+    const threadIdForSend = newThreadDraft?.threadId ?? activeThread.id;
+    const isFirstMessage =
+      newThreadDraft !== null || !isServerThread || activeThread.messages.length === 0;
+    const branchForSend = newThreadDraft ? newThreadDraft.branch : activeThreadBranch;
+    const worktreePathForSend = newThreadDraft
+      ? newThreadDraft.worktreePath
+      : activeThread.worktreePath;
+    const envModeForSend = newThreadDraft
+      ? resolveSendEnvMode({ requestedEnvMode: newThreadDraft.envMode, isGitRepo })
+      : sendEnvMode;
+    const startFromOriginForSend = newThreadDraft
+      ? newThreadDraft.startFromOrigin
+      : startFromOrigin;
+    const runtimeModeForSend = newThreadDraft?.runtimeMode ?? runtimeMode;
+    const interactionModeForSend = newThreadDraft?.interactionMode ?? interactionMode;
     const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
+      isFirstMessage && envModeForSend === "worktree" && !worktreePathForSend
+        ? branchForSend
         : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
-      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      isFirstMessage && envModeForSend === "worktree" && !worktreePathForSend;
+    if (shouldCreateWorktree && !branchForSend) {
+      const error = "Select a base branch before sending in New worktree mode.";
+      if (newThreadDraft) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Could not send to a new thread",
+            description: error,
+          }),
+        );
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        restoreComposerSnapshot(false);
+      } else {
+        setThreadError(threadIdForSend, error);
+      }
       return;
     }
 
     sendInFlightRef.current = true;
-    if (isDraftHeroState && activeThreadKey) {
+    if (!newThreadDraft && isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
       const dockStarted = new Promise<void>((resolve) => {
         resolveDockStarted = resolve;
@@ -5065,13 +5220,10 @@ function ChatViewContent(props: ChatViewProps) {
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
     }
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    if (!newThreadDraft) {
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    }
 
-    const composerImagesSnapshot = [...composerImages];
-    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
-    const composerElementContextsSnapshot = [...composerElementContexts];
-    const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
-    const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
@@ -5110,35 +5262,37 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Sending always returns to the live edge. The new row becomes the
-    // anchored end-space target so it lands near the top while the response
-    // streams into the reserved space below it.
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "anchoring-new-turn";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = messageIdForSend;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor({
-      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-      messageId: messageIdForSend,
-    });
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        turnId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
-    setThreadError(threadIdForSend, null);
+    if (!newThreadDraft) {
+      // Sending always returns to the live edge. The new row becomes the
+      // anchored end-space target so it lands near the top while the response
+      // streams into the reserved space below it.
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "anchoring-new-turn";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      pendingTimelineAnchorRef.current = messageIdForSend;
+      activeTimelineAnchorIndexRef.current = null;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      setTimelineAnchor({
+        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        messageId: messageIdForSend,
+      });
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      setThreadError(threadIdForSend, null);
+    }
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
         expiredTerminalContextCount,
@@ -5152,9 +5306,11 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    if (!newThreadDraft) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    }
 
     let firstComposerImageName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
@@ -5184,7 +5340,7 @@ function ChatViewContent(props: ChatViewProps) {
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
     // Auto-title from first message
-    if (isFirstMessage && isServerThread) {
+    if (isFirstMessage && isServerThread && !newThreadDraft) {
       const titleResult = await updateThreadMetadata({
         environmentId,
         input: {
@@ -5197,7 +5353,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
 
-    if (failure === null && isServerThread) {
+    if (failure === null && isServerThread && !newThreadDraft) {
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
@@ -5205,8 +5361,8 @@ function ChatViewContent(props: ChatViewProps) {
         ...(localCheckoutBranchMismatch
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
-        runtimeMode,
-        interactionMode,
+        runtimeMode: runtimeModeForSend,
+        interactionMode: interactionModeForSend,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -5221,19 +5377,19 @@ function ChatViewContent(props: ChatViewProps) {
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
+        newThreadDraft || isLocalDraftThread || baseBranchForWorktree
           ? {
-              ...(isLocalDraftThread
+              ...(newThreadDraft || isLocalDraftThread
                 ? {
                     createThread: {
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
-                      runtimeMode,
-                      interactionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
-                      createdAt: activeThread.createdAt,
+                      runtimeMode: runtimeModeForSend,
+                      interactionMode: interactionModeForSend,
+                      branch: branchForSend,
+                      worktreePath: worktreePathForSend,
+                      createdAt: newThreadDraft?.createdAt ?? activeThread.createdAt,
                     },
                   }
                 : {}),
@@ -5243,14 +5399,16 @@ function ChatViewContent(props: ChatViewProps) {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(randomHex),
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(startFromOriginForSend ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
                   }
                 : {}),
             }
           : undefined;
-      beginLocalDispatch({ preparingWorktree: false });
+      if (!newThreadDraft) {
+        beginLocalDispatch({ preparingWorktree: false });
+      }
       const startResult = await startThreadTurn({
         environmentId,
         input: {
@@ -5263,8 +5421,8 @@ function ChatViewContent(props: ChatViewProps) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
-          runtimeMode,
-          interactionMode,
+          runtimeMode: runtimeModeForSend,
+          interactionMode: interactionModeForSend,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
@@ -5273,21 +5431,15 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        acknowledgeActiveThreadWoke();
+        if (!newThreadDraft) {
+          acknowledgeActiveThreadWoke();
+        }
       }
     }
 
     if (failure !== null) {
-      if (
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerElementContextsRef.current.length === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
-          .length ?? 0) === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-          .length ?? 0) === 0
-      ) {
+      const composerRestored = restoreComposerSnapshot(!newThreadDraft);
+      if (composerRestored && !newThreadDraft) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -5296,30 +5448,55 @@ function ChatViewContent(props: ChatViewProps) {
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
-        promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        composerElementContextsRef.current = composerElementContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-          prompt: promptForSend,
-          detectTrigger: true,
-        });
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
-        setThreadError(
-          threadIdForSend,
-          error instanceof Error ? error.message : "Failed to send message.",
+        const description = error instanceof Error ? error.message : "Failed to send message.";
+        if (newThreadDraft) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not send to a new thread",
+              description,
+            }),
+          );
+        } else {
+          setThreadError(threadIdForSend, description);
+        }
+      }
+    }
+    if (turnStartSucceeded && newThreadDraft && newThreadDraftId) {
+      for (const image of composerImagesSnapshot) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      await settlePromise(() =>
+        waitForStartedServerThread(
+          scopeThreadRef(newThreadDraft.environmentId, threadIdForSend),
+          2_000,
+        ),
+      );
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      const navigateResult = await settlePromise(() =>
+        navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(newThreadDraftId),
+        }),
+      );
+      if (navigateResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(navigateResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "New thread started",
+            description:
+              error instanceof Error
+                ? `The thread started, but could not be opened: ${error.message}`
+                : "The thread started, but could not be opened.",
+          }),
         );
       }
+      return;
     }
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
@@ -5329,6 +5506,9 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  const onSendToNewThread = (e?: { preventDefault: () => void }) =>
+    onSend(e, undefined, "new-thread");
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -6395,6 +6575,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
+                            onSendToNewThread={onSendToNewThread}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

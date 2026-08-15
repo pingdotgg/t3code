@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { ComposerImageAttachment } from "../composerDraftStore";
 import type { Thread, ThreadShell } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
@@ -24,6 +25,7 @@ import {
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  prepareComposerImagesForRetry,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
@@ -38,6 +40,28 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("composer image retry ownership", () => {
+  it("keeps new-thread preview URLs that were not handed to an optimistic message", () => {
+    const file = new File(["image"], "image.png", { type: "image/png" });
+    const image: ComposerImageAttachment = {
+      type: "image",
+      id: "image-1",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl: "blob:new-thread-preview",
+      file,
+    };
+
+    const retryImages = prepareComposerImagesForRetry([image], {
+      previewsOwnedByOptimisticMessage: false,
+    });
+
+    expect(retryImages).toEqual([image]);
+    expect(retryImages[0]).toBe(image);
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());
