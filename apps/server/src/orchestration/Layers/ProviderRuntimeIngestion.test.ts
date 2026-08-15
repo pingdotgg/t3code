@@ -225,6 +225,11 @@ describe("ProviderRuntimeIngestion", () => {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
+    const backgroundLivenessLayer = Layer.succeed(
+      ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+      backgroundLiveness,
+    );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -242,7 +247,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(projectionSnapshotLayer),
       // Single shared liveness instance across ingestion (writer), the
       // engine, and the snapshot query (reader).
-      Layer.provideMerge(ThreadBackgroundLiveness.layer),
+      Layer.provideMerge(backgroundLivenessLayer),
       Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
@@ -318,6 +323,8 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      getBackgroundLiveness: (threadId: ThreadId) =>
+        backgroundLiveness.getThreadBackgroundLiveness(threadId),
       drain,
     };
   }
@@ -3252,6 +3259,37 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+  });
+
+  it("does not revive background liveness after the provider session exits", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-before-stale-task"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId,
+      payload: {},
+    });
+    await harness.drain();
+    expect(harness.getBackgroundLiveness(threadId)).toBeNull();
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-stale-task-after-session-exit"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId,
+      payload: {
+        taskId: "stale-task-after-exit",
+        description: "This task belongs to the exited session",
+      },
+    });
+    await harness.drain();
+
+    expect(harness.getBackgroundLiveness(threadId)).toBeNull();
   });
 
   it("titles task activities with the task description, including on completion", async () => {

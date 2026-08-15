@@ -18,6 +18,8 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type RuntimeTaskUsage,
+  type TaskProgressPayload,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -27,7 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makePriorityCoalescingWorker } from "@t3tools/shared/PriorityCoalescingWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -113,6 +115,152 @@ type RuntimeIngestionInput =
       source: "domain";
       event: TurnStartRequestedDomainEvent;
     };
+
+type RuntimeIngestionBatch = ReadonlyArray<RuntimeIngestionInput>;
+
+const TASK_LIFECYCLE_ORDER = [
+  "task.started",
+  "task.progress",
+  "task.updated",
+  "task.completed",
+] as const;
+
+function isTaskLifecycleInput(input: RuntimeIngestionInput): input is Extract<
+  RuntimeIngestionInput,
+  { source: "runtime" }
+> & {
+  readonly event: Extract<ProviderRuntimeEvent, { type: (typeof TASK_LIFECYCLE_ORDER)[number] }>;
+} {
+  return (
+    input.source === "runtime" &&
+    TASK_LIFECYCLE_ORDER.some((eventType) => eventType === input.event.type)
+  );
+}
+
+function hasTaskProgressActivityState(payload: TaskProgressPayload): boolean {
+  return (
+    payload.typedUsage === undefined ||
+    payload.summary !== undefined ||
+    payload.lastToolName !== undefined ||
+    payload.status !== undefined ||
+    payload.error !== undefined ||
+    payload.phases !== undefined
+  );
+}
+
+function mergeTaskUsage(
+  previous: RuntimeTaskUsage | undefined,
+  next: RuntimeTaskUsage | undefined,
+): RuntimeTaskUsage | undefined {
+  if (!previous) return next;
+  if (!next) return previous;
+
+  const max = (a: number | undefined, b: number | undefined): number | undefined =>
+    a === undefined ? b : b === undefined ? a : Math.max(a, b);
+  const inputTokens = max(previous.inputTokens, next.inputTokens);
+  const cachedInputTokens = max(previous.cachedInputTokens, next.cachedInputTokens);
+  const outputTokens = max(previous.outputTokens, next.outputTokens);
+  const reasoningOutputTokens = max(previous.reasoningOutputTokens, next.reasoningOutputTokens);
+  const toolUses = max(previous.toolUses, next.toolUses);
+  const durationMs = max(previous.durationMs, next.durationMs);
+  return {
+    totalTokens: Math.max(previous.totalTokens, next.totalTokens),
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(reasoningOutputTokens === undefined ? {} : { reasoningOutputTokens }),
+    ...(toolUses === undefined ? {} : { toolUses }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+  };
+}
+
+function mergeTaskProgressPayload(
+  previous: TaskProgressPayload,
+  next: TaskProgressPayload,
+): TaskProgressPayload {
+  const payload = hasTaskProgressActivityState(next) ? next : { ...previous, ...next };
+  const typedUsage = mergeTaskUsage(previous.typedUsage, next.typedUsage);
+  return typedUsage === undefined ? payload : { ...payload, typedUsage };
+}
+
+export function mergeBackgroundIngestion(
+  current: RuntimeIngestionBatch,
+  next: RuntimeIngestionBatch,
+): RuntimeIngestionBatch {
+  const combined = [...current, ...next];
+  if (!combined.every(isTaskLifecycleInput)) {
+    return next;
+  }
+
+  const latestByType = new Map<(typeof TASK_LIFECYCLE_ORDER)[number], RuntimeIngestionInput>();
+  // Reinsert replacements so different lifecycle types keep their latest arrival order.
+  // Explicit running updates can reactivate a task after a completed attempt.
+  for (const input of combined) {
+    const previous = latestByType.get(input.event.type);
+    if (
+      input.event.type === "task.progress" &&
+      previous?.source === "runtime" &&
+      previous.event.type === "task.progress"
+    ) {
+      latestByType.delete(input.event.type);
+      latestByType.set(input.event.type, {
+        ...input,
+        event: {
+          ...input.event,
+          payload: mergeTaskProgressPayload(previous.event.payload, input.event.payload),
+        },
+      });
+      continue;
+    }
+    if (
+      input.event.type === "task.updated" &&
+      previous?.source === "runtime" &&
+      previous.event.type === "task.updated"
+    ) {
+      latestByType.delete(input.event.type);
+      latestByType.set(input.event.type, {
+        ...input,
+        event: {
+          ...input.event,
+          payload: {
+            ...previous.event.payload,
+            ...input.event.payload,
+          },
+        },
+      });
+      continue;
+    }
+    latestByType.delete(input.event.type);
+    latestByType.set(input.event.type, input);
+  }
+  return Array.from(latestByType.values());
+}
+
+function backgroundIngestionKey(input: RuntimeIngestionInput): string | undefined {
+  if (input.source !== "runtime") {
+    return undefined;
+  }
+
+  const event = input.event;
+  switch (event.type) {
+    // These are latest-state telemetry streams. A large agent fleet can emit
+    // hundreds of ticks while one database write is in flight, so keeping
+    // every queued intermediate value only delays user-visible replies.
+    case "task.started":
+    case "task.progress":
+    case "task.updated":
+    case "task.completed":
+      return `task:${event.threadId}:${event.payload.taskId}`;
+    case "tool.progress":
+      return event.payload.taskId === undefined
+        ? undefined
+        : `tool-progress:${event.threadId}:${event.payload.taskId}`;
+    case "thread.token-usage.updated":
+      return `thread-token-usage:${event.threadId}`;
+    default:
+      return undefined;
+  }
+}
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
@@ -577,12 +725,7 @@ export function runtimeEventToActivities(
         event.payload.description.trim().length > 0
           ? { title: truncateDetail(event.payload.description, 120) }
           : {};
-      const hasProgressState =
-        event.payload.typedUsage === undefined ||
-        event.payload.summary !== undefined ||
-        event.payload.lastToolName !== undefined ||
-        event.payload.status !== undefined ||
-        event.payload.error !== undefined;
+      const hasProgressState = hasTaskProgressActivityState(event.payload);
       return [
         ...(hasProgressState
           ? [
@@ -1965,6 +2108,11 @@ const make = Effect.gen(function* () {
         case "task.progress":
         case "task.updated":
         case "task.completed": {
+          // A realtime session exit can overtake queued background task
+          // telemetry. Never let those stale rows resurrect sidebar liveness.
+          if (thread.session?.status === "stopped") {
+            break;
+          }
           const payload = event.payload as {
             taskId: string;
             taskType?: string;
@@ -2040,13 +2188,24 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processInputSafely);
+  const worker = yield* makePriorityCoalescingWorker({
+    mergeBackground: mergeBackgroundIngestion,
+    process: (batch) =>
+      Effect.forEach(batch, processInputSafely, { concurrency: 1 }).pipe(Effect.asVoid),
+  });
+
+  const enqueueInput = (input: RuntimeIngestionInput) => {
+    const backgroundKey = backgroundIngestionKey(input);
+    return backgroundKey === undefined
+      ? worker.enqueueRealtime([input])
+      : worker.enqueueBackground(backgroundKey, [input]);
+  };
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* forkParked(
         Stream.runForEach(providerService.streamEvents, (event) =>
-          worker.enqueue({ source: "runtime", event }),
+          enqueueInput({ source: "runtime", event }),
         ),
       );
       yield* forkParked(
@@ -2054,7 +2213,7 @@ const make = Effect.gen(function* () {
           if (event.type !== "thread.turn-start-requested") {
             return Effect.void;
           }
-          return worker.enqueue({ source: "domain", event });
+          return enqueueInput({ source: "domain", event });
         }),
       );
     });
