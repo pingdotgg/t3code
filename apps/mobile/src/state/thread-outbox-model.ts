@@ -169,7 +169,7 @@ export function resolveThreadOutboxDeliveryAction(input: {
   if (!input.threadExists) {
     return input.shellStatus === "live" ? "remove" : "wait";
   }
-  return input.environmentConnected && !input.threadBusy ? "send" : "wait";
+  return input.environmentConnected ? "send" : "wait";
 }
 
 /**

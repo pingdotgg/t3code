@@ -6049,8 +6049,9 @@ function ChatViewContent(props: ChatViewProps) {
         // One inset in both states: the controls move between containers when
         // the right panel opens, and a different right offset made them jump
         // sideways on every toggle.
-        "workspace-titlebar-controls z-50 mr-px gap-1 [-webkit-app-region:no-drag]",
+        "absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
       )}
+      data-workspace-titlebar-controls
     >
       {rightPanelOpen && !shouldUseRightPanelSheet ? (
         <RightPanelMaximizeControl
@@ -6195,12 +6196,12 @@ function ChatViewContent(props: ChatViewProps) {
             "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
               ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
+                  "drag-region relative flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
                   reserveTitleBarControlInset &&
                     !inlineRightPanelOwnsTitleBar &&
                     "wco:pr-[var(--workspace-native-controls-inset)]",
                 )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+              : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
@@ -6304,16 +6305,17 @@ function ChatViewContent(props: ChatViewProps) {
                   className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
                   style={{ bottom: composerOverlayHeight + 4 }}
                 >
-                  <button
-                    type="button"
+                  <Button
                     aria-label="Scroll to end"
                     title="Scroll to end"
                     onClick={() => scrollToEnd(true)}
-                    className="chat-composer-glass pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                    className="pointer-events-auto gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
+                    size="xs"
+                    variant="glass"
                   >
                     <ChevronDownIcon className="size-3.5" />
                     Scroll to end
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -6330,7 +6332,7 @@ function ChatViewContent(props: ChatViewProps) {
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
-                className="chat-composer-horizontal-inset w-full"
+                className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
               >
                 <div className="pointer-events-auto relative z-10">
                   {isDraftHeroState ? (
@@ -6614,7 +6616,11 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelSheet open onClose={closePreviewPanel}>
           <RightPanelTabs
             mode="sheet"
-            layoutControls={panelToggleControls}
+            // Same effective inset as the closed-state titlebar controls
+            // (pr-3 in the tab bar plus this pixel equals the absolute
+            // right inset plus mr-px), so the cluster does not creep when
+            // the sheet opens.
+            layoutControls={<div className="mr-px flex items-center">{panelToggleControls}</div>}
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}

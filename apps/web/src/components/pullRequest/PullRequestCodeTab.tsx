@@ -668,13 +668,12 @@ export function PullRequestCodeTab({
       // chevron follows it rather than recomputing the default here.
       const collapsed = item.collapsed === true;
       return (
-        <button
-          type="button"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-          className={cn(
-            "mr-1 inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground",
-          )}
+          className="mr-1 rounded hover:bg-transparent"
           onClick={(event) => {
             event.stopPropagation();
             toggleFile(item.id);
@@ -685,7 +684,7 @@ export function PullRequestCodeTab({
           ) : (
             <ChevronDownIcon className="size-4" />
           )}
-        </button>
+        </Button>
       );
     },
     [toggleFile],
@@ -899,7 +898,7 @@ export function PullRequestCodeTab({
     review.verdicts.length === 0 ? null : (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
         {reviewOpen ? (
-          <div className="chat-composer-glass pointer-events-auto absolute inset-x-3 bottom-3 rounded-xl border border-border/60 shadow-lg">
+          <div className="surface-glass pointer-events-auto absolute inset-x-3 bottom-3 rounded-xl border border-border/60 shadow-lg">
             <Button
               type="button"
               size="icon-sm"
@@ -923,10 +922,11 @@ export function PullRequestCodeTab({
         ) : (
           // Bottom-right, clear of the vertical scrollbar the diff view keeps to its own right
           // edge.
-          <button
-            type="button"
-            className="chat-composer-glass pointer-events-auto absolute bottom-3 right-4 flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1.5 text-xs font-medium shadow-lg"
+          <Button
+            className="pointer-events-auto absolute right-4 bottom-3 rounded-full shadow-lg"
             onClick={() => setReviewOpen(true)}
+            size="compact"
+            variant="glass"
           >
             <MessageSquareIcon className="size-3.5" />
             Review
@@ -935,7 +935,7 @@ export function PullRequestCodeTab({
                 {pendingComments.length}
               </span>
             ) : null}
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -959,7 +959,7 @@ export function PullRequestCodeTab({
    * diff API offers it.
    */
   const toolbar = (
-    <div className="surface-subheader justify-between gap-2 px-4 text-xs text-muted-foreground">
+    <div className="flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {/* A host that reports no commits has nothing to scope by, and a dropdown whose only
             entry is the scope already showing is a control that does nothing. */}

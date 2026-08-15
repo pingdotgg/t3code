@@ -950,6 +950,27 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports changes to a file named HEAD", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "HEAD", "first line\n");
+        yield* git(cwd, ["add", "HEAD"]);
+        yield* git(cwd, ["commit", "-m", "add HEAD file"]);
+        yield* writeTextFile(cwd, "HEAD", "first line\nsecond line\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.hasWorkingTreeChanges, true);
+        assert.deepInclude(status.workingTree.files, {
+          path: "HEAD",
+          insertions: 1,
+          deletions: 0,
+        });
+      }),
+    );
+
     it.effect("reports default-branch delta separately from upstream delta", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
