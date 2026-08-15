@@ -29,7 +29,15 @@ import {
 import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
@@ -247,6 +255,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null) {
   const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
     reportFailure: false,
     reportDefect: false,
+    refresh: true,
   });
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
   const [isBrowseNavigating, setIsBrowseNavigating] = useState(false);
@@ -717,6 +726,17 @@ function FolderBrowser(props: {
           input: browseInput,
         }),
   );
+  const shouldRefreshCachedBrowseOnMountRef = useRef(
+    browseState.data !== null && !browseState.isPending,
+  );
+  const refreshCachedBrowseOnMount = useEffectEvent(() => {
+    browseState.refresh();
+  });
+  useEffect(() => {
+    if (shouldRefreshCachedBrowseOnMountRef.current) {
+      refreshCachedBrowseOnMount();
+    }
+  }, []);
   const { visibleEntries: visibleBrowseEntries } = useMemo(
     () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browsePath.filterQuery),
     [browsePath.filterQuery, browseState.data?.entries],
