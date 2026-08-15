@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PlusIcon, XIcon } from "lucide-react";
 import type {
   ComputerHistoryClearScope,
@@ -8,7 +8,6 @@ import type {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -25,6 +24,7 @@ import { Switch } from "../ui/switch";
 import {
   SettingIconAction,
   SettingResetButton,
+  SettingRowTitle,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
@@ -33,10 +33,6 @@ import { searchableSetting } from "./settingsSearch";
 
 function isDesktopHost(): boolean {
   return typeof window !== "undefined" && window.desktopBridge !== undefined;
-}
-
-function RowTitle({ children }: { children: ReactNode }) {
-  return <span className="inline-flex items-center gap-2">{children}</span>;
 }
 
 function normalizeEntry(value: string): string {
@@ -128,10 +124,7 @@ function PrivacyExclusionList({
           <ul className="flex flex-col gap-1.5">
             {items.map((item) => (
               <li key={item}>
-                <Badge
-                  variant="outline"
-                  className="h-auto max-w-full justify-between gap-2 px-2 py-1 text-left font-normal"
-                >
+                <div className="flex w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2 py-1 text-sm">
                   <span className="min-w-0 truncate">{item}</span>
                   <SettingIconAction
                     type="button"
@@ -141,7 +134,7 @@ function PrivacyExclusionList({
                   >
                     <XIcon className="size-3" />
                   </SettingIconAction>
-                </Badge>
+                </div>
               </li>
             ))}
           </ul>
@@ -338,7 +331,7 @@ export function ComputerHistorySettings() {
         />
 
         <SettingsRow
-          title={<RowTitle>Paused</RowTitle>}
+          title={<SettingRowTitle>Paused</SettingRowTitle>}
           description="Stop collecting new events without turning the feature off"
           control={
             <Switch
@@ -351,7 +344,7 @@ export function ComputerHistorySettings() {
         />
 
         <SettingsRow
-          title={<RowTitle>Mirror to Codex skysight</RowTitle>}
+          title={<SettingRowTitle>Mirror to Codex skysight</SettingRowTitle>}
           description="Also write memories under ~/.codex/memories/extensions/skysight/"
           control={
             <Switch
@@ -364,7 +357,7 @@ export function ComputerHistorySettings() {
 
         {status ? (
           <SettingsRow
-            title={<RowTitle>Recorder status</RowTitle>}
+            title={<SettingRowTitle>Recorder status</SettingRowTitle>}
             description={
               status.lastError
                 ? status.lastError
@@ -385,7 +378,7 @@ export function ComputerHistorySettings() {
           recorded.
         </p>
         <SettingsRow
-          title={<RowTitle>Excluded apps &amp; websites</RowTitle>}
+          title={<SettingRowTitle>Excluded apps &amp; websites</SettingRowTitle>}
           description={exclusionSummary}
           control={
             <Button
