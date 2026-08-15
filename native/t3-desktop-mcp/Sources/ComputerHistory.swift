@@ -285,13 +285,45 @@ private final class DaemonState {
     // Strip query/fragment so nested URLs in ?next= cannot spoof includeOnly matches.
     let page = Self.stripQueryAndFragment(url).lowercased()
     if needle.contains("/") {
-      return page.contains(needle)
+      return pathNeedleMatches(page: page, needle: needle)
     }
     // Hostname / bare-label needles compare against the page host only.
     guard let host = urlHosts(page).first else {
       return page == needle || page.hasSuffix(".\(needle)")
     }
     return host == needle || host.hasSuffix(".\(needle)")
+  }
+
+  private static func pathNeedleMatches(page: String, needle: String) -> Bool {
+    // `trusted.example/path` must not match `https://evil.example/trusted.example/path`.
+    if let slash = needle.firstIndex(of: "/") {
+      let hostPart = String(needle[..<slash])
+      let pathPart = String(needle[needle.index(after: slash)...])
+      if !hostPart.isEmpty && (hostPart.contains(".") || hostPart.hasPrefix("[")) {
+        guard let host = urlHosts(page).first else { return false }
+        guard host == hostPart || host.hasSuffix(".\(hostPart)") else { return false }
+        let path = pagePath(page)
+        let want = pathPart.isEmpty ? "/" : "/\(pathPart)"
+        return path == want || path.hasPrefix("\(want)/") || path.hasPrefix(want)
+      }
+    }
+    let path = pagePath(page)
+    let want = needle.hasPrefix("/") ? needle : "/\(needle)"
+    return path == want || path.hasPrefix("\(want)/")
+  }
+
+  private static func pagePath(_ page: String) -> String {
+    if let range = page.range(of: "://") {
+      let after = page[range.upperBound...]
+      if let slash = after.firstIndex(of: "/") {
+        return String(after[slash...])
+      }
+      return "/"
+    }
+    if let slash = page.firstIndex(of: "/") {
+      return String(page[slash...])
+    }
+    return "/"
   }
 
   private static func stripQueryAndFragment(_ raw: String) -> String {

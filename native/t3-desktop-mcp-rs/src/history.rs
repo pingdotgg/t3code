@@ -547,12 +547,54 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
     };
     let page = strip_query_and_fragment(&raw_url).to_lowercase();
     if needle.contains('/') {
-        return page.contains(&needle);
+        return path_needle_matches(&page, &needle);
     }
     if let Some(host) = extract_hosts(&page).into_iter().next() {
         return host == needle || host.ends_with(&format!(".{needle}"));
     }
     false
+}
+
+fn path_needle_matches(page: &str, needle: &str) -> bool {
+    // `trusted.example/path` must not match `https://evil.example/trusted.example/path`.
+    if let Some((host_part, path_part)) = needle.split_once('/') {
+        if !host_part.is_empty() && (host_part.contains('.') || host_part.starts_with('[')) {
+            let Some(host) = extract_hosts(page).into_iter().next() else {
+                return false;
+            };
+            if !(host == host_part || host.ends_with(&format!(".{host_part}"))) {
+                return false;
+            }
+            let path = page_path(page);
+            let want = if path_part.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{path_part}")
+            };
+            return path == want || path.starts_with(&format!("{want}/")) || path.starts_with(&want);
+        }
+    }
+    let path = page_path(page);
+    let want = if needle.starts_with('/') {
+        needle.to_string()
+    } else {
+        format!("/{needle}")
+    };
+    path == want || path.starts_with(&format!("{want}/"))
+}
+
+fn page_path(page: &str) -> String {
+    if let Some(idx) = page.find("://") {
+        let after = &page[idx + 3..];
+        if let Some(slash) = after.find('/') {
+            return after[slash..].to_string();
+        }
+        return "/".to_string();
+    }
+    if let Some(slash) = page.find('/') {
+        return page[slash..].to_string();
+    }
+    "/".to_string()
 }
 
 fn strip_query_and_fragment(raw: &str) -> &str {
@@ -917,5 +959,17 @@ mod tests {
     fn angle_bracket_and_ipv6_hosts_match() {
         assert!(host_matches("<https://blocked.example>", "blocked.example"));
         assert!(host_matches("http://[::1]:8080/x", "[::1]"));
+    }
+
+    #[test]
+    fn path_needle_requires_matching_host() {
+        assert!(host_matches(
+            "https://trusted.example/path/more",
+            "trusted.example/path"
+        ));
+        assert!(!host_matches(
+            "https://evil.example/trusted.example/path",
+            "trusted.example/path"
+        ));
     }
 }
