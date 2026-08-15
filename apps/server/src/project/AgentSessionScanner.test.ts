@@ -354,12 +354,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const workspace = yield* makeTempDir("t3code-workspace-");
 
         // Claude transcripts often open with records that have no cwd.
-        const contents = [
-          JSON.stringify({ type: "file-history-snapshot", messageId: "m1" }),
-          JSON.stringify({ type: "queue-operation", operation: "enqueue" }),
-          JSON.stringify({ type: "user", cwd: workspace, sessionId: "s1" }),
-          "",
-        ].join("\n");
+        const contents = `{"type":"file-history-snapshot","messageId":"m1"}\n{"type":"queue-operation","operation":"enqueue"}\n${claudeSessionLine(workspace)}`;
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
           contents,
