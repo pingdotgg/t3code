@@ -57,6 +57,15 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
       };
 }
 
+/** Whether the open pull-request action group contains at least one action. */
+export function pullRequestActionMenuHasGroup(
+  showsDraftToggle: boolean,
+  showsAutoMerge: boolean,
+  showsMergeMethods: boolean,
+): boolean {
+  return showsDraftToggle || showsAutoMerge || showsMergeMethods;
+}
+
 /** Plain-language state, shown beside the author. Conflicts are a merge signal, not a state. */
 export function describePullRequestState(state: PullRequestState, isDraft: boolean): string {
   if (state === "merged") return "Merged";
