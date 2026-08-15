@@ -18,23 +18,51 @@
 //! accessibility tools.
 
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use interprocess::local_socket::{GenericNamespaced, ListenerOptions, SendHalf, Stream, ToNsName};
+use interprocess::local_socket::{ListenerOptions, SendHalf, Stream};
+#[cfg(unix)]
+use interprocess::local_socket::{GenericFilePath, ToFsName};
+#[cfg(windows)]
+use interprocess::local_socket::{GenericNamespaced, ToNsName};
 // Imported anonymously: the traits share their names with the enums above.
 use interprocess::local_socket::traits::{Listener as _, Stream as _};
 use serde_json::{Value, json};
 
-/// Shared by the server and the `native-host` relay. Namespaced so it maps to a
-/// named pipe on Windows and an abstract/socket name on Linux.
-const SOCKET_NAME: &str = "t3-desktop-mcp-bridge.sock";
-
-/// The extension answers promptly or not at all; a stuck call must not wedge a
-/// turn, so give up and let the model try the desktop tools instead.
+/// Timeout for extension replies; a stuck call must not wedge a turn.
 const CALL_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// User-private filesystem socket (Unix) or user-scoped named pipe (Windows).
+/// Abstract / global names are intentionally avoided — they have no ownership.
+#[cfg(unix)]
+fn bridge_socket_path() -> PathBuf {
+    let dir = if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+        PathBuf::from(runtime).join("t3-desktop-mcp")
+    } else if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home).join(".local/share/t3-desktop-mcp")
+    } else {
+        let user = std::env::var("USER").unwrap_or_else(|_| "user".into());
+        std::env::temp_dir().join(format!("t3-desktop-mcp-{user}"))
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    dir.join("bridge.sock")
+}
+
+#[cfg(windows)]
+fn bridge_pipe_name() -> String {
+    let user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "user".into());
+    // Named-pipe namespace is global; embed the username so sessions do not collide.
+    format!("t3-desktop-mcp-bridge-{user}")
+}
 
 pub struct BrowserBridge {
     /// Writer half of the accepted connection, once the extension shows up.
@@ -123,14 +151,30 @@ impl Default for BrowserBridge {
 /// Accept the native host and pump its replies onto `sender`.
 fn spawn_listener(outgoing: Arc<Mutex<Option<SendHalf>>>, sender: Sender<Value>) {
     std::thread::spawn(move || {
-        let Ok(name) = SOCKET_NAME.to_ns_name::<GenericNamespaced>() else {
-            return;
+        #[cfg(unix)]
+        let path = bridge_socket_path();
+        #[cfg(unix)]
+        let name = match path.as_os_str().to_fs_name::<GenericFilePath>() {
+            Ok(name) => name,
+            Err(_) => return,
+        };
+        #[cfg(windows)]
+        let pipe = bridge_pipe_name();
+        #[cfg(windows)]
+        let name = match pipe.to_ns_name::<GenericNamespaced>() {
+            Ok(name) => name,
+            Err(_) => return,
         };
         let Ok(listener) = ListenerOptions::new().name(name).create_sync() else {
             // Another server already owns the browser; the accessibility tools
             // still work, so this is not worth reporting as a failure.
             return;
         };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
 
         loop {
             let Ok(stream) = listener.accept() else { continue };
@@ -158,7 +202,7 @@ fn spawn_listener(outgoing: Arc<Mutex<Option<SendHalf>>>, sender: Sender<Value>)
 }
 
 /// Translate tool arguments into the extension's parameter names.
-fn normalise(command: &str, args: &Value) -> Value {
+fn normalise(_command: &str, args: &Value) -> Value {
     let mut params = json!({});
     let map = params.as_object_mut().expect("just built an object");
     if let Some(tab) = args.get("tab_id").and_then(Value::as_i64) {
@@ -169,13 +213,8 @@ fn normalise(command: &str, args: &Value) -> Value {
             map.insert(key.into(), value.clone());
         }
     }
-    // `browser_select_tab` and `browser_close_tab` accept either form.
-    if command.ends_with("_tab")
-        && !map.contains_key("tabId")
-        && let Some(index) = args.get("index").and_then(Value::as_i64)
-    {
-        map.insert("tabId".into(), json!(index));
-    }
+    // Do not promote 1-based `index` to `tabId` — select_tab/close_tab require a
+    // real Chrome tab id (or AppleScript fallback handles index separately).
     params
 }
 
@@ -307,9 +346,14 @@ fn describe_snapshot(result: &Value) -> String {
 /// Chrome frames each message with a 4-byte native-endian length; the socket
 /// side is newline-delimited JSON, which keeps the server's reader trivial.
 pub fn run_native_host() -> std::io::Result<()> {
-    let name = SOCKET_NAME
-        .to_ns_name::<GenericNamespaced>()
-        .map_err(std::io::Error::other)?;
+    #[cfg(unix)]
+    let path = bridge_socket_path();
+    #[cfg(unix)]
+    let name = path.as_os_str().to_fs_name::<GenericFilePath>()?;
+    #[cfg(windows)]
+    let pipe = bridge_pipe_name();
+    #[cfg(windows)]
+    let name = pipe.to_ns_name::<GenericNamespaced>()?;
     let stream = Stream::connect(name)?;
     let (recv, mut writer) = stream.split();
 
@@ -377,9 +421,13 @@ mod tests {
     }
 
     #[test]
-    fn tab_commands_accept_an_index_when_no_tab_id_is_given() {
+    fn tab_commands_do_not_promote_index_to_tab_id() {
+        // 1-based index is AppleScript-fallback only; the extension needs tabId.
         let params = normalise("select_tab", &json!({ "index": 2 }));
-        assert_eq!(params["tabId"], json!(2));
+        assert_eq!(params.get("index"), Some(&json!(2)));
+        assert!(params.get("tabId").is_none());
+        let params = normalise("close_tab", &json!({ "index": 1 }));
+        assert!(params.get("tabId").is_none());
     }
 
     #[test]

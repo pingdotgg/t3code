@@ -259,12 +259,27 @@ fn call_tool(
         };
     }
 
-    // Display listing needs no accessibility backend, so answer it even when the
-    // backend failed to start — it helps diagnose a headless session.
+    // Display listing and whole-display screenshots need no accessibility
+    // backend, so answer them even when the backend failed to start — they help
+    // diagnose a headless session.
     if name == "list_displays" {
         return match capture::list_displays() {
             Ok(text) => text_result(text, false),
             Err(error) => text_result(format!("error: {error}"), true),
+        };
+    }
+    if name == "screenshot"
+        && let Some(display) = arg_i64(&args, "display")
+    {
+        let max_width = arg_i64(&args, "max_width")
+            .unwrap_or(capture::DEFAULT_MAX_WIDTH as i64)
+            .clamp(0, 8000) as u32;
+        return match usize::try_from(display) {
+            Ok(index) => match capture::capture_display(index, max_width) {
+                Ok(png) => image_result(png, format!("display {index}")),
+                Err(error) => text_result(format!("error: {error}"), true),
+            },
+            Err(_) => text_result("error: display index must be zero or greater", true),
         };
     }
 
@@ -354,6 +369,11 @@ fn run_desktop_tool(
             )?;
             let start = arg_i64(args, "start").unwrap_or(0).max(0) as usize;
             let length = arg_i64(args, "length").filter(|value| *value >= 0).map(|v| v as usize);
+            if let Some(len) = length
+                && start.checked_add(len).is_none()
+            {
+                return Err(DesktopError::new("start + length overflows"));
+            }
             desktop.select_text(element, start, length)?
         }
         "screenshot" => {

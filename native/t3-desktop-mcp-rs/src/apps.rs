@@ -99,19 +99,23 @@ pub fn resolve_pid(query: &str) -> Result<u32> {
     })?;
     let lowered = query.to_lowercase();
 
-    if let Some(app) = apps
+    let exact: Vec<&AppInfo> = apps
         .iter()
-        .find(|app| app.name.to_lowercase() == lowered || app.id == lowered)
-    {
-        return Ok(app.pid);
+        .filter(|app| app.name.to_lowercase() == lowered || app.id == lowered)
+        .collect();
+    if !exact.is_empty() {
+        return pick_from_matches(query, &exact);
     }
 
     let matches: Vec<&AppInfo> = apps
         .iter()
         .filter(|app| app.name.to_lowercase().contains(&lowered))
         .collect();
+    pick_from_matches(query, &matches)
+}
 
-    match matches.as_slice() {
+fn pick_from_matches(query: &str, matches: &[&AppInfo]) -> Result<u32> {
+    match matches {
         [single] => Ok(single.pid),
         [] => Err(DesktopError::new(format!(
             "no running app matches '{query}' — call list_apps to see what is open"

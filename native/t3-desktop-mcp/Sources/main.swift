@@ -394,7 +394,7 @@ struct WindowTarget {
 
 func makeWindowTarget(pid: pid_t, window: AXUIElement) -> WindowTarget? {
     guard let wid = SkyLight.windowID(window) else { return nil }
-    let origin = axPoint(window, kAXPositionAttribute as String) ?? .zero
+    guard let origin = axPoint(window, kAXPositionAttribute as String) else { return nil }
     let size = axSize(window, kAXSizeAttribute as String) ?? .zero
     return WindowTarget(pid: pid, wid: wid, frame: CGRect(origin: origin, size: size))
 }
@@ -454,8 +454,7 @@ func windowTarget(forPid pid: pid_t) -> WindowTarget? {
 /// anything, so callers need to know when to bypass it and click for real.
 func isInWebContent(_ element: AXUIElement) -> Bool {
     var node: AXUIElement? = element
-    for _ in 0..<14 {
-        guard let current = node else { return false }
+    while let current = node {
         if let role = axString(current, kAXRoleAttribute as String),
            role == "AXWebArea" { return true }
         node = axElement(current, kAXParentAttribute as String)
@@ -1200,10 +1199,12 @@ enum Chrome {
             let data = try? Data(contentsOf: stateURL),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let windowId = object["windowId"] as? Int,
-            let chromePid = object["chromePid"] as? Int
+            let chromePid = object["chromePid"] as? Int,
+            chromePid >= Int(pid_t.min), chromePid <= Int(pid_t.max)
         else {
             // Legacy plain-integer files from older builds are intentionally
             // discarded: a reused window id after Chrome restart is unsafe.
+            // Out-of-range chromePid would trap on pid_t conversion.
             try? FileManager.default.removeItem(at: stateURL)
             return
         }
@@ -1353,24 +1354,40 @@ enum Chrome {
         return false
     }
 
+    /// Cross-process lock around agent-window state so concurrent MCP servers
+    /// cannot each create a window after both observing a missing one.
+    private static func withStateLock<T>(_ body: () -> T) -> T {
+        let lockPath = stateURL.path + ".lock"
+        let lockFd = open(lockPath, O_CREAT | O_RDWR, 0o600)
+        guard lockFd >= 0 else { return body() }
+        _ = flock(lockFd, LOCK_EX)
+        defer {
+            flock(lockFd, LOCK_UN)
+            close(lockFd)
+        }
+        return body()
+    }
+
     /// Return the agent's window id, creating the window if needed.
     static func ensureAgentWindow() -> WindowOutcome {
-        if let id = liveAgentWindowID() { return .success(id) }
+        withStateLock {
+            if let id = liveAgentWindowID() { return .success(id) }
 
-        let created = run("""
-        tell application "Google Chrome"
-            set w to make new window
-            return id of w as string
-        end tell
-        """)
-        switch created {
-        case .failure(let e): return .failure(e)
-        case .success(let s):
-            guard let id = Int(s.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)) else {
-                return .failure("unexpected window id: \(s)")
+            let created = run("""
+            tell application "Google Chrome"
+                set w to make new window
+                return id of w as string
+            end tell
+            """)
+            switch created {
+            case .failure(let e): return .failure(e)
+            case .success(let s):
+                guard let id = Int(s.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)) else {
+                    return .failure("unexpected window id: \(s)")
+                }
+                agentWindowID = id
+                return .success(id)
             }
-            agentWindowID = id
-            return .success(id)
         }
     }
 
