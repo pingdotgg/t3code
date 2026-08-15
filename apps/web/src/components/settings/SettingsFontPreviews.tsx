@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
 import { useTheme } from "../../hooks/useTheme";
-import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
+import type { DiffThemeName } from "../../lib/diffRendering";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 // The font previews are the real surfaces, not lookalikes: the composer's
@@ -79,7 +79,12 @@ function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
     promise = preloadPatchFile({
       patch: DIFF_PREVIEW_PATCH,
       options: { diffStyle: "unified", theme },
-    }).then((results) => results.map((result) => result.prerenderedHTML));
+    })
+      .then((results) => results.map((result) => result.prerenderedHTML))
+      .catch((error) => {
+        diffPreviewHtmlByTheme.delete(theme);
+        throw error;
+      });
     diffPreviewHtmlByTheme.set(theme, promise);
   }
   return promise;
@@ -121,22 +126,28 @@ function StaticDiffHtml({ html }: { html: string }) {
 
 /** The diff panel's file diff, statically rendered by its real pipeline. */
 export function CodeFontPreview() {
-  const { resolvedTheme } = useTheme();
-  const themeName = resolveDiffThemeName(resolvedTheme);
-  const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
+  const { syntaxThemeName: themeName } = useTheme();
+  const [preview, setPreview] = useState<{
+    themeName: DiffThemeName;
+    htmlByFile: readonly string[];
+  } | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void loadDiffPreviewHtml(themeName).then((html) => {
-      if (!cancelled) setHtmlByFile(html);
-    });
+    void loadDiffPreviewHtml(themeName)
+      .then((htmlByFile) => {
+        if (!cancelled) setPreview({ themeName, htmlByFile });
+      })
+      .catch(() => {
+        if (!cancelled) setPreview(null);
+      });
     return () => {
       cancelled = true;
     };
   }, [themeName]);
-  if (htmlByFile === null) return null;
+  if (preview?.themeName !== themeName) return null;
   return (
     <div className="mt-1 mb-2 space-y-2">
-      {htmlByFile.map((html) => (
+      {preview.htmlByFile.map((html) => (
         <StaticDiffHtml key={html} html={html} />
       ))}
     </div>

@@ -4,11 +4,12 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
-  CUSTOM_THEMES_STORAGE_KEY,
-  invalidateCustomThemes,
   canonicalThemePreference,
   isKnownThemePreference,
+  getThemeDefinition,
+  getThemeMode,
   getThemePreferenceMode,
+  subscribeToCustomThemes,
   parseThemeHalves,
   resolveDesktopTheme,
   resolveThemeAppearance,
@@ -21,6 +22,8 @@ import {
   type ThemeHalves,
   type ThemePreferenceMode,
 } from "../themePalette";
+import type { DiffThemeName } from "../lib/diffRendering";
+import { activateSyntaxTheme } from "../lib/syntaxTheme";
 
 type Theme = ThemePreference;
 type ThemeSnapshot = {
@@ -29,6 +32,8 @@ type ThemeSnapshot = {
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
   themeHalves: ThemeHalves | null;
+  resolvedTheme: ThemeAppearance;
+  syntaxThemeName: DiffThemeName;
 };
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
@@ -41,6 +46,8 @@ const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   followSystem: true,
   appearanceMode: "system",
   themeHalves: null,
+  resolvedTheme: "light",
+  syntaxThemeName: "pierre-light",
 };
 
 /** Live read of the stored appearance mix, for callers that must not rely on
@@ -309,10 +316,29 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
     appearanceMode,
     themeHalves,
   );
-  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
+  const resolvedThemeId = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
+  const definition = getThemeDefinition(resolvedThemeId);
+  const mode = definition ? getThemeMode(definition, resolvedAppearance) : null;
+  applyThemePalette(resolvedThemeId, resolvedAppearance);
+  const syntaxThemeName = activateSyntaxTheme({
+    appearance: resolvedAppearance,
+    background: mode?.colors.codeBackground ?? "#000000",
+    foreground: mode?.colors.codeForeground ?? "#ffffff",
+    ...(definition ? { label: definition.label } : {}),
+    ...(mode?.syntax ? { syntax: mode.syntax } : {}),
+  });
   const isDark = resolvedAppearance === "dark";
   document.documentElement.classList.toggle("dark", isDark);
-  lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  lastAppliedTheme = {
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+    resolvedTheme: resolvedAppearance,
+    syntaxThemeName,
+  };
+  lastSnapshot = lastAppliedTheme;
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
   if (suppressTransitions) {
@@ -397,7 +423,27 @@ function getSnapshot(): ThemeSnapshot {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  const resolvedTheme = resolveThemeAppearance(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+  );
+  lastSnapshot = {
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+    resolvedTheme,
+    syntaxThemeName:
+      lastAppliedTheme?.resolvedTheme === resolvedTheme
+        ? lastAppliedTheme.syntaxThemeName
+        : resolvedTheme === "dark"
+          ? "pierre-dark"
+          : "pierre-light",
+  };
   return lastSnapshot;
 }
 
@@ -408,6 +454,13 @@ function getServerSnapshot() {
 function handleSystemAppearanceChange() {
   const storedTheme = getStored();
   if (readAppearanceModePreference(storedTheme) === "system") applyTheme(storedTheme, true);
+  emitChange();
+}
+
+function handleCustomThemesChange() {
+  lastSnapshot = null;
+  lastAppliedTheme = null;
+  applyTheme(getStored(), true);
   emitChange();
 }
 
@@ -422,12 +475,8 @@ function handleStorageChange(e: StorageEvent) {
   } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY || e.key === THEME_HALVES_STORAGE_KEY) {
     applyTheme(getStored(), true);
     emitChange();
-  } else if (e.key === CUSTOM_THEMES_STORAGE_KEY || e.key === null) {
-    if (e.key === null) themeStorageReadFailure = null;
-    invalidateCustomThemes();
-    lastAppliedTheme = null;
-    applyTheme(getStored(), true);
-    emitChange();
+  } else if (e.key === null) {
+    themeStorageReadFailure = null;
   }
 }
 
@@ -443,9 +492,11 @@ function subscribe(listener: () => void): () => void {
     const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
     mq?.addEventListener("change", handleSystemAppearanceChange);
     window.addEventListener("storage", handleStorageChange);
+    const unsubscribeFromCustomThemes = subscribeToCustomThemes(handleCustomThemesChange);
     removeWindowListeners = () => {
       mq?.removeEventListener("change", handleSystemAppearanceChange);
       window.removeEventListener("storage", handleStorageChange);
+      unsubscribeFromCustomThemes();
     };
   }
 
@@ -462,13 +513,8 @@ export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const theme = snapshot.theme;
 
-  const resolvedTheme: "light" | "dark" = resolveThemeAppearance(
-    theme,
-    snapshot.systemDark,
-    snapshot.followSystem,
-    snapshot.appearanceMode,
-    snapshot.themeHalves,
-  );
+  const resolvedTheme = snapshot.resolvedTheme;
+  const syntaxThemeName = snapshot.syntaxThemeName;
 
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;
@@ -632,6 +678,7 @@ export function useTheme() {
     followSystem: snapshot.followSystem,
     appearanceMode: snapshot.appearanceMode,
     resolvedTheme,
+    syntaxThemeName,
     themeHalves: snapshot.themeHalves,
   } as const;
 }

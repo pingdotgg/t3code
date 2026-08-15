@@ -36,7 +36,6 @@ import {
   fnv1a32,
   getDiffLineStat,
   getRenderablePatch,
-  resolveDiffThemeName,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
   type RenderablePatch,
@@ -207,7 +206,7 @@ export function PullRequestCodeTab({
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
 }) {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, syntaxThemeName } = useTheme();
   const settings = useClientSettings();
   const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
@@ -365,23 +364,24 @@ export function PullRequestCodeTab({
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
   const canCommentOnLines = review.inlineComment && commit === null;
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
-  // rather than one per slice already on screen. Its cache key carries the theme, which is what
-  // the tokenizer caches against, so a theme change is still a fresh parse.
+  // rather than one per slice already on screen. Structural parse identity stays independent of
+  // theme; the item version below carries syntax identity so colors refresh without reminting ids.
   const parsedSlices = useMemo(
     () =>
       loadedSlices.map((slice) => {
         // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
         // key of position alone would keep handing back the parse of the patch it replaced.
-        const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
-        const cached = parseCache.current.get(cacheKey);
+        const sliceKey = `${scopeKey}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
+        const parseCacheKey = `pull-request:${sliceKey}`;
+        const cached = parseCache.current.get(parseCacheKey);
         if (cached) return cached;
-        const parsed = getRenderablePatch(slice.patch, cacheKey, {
+        const parsed = getRenderablePatch(slice.patch, `pull-request:${sliceKey}`, {
           compactPartialHunkOffsets: true,
         });
-        if (parsed) parseCache.current.set(cacheKey, parsed);
+        if (parsed) parseCache.current.set(parseCacheKey, parsed);
         return parsed;
       }),
-    [loadedSlices, resolvedTheme, scopeKey],
+    [loadedSlices, scopeKey, syntaxThemeName],
   );
   // Ordered within a slice rather than across them: ordering the accumulated set would let a late
   // slice push a file the reader is part way through further down the page.
@@ -482,7 +482,7 @@ export function PullRequestCodeTab({
           // The viewer re-renders an item only when its version changes, so everything the
           // annotations show has to be part of it.
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${syntaxThemeName}:${collapsed ? "1" : "0"}:${annotations
               .map(
                 ({ side, lineNumber, metadata }) =>
                   `${side}:${lineNumber}:${metadata.draft ? "d" : ""}:${metadata.pending
@@ -519,6 +519,7 @@ export function PullRequestCodeTab({
       foldOverride,
       pendingComments,
       placedThreadIds,
+      syntaxThemeName,
       toggledFiles,
     ],
   );
@@ -738,7 +739,7 @@ export function PullRequestCodeTab({
       diffStyle: diffRenderMode === "split" ? ("split" as const) : ("unified" as const),
       lineDiffType: "none" as const,
       overflow: wordWrap ? ("wrap" as const) : ("scroll" as const),
-      theme: resolveDiffThemeName(resolvedTheme),
+      theme: syntaxThemeName,
       themeType: resolvedTheme,
       stickyHeaders: true,
       loadDiffFiles,
@@ -755,6 +756,7 @@ export function PullRequestCodeTab({
       diffRenderMode,
       wordWrap,
       resolvedTheme,
+      syntaxThemeName,
       loadDiffFiles,
       canCommentOnLines,
       draft,

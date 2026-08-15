@@ -123,7 +123,7 @@ describe("theme failure handling", () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let readSnapshot: (() => unknown) | undefined;
     let subscribeToTheme: ((listener: () => void) => () => void) | undefined;
-    let storageHandler: ((event: StorageEvent) => void) | undefined;
+    const storageHandlers: Array<(event: StorageEvent) => void> = [];
     vi.doMock("react", () => ({
       useCallback: <A>(callback: A) => callback,
       useEffect: () => undefined,
@@ -138,7 +138,7 @@ describe("theme failure handling", () => {
     }));
     vi.stubGlobal("window", {
       addEventListener: (type: string, listener: (event: StorageEvent) => void) => {
-        if (type === "storage") storageHandler = listener;
+        if (type === "storage") storageHandlers.push(listener);
       },
       localStorage: createStorage({ getItem }),
       matchMedia: () => ({
@@ -158,12 +158,88 @@ describe("theme failure handling", () => {
     expect(errorLog).toHaveBeenCalledTimes(1);
 
     const unsubscribe = subscribeToTheme?.(() => undefined);
-    storageHandler?.({ key: "t3code:theme" } as StorageEvent);
+    for (const storageHandler of storageHandlers) {
+      storageHandler({ key: "t3code:theme" } as StorageEvent);
+    }
     readSnapshot?.();
 
     expect(themeGetItem).toHaveBeenCalledTimes(2);
     expect(errorLog).toHaveBeenCalledTimes(2);
     unsubscribe?.();
+  });
+
+  it("refreshes syntax colors when the selected custom theme is updated", async () => {
+    const storage = createStorage();
+    let onStoreChange = () => {};
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect: () => undefined,
+      useSyncExternalStore: (
+        subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => {
+        subscribe(() => onStoreChange());
+        return getSnapshot();
+      },
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      localStorage: storage,
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+    vi.stubGlobal("document", {
+      documentElement: {
+        classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() },
+        dataset: {},
+        offsetHeight: 0,
+        style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+      },
+      querySelectorAll: () => [],
+    });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => callback(0));
+
+    const { useTheme } = await import("./useTheme");
+    const { installCustomTheme, parseThemeFile, THEME_FILE_VERSION, updateCustomTheme } =
+      await import("../themePalette");
+    storage.setItem("t3code:theme", "syntax-refresh");
+    useTheme();
+    const theme = installCustomTheme(
+      parseThemeFile({
+        version: THEME_FILE_VERSION,
+        name: "Syntax refresh",
+        appearance: "dark",
+        colors: { accent: "#8b5cf6" },
+        syntax: {
+          dark: {
+            tokenColors: [{ scope: "keyword", settings: { foreground: "#c4a7e7" } }],
+          },
+        },
+      }),
+    );
+
+    const firstThemeName = useTheme().syntaxThemeName;
+    onStoreChange = vi.fn();
+    updateCustomTheme({
+      ...theme,
+      modes: {
+        ...theme.modes,
+        dark: {
+          ...theme.modes.dark!,
+          syntax: {
+            tokenColors: [{ scope: "keyword", settings: { foreground: "#eb6f92" } }],
+          },
+        },
+      },
+    });
+    const updatedThemeName = useTheme().syntaxThemeName;
+
+    expect(onStoreChange).toHaveBeenCalled();
+    expect(updatedThemeName).not.toBe(firstThemeName);
   });
 
   it("preserves desktop sync causes and retries after a failed cosmetic sync", async () => {

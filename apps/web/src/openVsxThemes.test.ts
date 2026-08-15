@@ -301,13 +301,19 @@ describe("Open VSX themes", () => {
           "editor.foreground": "#eeeeee",
           "focusBorder": "#8b5cf6",
         },
+        "tokenColors": [
+          { "scope": "keyword", "settings": { "foreground": "#c4a7e7" } }
+        ]
       }`,
     );
     zip.file(
       "extension/themes/demo-dark.json",
       `{
         "include": "./base.jsonc",
-        "colors": { "editor.background": "#111111" }
+        "colors": { "editor.background": "#111111" },
+        "tokenColors": [
+          { "scope": "variable", "settings": { "foreground": "#ebbcba" } }
+        ]
       }`,
     );
     zip.file(
@@ -317,7 +323,10 @@ describe("Open VSX themes", () => {
           "editor.background": "#fafafa",
           "editor.foreground": "#222222",
           "focusBorder": "#8b5cf6"
-        }
+        },
+        "tokenColors": [
+          { "scope": "keyword", "settings": { "foreground": "#907aa9" } }
+        ]
       }`,
     );
     zip.file(
@@ -402,9 +411,14 @@ describe("Open VSX themes", () => {
         getThemeColorsForMode(theme, "dark") !== null,
     )!;
     expect(paired.label).toBe("Demo");
-    expect(themeColorToHex(paired.colors.canvas)).toBe("#fafafa");
+    expect(themeColorToHex(paired.modes.light!.colors.canvas)).toBe("#fafafa");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.canvas)).toBe("#111111");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.text)).toBe("#eeeeee");
+    expect(paired.modes.light!.syntax?.tokenColors[0]?.settings.foreground).toBe("#907aa9");
+    expect(paired.modes.dark!.syntax?.tokenColors).toMatchObject([
+      { scope: "keyword", settings: { foreground: "#c4a7e7" } },
+      { scope: "variable", settings: { foreground: "#ebbcba" } },
+    ]);
 
     packagedManifest.contributes.themes[0]!.label = "Renamed Dark";
     packagedManifest.contributes.themes[1]!.label = "Renamed Light";

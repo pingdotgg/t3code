@@ -30,11 +30,9 @@ import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
 import { useTheme } from "../hooks/useTheme";
 import {
-  buildFileDiffRenderKey,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
-  resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
@@ -99,7 +97,7 @@ export default function DiffPanel({
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
 }: DiffPanelProps) {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, syntaxThemeName } = useTheme();
   const settings = useClientSettings();
   const [initialGitScope] = useState(initialGitScopeProp);
   const diffRenderMode = useDiffPanelStore((state) => state.diffRenderMode);
@@ -392,10 +390,10 @@ export default function DiffPanel({
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
     () =>
-      getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`, {
+      getRenderablePatch(selectedPatch, "diff-panel", {
         compactPartialHunkOffsets: selectedTurnId === null,
       }),
-    [resolvedTheme, selectedPatch, selectedTurnId],
+    [selectedPatch, selectedTurnId],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -412,7 +410,7 @@ export default function DiffPanel({
     () =>
       renderableFiles.map((fileDiff) => ({
         fileDiff,
-        fileKey: buildFileDiffRenderKey(fileDiff),
+        fileKey: resolveFileDiffPath(fileDiff),
       })),
     [renderableFiles],
   );
@@ -900,6 +898,7 @@ export default function DiffPanel({
                   key={collapseScopeKey ?? reviewSectionId}
                   viewerRef={codeViewRef}
                   codeViewKey={codeViewMountKey}
+                  syntaxThemeName={syntaxThemeName}
                   className="h-full min-h-0 overflow-auto"
                   files={codeViewFiles}
                   sectionId={reviewSectionId}
@@ -943,7 +942,7 @@ export default function DiffPanel({
                     diffStyle: diffRenderMode === "split" ? "split" : "unified",
                     lineDiffType: "none",
                     overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
+                    theme: syntaxThemeName,
                     themeType: resolvedTheme as DiffThemeType,
                     stickyHeaders: true,
                     ...(loadDiffFiles ? { loadDiffFiles } : {}),

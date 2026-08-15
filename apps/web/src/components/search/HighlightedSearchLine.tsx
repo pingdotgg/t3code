@@ -2,7 +2,7 @@ import { getFiletypeFromFileName } from "@pierre/diffs";
 import type { ProjectContentMatch } from "@t3tools/contracts";
 import { memo, Suspense, use, useMemo, type CSSProperties } from "react";
 
-import { resolveDiffThemeName } from "~/lib/diffRendering";
+import type { DiffThemeName } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
@@ -16,6 +16,7 @@ interface CodeToken {
   readonly content: string;
   readonly offset: number;
   readonly color?: string;
+  readonly bgColor?: string;
   readonly fontStyle?: number;
 }
 
@@ -91,13 +92,17 @@ function splitToken(line: string, token: CodeToken, ranges: ReadonlyArray<Range>
   return segments;
 }
 
-function tokenStyle(token: CodeToken): CSSProperties {
+function tokenStyle(token: CodeToken, includeBackground = true): CSSProperties {
   const fontStyle = token.fontStyle ?? 0;
+  const textDecoration = [fontStyle & 4 ? "underline" : "", fontStyle & 8 ? "line-through" : ""]
+    .filter(Boolean)
+    .join(" ");
   return {
     ...(token.color ? { color: token.color } : {}),
+    ...(includeBackground && token.bgColor ? { backgroundColor: token.bgColor } : {}),
     ...(fontStyle & 1 ? { fontStyle: "italic" } : {}),
     ...(fontStyle & 2 ? { fontWeight: 700 } : {}),
-    ...(fontStyle & 4 ? { textDecoration: "underline" } : {}),
+    ...(textDecoration ? { textDecoration } : {}),
   };
 }
 
@@ -113,7 +118,7 @@ function HighlightedTokens(props: {
         <mark
           className="rounded-[2px] bg-primary/25 text-inherit"
           key={`${segment.start}:${segment.end}:match`}
-          style={tokenStyle(segment.token)}
+          style={tokenStyle(segment.token, false)}
         >
           {segment.content}
         </mark>
@@ -129,19 +134,19 @@ function SyntaxHighlightedTokens(props: {
   readonly line: string;
   readonly language: string;
   readonly ranges: ReadonlyArray<Range>;
-  readonly theme: "light" | "dark";
+  readonly themeName: DiffThemeName;
 }) {
-  const highlighter = use(getSyntaxHighlighterPromise(props.language));
+  const highlighter = use(getSyntaxHighlighterPromise(props.language, props.themeName));
   const tokens = useMemo(() => {
     try {
       return highlighter.codeToTokens(props.line, {
         lang: props.language,
-        theme: resolveDiffThemeName(props.theme),
+        theme: props.themeName,
       }).tokens[0];
     } catch {
       return undefined;
     }
-  }, [highlighter, props.language, props.line, props.theme]);
+  }, [highlighter, props.language, props.line, props.themeName]);
 
   return tokens ? (
     <HighlightedTokens line={props.line} ranges={props.ranges} tokens={tokens} />
@@ -157,7 +162,7 @@ function SyntaxHighlightedTokens(props: {
 export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: {
   readonly match: ProjectContentMatch;
   readonly path: string;
-  readonly theme: "light" | "dark";
+  readonly themeName: DiffThemeName;
 }) {
   const ranges = useMemo(() => normalizeRanges(props.match), [props.match]);
   const fallback = (
@@ -175,7 +180,7 @@ export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: 
           line={props.match.lineContent}
           language={getFiletypeFromFileName(props.path)}
           ranges={ranges}
-          theme={props.theme}
+          themeName={props.themeName}
         />
       </Suspense>
     </RenderErrorBoundary>

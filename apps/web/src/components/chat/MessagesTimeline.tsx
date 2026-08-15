@@ -41,8 +41,8 @@ import {
 import { type TurnDiffSummary } from "../../types";
 import {
   getRenderablePatch,
-  resolveDiffThemeName,
   resolveFileDiffPath,
+  type DiffThemeName,
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
@@ -135,6 +135,7 @@ interface TimelineRowSharedState {
   threadRef: ScopedThreadRef | null;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
+  syntaxThemeName: DiffThemeName;
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
@@ -223,6 +224,7 @@ interface MessagesTimelineProps {
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
+  syntaxThemeName: DiffThemeName;
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -269,6 +271,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
+  syntaxThemeName,
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
@@ -508,6 +511,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       threadRef: parseScopedThreadKey(routeThreadKey),
       markdownCwd,
       resolvedTheme,
+      syntaxThemeName,
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
@@ -524,6 +528,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       routeThreadKey,
       markdownCwd,
       resolvedTheme,
+      syntaxThemeName,
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
@@ -1875,7 +1880,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
             options={{
               collapsed: false,
               diffStyle: "unified",
-              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              theme: ctx.syntaxThemeName,
             }}
           />
         ))}

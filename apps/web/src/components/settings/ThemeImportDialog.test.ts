@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { describeOversizedThemeFile, MAX_THEME_FILE_BYTES } from "./ThemeImportDialog";
+import {
+  describeOversizedThemeBatch,
+  describeOversizedThemeFile,
+  MAX_THEME_BATCH_BYTES,
+  MAX_THEME_BATCH_FILES,
+  MAX_THEME_FILE_BYTES,
+} from "./ThemeImportDialog";
 
 describe("theme import size guard", () => {
   it("accepts anything a theme file could plausibly be", () => {
@@ -17,5 +23,15 @@ describe("theme import size guard", () => {
 
   it("reports sizes just past the limit in KB", () => {
     expect(describeOversizedThemeFile(MAX_THEME_FILE_BYTES + 1)).toContain("256 KB");
+  });
+
+  it("bounds batch count and aggregate bytes before reading files", () => {
+    expect(
+      describeOversizedThemeBatch(
+        Array.from({ length: MAX_THEME_BATCH_FILES + 1 }, () => ({ size: 1 })),
+      ),
+    ).toContain(String(MAX_THEME_BATCH_FILES));
+    expect(describeOversizedThemeBatch([{ size: MAX_THEME_BATCH_BYTES + 1 }])).toContain("2.0 MB");
+    expect(describeOversizedThemeBatch([{ size: MAX_THEME_BATCH_BYTES }])).toBeNull();
   });
 });
