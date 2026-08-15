@@ -16,7 +16,6 @@ import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 import {
   createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWriteController,
-  fanOutPlanModePreferencePatches,
   reconcilePlanModePreferences,
 } from "./synced-client-preferences-model";
 
@@ -142,11 +141,13 @@ export function useUpdatePlanModePreference() {
         now: new Date().toISOString(),
       });
       savePreferences(write.localPatch);
-      void fanOutPlanModePreferencePatches(write.environmentPatches, async (target) => {
-        const result = await patchPreferences(target);
-        const localPatch = writeController.settle({ target, result });
-        if (localPatch !== null) savePreferences(localPatch);
-      });
+      void Promise.allSettled(
+        write.environmentPatches.map(async (target) => {
+          const result = await patchPreferences(target);
+          const localPatch = writeController.settle({ target, result });
+          if (localPatch !== null) savePreferences(localPatch);
+        }),
+      );
     },
     [
       connectedEnvironmentIds,

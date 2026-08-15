@@ -18,6 +18,18 @@ export const SyncedClientPreferencesUpdatedAt = IsoDateTime.check(
 );
 export type SyncedClientPreferencesUpdatedAt = typeof SyncedClientPreferencesUpdatedAt.Type;
 
+export function nextSyncedClientPreferencesUpdatedAt(
+  updatedAts: ReadonlyArray<string | undefined>,
+  now: string,
+): string {
+  let latest: string | undefined;
+  for (const updatedAt of updatedAts) {
+    if (updatedAt !== undefined && (latest === undefined || updatedAt > latest)) latest = updatedAt;
+  }
+  if (latest === undefined || now > latest) return now;
+  return DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(latest), { milliseconds: 1 }));
+}
+
 const SyncedClientPreferenceFields = {
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   appearanceMode: Schema.optionalKey(SyncedClientAppearanceMode),

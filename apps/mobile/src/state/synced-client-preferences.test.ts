@@ -7,10 +7,8 @@ import {
   createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWrite,
   createPlanModePreferenceWriteController,
-  fanOutPlanModePreferencePatches,
   nextMobileSyncedPreferencesUpdatedAt,
   reconcilePlanModePreferences,
-  settlePendingPlanModePreferencePatch,
 } from "./synced-client-preferences-model";
 
 const environmentId = (value: string) => EnvironmentId.make(value);
@@ -382,7 +380,7 @@ describe("synced client preferences", () => {
     ]);
   });
 
-  it("clears pending reconciliation from an older canonical patch ack", () => {
+  it("clears pending reconciliation from an older canonical patch ack", async () => {
     const target = {
       environmentId: environmentId("environment-1"),
       input: {
@@ -390,20 +388,24 @@ describe("synced client preferences", () => {
         updatedAt: "2099-01-01T00:00:00.000Z",
       },
     } as const;
-    const pendingByEnvironment = new Map([[target.environmentId, target.input.updatedAt]]);
     const canonical = {
       planModeEnabled: true,
       updatedAt: "2026-08-14T12:00:30.000Z",
     } as const;
 
-    const localPatch = settlePendingPlanModePreferencePatch({
-      pendingByEnvironment,
+    const controller = createPlanModePreferenceReconciliationController();
+    const persist = vi.fn();
+    controller.setActiveEnvironmentIds([target.environmentId]);
+    controller.reconcile({
       target,
-      result: AsyncResult.success(canonical),
+      patch: async () => AsyncResult.success(canonical),
+      persist,
     });
+    await flushReconciliation();
+
     const next = reconcilePlanModePreferences({
-      localPlanModeEnabled: localPatch?.planModeEnabled,
-      localUpdatedAt: localPatch?.syncedClientPreferencesUpdatedAt,
+      localPlanModeEnabled: canonical.planModeEnabled,
+      localUpdatedAt: canonical.updatedAt,
       environments: [
         {
           environmentId: target.environmentId,
@@ -414,8 +416,7 @@ describe("synced client preferences", () => {
       now: "2099-01-01T00:00:01.000Z",
     });
 
-    expect(pendingByEnvironment.size).toBe(0);
-    expect(localPatch).toEqual({
+    expect(persist).toHaveBeenCalledWith({
       planModeEnabled: true,
       syncedClientPreferencesUpdatedAt: canonical.updatedAt,
     });
@@ -457,24 +458,6 @@ describe("synced client preferences", () => {
         now: "2026-08-14T12:01:00.000Z",
       }),
     ).toEqual({ localPatch: null, environmentPatches: [] });
-  });
-
-  it("continues fan-out when one environment write fails", async () => {
-    const attempted: string[] = [];
-    const targets = createPlanModePreferenceWrite({
-      value: true,
-      connectedEnvironmentIds: [environmentId("failing"), environmentId("healthy")],
-      currentUpdatedAts: [],
-      now: "2026-08-14T12:00:00.000Z",
-    }).environmentPatches;
-
-    await expect(
-      fanOutPlanModePreferencePatches(targets, async (target) => {
-        attempted.push(target.environmentId);
-        if (target.environmentId === environmentId("failing")) throw new Error("offline");
-      }),
-    ).resolves.toBeUndefined();
-    expect(attempted).toEqual([environmentId("failing"), environmentId("healthy")]);
   });
 
   it("retries failed reconciliation and succeeds within the cap", async () => {

@@ -1,7 +1,8 @@
-import type {
-  EnvironmentId,
-  PatchSyncedClientPreferencesRequest,
-  SyncedClientPreferences,
+import {
+  nextSyncedClientPreferencesUpdatedAt,
+  type EnvironmentId,
+  type PatchSyncedClientPreferencesRequest,
+  type SyncedClientPreferences,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
@@ -39,27 +40,29 @@ export function createPlanModePreferenceReconciliationController(
     cancelRetry?: () => void;
   }
 
-  let activeEnvironmentIds = new Set<EnvironmentId>();
-  const reconciliationByEnvironment = new Map<EnvironmentId, Reconciliation>();
-  const settledUpdatedAtByEnvironment = new Map<EnvironmentId, string>();
+  interface EnvironmentReconciliation {
+    reconciliation?: Reconciliation;
+    settledUpdatedAt?: string;
+  }
+
+  const environmentReconciliations = new Map<EnvironmentId, EnvironmentReconciliation>();
   const cancel = (environmentId: EnvironmentId) => {
-    reconciliationByEnvironment.get(environmentId)?.cancelRetry?.();
-    reconciliationByEnvironment.delete(environmentId);
+    const state = environmentReconciliations.get(environmentId);
+    state?.reconciliation?.cancelRetry?.();
+    if (state !== undefined) state.reconciliation = undefined;
   };
   const settleFailure = (reconciliation: Reconciliation) => {
     const { environmentId } = reconciliation.target;
-    if (reconciliationByEnvironment.get(environmentId) !== reconciliation) return;
+    const state = environmentReconciliations.get(environmentId);
+    if (state?.reconciliation !== reconciliation) return;
     if (reconciliation.attempt >= PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS) {
-      reconciliationByEnvironment.delete(environmentId);
+      state.reconciliation = undefined;
       return;
     }
     const delayMs = 1_000 * 2 ** (reconciliation.attempt - 1);
     reconciliation.cancelRetry = scheduleRetry(() => {
       reconciliation.cancelRetry = undefined;
-      if (
-        activeEnvironmentIds.has(environmentId) &&
-        reconciliationByEnvironment.get(environmentId) === reconciliation
-      ) {
+      if (environmentReconciliations.get(environmentId)?.reconciliation === reconciliation) {
         dispatch(reconciliation);
       }
     }, delayMs);
@@ -69,13 +72,14 @@ export function createPlanModePreferenceReconciliationController(
     void reconciliation.patch().then(
       (preferences) => {
         const { environmentId } = reconciliation.target;
-        if (reconciliationByEnvironment.get(environmentId) !== reconciliation) return;
+        const state = environmentReconciliations.get(environmentId);
+        if (state?.reconciliation !== reconciliation) return;
         if (preferences === null) {
           settleFailure(reconciliation);
           return;
         }
-        reconciliationByEnvironment.delete(environmentId);
-        settledUpdatedAtByEnvironment.set(environmentId, reconciliation.target.input.updatedAt);
+        state.reconciliation = undefined;
+        state.settledUpdatedAt = reconciliation.target.input.updatedAt;
         const localPatch = canonicalPlanModePreferencePatch(preferences);
         if (localPatch !== null) reconciliation.persist(localPatch);
       },
@@ -86,15 +90,19 @@ export function createPlanModePreferenceReconciliationController(
   return {
     setActiveEnvironmentIds(environmentIds: ReadonlyArray<EnvironmentId>) {
       const nextEnvironmentIds = new Set(environmentIds);
-      for (const environmentId of activeEnvironmentIds) {
+      for (const environmentId of environmentReconciliations.keys()) {
         if (nextEnvironmentIds.has(environmentId)) continue;
         cancel(environmentId);
-        settledUpdatedAtByEnvironment.delete(environmentId);
+        environmentReconciliations.delete(environmentId);
       }
-      activeEnvironmentIds = nextEnvironmentIds;
+      for (const environmentId of nextEnvironmentIds) {
+        if (!environmentReconciliations.has(environmentId)) {
+          environmentReconciliations.set(environmentId, {});
+        }
+      }
     },
     observe(environmentId: EnvironmentId, updatedAt: string | undefined) {
-      const reconciliation = reconciliationByEnvironment.get(environmentId);
+      const reconciliation = environmentReconciliations.get(environmentId)?.reconciliation;
       if (reconciliation?.target.input.updatedAt === updatedAt) cancel(environmentId);
     },
     reconcile<E>(input: {
@@ -105,13 +113,11 @@ export function createPlanModePreferenceReconciliationController(
       readonly persist: (patch: Partial<Preferences>) => void;
     }) {
       const { environmentId } = input.target;
-      if (
-        !activeEnvironmentIds.has(environmentId) ||
-        settledUpdatedAtByEnvironment.get(environmentId) === input.target.input.updatedAt
-      ) {
+      const state = environmentReconciliations.get(environmentId);
+      if (state === undefined || state.settledUpdatedAt === input.target.input.updatedAt) {
         return;
       }
-      const current = reconciliationByEnvironment.get(environmentId);
+      const current = state.reconciliation;
       if (current?.target.input.updatedAt === input.target.input.updatedAt) {
         current.patch = async () => {
           const result = await input.patch(input.target);
@@ -121,7 +127,7 @@ export function createPlanModePreferenceReconciliationController(
         return;
       }
       if (current !== undefined) cancel(environmentId);
-      settledUpdatedAtByEnvironment.delete(environmentId);
+      state.settledUpdatedAt = undefined;
       const reconciliation: Reconciliation = {
         target: input.target,
         attempt: 0,
@@ -131,22 +137,14 @@ export function createPlanModePreferenceReconciliationController(
         },
         persist: input.persist,
       };
-      reconciliationByEnvironment.set(environmentId, reconciliation);
+      state.reconciliation = reconciliation;
       dispatch(reconciliation);
     },
     reset() {
-      for (const environmentId of reconciliationByEnvironment.keys()) cancel(environmentId);
-      activeEnvironmentIds.clear();
-      settledUpdatedAtByEnvironment.clear();
+      for (const environmentId of environmentReconciliations.keys()) cancel(environmentId);
+      environmentReconciliations.clear();
     },
   };
-}
-
-export async function fanOutPlanModePreferencePatches(
-  targets: ReadonlyArray<PlanModePreferencePatchTarget>,
-  patch: (target: PlanModePreferencePatchTarget) => Promise<unknown>,
-): Promise<void> {
-  await Promise.allSettled(targets.map(patch));
 }
 
 export function canonicalPlanModePreferencePatch(
@@ -160,44 +158,21 @@ export function canonicalPlanModePreferencePatch(
       };
 }
 
-export function settlePendingPlanModePreferencePatch<E>(input: {
-  readonly pendingByEnvironment: Map<EnvironmentId, string>;
-  readonly target: PlanModePreferencePatchTarget;
-  readonly result: AtomCommandResult<SyncedClientPreferences, E>;
-}): Partial<Preferences> | null {
-  if (input.pendingByEnvironment.get(input.target.environmentId) !== input.target.input.updatedAt) {
-    return null;
-  }
-  input.pendingByEnvironment.delete(input.target.environmentId);
-  return input.result._tag === "Success"
-    ? canonicalPlanModePreferencePatch(input.result.value)
-    : null;
-}
-
 export function nextMobileSyncedPreferencesUpdatedAt(
   localUpdatedAts: ReadonlyArray<string | undefined>,
   now: string,
   authoritativeUpdatedAts: ReadonlyArray<string | undefined> = [],
 ): string {
   const maximumUpdatedAt = Date.parse(now) + SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS;
-  const latestLocal = localUpdatedAts.reduce<string | undefined>(
-    (current, candidate) =>
-      candidate !== undefined &&
-      Date.parse(candidate) <= maximumUpdatedAt &&
-      (current === undefined || candidate > current)
-        ? candidate
-        : current,
-    undefined,
+  return nextSyncedClientPreferencesUpdatedAt(
+    [
+      ...localUpdatedAts.filter(
+        (candidate) => candidate !== undefined && Date.parse(candidate) <= maximumUpdatedAt,
+      ),
+      ...authoritativeUpdatedAts,
+    ],
+    now,
   );
-  const latest = authoritativeUpdatedAts.reduce<string | undefined>(
-    (current, candidate) =>
-      candidate !== undefined && (current === undefined || candidate > current)
-        ? candidate
-        : current,
-    latestLocal,
-  );
-  if (latest === undefined || now > latest) return now;
-  return new Date(Date.parse(latest) + 1).toISOString();
 }
 
 export function createPlanModePreferenceWrite(input: {
