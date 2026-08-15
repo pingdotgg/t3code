@@ -20,6 +20,7 @@ const EMPTY_SKILLS: ReadonlyArray<SelectableMarkdownSkill> = [];
 export type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
+  MarkdownImageRenderProps,
   NativeMarkdownTextStyle,
   SelectableMarkdownSkill,
   SelectableMarkdownTextProps,
@@ -36,6 +37,7 @@ export function SelectableMarkdownText({
   highlightCode,
   preserveSoftBreaks = false,
   onLinkPress,
+  renderImage,
   marginTop = 0,
   marginBottom = 0,
 }: SelectableMarkdownTextProps) {
@@ -73,6 +75,7 @@ export function SelectableMarkdownText({
               textStyle={textStyle}
               highlightCode={highlightCode}
               onLinkPress={onLinkPress}
+              renderImage={renderImage}
             />
           ) : (
             <NativeMarkdownSelectableText

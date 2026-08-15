@@ -77,6 +77,13 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("host-image-exact"),
+    absolutePath: Schema.String,
+    generatedImagesRoot: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
     expiresAt: Schema.Number,
@@ -166,9 +173,46 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
+const resolveCanonicalHostGeneratedImage = Effect.fn(
+  "AssetAccess.resolveCanonicalHostGeneratedImage",
+)(function* (absolutePath: string, generatedImagesRoots: ReadonlyArray<string>) {
+  const path = yield* Path.Path;
+  if (!path.isAbsolute(absolutePath) || !isWorkspaceImagePreviewPath(absolutePath)) return null;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const canonicalFile = yield* optionOnNotFound(fileSystem.realPath(absolutePath));
+  if (Option.isNone(canonicalFile) || !path.isAbsolute(canonicalFile.value)) return null;
+  const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
+  if (Option.isNone(info) || info.value.type !== "File") return null;
+
+  for (const root of generatedImagesRoots) {
+    const canonicalRoot = yield* optionOnNotFound(fileSystem.realPath(root));
+    if (Option.isNone(canonicalRoot)) continue;
+    const relative = path.relative(canonicalRoot.value, canonicalFile.value);
+    if (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+      return { path: canonicalFile.value, root: canonicalRoot.value };
+    }
+  }
+  return null;
+});
+
+const resolveCanonicalHostGeneratedImageForRequest = (
+  absolutePath: string,
+  generatedImagesRoot: string,
+) =>
+  resolveCanonicalHostGeneratedImage(absolutePath, [generatedImagesRoot]).pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to resolve generated image path.", {
+        path: absolutePath,
+        cause,
+      }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
+  readonly generatedImagesRoots?: ReadonlyArray<string>;
   readonly projectFaviconPath?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -201,22 +245,49 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const resolved = yield* workspacePaths
         .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
         .pipe(
+          Effect.map((value) => ({ _tag: "inside" as const, value })),
+          Effect.catchTags({
+            WorkspacePathOutsideRootError: (cause) =>
+              Effect.succeed({ _tag: "outside" as const, cause }),
+          }),
+        );
+      if (resolved._tag === "outside") {
+        const hostImage = yield* resolveCanonicalHostGeneratedImage(
+          input.resource.path,
+          input.generatedImagesRoots ?? [],
+        ).pipe(
           Effect.mapError(
             (cause) =>
-              new AssetWorkspacePathValidationError({
+              new AssetWorkspaceAssetInspectionError({
                 resource: input.resource,
                 cause,
               }),
           ),
         );
-      if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
+        if (!hostImage) {
+          return yield* new AssetWorkspacePathValidationError({
+            resource: input.resource,
+            cause: resolved.cause,
+          });
+        }
+        claims = {
+          version: 1,
+          kind: "host-image-exact",
+          absolutePath: hostImage.path,
+          generatedImagesRoot: hostImage.root,
+          expiresAt,
+        };
+        fileName = path.basename(hostImage.path);
+        break;
+      }
+      if (!isWorkspacePreviewEntryPath(resolved.value.relativePath)) {
         return yield* new AssetPreviewTypeValidationError({
           resource: input.resource,
         });
       }
       const canonicalFile = yield* resolveCanonicalWorkspaceFile({
         workspaceRoot,
-        relativePath: resolved.relativePath,
+        relativePath: resolved.value.relativePath,
       }).pipe(
         Effect.mapError(
           (cause) =>
@@ -240,22 +311,22 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
+      claims = isWorkspaceImagePreviewPath(resolved.value.relativePath)
         ? {
             version: 1,
             kind: "workspace-file-exact",
             workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
+            relativePath: resolved.value.relativePath,
             expiresAt,
           }
         : {
             version: 1,
             kind: "workspace-file",
             workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
+            baseRelativePath: path.dirname(resolved.value.relativePath),
             expiresAt,
           };
-      fileName = path.basename(resolved.relativePath);
+      fileName = path.basename(resolved.value.relativePath);
       break;
     }
     case "attachment": {
@@ -444,6 +515,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
+  if (claims.kind === "host-image-exact") {
+    if (decodedPath !== path.basename(claims.absolutePath)) return null;
+    const hostImage = yield* resolveCanonicalHostGeneratedImageForRequest(
+      claims.absolutePath,
+      claims.generatedImagesRoot,
+    );
+    return hostImage ? ({ kind: "file", path: hostImage.path } satisfies ResolvedAsset) : null;
+  }
   if (claims.kind === "workspace-file-exact") {
     if (decodedPath !== path.basename(claims.relativePath)) return null;
     const exactWorkspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({

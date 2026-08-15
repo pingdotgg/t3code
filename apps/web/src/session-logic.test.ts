@@ -1245,6 +1245,38 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("prefers Codex image generation savedPath over truncated tool detail", () => {
+    const savedPath = "/home/sambhav/.codex/generated_images/a-very-long-hero-image-name.png";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "image-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Generated image",
+        payload: {
+          itemType: "image_view",
+          title: "Generated image",
+          detail: `${savedPath.slice(0, 20)}...`,
+          data: {
+            item: {
+              type: "imageGeneration",
+              savedPath,
+              status: "completed",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "image-complete",
+      toolTitle: "Generated image",
+      detail: savedPath,
+      itemType: "image_view",
+    });
+  });
+
   it("uses completed read-file output previews and still collapses the same tool call", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

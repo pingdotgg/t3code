@@ -15,6 +15,7 @@ import {
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import {
   createContext,
   Fragment,
@@ -45,6 +46,7 @@ import {
   resolveFileDiffPath,
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
+import { ChatWorkspaceImage } from "./ChatWorkspaceImage";
 import {
   BotIcon,
   CheckIcon,
@@ -114,6 +116,7 @@ import {
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { resolveMarkdownFileLinkMeta } from "../../markdown-links";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
@@ -1941,6 +1944,7 @@ type WorkEntryIconName =
   | "globe"
   | "hammer"
   | "message-circle"
+  | "paintbrush"
   | "square-pen"
   | "terminal"
   | "wrench"
@@ -1963,6 +1967,8 @@ function WorkEntryIconSvg({ name, className }: { name: WorkEntryIconName; classN
       return <HammerIcon className={className} aria-hidden />;
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
+    case "paintbrush":
+      return <PaintbrushIcon className={className} aria-hidden />;
     case "square-pen":
       return <SquarePenIcon className={className} aria-hidden />;
     case "terminal":
@@ -2002,6 +2008,23 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
     iconName: "zap",
     className: "text-foreground",
   };
+}
+
+function workEntryLooksLikeGeneratedImage(workEntry: Pick<TimelineWorkEntry, "toolTitle" | "label">) {
+  const title = `${workEntry.toolTitle ?? ""} ${workEntry.label}`.toLowerCase();
+  return title.includes("generated image");
+}
+
+function workEntryImagePath(
+  workEntry: Pick<TimelineWorkEntry, "itemType" | "detail">,
+  workspaceRoot: string | undefined,
+): string | null {
+  if (workEntry.itemType !== "image_view") return null;
+  const candidate = workEntry.detail?.trim();
+  if (!candidate) return null;
+  const meta = resolveMarkdownFileLinkMeta(candidate, workspaceRoot);
+  if (!meta || !isWorkspaceImagePreviewPath(meta.filePath)) return null;
+  return meta.filePath;
 }
 
 function workEntryPreview(
@@ -2075,7 +2098,9 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
     return "square-pen";
   }
   if (workEntry.itemType === "web_search") return "globe";
-  if (workEntry.itemType === "image_view") return "eye";
+  if (workEntry.itemType === "image_view") {
+    return workEntryLooksLikeGeneratedImage(workEntry) ? "paintbrush" : "eye";
+  }
 
   switch (workEntry.itemType) {
     case "mcp_tool_call":
@@ -2222,7 +2247,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const { threadRef } = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
+  const imagePath = workEntryImagePath(workEntry, workspaceRoot);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -2361,6 +2388,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </div>
         </div>
       </div>
+      {imagePath && threadRef ? (
+        <div className="ms-7 mt-1" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+          <ChatWorkspaceImage
+            environmentId={threadRef.environmentId}
+            threadRef={threadRef}
+            path={imagePath}
+            alt={workEntry.detail ?? "Generated image"}
+          />
+        </div>
+      ) : null}
       {expanded && canExpand && expandedBody ? (
         <div
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"

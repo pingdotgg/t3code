@@ -36,6 +36,7 @@ export interface ThreadFeedActivity {
   readonly turnId: TurnId | null;
   readonly summary: string;
   readonly detail: string | null;
+  readonly imagePath: string | null;
   readonly canExpand: boolean;
   readonly getFullDetail: () => string | null;
   readonly getCopyText: () => string;
@@ -66,6 +67,7 @@ interface WorkLogEntry {
   turnId: TurnId | null;
   label: string;
   detail?: string;
+  imagePath?: string;
   command?: string;
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
@@ -391,7 +393,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  if (
+  const imagePath = itemType === "image_view" ? extractImageViewPath(payload) : null;
+  if (imagePath) {
+    entry.detail = imagePath;
+    entry.imagePath = imagePath;
+  } else if (
     !taskDetailAsLabel &&
     payload &&
     typeof payload.detail === "string" &&
@@ -495,6 +501,7 @@ function mergeDerivedWorkLogEntries(
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const detail = next.detail ?? previous.detail;
+  const imagePath = next.imagePath ?? previous.imagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
@@ -507,6 +514,7 @@ function mergeDerivedWorkLogEntries(
     ...previous,
     ...next,
     ...(detail ? { detail } : {}),
+    ...(imagePath ? { imagePath } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
@@ -950,6 +958,17 @@ function stripTrailingExitCode(value: string): {
     output: normalizedOutput.length > 0 ? normalizedOutput : null,
     ...(Number.isInteger(exitCode) ? { exitCode } : {}),
   };
+}
+
+function extractImageViewPath(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  for (const candidate of [item?.savedPath, item?.path, payload?.detail]) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return null;
 }
 
 function extractWorkLogItemType(
@@ -1560,6 +1579,7 @@ export function buildThreadFeed(
               turnId: entry.turnId,
               summary,
               detail,
+              imagePath: entry.imagePath ?? null,
               canExpand: workEntryHasExpandedBody(entry),
               getFullDetail,
               getCopyText,

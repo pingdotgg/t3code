@@ -274,6 +274,35 @@ describe("buildThreadFeed", () => {
     );
   });
 
+  it("exposes generated-image paths to mobile work rows", () => {
+    const savedPath = "/home/sam/.codex/generated_images/hero.png";
+    const thread = makeThread({
+      id: ThreadId.make("thread-image"),
+      projectId: ProjectId.make("project-1"),
+      title: "Generated image",
+      activities: [
+        makeActivity({
+          id: EventId.make("image-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Generated image",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            title: "Generated image",
+            itemType: "image_view",
+            data: { item: { type: "imageGeneration", savedPath } },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({
+      type: "activity-group",
+      activities: [{ imagePath: savedPath }],
+    });
+  });
+
   it("keeps MCP inputs available to expanded mobile work rows", () => {
     const turnId = TurnId.make("turn-mcp");
     const thread = makeThread({
@@ -583,6 +612,7 @@ describe("buildThreadFeed", () => {
       turnId: null,
       summary: `Tool ${id}`,
       detail: null,
+      imagePath: null,
       canExpand: false,
       getFullDetail: () => null,
       getCopyText: () => id,

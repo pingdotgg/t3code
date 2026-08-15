@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -48,7 +49,9 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  CodexSettings,
   RpcClientId,
+  type ServerSettings as ServerSettingsValue,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -79,6 +82,8 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { mergeProviderInstanceEnvironment } from "./provider/ProviderInstanceEnvironment.ts";
+import { resolveCodexHomeLayout } from "./provider/Drivers/CodexHomeLayout.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -108,6 +113,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import { expandHomePath } from "./pathExpansion.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -128,6 +134,33 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+
+const resolveCodexGeneratedImagesRoots = Effect.fn("resolveCodexGeneratedImagesRoots")(
+  function* (settings: ServerSettingsValue) {
+    const path = yield* Path.Path;
+    const roots: string[] = [];
+    const instances = Object.values(settings.providerInstances)
+      .filter((instance) => instance.driver === "codex")
+      .map((instance) => ({ config: instance.config, environment: instance.environment }));
+    const defaultInstance = settings.providerInstances.codex;
+    if (!defaultInstance) {
+      instances.push({ config: settings.providers.codex, environment: undefined });
+    }
+    for (const instance of instances) {
+      const config = Option.getOrNull(decodeCodexSettings(instance.config ?? {}));
+      if (!config) continue;
+      const layout = yield* resolveCodexHomeLayout(config);
+      const environmentHome = mergeProviderInstanceEnvironment(instance.environment).CODEX_HOME;
+      const home =
+        layout.effectiveHomePath ??
+        (environmentHome?.trim() ? path.resolve(expandHomePath(environmentHome)) : null) ??
+        layout.sharedHomePath;
+      roots.push(path.join(home, "generated_images"));
+    }
+    return roots;
+  },
+);
 
 export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
@@ -1909,9 +1942,17 @@ const makeWsRpcLayer = (
                   resource: input.resource,
                 });
               }
+              const generatedImagesRoots = yield* serverSettings.getSettings.pipe(
+                Effect.flatMap(resolveCodexGeneratedImagesRoots),
+                Effect.tapError((cause) =>
+                  Effect.logError("Failed to resolve Codex generated-image roots.", { cause }),
+                ),
+                Effect.orElseSucceed(() => []),
+              );
               return yield* issueAssetUrl({
                 resource: input.resource,
                 workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+                generatedImagesRoots,
               });
             }),
             { "rpc.aggregate": "workspace" },

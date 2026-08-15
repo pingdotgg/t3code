@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Image, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
@@ -9,9 +9,14 @@ import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios
 import type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
+  MarkdownImageRenderProps,
   NativeMarkdownTextStyle,
   SelectableMarkdownSkill,
 } from "./SelectableMarkdownText.types";
+
+const MarkdownImageRenderContext = createContext<
+  ((props: MarkdownImageRenderProps) => ReactNode) | undefined
+>(undefined);
 
 type HighlightedCode = ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>;
 
@@ -380,6 +385,10 @@ function NativeMarkdownImage(props: {
   readonly onLinkPress?: (href: string) => void;
 }) {
   const href = props.node.href;
+  const renderImage = useContext(MarkdownImageRenderContext);
+  if (href && renderImage) {
+    return <>{renderImage({ href, alt: props.node.alt ?? props.node.title })}</>;
+  }
   if (!href) {
     return (
       <SelectableNode
@@ -561,10 +570,31 @@ export function NativeMarkdownBlock(props: {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
   readonly onLinkPress?: (href: string) => void;
+  readonly renderImage?: (props: MarkdownImageRenderProps) => ReactNode;
   readonly depth?: number;
   readonly compact?: boolean;
 }) {
   const depth = props.depth ?? 0;
+  const block = <NativeMarkdownBlockInner {...props} depth={depth} />;
+  if (!props.renderImage) {
+    return block;
+  }
+  return (
+    <MarkdownImageRenderContext.Provider value={props.renderImage}>
+      {block}
+    </MarkdownImageRenderContext.Provider>
+  );
+}
+
+function NativeMarkdownBlockInner(props: {
+  readonly node: MarkdownNode;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
+  readonly onLinkPress?: (href: string) => void;
+  readonly depth: number;
+  readonly compact?: boolean;
+}) {
+  const depth = props.depth;
   switch (props.node.type) {
     case "document":
       return (
