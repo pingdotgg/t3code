@@ -281,7 +281,7 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.meta-updated", () => {
-    it("patches title and branch", () => {
+    it("patches title, branch, and Operator settings", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
         sequence: 5,
@@ -293,6 +293,9 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-1"),
           title: "Updated Title",
           branch: "feature/demo",
+          operatorWorkspacePath: "/worktrees/operator",
+          operatorWorkspaceBranch: "feat/operator",
+          operatorWaitStartedAt: "2026-04-01T04:59:00.000Z",
           updatedAt: "2026-04-01T05:00:00.000Z",
         },
       });
@@ -301,8 +304,70 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.title).toBe("Updated Title");
         expect(result.thread.branch).toBe("feature/demo");
+        expect(result.thread.operatorWorkspacePath).toBe("/worktrees/operator");
+        expect(result.thread.operatorWorkspaceBranch).toBe("feat/operator");
+        expect(result.thread.operatorWaitStartedAt).toBe("2026-04-01T04:59:00.000Z");
         // Model selection should be unchanged since it wasn't in the payload
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);
+      }
+    });
+
+    it("clears operatorWaitStartedAt when the event sets null", () => {
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          operatorWaitStartedAt: "2026-04-01T04:59:00.000Z",
+        },
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T05:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            operatorWaitStartedAt: null,
+            updatedAt: "2026-04-01T05:01:00.000Z",
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.operatorWaitStartedAt).toBeNull();
+      }
+    });
+
+    it("preserves Operator settings omitted from the event", () => {
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          operatorWorkspacePath: "/worktrees/operator",
+          operatorWorkspaceBranch: "feat/operator",
+          operatorWaitStartedAt: "2026-04-01T04:59:00.000Z",
+        },
+        {
+          ...baseEventFields,
+          sequence: 7,
+          occurredAt: "2026-04-01T05:02:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            title: "Renamed",
+            updatedAt: "2026-04-01T05:02:00.000Z",
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.title).toBe("Renamed");
+        expect(result.thread.operatorWorkspacePath).toBe("/worktrees/operator");
+        expect(result.thread.operatorWorkspaceBranch).toBe("feat/operator");
+        expect(result.thread.operatorWaitStartedAt).toBe("2026-04-01T04:59:00.000Z");
       }
     });
   });

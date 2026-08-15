@@ -150,6 +150,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly operatorParentThreadId?: ThreadId;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -434,6 +435,23 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    if (input?.operatorParentThreadId) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-operator-parent-create"),
+          threadId: input.operatorParentThreadId,
+          projectId: asProjectId("project-1"),
+          title: "Operator coordinator",
+          modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+    }
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.create",
@@ -446,6 +464,9 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        ...(input?.operatorParentThreadId
+          ? { operatorParentThreadId: input.operatorParentThreadId }
+          : {}),
         createdAt: now,
       }),
     );
@@ -1465,7 +1486,7 @@ describe("ProviderCommandReactor", () => {
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
-        branch: "t3code/1234abcd",
+        branch: "t3code/deadbeef",
         worktreePath: "/tmp/provider-project-worktree",
       }),
     );
@@ -1503,11 +1524,66 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
     await waitFor(() => harness.refreshStatus.mock.calls.length === 1);
     expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
       message: "Add a safer reconnect backoff.",
     });
+    expect(harness.renameBranch).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-project-worktree",
+      oldBranch: "t3code/deadbeef",
+      newBranch: "t3code/feature/gpt-5-6-luna",
+    });
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+  });
+
+  it("keeps Operator child titles and shared temporary branches stable", async () => {
+    const harness = await createHarness({
+      operatorParentThreadId: ThreadId.make("operator-coordinator"),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-operator-child-metadata"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Backend implementation",
+        branch: "t3code/deadbeef",
+        worktreePath: "/tmp/shared-operator-worktree",
+      }),
+    );
+    harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: "feature/renamed" }));
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-operator-child-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("operator-child-message"),
+          role: "user",
+          text: "Implement the backend files only.",
+          attachments: [],
+        },
+        titleSeed: "Backend implementation",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+
+    expect(harness.generateBranchName).not.toHaveBeenCalled();
+    expect(harness.renameBranch).not.toHaveBeenCalled();
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Backend implementation");
+    expect(thread?.branch).toBe("t3code/deadbeef");
   });
 
   it("forwards codex model options through session start and turn send", async () => {

@@ -385,6 +385,11 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  operatorParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  operatorBatchId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspaceBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWaitStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -456,6 +461,11 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  operatorParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  operatorBatchId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspaceBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWaitStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -678,6 +688,8 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  operatorParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  operatorBatchId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   createdAt: IsoDateTime,
 });
 
@@ -773,6 +785,9 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspaceBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWaitStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -1165,6 +1180,8 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  operatorParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  operatorBatchId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1247,6 +1264,9 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspacePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWorkspaceBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  operatorWaitStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   updatedAt: IsoDateTime,
 });
 

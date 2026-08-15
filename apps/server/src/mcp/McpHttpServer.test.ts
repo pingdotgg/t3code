@@ -5,12 +5,13 @@ import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3to
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { OperatorModelsTool } from "./toolkits/operator/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -49,6 +50,13 @@ it("normalizes empty successful notification responses to accepted", () => {
     HttpServerResponse.jsonUnsafe({ jsonrpc: "2.0", id: 1, result: {} }),
   );
   expect(resultResponse.status).toBe(200);
+});
+
+it("advertises an object input schema for argument-free Operator tools", () => {
+  expect(Tool.getJsonSchema(OperatorModelsTool)).toEqual({
+    type: "object",
+    additionalProperties: false,
+  });
 });
 
 it.effect("returns bounded structural preview snapshot failures", () =>

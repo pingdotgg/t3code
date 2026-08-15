@@ -175,6 +175,18 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings Operator", () => {
+  it("defaults off for existing settings files", () => {
+    expect(decodeServerSettings({}).agenticOperatorEnabled).toBe(false);
+  });
+
+  it("accepts global enablement updates", () => {
+    expect(decodeServerSettingsPatch({ agenticOperatorEnabled: true }).agenticOperatorEnabled).toBe(
+      true,
+    );
+  });
+});
+
 describe("ServerSettings worktree cleanup", () => {
   it("defaults artifact cleanup to two days", () => {
     expect(decodeServerSettings({}).worktreeCleanupAfterDays).toBe(2);

@@ -227,6 +227,20 @@ describe("rightPanelStore", () => {
     ).toHaveLength(2);
   });
 
+  it("keeps Operator separate from native Agents", () => {
+    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().open(refA, "operator");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "operator",
+      surfaces: [
+        { id: "agents", kind: "agents" },
+        { id: "operator", kind: "operator" },
+      ],
+    });
+  });
+
   it("reopening an inactive singleton activates its existing surface", () => {
     useRightPanelStore.getState().open(refA, "diff");
     useRightPanelStore.getState().open(refA, "agents");

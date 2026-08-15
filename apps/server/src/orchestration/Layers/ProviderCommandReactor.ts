@@ -1108,7 +1108,13 @@ const make = Effect.gen(function* () {
     const isFirstUserMessageTurn =
       event.payload.origin !== "usage-limit-auto-resume" &&
       thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
+    // Operator children share one checkout. First-turn branch generation from
+    // multiple children would race to rename that shared branch, and their
+    // coordinator already supplied stable task titles.
+    if (
+      isFirstUserMessageTurn &&
+      (thread.operatorParentThreadId === null || thread.operatorParentThreadId === undefined)
+    ) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({

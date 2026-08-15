@@ -71,6 +71,10 @@
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
     },
+    "./state/operatorRuntime": {
+      "types": "./src/state/operatorRuntime.ts",
+      "default": "./src/state/operatorRuntime.ts"
+    },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"

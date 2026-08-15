@@ -299,6 +299,11 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            operatorParentThreadId: payload.operatorParentThreadId ?? null,
+            operatorBatchId: payload.operatorBatchId ?? null,
+            operatorWorkspacePath: null,
+            operatorWorkspaceBranch: null,
+            operatorWaitStartedAt: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -459,6 +464,15 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.operatorWorkspacePath !== undefined
+              ? { operatorWorkspacePath: payload.operatorWorkspacePath }
+              : {}),
+            ...(payload.operatorWorkspaceBranch !== undefined
+              ? { operatorWorkspaceBranch: payload.operatorWorkspaceBranch }
+              : {}),
+            ...(payload.operatorWaitStartedAt !== undefined
+              ? { operatorWaitStartedAt: payload.operatorWaitStartedAt }
+              : {}),
             updatedAt: payload.updatedAt,
           }),
         })),

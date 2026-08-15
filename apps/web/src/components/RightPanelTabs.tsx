@@ -8,6 +8,7 @@ import {
   Globe2,
   Plus,
   TerminalSquare,
+  Workflow,
   X,
 } from "lucide-react";
 import {
@@ -61,15 +62,19 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddOperator: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  operatorAvailable: boolean;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
+  /** Queued + running + waiting T3 tasks; badges the Operator card in the empty state. */
+  liveOperatorCount: number;
   children: ReactNode;
 }
 
@@ -88,6 +93,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
+  operator: "Operator is unavailable for this task or environment.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -156,13 +162,16 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddOperator: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  operatorAvailable: boolean;
   liveAgentCount: number;
+  liveOperatorCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -227,6 +236,16 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
       onClick: props.onAddAgents,
       badgeCount: props.liveAgentCount,
+    },
+    {
+      label: "Operator",
+      description: "Monitor model-specific T3 Code tasks.",
+      icon: Workflow,
+      shortcut: "O",
+      available: props.operatorAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.operator,
+      onClick: props.onAddOperator,
+      badgeCount: props.liveOperatorCount,
     },
   ] as const;
 
@@ -422,6 +441,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "agents":
       return "Agents";
+    case "operator":
+      return "Operator";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -499,6 +520,8 @@ function SurfaceIcon({
     }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "operator":
+      return <Workflow className="size-3 shrink-0" />;
   }
 }
 
@@ -722,6 +745,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <Bot />
                     Agents
                   </SurfaceMenuItem>
+                  <SurfaceMenuItem
+                    available={props.operatorAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.operator}
+                    onClick={props.onAddOperator}
+                  >
+                    <Workflow />
+                    Operator
+                  </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -738,13 +769,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
+            onAddOperator={props.onAddOperator}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             agentsAvailable={props.agentsAvailable}
+            operatorAvailable={props.operatorAvailable}
             liveAgentCount={props.liveAgentCount}
+            liveOperatorCount={props.liveOperatorCount}
           />
         ) : (
           props.children

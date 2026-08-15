@@ -77,6 +77,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { OPERATOR_PROVIDER_INSTRUCTIONS } from "../../operator/OperatorInstructions.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -4145,7 +4146,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: OPERATOR_PROVIDER_INSTRUCTIONS,
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
@@ -4175,6 +4180,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                   headers: {
                     Authorization: mcpSession.authorizationHeader,
                   },
+                  timeout: McpProviderSession.T3_MCP_TOOL_TIMEOUT_MS,
                 },
               },
             }

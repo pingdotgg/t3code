@@ -146,6 +146,32 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-thread-shells-for-projects:${key}`));
   });
 
+  const operatorThreadShellsAtomFamily = Atom.family((key: string) => {
+    const coordinatorRef = parseThreadKey(key);
+    let previous: ReadonlyArray<EnvironmentThreadShell> = [];
+    return Atom.make((get) => {
+      const next = get(environmentThreadsAtom(coordinatorRef.environmentId)).flatMap((thread) => {
+        if (thread.operatorParentThreadId !== coordinatorRef.threadId) {
+          return [];
+        }
+        const child = get(
+          threadShellAtomFamily(
+            threadKey({
+              environmentId: coordinatorRef.environmentId,
+              threadId: thread.id,
+            }),
+          ),
+        );
+        return child === null ? [] : [child];
+      });
+      if (arrayElementsEqual(previous, next)) {
+        return previous;
+      }
+      previous = next;
+      return previous;
+    }).pipe(Atom.withLabel(`environment-operator-thread-shells:${key}`));
+  });
+
   let previousThreadRefs: ReadonlyArray<ScopedThreadRef> = [];
   const threadRefsAtom = Atom.make((get) => {
     const refs: ScopedThreadRef[] = [];
@@ -181,6 +207,8 @@ export function createEnvironmentThreadShellAtoms(input: {
     threadShellsAtom,
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),
+    operatorThreadShellsAtom: (ref: ScopedThreadRef) =>
+      operatorThreadShellsAtomFamily(threadKey(ref)),
     threadShellAtom: (ref: ScopedThreadRef) => threadShellAtomFamily(threadKey(ref)),
   };
 }

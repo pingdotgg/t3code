@@ -709,6 +709,23 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("working");
   });
 
+  it("reports waiting while a running Operator coordinator is blocked", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session,
+        operatorWaitStartedAt: "2026-03-09T10:01:00.000Z",
+      }),
+    ).toBe("waiting");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session,
+        operatorWaitStartedAt: null,
+      }),
+    ).toBe("working");
+  });
+
   it("reports failed only while the session status is error", () => {
     expect(
       resolveSidebarThreadStatus({
@@ -1054,6 +1071,7 @@ describe("resolveThreadStatusPill", () => {
     interactionMode: "plan" as const,
     latestTurn: null,
     lastVisitedAt: undefined,
+    operatorWaitStartedAt: null,
     session: {
       threadId: ThreadId.make("thread-1"),
       status: "running" as const,
@@ -1095,6 +1113,21 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows an amber waiting state for an Operator coordinator", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          operatorWaitStartedAt: "2026-03-09T10:01:00.000Z",
+        },
+      }),
+    ).toMatchObject({
+      label: "Waiting",
+      pulse: false,
+      colorClass: expect.stringContaining("amber"),
+    });
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {

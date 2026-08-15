@@ -52,6 +52,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
+  WorkflowIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -732,6 +733,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const isOperatorChild = thread.operatorParentThreadId != null;
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -791,7 +793,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // working threads aren't your problem yet) — only the colored status label
   // stands out.
   const isInFlight =
-    status === "working" || status === "monitoring" || status === "approval" || status === "input";
+    status === "working" ||
+    status === "waiting" ||
+    status === "monitoring" ||
+    status === "approval" ||
+    status === "input";
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
@@ -809,45 +815,51 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           // the label at full strength.
           className: cn("text-sky-600 dark:text-sky-400", !props.isActive && "opacity-75"),
         }
-      : status === "monitoring"
+      : status === "waiting"
         ? {
-            // Monitoring is calm background presence, not active progress
-            // (monitoring-pill D6), so it keeps the label at full strength.
-            label: "Monitoring",
-            icon: null,
-            className: "text-sky-600 dark:text-sky-400",
+            label: "Waiting",
+            icon: "waiting" as const,
+            className: "text-amber-700 dark:text-amber-300",
           }
-        : status === "approval"
+        : status === "monitoring"
           ? {
-              label: "Approval",
+              // Monitoring is calm background presence, not active progress
+              // (monitoring-pill D6), so it keeps the label at full strength.
+              label: "Monitoring",
               icon: null,
-              className: "text-amber-700 dark:text-amber-300",
+              className: "text-sky-600 dark:text-sky-400",
             }
-          : status === "input"
+          : status === "approval"
             ? {
-                label: "Input",
+                label: "Approval",
                 icon: null,
-                className: "text-indigo-600 dark:text-indigo-300",
+                className: "text-amber-700 dark:text-amber-300",
               }
-            : status === "failed"
+            : status === "input"
               ? {
-                  label: "Failed",
+                  label: "Input",
                   icon: null,
-                  className: "text-red-700 dark:text-red-300",
+                  className: "text-indigo-600 dark:text-indigo-300",
                 }
-              : isWoke
+              : status === "failed"
                 ? {
-                    label: "Woke",
-                    icon: "woke" as const,
-                    className: "text-amber-700 dark:text-amber-300",
+                    label: "Failed",
+                    icon: null,
+                    className: "text-red-700 dark:text-red-300",
                   }
-                : isUnread
+                : isWoke
                   ? {
-                      label: "Done",
-                      icon: "done" as const,
-                      className: "text-emerald-700 dark:text-emerald-300",
+                      label: "Woke",
+                      icon: "woke" as const,
+                      className: "text-amber-700 dark:text-amber-300",
                     }
-                  : null;
+                  : isUnread
+                    ? {
+                        label: "Done",
+                        icon: "done" as const,
+                        className: "text-emerald-700 dark:text-emerald-300",
+                      }
+                    : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1095,6 +1107,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {thread.title}
     </span>
   );
+  const operatorChildIcon = isOperatorChild ? (
+    <WorkflowIcon
+      data-testid="operator-child-icon"
+      role="img"
+      aria-label="Operator task"
+      className="size-3.5 shrink-0 text-violet-600/75 dark:text-violet-300/75"
+    />
+  ) : null;
 
   // A real link so cmd/ctrl+click and middle-click open the host in the
   // browser. A plain click still opens T3's pull request view.
@@ -1136,6 +1156,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-operator-role={isOperatorChild ? "child" : undefined}
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         <Tooltip>
@@ -1171,6 +1192,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            {operatorChildIcon}
             {title}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1284,6 +1306,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
         sortable?.isDragging && "z-20 opacity-80",
       )}
+      data-operator-role={isOperatorChild ? "child" : undefined}
     >
       <Tooltip>
         <TooltipTrigger
@@ -1390,6 +1413,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       >
                         {topStatus.icon === "working" ? (
                           <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                        ) : topStatus.icon === "waiting" ? (
+                          <ClockIcon aria-hidden className="size-4 shrink-0" />
                         ) : topStatus.icon === "done" ? (
                           <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
                         ) : null}
@@ -1397,9 +1422,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
                         <span role="status">{topStatus.label}</span>
-                        {status === "working" ? (
+                        {status === "working" || status === "waiting" ? (
                           <span aria-hidden>
-                            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                            <WorkingDuration
+                              startedAt={
+                                status === "waiting"
+                                  ? (thread.operatorWaitStartedAt ?? null)
+                                  : resolveWorkingStartedAt(thread)
+                              }
+                            />
                           </span>
                         ) : null}
                       </span>
@@ -1443,7 +1474,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {operatorChildIcon}
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
@@ -1452,9 +1484,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* Always the branch. The plan step used to take this slot while
-                  working, but it truncated to a half-sentence and dropped the
-                  branch, so the row lost its most stable identifier. */}
               {thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />

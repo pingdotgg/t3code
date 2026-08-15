@@ -368,6 +368,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
+      const operatorParentThread =
+        command.operatorParentThreadId == null
+          ? null
+          : yield* requireThread({
+              readModel,
+              command,
+              threadId: command.operatorParentThreadId,
+            });
+      if (operatorParentThread !== null && operatorParentThread.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Operator parent thread '${operatorParentThread.id}' belongs to a different project.`,
+        });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -390,6 +404,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          operatorParentThreadId: command.operatorParentThreadId ?? null,
+          operatorBatchId: command.operatorBatchId ?? null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -890,6 +906,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.operatorWorkspacePath !== undefined
+            ? { operatorWorkspacePath: command.operatorWorkspacePath }
+            : {}),
+          ...(command.operatorWorkspaceBranch !== undefined
+            ? { operatorWorkspaceBranch: command.operatorWorkspaceBranch }
+            : {}),
+          ...(command.operatorWaitStartedAt !== undefined
+            ? { operatorWaitStartedAt: command.operatorWaitStartedAt }
+            : {}),
           updatedAt: occurredAt,
         },
       };

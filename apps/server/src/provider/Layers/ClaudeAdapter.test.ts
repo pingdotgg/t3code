@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -34,6 +35,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { OPERATOR_PROVIDER_INSTRUCTIONS } from "../../operator/OperatorInstructions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
@@ -414,7 +417,47 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+      assert.deepEqual(createInput?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append: OPERATOR_PROVIDER_INSTRUCTIONS,
+      });
+      assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /top-level T3 Code sidebar task/);
+      assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /operator_resume/);
+      assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /never.*native subagents/i);
+      assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /never silently substitute/i);
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("gives T3 MCP tools enough time for complete Operator child turns", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: THREAD_ID,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:4567/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.mcpServers?.["t3-code"], {
+        type: "http",
+        url: "http://127.0.0.1:4567/mcp",
+        headers: { Authorization: "Bearer test-token" },
+        timeout: McpProviderSession.T3_MCP_TOOL_TIMEOUT_MS,
+      });
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );

@@ -4,6 +4,7 @@
 
 - [Install and first run](./user/install.md)
 - [Permission modes](./user/permission-modes.md)
+- [Operator](./user/agentic-operator.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Notifications](./user/notifications.md)
 - [Organizing threads](./user/thread-sidebar.md)

@@ -1,5 +1,11 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
+// Operator waits intentionally span complete child turns. Keep provider-side
+// MCP call limits above realistic implementation runs while preserving normal
+// cancellation when the coordinator turn is interrupted.
+export const T3_MCP_TOOL_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+export const T3_MCP_TOOL_TIMEOUT_SECONDS = T3_MCP_TOOL_TIMEOUT_MS / 1_000;
+
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;

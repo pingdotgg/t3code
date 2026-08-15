@@ -1168,6 +1168,95 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("rejects missing and cross-project Operator parent threads", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+    } as const;
+
+    for (const [projectId, workspaceRoot] of [
+      [asProjectId("operator-parent-project"), "/tmp/operator-parent-project"],
+      [asProjectId("operator-child-project"), "/tmp/operator-child-project"],
+    ] as const) {
+      await system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make(`cmd-${projectId}-create`),
+          projectId,
+          title: projectId,
+          workspaceRoot,
+          defaultModelSelection: modelSelection,
+          createdAt,
+        }),
+      );
+    }
+
+    const parentThreadId = ThreadId.make("operator-parent-thread");
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-operator-parent-thread-create"),
+        threadId: parentThreadId,
+        projectId: asProjectId("operator-parent-project"),
+        title: "Operator parent",
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const childCommand = {
+      type: "thread.create" as const,
+      projectId: asProjectId("operator-child-project"),
+      title: "Operator child",
+      modelSelection,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "full-access" as const,
+      branch: null,
+      worktreePath: null,
+      createdAt,
+    };
+    await expect(
+      system.run(
+        engine.dispatch({
+          ...childCommand,
+          commandId: CommandId.make("cmd-operator-child-missing-parent"),
+          threadId: ThreadId.make("operator-child-missing-parent"),
+          operatorParentThreadId: ThreadId.make("missing-operator-parent"),
+        }),
+      ),
+    ).rejects.toThrow("Thread 'missing-operator-parent' does not exist");
+    await expect(
+      system.run(
+        engine.dispatch({
+          ...childCommand,
+          commandId: CommandId.make("cmd-operator-child-cross-project"),
+          threadId: ThreadId.make("operator-child-cross-project"),
+          operatorParentThreadId: parentThreadId,
+        }),
+      ),
+    ).rejects.toThrow("belongs to a different project");
+
+    const snapshot = await system.readModel();
+    expect(
+      snapshot.threads.some(
+        (thread) => thread.id === ThreadId.make("operator-child-missing-parent"),
+      ),
+    ).toBe(false);
+    expect(
+      snapshot.threads.some(
+        (thread) => thread.id === ThreadId.make("operator-child-cross-project"),
+      ),
+    ).toBe(false);
+    await system.dispose();
+  });
+
   it("rejects duplicate thread creation", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
