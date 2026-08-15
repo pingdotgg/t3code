@@ -1107,7 +1107,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               ctx.currentModelId = currentModelId;
               ctx.currentReasoningEffort = turnSelection.reasoningEffort;
               if (currentModelId) {
-                ctx.maxTokens = ctx.maxTokensByModel.get(currentModelId) ?? ctx.maxTokens;
+                ctx.maxTokens = ctx.maxTokensByModel.get(currentModelId);
               }
 
               const text = input.input?.trim();

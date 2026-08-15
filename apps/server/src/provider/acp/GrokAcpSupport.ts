@@ -263,10 +263,25 @@ export function requestedGrokReasoningEffort(
   if (!requested) {
     return undefined;
   }
+  // Before ACP discovery the advertised menu is empty. Accept spawnable
+  // levels so `--reasoning-effort` still reaches the Grok process.
+  if (advertised.length === 0) {
+    return spawnableGrokReasoningEffort(requested);
+  }
   if (advertised.includes(requested)) {
     return requested;
   }
   return undefined;
+}
+
+export function grokDiscoveredModelCapabilities(meta: GrokAcpModelMeta): ModelCapabilities {
+  if (meta.reasoningEfforts.length > 0) {
+    return grokReasoningEffortCapabilities(meta.reasoningEfforts);
+  }
+  if (meta.supportsReasoningEffort) {
+    return fallbackGrokReasoningEffortCapabilities();
+  }
+  return createModelCapabilities({ optionDescriptors: [] });
 }
 
 export function grokMaxTokensByModelFromSessionSetup(

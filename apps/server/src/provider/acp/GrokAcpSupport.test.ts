@@ -9,6 +9,7 @@ import {
   grokReasoningEffortCapabilities,
   isGrokAcpAuthFailure,
   parseGrokAcpModelMeta,
+  grokDiscoveredModelCapabilities,
   requestedGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
@@ -88,6 +89,39 @@ describe("requestedGrokReasoningEffort", () => {
         ["high", "medium", "low"],
       ),
     ).toBeUndefined();
+  });
+
+  it("keeps spawnable effort before the ACP menu is known", () => {
+    expect(
+      requestedGrokReasoningEffort(
+        {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+          options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "xhigh" }],
+        },
+        [],
+      ),
+    ).toBe("xhigh");
+  });
+});
+
+describe("grokDiscoveredModelCapabilities", () => {
+  it("hides Reasoning when the model does not support effort", () => {
+    expect(
+      grokDiscoveredModelCapabilities({
+        supportsReasoningEffort: false,
+        reasoningEfforts: [],
+      }).optionDescriptors,
+    ).toEqual([]);
+  });
+
+  it("falls back to the default menu when support is advertised without choices", () => {
+    expect(
+      grokDiscoveredModelCapabilities({
+        supportsReasoningEffort: true,
+        reasoningEfforts: [],
+      }).optionDescriptors?.[0]?.id,
+    ).toBe(GROK_REASONING_EFFORT_OPTION_ID);
   });
 });
 

@@ -30,7 +30,7 @@ import {
 } from "../providerMaintenance.ts";
 import {
   fallbackGrokReasoningEffortCapabilities,
-  grokReasoningEffortCapabilities,
+  grokDiscoveredModelCapabilities,
   isGrokAcpAuthFailure,
   makeGrokAcpRuntime,
   parseGrokAcpModelMeta,
@@ -123,9 +123,7 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: meta.supportsReasoningEffort
-          ? grokReasoningEffortCapabilities(meta.reasoningEfforts)
-          : FALLBACK_CAPABILITIES,
+        capabilities: grokDiscoveredModelCapabilities(meta),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);

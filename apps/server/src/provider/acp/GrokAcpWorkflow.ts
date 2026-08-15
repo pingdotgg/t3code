@@ -278,8 +278,8 @@ export function grokWorkflowAgentIsTerminal(state: string): boolean {
   );
 }
 
-export function grokWorkflowMemberTaskId(runId: string, index: number): string {
-  return `${runId}:wf:${index}`;
+export function grokWorkflowMemberTaskId(runId: string, agentId: string): string {
+  return `${runId}:wf:${agentId}`;
 }
 
 function memberFingerprint(agent: GrokWorkflowAgent, status: RuntimeTaskStatus): string {
@@ -303,6 +303,25 @@ function agentCompletedStatus(state: string): "completed" | "failed" | "stopped"
   if (state === "failed" || state === "error") return "failed";
   if (state === "cancelled") return "stopped";
   return "completed";
+}
+
+function typedUsageFromCounts(input: {
+  readonly tokensUsed?: number;
+  readonly durationMs?: number;
+  readonly toolCallCount?: number;
+}): Record<string, unknown> | undefined {
+  if (
+    input.tokensUsed === undefined &&
+    input.durationMs === undefined &&
+    input.toolCallCount === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    totalTokens: input.tokensUsed ?? 0,
+    ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+    ...(input.toolCallCount !== undefined ? { toolUses: input.toolCallCount } : {}),
+  };
 }
 
 export function applyGrokWorkflowUpdate(
@@ -375,7 +394,7 @@ export function applyGrokWorkflowUpdate(
   }
 
   for (const [agentIndex, agent] of update.agents.entries()) {
-    const memberId = grokWorkflowMemberTaskId(update.runId, agentIndex);
+    const memberId = grokWorkflowMemberTaskId(update.runId, agent.agentId);
     const status = grokWorkflowAgentStatus(agent.state);
     const fingerprint = memberFingerprint(agent, status);
     if (memberFingerprints.get(memberId) === fingerprint) {
@@ -470,21 +489,14 @@ export function applyGrokSubagentUpdate(
       events.push({ type: "task.started", payload: linkage });
     }
     if (!completedSubagentIds.has(update.subagentId)) {
+      const typedUsage = typedUsageFromCounts(update);
       events.push({
         type: "task.progress",
         payload: {
           ...linkage,
           status: "running",
           summary: update.role ?? "running",
-          ...(update.tokensUsed !== undefined || update.durationMs !== undefined
-            ? {
-                typedUsage: {
-                  totalTokens: update.tokensUsed ?? 0,
-                  ...(update.durationMs !== undefined ? { durationMs: update.durationMs } : {}),
-                  ...(update.toolCallCount !== undefined ? { toolUses: update.toolCallCount } : {}),
-                },
-              }
-            : {}),
+          ...(typedUsage ? { typedUsage } : {}),
         },
       });
     }
@@ -495,6 +507,7 @@ export function applyGrokSubagentUpdate(
     }
     completedSubagentIds.add(update.subagentId);
     const finished = update.status ?? "completed";
+    const typedUsage = typedUsageFromCounts(update);
     events.push({
       type: "task.completed",
       payload: {
@@ -502,9 +515,7 @@ export function applyGrokSubagentUpdate(
         status:
           finished === "failed" ? "failed" : finished === "cancelled" ? "stopped" : "completed",
         summary: update.error ?? update.output ?? finished,
-        ...(update.tokensUsed !== undefined
-          ? { typedUsage: { totalTokens: update.tokensUsed } }
-          : {}),
+        ...(typedUsage ? { typedUsage } : {}),
       },
     });
   }

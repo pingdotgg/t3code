@@ -43,7 +43,7 @@ describe("GrokAcpWorkflow", () => {
       (event) => event.type === "task.started" && event.payload.taskType === "subagent",
     );
     expect(memberStarted?.payload).toMatchObject({
-      taskId: grokWorkflowMemberTaskId("wf_review_1", 0),
+      taskId: grokWorkflowMemberTaskId("wf_review_1", "agent_reviewer"),
       parentAgentId: "wf_review_1",
       timelineBypass: true,
     });
@@ -103,6 +103,62 @@ describe("GrokAcpWorkflow", () => {
     expect(afterFinish.events[0]).toMatchObject({
       type: "task.completed",
       payload: { status: "completed", typedUsage: { totalTokens: 90 } },
+    });
+  });
+
+  it("keeps member identity on the Grok agent_id when the array is filtered or reordered", () => {
+    const update = parseXAiWorkflowUpdated({
+      update: {
+        sessionUpdate: "workflow_updated",
+        run_id: "wf_review_1",
+        name: "review-changes",
+        status: "active",
+        agents: [
+          { label: "broken" },
+          {
+            agent_id: "agent_reviewer",
+            label: "Reviewer",
+            state: "running",
+          },
+        ],
+      },
+    });
+    const applied = applyGrokWorkflowUpdate(emptyGrokWorkflowTrackState(), update!);
+    const member = applied.events.find(
+      (event) => event.type === "task.started" && event.payload.taskType === "subagent",
+    );
+    expect(member?.payload.taskId).toBe("wf_review_1:wf:agent_reviewer");
+  });
+
+  it("carries duration and tool-use counts on subagent progress and finish", () => {
+    const progress = parseXAiSubagentUpdate({
+      update: {
+        sessionUpdate: "subagent_progress",
+        subagent_id: "sa_1",
+        tool_call_count: 3,
+      },
+    });
+    const afterProgress = applyGrokSubagentUpdate(emptyGrokWorkflowTrackState(), progress!);
+    expect(afterProgress.events.at(-1)?.payload.typedUsage).toEqual({
+      totalTokens: 0,
+      toolUses: 3,
+    });
+
+    const finished = parseXAiSubagentUpdate({
+      update: {
+        sessionUpdate: "subagent_finished",
+        subagent_id: "sa_1",
+        status: "completed",
+        tokens_used: 90,
+        duration_ms: 1200,
+        tool_calls: 4,
+      },
+    });
+    const afterFinish = applyGrokSubagentUpdate(afterProgress.state, finished!);
+    expect(afterFinish.events[0]?.payload.typedUsage).toEqual({
+      totalTokens: 90,
+      durationMs: 1200,
+      toolUses: 4,
     });
   });
 });
