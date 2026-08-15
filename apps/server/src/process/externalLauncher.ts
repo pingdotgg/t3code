@@ -439,13 +439,22 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     });
 
     // For macRequiresAppBundle editors the PATH command name is also owned by
-    // a standalone non-IDE tool, so the bundle launch comes first: resolving
-    // the command could spawn the wrong program.
-    if ("macRequiresAppBundle" in editorDef && editorDef.macRequiresAppBundle) {
+    // a standalone non-IDE tool, so on macOS the bundle is the only trusted
+    // launch path: without it the PATH command could be the wrong program,
+    // and the launch fails as not-installed instead of falling through.
+    if (
+      macAppName !== undefined &&
+      "macRequiresAppBundle" in editorDef &&
+      editorDef.macRequiresAppBundle
+    ) {
       const bundleLaunch = yield* macBundleLaunch;
       if (Option.isSome(bundleLaunch)) {
         return bundleLaunch.value;
       }
+      return yield* new ExternalLauncherCommandNotFoundError({
+        editor: editorDef.id,
+        command: editorDef.commands[0],
+      });
     }
 
     const command = yield* resolveAvailableCommand(editorDef.commands, env);

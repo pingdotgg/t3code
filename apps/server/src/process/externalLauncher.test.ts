@@ -311,6 +311,41 @@ it.effect("launches Antigravity through its bundle even when agy is on PATH", ()
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// Without the bundle the PATH `agy` is the standalone CLI, so the launch must
+// fail as not-installed instead of spawning the wrong program.
+it.effect("fails an Antigravity launch on macOS when only the agy command is on PATH", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const homeDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mac-home-" });
+    const agyPath = path.join(binDir, "agy");
+    yield* fileSystem.writeFileString(agyPath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(agyPath, 0o755);
+
+    let spawnCount = 0;
+    const error = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher
+        .launchEditor({ editor: "antigravity", cwd: "/tmp/workspace" })
+        .pipe(Effect.flip);
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "darwin",
+          env: { PATH: binDir, HOME: homeDir },
+          onSpawn: () => {
+            spawnCount += 1;
+          },
+        }),
+      ),
+    );
+
+    assert.instanceOf(error, ExternalLauncher.ExternalLauncherCommandNotFoundError);
+    assert.equal(spawnCount, 0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("memoizes editor discovery and refreshes after the cache window", () => {
   let statCalls = 0;
   const fileInfo = { type: "File" } as FileSystem.File.Info;
