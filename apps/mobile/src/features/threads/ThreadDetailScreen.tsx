@@ -78,6 +78,10 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import {
+  resolveThreadFeedAtEndState,
+  shouldShowThreadFeedScrollToEnd,
+} from "./thread-feed-live-follow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
@@ -261,6 +265,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const [feedAtEndState, setFeedAtEndState] = useState(() => ({
+    threadKey: selectedThreadKey,
+    isAtEnd: true,
+  }));
   // Android keys the safe-area padding on keyboard visibility (#5988): the
   // back gesture closes the keyboard while the editor stays focused, and a
   // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
@@ -454,6 +462,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
+    setFeedAtEndState((current) => resolveThreadFeedAtEndState(current, selectedThreadKey));
   }, [selectedThreadKey]);
 
   useEffect(() => {
@@ -538,7 +547,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     });
   }, [freeze, scrollMessageToEnd]);
 
-  const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
+  const handleFeedAtEndChange = useCallback(
+    (isAtEnd: boolean) => {
+      setFeedAtEndState({ threadKey: selectedThreadKey, isAtEnd });
+    },
+    [selectedThreadKey],
+  );
+  const feedIsAtEnd =
+    feedAtEndState.threadKey === selectedThreadKey ? feedAtEndState.isAtEnd : true;
+  const showScrollToEndButton =
+    contentPresentationKind === "ready" &&
+    shouldShowThreadFeedScrollToEnd({ endFollowEnabled, isAtEnd: feedIsAtEnd });
   const isDarkMode = useColorScheme() === "dark";
 
   const handleFeedTouchStart = useCallback((event: GestureResponderEvent) => {
@@ -602,6 +621,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             onEndFollowEnabledChange={setEndFollowEnabled}
+            onAtEndChange={handleFeedAtEndChange}
             skills={selectedProviderSkills}
             loadEarlier={props.loadEarlier ?? null}
           />
@@ -627,7 +647,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             {showScrollToEndButton ? (
               <Animated.View
                 pointerEvents="box-none"
-                className="absolute -top-11 left-0 right-0 z-20 items-center"
+                className="absolute -top-24 left-0 right-0 z-20 items-center"
                 entering={FadeInDown.duration(160)}
                 exiting={FadeOut.duration(100)}
               >

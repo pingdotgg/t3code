@@ -160,6 +160,7 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onAtEndChange?: (isAtEnd: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: {
@@ -1350,6 +1351,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // when the list actually returns to the end (or on send / thread switch).
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   const endFollowEnabledRef = useRef(true);
+  const isAtEndRef = useRef(true);
   // A "user scroll session" spans from drag start through the end of its
   // momentum; only motion inside a session can break follow, so MVCP
   // compensations and programmatic scrolls never strand a follower.
@@ -1370,6 +1372,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
     },
     [setEndFollow],
+  );
+  const setIsAtEnd = useCallback(
+    (isAtEnd: boolean) => {
+      if (isAtEndRef.current === isAtEnd) {
+        return;
+      }
+      isAtEndRef.current = isAtEnd;
+      props.onAtEndChange?.(isAtEnd);
+    },
+    [props.onAtEndChange],
   );
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
@@ -1490,6 +1502,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // remains inside LegendList's at-end tolerance.
       const listState = props.listRef.current?.getState();
       if (listState) {
+        setIsAtEnd(listState.isAtEnd);
         transitionEndFollow({
           type: "scroll",
           isAtEnd: listState.isAtEnd,
@@ -1497,7 +1510,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         });
       }
     },
-    [reportHeaderMaterialVisibility, anchorTopInset, props.listRef, transitionEndFollow],
+    [
+      reportHeaderMaterialVisibility,
+      anchorTopInset,
+      props.listRef,
+      setIsAtEnd,
+      transitionEndFollow,
+    ],
   );
   const clearUserScrollSettle = useCallback(() => {
     if (userScrollSettleTimerRef.current !== null) {
@@ -1571,15 +1590,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   useEffect(() => {
     clearUserScrollSettle();
     userScrollSessionRef.current = false;
+    setIsAtEnd(true);
     transitionEndFollow({ type: "reset" });
-  }, [clearUserScrollSettle, feedThreadKey, transitionEndFollow]);
+  }, [clearUserScrollSettle, feedThreadKey, setIsAtEnd, transitionEndFollow]);
   useEffect(() => {
     if (props.anchorMessageId !== null) {
       clearUserScrollSettle();
       userScrollSessionRef.current = false;
+      setIsAtEnd(true);
       transitionEndFollow({ type: "reset" });
     }
-  }, [clearUserScrollSettle, props.anchorMessageId, transitionEndFollow]);
+  }, [clearUserScrollSettle, props.anchorMessageId, setIsAtEnd, transitionEndFollow]);
 
   const expandedWorkGroupIds = useMemo(() => {
     const ids = new Set<string>();
