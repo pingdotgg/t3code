@@ -279,10 +279,13 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
 
 /// Parse `Name  [id]  pid=…  windows=…  FRONTMOST` from `format_app_list`.
 fn parse_app_line(line: &str) -> Option<(String, String)> {
-    let id_start = line.find('[')?;
+    // Use the "  [" delimiter format_app_list emits so names that contain `[`
+    // are not truncated at the first bracket.
+    let marker = line.find("  [")?;
+    let id_start = marker + 3;
     let id_end = line[id_start..].find(']')? + id_start;
-    let name = line[..id_start].trim().to_string();
-    let id = line[id_start + 1..id_end].trim().to_string();
+    let name = line[..marker].trim().to_string();
+    let id = line[id_start..id_end].trim().to_string();
     if name.is_empty() {
         None
     } else {
@@ -592,10 +595,13 @@ fn chrono_lite(secs: u64) -> String {
 }
 
 fn uuid_like() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     format!(
-        "{:x}-{:x}",
+        "{:x}-{:x}-{:x}",
         now_secs(),
-        std::process::id().wrapping_mul(2654435761)
+        std::process::id().wrapping_mul(2654435761),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
     )
 }
 
@@ -611,6 +617,14 @@ mod tests {
         .expect("parse");
         assert_eq!(name, "Windows Explorer");
         assert_eq!(id, "explorer.exe");
+    }
+
+    #[test]
+    fn parses_app_name_that_contains_brackets() {
+        let (name, id) = parse_app_line("Foo [bar] App  [com.foo]  pid=1  windows=1")
+            .expect("parse");
+        assert_eq!(name, "Foo [bar] App");
+        assert_eq!(id, "com.foo");
     }
 
     #[test]
