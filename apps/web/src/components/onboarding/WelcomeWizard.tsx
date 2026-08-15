@@ -85,6 +85,7 @@ function useOnboardingTargetEnvironment(mode: ConnectionMode) {
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const IMPORT_RECENT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const isClipboardApiUnavailableError = Schema.is(ClipboardApiUnavailableError);
 
 export function WelcomeWizard({
   localAvailable,
@@ -1105,7 +1106,7 @@ function CommandBlock({
     timeout: 1500,
     target: "command",
     onError: (error) => {
-      if (!(error instanceof ClipboardApiUnavailableError)) return;
+      if (!isClipboardApiUnavailableError(error)) return;
       const scratch = document.createElement("textarea");
       scratch.value = command;
       document.body.append(scratch);
