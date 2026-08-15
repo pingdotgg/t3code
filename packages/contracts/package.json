@@ -30,11 +30,12 @@
     "typecheck": "tsgo --noEmit",
     "test": "vp test run"
   },
-  "dependencies": {
-    "effect": "catalog:"
-  },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "effect": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "catalog:"
   }
 }
