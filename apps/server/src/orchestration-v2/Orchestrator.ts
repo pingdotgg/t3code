@@ -129,12 +129,40 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
   }
 }
 
+export class OrchestratorCommandIdConflictError extends Schema.TaggedErrorClass<OrchestratorCommandIdConflictError>()(
+  "OrchestratorCommandIdConflictError",
+  {
+    commandId: CommandId,
+    commandType: Schema.String,
+    receiptThreadId: ThreadId,
+    commandThreadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Command ${this.commandId} was already handled for thread ${this.receiptThreadId} and cannot be replayed for ${this.commandThreadId}.`;
+  }
+}
+
+/**
+ * A command receipt only proves that this exact command already ran for the
+ * thread it was recorded against. Replaying it for a command aimed at another
+ * thread would report success for work that never happened there, so the
+ * dispatcher rejects the reuse instead (mirrors v1's command-id conflict).
+ */
+export function canReplayCommandReceipt(
+  receiptThreadId: ThreadId,
+  commandThreadId: ThreadId,
+): boolean {
+  return receiptThreadId === commandThreadId;
+}
+
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
   OrchestratorProjectionError,
   OrchestratorDomainEventStreamError,
   OrchestratorProviderAdapterError,
   OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorCommandIdConflictError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -6843,6 +6871,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           detail: receipt.error ?? "Previously rejected.",
+        });
+      }
+      // A receipt only proves this exact command was handled for its own
+      // thread. Replaying it for a command aimed at another thread would
+      // report success for work that never happened.
+      const dispatchThreadId = commandThreadId(command);
+      if (!canReplayCommandReceipt(receipt.threadId, dispatchThreadId)) {
+        return yield* new OrchestratorCommandIdConflictError({
+          commandId: command.commandId,
+          commandType: command.type,
+          receiptThreadId: receipt.threadId,
+          commandThreadId: dispatchThreadId,
         });
       }
       const storedEvents = yield* eventSink.readByCommandId({ commandId: command.commandId }).pipe(
