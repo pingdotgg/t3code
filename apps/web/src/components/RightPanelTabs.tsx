@@ -38,6 +38,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { skillRootPath } from "./files/skillPreviewPaths";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -558,7 +559,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
       switch (action) {
         case "copy-path":
-          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
+          if (surface.kind === "file") {
+            props.onCopyFilePath(
+              surface.skill
+                ? `${skillRootPath(surface.skill.path)}/${surface.relativePath}`
+                : surface.relativePath,
+            );
+          }
           break;
         case "close":
           props.onCloseSurface(surface);

@@ -1152,6 +1152,8 @@ function SkillTextFilePreviewPanel(
     true,
     Schema.Boolean,
   );
+  const { resolvedTheme } = useTheme();
+  const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const relativePath = props.relativePath ?? "SKILL.md";
   const isMarkdown = isMarkdownPreviewFile(relativePath);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred;
@@ -1253,11 +1255,33 @@ function SkillTextFilePreviewPanel(
           />
         </ScrollArea>
       ) : (
-        <ScrollArea className="min-h-0 flex-1">
-          <pre className="min-h-full whitespace-pre-wrap break-words px-6 py-5 font-mono text-xs leading-relaxed text-foreground">
-            {file.data.contents ?? ""}
-          </pre>
-        </ScrollArea>
+        <Virtualizer
+          key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
+          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+          config={{
+            overscrollSize: 600,
+            intersectionObserverMargin: 1200,
+          }}
+        >
+          <File
+            file={{
+              name: relativePath,
+              contents: file.data.contents ?? "",
+              cacheKey: projectFileCacheKey(
+                skillRootPath(props.skill.path),
+                relativePath,
+                file.data.contents ?? "",
+              ),
+            }}
+            options={{
+              disableFileHeader: true,
+              overflow: wordWrap ? "wrap" : "scroll",
+              theme: resolveDiffThemeName(resolvedTheme),
+              themeType: resolvedTheme,
+            }}
+            className="min-h-full"
+          />
+        </Virtualizer>
       )}
     </div>
   );
