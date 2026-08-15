@@ -11,7 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
-import * as ComputerHistoryManager from "../../computerHistory/manager.ts";
+import * as ComputerHistoryManager from "../../computerHistory/ComputerHistoryManager.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 

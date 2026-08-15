@@ -63,7 +63,7 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
-import * as ComputerHistoryManager from "./computerHistory/manager.ts";
+import * as ComputerHistoryManager from "./computerHistory/ComputerHistoryManager.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
