@@ -25,6 +25,7 @@ import { AgentCursorIcon, ChromeIcon } from "./browserBrandIcons";
 import { ComputerUseMoreBrowsers } from "./ComputerUseMoreBrowsers";
 import {
   SettingResetButton,
+  SettingRowTitle,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
@@ -41,15 +42,6 @@ function isDesktopHost(): boolean {
 function isBridgeSupported(): boolean {
   return (
     typeof window !== "undefined" && window.desktopBridge?.getComputerUsePermissions !== undefined
-  );
-}
-
-function RowTitle({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      {icon}
-      <span>{children}</span>
-    </span>
   );
 }
 
@@ -198,9 +190,9 @@ export function ComputerUseSettings() {
         <SettingsRow
           id={searchableSetting("computer-use-agent-cursor").id}
           title={
-            <RowTitle icon={<AgentCursorIcon className="size-6" />}>
+            <SettingRowTitle icon={<AgentCursorIcon className="size-6" />}>
               {searchableSetting("computer-use-agent-cursor").title}
-            </RowTitle>
+            </SettingRowTitle>
           }
           description="Show the agent pointer overlay while it works, without moving your mouse."
           resetAction={
@@ -238,9 +230,9 @@ export function ComputerUseSettings() {
         <SettingsRow
           id={searchableSetting("computer-use-browser").id}
           title={
-            <RowTitle icon={<ChromeIcon className="size-5" />}>
+            <SettingRowTitle icon={<ChromeIcon className="size-5" />}>
               {searchableSetting("computer-use-browser").title}
-            </RowTitle>
+            </SettingRowTitle>
           }
           description="Drive an agent-owned tab group in your signed-in Chrome."
           status={
