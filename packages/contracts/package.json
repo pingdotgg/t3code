@@ -1,26 +1,32 @@
 {
   "name": "@t3tools/contracts",
   "version": "0.0.33",
-  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vite-hub/t3code.git",
+    "directory": "packages/contracts"
+  },
   "files": [
     "dist"
   ],
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
     },
     "./settings": {
-      "types": "./src/settings.ts",
-      "import": "./src/settings.ts"
+      "types": "./dist/settings.d.mts",
+      "import": "./dist/settings.mjs"
     },
     "./relay": {
-      "types": "./src/relay.ts",
-      "import": "./src/relay.ts"
+      "types": "./dist/relay.d.mts",
+      "import": "./dist/relay.mjs"
     }
   },
   "scripts": {
+    "build": "vp pack",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run"
   },

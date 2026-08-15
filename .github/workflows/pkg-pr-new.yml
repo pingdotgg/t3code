@@ -1,0 +1,28 @@
+name: pkg.pr.new
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "!**"
+  workflow_dispatch:
+
+concurrency:
+  group: pkg-pr-new-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish preview packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+      - run: vp run --filter @t3tools/contracts build
+      - run: vp dlx publint './packages/contracts' --pack npm
+      - run: vp dlx pkg-pr-new publish './packages/contracts' --pnpm --packageManager=pnpm
