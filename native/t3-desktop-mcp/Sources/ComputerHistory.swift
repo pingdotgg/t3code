@@ -172,13 +172,18 @@ private final class DaemonState {
     }
     guard appOk else { return false }
 
+    let isBrowser = Self.isBrowser(app)
+
     // Private-mode markers may live in the title even when AXURL is an ordinary https URL.
-    if let signal = context.privateSignal, Self.isPrivateBrowsing(url: signal.lowercased()) {
+    if isBrowser,
+       let signal = context.privateSignal,
+       Self.isPrivateBrowsing(text: signal.lowercased())
+    {
       return false
     }
     guard let url = context.url else { return true }
     let lowered = url.lowercased()
-    if Self.isPrivateBrowsing(url: lowered) {
+    if isBrowser, Self.isPrivateBrowsing(text: lowered) {
       return false
     }
     let siteNeedles = websites.map { $0.lowercased() }
@@ -192,7 +197,7 @@ private final class DaemonState {
     if siteNeedles.isEmpty {
       return websiteFilterMode == "exclude"
     }
-    let siteHit = siteNeedles.contains { lowered.contains($0) }
+    let siteHit = siteNeedles.contains { Self.hostMatches(url: lowered, needle: $0) }
     return websiteFilterMode == "exclude" ? !siteHit : siteHit
   }
 
@@ -253,19 +258,48 @@ private final class DaemonState {
     return context
   }
 
-  private static func isPrivateBrowsing(url: String) -> Bool {
-    url.contains("chrome://newtab")
-      || url.contains("chrome://private")
-      || url.contains("chrome-search://local-ntp")
-      || url.hasPrefix("about:privatebrowsing")
-      || url.contains("about:privatebrowsing")
-      || url.contains("edge://newtab")
-      || url.contains("edge://private")
-      || url.contains("brave://newtab")
-      || url.contains("opera://private")
-      || url.contains("(private)")
-      || url.contains("incognito")
-      || url.contains("inprivate")
+  private static func isBrowser(_ app: NSRunningApplication) -> Bool {
+    let hay = [
+      app.bundleIdentifier ?? "",
+      app.localizedName ?? "",
+      app.bundleURL?.path ?? "",
+    ]
+    .map { $0.lowercased() }
+    return ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera"].contains { needle in
+      hay.contains { $0.contains(needle) }
+    }
+  }
+
+  private static func isPrivateBrowsing(text: String) -> Bool {
+    text.contains("chrome://newtab")
+      || text.contains("chrome://private")
+      || text.contains("chrome-search://local-ntp")
+      || text.hasPrefix("about:privatebrowsing")
+      || text.contains("about:privatebrowsing")
+      || text.contains("private browsing")
+      || text.contains("edge://newtab")
+      || text.contains("edge://private")
+      || text.contains("brave://newtab")
+      || text.contains("opera://private")
+      || text.contains("(private)")
+      || text.contains("incognito")
+      || text.contains("inprivate")
+  }
+
+  private static func hostMatches(url: String, needle: String) -> Bool {
+    let needle = needle.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+    guard !needle.isEmpty else { return false }
+    if let host = urlHost(url) {
+      return host == needle || host.hasSuffix(".\(needle)")
+    }
+    return url == needle || url.hasSuffix(".\(needle)")
+  }
+
+  private static func urlHost(_ raw: String) -> String? {
+    guard let parsed = URL(string: raw), let host = parsed.host?.lowercased(), !host.isEmpty else {
+      return nil
+    }
+    return host
   }
 
   private func append(_ record: [String: Any]) {

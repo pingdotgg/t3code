@@ -1374,41 +1374,38 @@ enum Chrome {
     }
 
     /// The stored id, or nil if that window (or this Chrome instance) is gone.
-    static func liveAgentWindowID() -> Int? {
-        withStateLock {
-            loadState()
-            guard let id = cachedWindowID else { return nil }
-            // Window ids are only valid within a single Chrome process lifetime.
-            // After a restart Chrome can reuse the numeric id for an ordinary user
-            // window; refuse to reclaim unless the pid still matches *and* the
-            // process launch time matches (PIDs are reusable).
-            guard let expectedPid = cachedChromePid, let app = chromeApp(pid: expectedPid) else {
-                clearAgentWindowState()
-                return nil
-            }
-            guard let expectedLaunch = cachedChromeLaunch,
-                  let liveLaunch = launchInterval(for: app),
-                  abs(expectedLaunch - liveLaunch) <= 0.5
-            else {
-                clearAgentWindowState()
-                return nil
-            }
-            guard windowExists(id) else {
-                clearAgentWindowState()
-                return nil
-            }
-            // Prefer AX confirmation when available, but do not drop a still-valid
-            // scripting window when AX is unavailable or briefly skewed — that would
-            // force ensureAgentWindow to open a new Chrome window every call.
-            if let frame = boundsOf(id),
-               let match = axWindow(matching: frame, pid: expectedPid)
-            {
-                cachedChromePid = match.pid
-                cachedChromeLaunch = launchInterval(for: app)
-                return id
-            }
+    /// Caller must hold the agent-window state lock.
+    private static func liveAgentWindowIDLocked() -> Int? {
+        loadState()
+        guard let id = cachedWindowID else { return nil }
+        guard let expectedPid = cachedChromePid, let app = chromeApp(pid: expectedPid) else {
+            clearAgentWindowState()
+            return nil
+        }
+        guard let expectedLaunch = cachedChromeLaunch,
+              let liveLaunch = launchInterval(for: app),
+              abs(expectedLaunch - liveLaunch) <= 0.5
+        else {
+            clearAgentWindowState()
+            return nil
+        }
+        guard windowExists(id) else {
+            clearAgentWindowState()
+            return nil
+        }
+        if let frame = boundsOf(id),
+           let match = axWindow(matching: frame, pid: expectedPid)
+        {
+            cachedChromePid = match.pid
+            cachedChromeLaunch = launchInterval(for: app)
             return id
         }
+        return id
+    }
+
+    /// The stored id, or nil if that window (or this Chrome instance) is gone.
+    static func liveAgentWindowID() -> Int? {
+        withStateLock { liveAgentWindowIDLocked() }
     }
 
     /// NSAppleScript is not thread-safe and the JSON-RPC loop runs off-main.
@@ -1494,7 +1491,7 @@ enum Chrome {
             // Another MCP process may have created and persisted a window while
             // this process held a stale in-memory cache — reload under the lock.
             didLoadState = false
-            if let id = liveAgentWindowID() { return .success(id) }
+            if let id = liveAgentWindowIDLocked() { return .success(id) }
 
             let created = run("""
             tell application "Google Chrome"
@@ -1508,7 +1505,20 @@ enum Chrome {
                 guard let id = Int(s.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)) else {
                     return .failure("unexpected window id: \(s)")
                 }
-                agentWindowID = id
+                didLoadState = true
+                cachedWindowID = id
+                if let frame = boundsOf(id), let match = axWindow(matching: frame) {
+                    cachedChromePid = match.pid
+                    if let app = chromeApp(pid: match.pid) {
+                        cachedChromeLaunch = launchInterval(for: app)
+                    } else {
+                        cachedChromeLaunch = nil
+                    }
+                } else {
+                    cachedChromePid = nil
+                    cachedChromeLaunch = nil
+                }
+                persistState()
                 return .success(id)
             }
         }

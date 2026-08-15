@@ -95,6 +95,8 @@ function PrivacyExclusionList({
               onValueChange={(value) => setDraft(value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
                   setAdding(false);
                   setDraft("");
                 }
@@ -277,6 +279,12 @@ export function ComputerHistorySettings() {
       });
   };
 
+  const hasPrivacyOverrides =
+    history.apps.length > 0 ||
+    history.websites.length > 0 ||
+    history.appFilterMode !== defaults.appFilterMode ||
+    history.websiteFilterMode !== defaults.websiteFilterMode;
+
   const exclusionSummary = (() => {
     const appCount = history.apps.length;
     const siteCount = history.websites.length;
@@ -349,6 +357,7 @@ export function ComputerHistorySettings() {
           control={
             <Switch
               checked={history.mirrorToCodex}
+              disabled={!onDesktop}
               onCheckedChange={(checked) => patch({ mirrorToCodex: Boolean(checked) })}
               aria-label="Mirror Computer History to Codex"
             />
@@ -391,9 +400,7 @@ export function ComputerHistorySettings() {
             </Button>
           }
         />
-        {(history.apps.length > 0 || history.websites.length > 0) &&
-        (history.apps.length !== defaults.apps.length ||
-          history.websites.length !== defaults.websites.length) ? (
+        {hasPrivacyOverrides ? (
           <div className="flex justify-end px-3 pb-2 sm:px-4">
             <SettingResetButton
               label="exclusions"
@@ -401,8 +408,8 @@ export function ComputerHistorySettings() {
                 patch({
                   apps: [...defaults.apps],
                   websites: [...defaults.websites],
-                  appFilterMode: "exclude",
-                  websiteFilterMode: "exclude",
+                  appFilterMode: defaults.appFilterMode,
+                  websiteFilterMode: defaults.websiteFilterMode,
                 })
               }
             />
