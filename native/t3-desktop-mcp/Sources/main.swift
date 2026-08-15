@@ -1186,12 +1186,15 @@ func toolDrag(_ args: [String: Any]) -> String {
     } else {
         target = underStart
     }
-    if let target {
-        guard let dest = windowTarget(under: end) else {
-            return "error: drag destination is outside the source window"
-        }
-        if dest.wid != target.wid || dest.pid != target.pid {
+    // Only treat as cross-window when the endpoint is outside the source frame.
+    // `windowTarget(under:)` is frontmost-first, so using it for every drag would
+    // reject legitimate background drags under an occluding window.
+    if let target, !target.frame.contains(end) {
+        if let dest = windowTarget(under: end), dest.wid != target.wid || dest.pid != target.pid {
             return "error: cross-window drag is not supported — keep the drag inside one window"
+        }
+        if windowTarget(under: end) == nil {
+            return "error: drag destination is outside the source window"
         }
     }
     if let target, backgroundDrag(target, from: start, to: end) {
