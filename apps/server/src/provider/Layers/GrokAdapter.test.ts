@@ -424,13 +424,21 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeMockGrokWrapper({
           T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+          T3_ACP_EMIT_USAGE: "1",
         }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
       const contentDelta = yield* Deferred.make<void>();
-      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        event.type === "content.delta" ? Deferred.succeed(contentDelta, undefined) : Effect.void,
-      ).pipe(Effect.forkChild);
+      const usageUpdated = yield* Deferred.make<ProviderRuntimeEvent>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (event.type === "content.delta") {
+          return Deferred.succeed(contentDelta, undefined).pipe(Effect.ignore);
+        }
+        if (event.type === "thread.token-usage.updated") {
+          return Deferred.succeed(usageUpdated, event).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
 
       yield* adapter.startSession({
         threadId,
@@ -460,10 +468,16 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const snapshot = yield* adapter.readThread(threadId);
       assert.equal(snapshot.turns.length, 1);
       assert.equal(snapshot.turns[0]?.items.length, 1);
+      const usageEvent = yield* Deferred.await(usageUpdated).pipe(Effect.timeout("2 seconds"));
+      assert.equal(usageEvent.type, "thread.token-usage.updated");
+      if (usageEvent.type === "thread.token-usage.updated") {
+        assert.equal(usageEvent.payload.usage.usedTokens, 17);
+        assert.equal(usageEvent.payload.usage.inputTokens, 10);
+      }
 
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
-    }),
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("does not report a synthetic stop reason when xAI omits one", () =>

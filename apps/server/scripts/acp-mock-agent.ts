@@ -569,7 +569,13 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
           ...(omitXAiPromptCompleteStopReason ? {} : { stopReason: "end_turn" }),
-          agentResult: null,
+          agentResult: emitUsage
+            ? {
+                input_tokens: 10,
+                output_tokens: 4,
+                reasoning_tokens: 3,
+              }
+            : null,
         });
 
         if (emitForeignSessionUpdates) {

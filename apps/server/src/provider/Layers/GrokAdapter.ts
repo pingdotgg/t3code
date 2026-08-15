@@ -498,6 +498,27 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         }
       });
 
+    const publishGrokPromptUsage = (
+      ctx: GrokSessionContext,
+      turnId: TurnId,
+      result: EffectAcpSchema.PromptResponse,
+    ) =>
+      Effect.gen(function* () {
+        const tokenUsage = extractGrokTokenUsage(result._meta, ctx.maxTokens);
+        if (!tokenUsage) {
+          return;
+        }
+        ctx.lastKnownTokenUsage = tokenUsage;
+        yield* offerRuntimeEvent({
+          type: "thread.token-usage.updated",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId,
+          payload: { usage: tokenUsage },
+        });
+      });
+
     const logNative = (threadId: ThreadId, method: string, payload: unknown) =>
       Effect.gen(function* () {
         if (!nativeEventLogger) return;
@@ -1303,18 +1324,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
 
               appendPromptResultToTurn(ctx, prepared.turnId, prepared.promptParts, result);
-              const tokenUsage = extractGrokTokenUsage(result._meta, ctx.maxTokens);
-              if (tokenUsage) {
-                ctx.lastKnownTokenUsage = tokenUsage;
-                yield* offerRuntimeEvent({
-                  type: "thread.token-usage.updated",
-                  ...(yield* makeEventStamp()),
-                  provider: PROVIDER,
-                  threadId: input.threadId,
-                  turnId: prepared.turnId,
-                  payload: { usage: tokenUsage },
-                });
-              }
+              yield* publishGrokPromptUsage(ctx, prepared.turnId, result);
               ctx.session = {
                 ...ctx.session,
                 status: "running",
@@ -1419,6 +1429,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       prepared.promptParts,
                       promptResult,
                     );
+                    yield* publishGrokPromptUsage(ctx, prepared.turnId, promptResult);
                     yield* settlePromptInFlight(
                       input.threadId,
                       prepared.turnId,
