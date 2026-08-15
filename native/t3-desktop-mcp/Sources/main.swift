@@ -476,8 +476,9 @@ func visibleCenter(of element: AXUIElement) -> CGPoint? {
         return CGPoint(x: elementRect.midX, y: elementRect.midY)
     }
     let visible = elementRect.intersection(target.frame)
-    let rect = visible.isNull || visible.isEmpty ? elementRect : visible
-    return CGPoint(x: rect.midX, y: rect.midY)
+    // Entirely off-window (scrolled away / off-screen) — no clickable target.
+    guard !visible.isNull, !visible.isEmpty else { return nil }
+    return CGPoint(x: visible.midX, y: visible.midY)
 }
 
 var clickGroupCounter: Int64 = 0x4000
@@ -832,7 +833,9 @@ func toolClick(_ args: [String: Any]) -> String {
             }
         }
         // Coordinate fallback: see MOUSE_TARGETING.
-        guard let center = elementCenter else { return "error: \(id) has no screen position and AXPress failed" }
+        guard let center = elementCenter else {
+            return "error: \(id) is not visible in its window — scroll it into view and call get_app_state again"
+        }
         if let target = windowTarget(for: el), backgroundClick(target, at: center, clickCount: clickCount) {
             return "clicked \(id) at (\(Int(center.x)), \(Int(center.y))) in background"
         }
@@ -850,7 +853,10 @@ func toolClick(_ args: [String: Any]) -> String {
         // Prefer the window under the point so backgroundClick uses the correct
         // window ID/origin even when `app` resolves to that app's first AX window.
         // Fall back to the named app only when nothing sits under the point.
-        let target = windowTarget(under: point) ?? resolveTargetPid(args).flatMap(windowTarget(forPid:))
+        let resolvedPid = resolveTargetPid(args)
+        let target = windowTarget(under: point).flatMap { candidate in
+            resolvedPid == nil || candidate.pid == resolvedPid ? candidate : nil
+        } ?? resolvedPid.flatMap(windowTarget(forPid:))
         if let target, backgroundClick(target, at: point, clickCount: clickCount) {
             return "clicked at (\(Int(x)), \(Int(y))) in background"
         }
