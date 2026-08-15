@@ -265,6 +265,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
+import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
@@ -2744,10 +2745,12 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
+  const remoteOpenState = useRemoteOpenState(activeThread?.environmentId ?? environmentId);
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName: activeProject?.title,
     activeThreadEnvironmentId: activeThread?.environmentId ?? environmentId,
     primaryEnvironmentId,
+    remoteOpenMode: remoteOpenState.mode,
   });
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker,

@@ -72,7 +72,6 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
       showPlanFollowUpPrompt: false,
       promptHasText: hasSendableContent,
       isSendBusy: false,
-      sendDisabledReason: null,
       isConnecting: false,
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
@@ -237,7 +236,7 @@ describe("ComposerPrimaryActions", () => {
     const markup = renderRunningActions(true, true);
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).toContain('aria-label="Send message to steer active turn"');
     expect(markup).toContain('type="submit"');
   });
 
@@ -278,7 +277,7 @@ describe("active-turn primary action", () => {
     expect(markup).not.toContain("steer active turn");
   });
 
-  it("replaces stop with send while the active composer has content", () => {
+  it("keeps stop reachable while the active composer has content", () => {
     const markup = renderToStaticMarkup(
       createElement(ComposerPrimaryActions, {
         ...activeTurnProps,
@@ -287,7 +286,21 @@ describe("active-turn primary action", () => {
       }),
     );
 
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain("steer active turn");
+  });
+
+  it("adds the steering send beside stop when Enter-to-send is unavailable", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: true,
+        hasSendableContent: true,
+        showSendWhileRunning: true,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).toContain('aria-label="Send message to steer active turn"');
-    expect(markup).not.toContain('aria-label="Stop generation"');
   });
 });

@@ -89,6 +89,7 @@ import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } fr
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings } from "./settings.ts";
+import type { EditorId } from "./editor.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -1094,7 +1095,19 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /**
+   * Probe this desktop machine for installed remote-capable editor CLIs
+   * (used for remote open-in-editor deep links). Optional: older desktop
+   * builds lack it; callers fall back to VS Code only.
+   */
+  probeRemoteEditors?: () => Promise<readonly EditorId[]>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  /**
+   * Hold-to-quit hint pushes: "down" when the quit shortcut is first pressed,
+   * "up" when it is released before the hold completes. Optional: older
+   * desktop builds never emit it.
+   */
+  onQuitShortcut?: (listener: (state: "down" | "up") => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
@@ -1228,6 +1241,7 @@ export interface LocalApi {
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
+    close: () => Promise<void>;
   };
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
