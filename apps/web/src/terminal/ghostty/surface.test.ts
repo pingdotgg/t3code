@@ -253,6 +253,22 @@ describe("isTerminalPasteShortcut", () => {
       true,
     );
   });
+
+  it("supports the conventional Shift+Insert paste shortcut", () => {
+    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "Linux x86_64")).toBe(
+      true,
+    );
+    expect(isTerminalPasteShortcut(event({ key: "Insert" }), "Linux x86_64")).toBe(false);
+    expect(
+      isTerminalPasteShortcut(
+        event({ key: "Insert", ctrlKey: true, shiftKey: true }),
+        "Linux x86_64",
+      ),
+    ).toBe(false);
+    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "MacIntel")).toBe(
+      false,
+    );
+  });
 });
 
 describe("isTerminalCompositionCommitInput", () => {
