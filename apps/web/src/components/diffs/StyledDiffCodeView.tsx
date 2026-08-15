@@ -292,8 +292,8 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
       // outside the panel clipping boundary; actual controls inside retain their own indicators.
       className={
         className
-          ? `diff-render-surface outline-none ${className}`
-          : "diff-render-surface outline-none"
+          ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
+          : "diff-render-surface [--code-background:var(--background)] outline-none"
       }
       options={{
         ...options,
