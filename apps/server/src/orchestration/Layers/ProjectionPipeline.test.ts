@@ -237,6 +237,40 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         WHERE thread_id = 'thread-1'
       `;
       assert.deepEqual(unsettledRows, [{ settledOverride: "active", settledAt: null }]);
+
+      yield* eventStore.append({
+        type: "thread.view-status-updated",
+        eventId: EventId.make("evt-viewed-1"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:03.000Z",
+        commandId: CommandId.make("cmd-viewed-1"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-viewed-1"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          lastViewedAt: "2026-01-01T00:00:03.000Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      const viewRows = yield* sql<{
+        readonly lastViewedAt: string | null;
+        readonly updatedAt: string;
+      }>`
+        SELECT
+          last_viewed_at AS "lastViewedAt",
+          updated_at AS "updatedAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(viewRows, [
+        {
+          lastViewedAt: "2026-01-01T00:00:03.000Z",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+      ]);
     }),
   );
 });

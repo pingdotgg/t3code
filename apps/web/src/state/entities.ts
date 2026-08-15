@@ -268,6 +268,14 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   );
 }
 
+/** Whether the environment server owns synchronized thread read state. */
+export function readEnvironmentSupportsViewStatus(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadViewStatus === true
+  );
+}
+
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
   return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
 }

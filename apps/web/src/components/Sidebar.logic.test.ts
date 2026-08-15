@@ -11,6 +11,7 @@ import {
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  hasUnseenWake,
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
@@ -195,13 +196,21 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
 describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+      buildMultiSelectThreadContextMenuItems({
+        count: 3,
+        hasRunningThread: false,
+        canMarkUnread: true,
+      }),
     ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
   });
 
   it("disables bulk archive when a selected thread is running", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
+      buildMultiSelectThreadContextMenuItems({
+        count: 2,
+        hasRunningThread: true,
+        canMarkUnread: true,
+      }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
 });
@@ -269,13 +278,13 @@ describe("hasUnseenCompletion", () => {
         hasPendingUserInput: false,
         interactionMode: "default",
         latestTurn: makeLatestTurn(),
-        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        lastViewedAt: "2026-03-09T10:04:00.000Z",
         session: null,
       }),
     ).toBe(true);
   });
 
-  it("treats a missing client visit marker as read", () => {
+  it("treats missing server view state as read", () => {
     expect(
       hasUnseenCompletion({
         hasActionableProposedPlan: false,
@@ -283,8 +292,47 @@ describe("hasUnseenCompletion", () => {
         hasPendingUserInput: false,
         interactionMode: "default",
         latestTurn: makeLatestTurn(),
-        lastVisitedAt: undefined,
+        lastViewedAt: undefined,
         session: null,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("hasUnseenWake", () => {
+  it("treats missing server view state as read", () => {
+    expect(
+      hasUnseenWake({
+        viewStatusSupported: true,
+        wokeAt: "2026-03-09T10:05:00.000Z",
+        lastViewedAt: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("suppresses wakes that an older server cannot acknowledge", () => {
+    expect(
+      hasUnseenWake({
+        viewStatusSupported: false,
+        wokeAt: "2026-03-09T10:05:00.000Z",
+        lastViewedAt: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears a wake only after its timestamp has been viewed", () => {
+    expect(
+      hasUnseenWake({
+        viewStatusSupported: true,
+        wokeAt: "2026-03-09T10:05:00.000Z",
+        lastViewedAt: "2026-03-09T10:04:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      hasUnseenWake({
+        viewStatusSupported: true,
+        wokeAt: "2026-03-09T10:05:00.000Z",
+        lastViewedAt: "2026-03-09T10:05:00.000Z",
       }),
     ).toBe(false);
   });
@@ -1053,7 +1101,7 @@ describe("resolveThreadStatusPill", () => {
     hasPendingUserInput: false,
     interactionMode: "plan" as const,
     latestTurn: null,
-    lastVisitedAt: undefined,
+    lastViewedAt: undefined,
     session: {
       threadId: ThreadId.make("thread-1"),
       status: "running" as const,
@@ -1137,7 +1185,7 @@ describe("resolveThreadStatusPill", () => {
           ...baseThread,
           interactionMode: "default",
           latestTurn: makeLatestTurn(),
-          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          lastViewedAt: "2026-03-09T10:04:00.000Z",
           session: {
             ...baseThread.session,
             status: "ready",

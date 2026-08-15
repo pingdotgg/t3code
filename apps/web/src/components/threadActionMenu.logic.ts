@@ -29,12 +29,14 @@ export interface ThreadActionMenuState {
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
+  readonly canMarkUnread: boolean;
   readonly isRegeneratingTitle: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+    readonly viewStatus: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
@@ -98,7 +100,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "mark-unread", label: "Mark unread" },
+    ...(state.supports.viewStatus && state.canMarkUnread
+      ? [{ id: "mark-unread" as const, label: "Mark unread" }]
+      : []),
     { id: "copy-path", label: "Copy path", icon: "copy" },
     ...(state.branch ? [{ id: "copy-branch" as const, label: "Copy branch", icon: "copy" }] : []),
     { id: "copy-thread-id", label: "Copy thread ID", icon: "copy" },

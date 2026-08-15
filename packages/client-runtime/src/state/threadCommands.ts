@@ -1,5 +1,6 @@
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
 import {
@@ -7,6 +8,8 @@ import {
   type CreateThreadInput,
   type DeleteThreadInput,
   type InterruptThreadTurnInput,
+  type MarkThreadUnreadInput,
+  type MarkThreadViewedInput as DispatchMarkThreadViewedInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
   type RevertThreadCheckpointInput,
@@ -27,6 +30,8 @@ import {
   createThread,
   deleteThread,
   interruptThreadTurn,
+  markThreadUnread,
+  markThreadViewed,
   respondToThreadApproval,
   respondToThreadUserInput,
   revertThreadCheckpoint,
@@ -45,12 +50,14 @@ import {
   updateThreadMetadata,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
 
 export type {
   ArchiveThreadInput,
   CreateThreadInput,
   DeleteThreadInput,
   InterruptThreadTurnInput,
+  MarkThreadUnreadInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
   RevertThreadCheckpointInput,
@@ -69,14 +76,67 @@ export type {
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
 
+export type MarkThreadViewedInput = Omit<
+  DispatchMarkThreadViewedInput,
+  "expectedLastViewedAt" | "supersededViewedAt"
+> & {
+  readonly expectedLastViewedAt?: DispatchMarkThreadViewedInput["expectedLastViewedAt"];
+};
+
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  options: {
+    readonly threadShellAtom: (ref: ScopedThreadRef) => Atom.Atom<EnvironmentThreadShell | null>;
+  },
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
+  };
+  const queuedViewedAtByThread = new Map<string, string>();
+  const dispatchMarkViewed = createEnvironmentCommand(runtime, {
+    label: "environment-data:commands:thread:mark-viewed",
+    execute: (input: DispatchMarkThreadViewedInput) => markThreadViewed(input),
+    scheduler,
+    concurrency,
+  });
+  const markViewed = {
+    label: dispatchMarkViewed.label,
+    run: (
+      registry: AtomRegistry.AtomRegistry,
+      target: { readonly environmentId: EnvironmentId; readonly input: MarkThreadViewedInput },
+    ) => {
+      const { expectedLastViewedAt: expectedOverride, ...input } = target.input;
+      const threadKey = JSON.stringify([target.environmentId, input.threadId]);
+      const supersededViewedAt = queuedViewedAtByThread.get(threadKey) ?? null;
+      if (
+        supersededViewedAt === null ||
+        Date.parse(input.viewedAt) > Date.parse(supersededViewedAt)
+      ) {
+        queuedViewedAtByThread.set(threadKey, input.viewedAt);
+      }
+      const expectedLastViewedAt =
+        expectedOverride !== undefined
+          ? expectedOverride
+          : (registry.get(
+              options.threadShellAtom({
+                environmentId: target.environmentId,
+                threadId: input.threadId,
+              }),
+            )?.lastViewedAt ?? null);
+      return dispatchMarkViewed
+        .run(registry, {
+          environmentId: target.environmentId,
+          input: { ...input, expectedLastViewedAt, supersededViewedAt },
+        })
+        .finally(() => {
+          if (queuedViewedAtByThread.get(threadKey) === input.viewedAt) {
+            queuedViewedAtByThread.delete(threadKey);
+          }
+        });
+    },
   };
   return {
     create: createEnvironmentCommand(runtime, {
@@ -100,6 +160,13 @@ export function createThreadEnvironmentAtoms<R, E>(
     unarchive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unarchive",
       execute: (input: UnarchiveThreadInput) => unarchiveThread(input),
+      scheduler,
+      concurrency,
+    }),
+    markViewed,
+    markUnread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:mark-unread",
+      execute: (input: MarkThreadUnreadInput) => markThreadUnread(input),
       scheduler,
       concurrency,
     }),

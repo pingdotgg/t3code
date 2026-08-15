@@ -20,7 +20,6 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
-  threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
@@ -35,7 +34,6 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
-  threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -48,7 +46,6 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
-  threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
@@ -83,21 +80,6 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
   );
 }
 
-function sanitizeTimestampRecord(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      (entry): entry is [string, string] =>
-        entry[0].length > 0 &&
-        typeof entry[1] === "string" &&
-        entry[1].length > 0 &&
-        Number.isFinite(Date.parse(entry[1])),
-    ),
-  );
-}
-
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -125,7 +107,6 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
-    threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -203,7 +184,6 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
-        threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
@@ -221,54 +201,6 @@ export function persistState(state: UiState): void {
 }
 
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
-
-export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
-  const visitedAtMs = Date.parse(visitedAt);
-  if (!Number.isFinite(visitedAtMs)) {
-    return state;
-  }
-  const previousVisitedAt = state.threadLastVisitedAtById[threadId];
-  const previousVisitedAtMs = previousVisitedAt ? Date.parse(previousVisitedAt) : NaN;
-  if (
-    Number.isFinite(previousVisitedAtMs) &&
-    Number.isFinite(visitedAtMs) &&
-    previousVisitedAtMs >= visitedAtMs
-  ) {
-    return state;
-  }
-  return {
-    ...state,
-    threadLastVisitedAtById: {
-      ...state.threadLastVisitedAtById,
-      [threadId]: visitedAt,
-    },
-  };
-}
-
-export function markThreadUnread(
-  state: UiState,
-  threadId: string,
-  latestTurnCompletedAt: string | null | undefined,
-): UiState {
-  if (!latestTurnCompletedAt) {
-    return state;
-  }
-  const latestTurnCompletedAtMs = Date.parse(latestTurnCompletedAt);
-  if (Number.isNaN(latestTurnCompletedAtMs)) {
-    return state;
-  }
-  const unreadVisitedAt = new Date(latestTurnCompletedAtMs - 1).toISOString();
-  if (state.threadLastVisitedAtById[threadId] === unreadVisitedAt) {
-    return state;
-  }
-  return {
-    ...state,
-    threadLastVisitedAtById: {
-      ...state.threadLastVisitedAtById,
-      [threadId]: unreadVisitedAt,
-    },
-  };
-}
 
 export function setThreadChangedFilesExpanded(
   state: UiState,
@@ -382,8 +314,6 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
-  markThreadVisited: (threadId: string, visitedAt: string) => void;
-  markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
@@ -396,10 +326,6 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
-  markThreadVisited: (threadId, visitedAt) =>
-    set((state) => markThreadVisited(state, threadId, visitedAt)),
-  markThreadUnread: (threadId, latestTurnCompletedAt) =>
-    set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>

@@ -3,8 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   legacyProjectCwdPreferenceKey,
-  markThreadUnread,
-  markThreadVisited,
   parsePersistedState,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
@@ -21,7 +19,6 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
-    threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
@@ -29,30 +26,6 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
-  it("stores server timestamps without moving visit state backwards", () => {
-    const threadId = ThreadId.make("thread-1");
-    const initialState = makeUiState();
-    const visited = markThreadVisited(initialState, threadId, "2026-02-25T12:30:00.700Z");
-
-    expect(visited.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:30:00.700Z");
-    expect(markThreadVisited(visited, threadId, "2026-02-25T12:30:00.000Z")).toBe(visited);
-    expect(markThreadVisited(visited, threadId, "not-a-date")).toBe(visited);
-  });
-
-  it("marks a completed thread unread using the server completion timestamp", () => {
-    const threadId = ThreadId.make("thread-1");
-    const initialState = makeUiState({
-      threadLastVisitedAtById: {
-        [threadId]: "2026-02-25T12:35:00.000Z",
-      },
-    });
-
-    const next = markThreadUnread(initialState, threadId, "2026-02-25T12:30:00.000Z");
-
-    expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
-    expect(markThreadUnread(next, threadId, null)).toBe(next);
-  });
-
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {
     const physicalKey = "environment:/repo/project";
     const legacyKey = legacyProjectCwdPreferenceKey("/repo/project");
@@ -154,10 +127,6 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
-      threadLastVisitedAtById: {
-        "environment:thread-1": "2026-02-25T12:35:00.000Z",
-        invalid: "not-a-date",
-      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
@@ -173,9 +142,6 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
-      threadLastVisitedAtById: {
-        "environment:thread-1": "2026-02-25T12:35:00.000Z",
-      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -264,15 +230,12 @@ describe("uiStateStore persistence", () => {
     vi.unstubAllGlobals();
   });
 
-  it("persists raw UI preferences including thread visit markers", () => {
+  it("persists raw UI preferences", () => {
     const state = makeUiState({
       projectExpandedById: {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
-      threadLastVisitedAtById: {
-        "environment:thread-1": "2026-02-25T12:35:00.000Z",
-      },
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -292,9 +255,6 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
-      threadLastVisitedAtById: {
-        "environment:thread-1": "2026-02-25T12:35:00.000Z",
-      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {

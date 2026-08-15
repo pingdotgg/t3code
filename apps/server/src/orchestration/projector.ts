@@ -30,6 +30,7 @@ import {
   ThreadUnarchivedPayload,
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
+  ThreadViewStatusUpdatedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -303,6 +304,7 @@ export function projectEvent(
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            lastViewedAt: payload.lastViewedAt ?? null,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -353,6 +355,21 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             archivedAt: null,
             updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.view-status-updated":
+      return decodeForEvent(
+        ThreadViewStatusUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            lastViewedAt: payload.lastViewedAt,
           }),
         })),
       );

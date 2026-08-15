@@ -24,6 +24,8 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
   createProject,
+  markThreadUnread,
+  markThreadViewed,
   settleThread,
   stopThreadSession,
   unsettleThread,
@@ -167,6 +169,41 @@ describe("environment commands", () => {
           commandId: "unsettle-command",
           threadId: "thread-1",
           reason: "user",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches server-owned thread view-status commands", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* markThreadViewed({
+        commandId: CommandId.make("viewed-command"),
+        threadId: ThreadId.make("thread-1"),
+        viewedAt: "2026-08-07T12:00:00.000Z",
+        expectedLastViewedAt: null,
+        supersededViewedAt: null,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* markThreadUnread({
+        commandId: CommandId.make("unread-command"),
+        threadId: ThreadId.make("thread-1"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.mark-viewed",
+          commandId: "viewed-command",
+          threadId: "thread-1",
+          viewedAt: "2026-08-07T12:00:00.000Z",
+          expectedLastViewedAt: null,
+          supersededViewedAt: null,
+        },
+        {
+          type: "thread.mark-unread",
+          commandId: "unread-command",
+          threadId: "thread-1",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

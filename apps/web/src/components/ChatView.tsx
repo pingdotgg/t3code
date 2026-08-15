@@ -101,7 +101,6 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { useUiStateStore } from "../uiStateStore";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -241,6 +240,7 @@ import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   useProject,
   useProjects,
+  useServerConfigs,
   useThread,
   useThreadRefs,
   useThreadShell,
@@ -275,6 +275,7 @@ import {
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
+import { hasUnseenWake } from "./Sidebar.logic";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
 import {
@@ -1217,6 +1218,9 @@ function ChatViewContent(props: ChatViewProps) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const markThreadViewed = useAtomCommand(threadEnvironment.markViewed, {
+    reportFailure: false,
+  });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
@@ -1240,6 +1244,7 @@ function ChatViewContent(props: ChatViewProps) {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
+  const serverConfigs = useServerConfigs();
   const primaryEnvironment = usePrimaryEnvironment();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const environmentById = useMemo(
@@ -1282,7 +1287,6 @@ function ChatViewContent(props: ChatViewProps) {
       },
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1671,23 +1675,29 @@ function ChatViewContent(props: ChatViewProps) {
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const serverThreadSupportsViewStatus =
+    serverThread != null &&
+    serverConfigs.get(serverThread.environmentId)?.environment.capabilities.threadViewStatus ===
+      true;
   // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // recorded by the server. A later completion retriggers this effect, so
+  // work that lands while the thread stays open is acknowledged too.
   useEffect(() => {
     const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
-    );
+    if (!serverThread?.id || !completedAt || !serverThreadSupportsViewStatus) return;
+    void markThreadViewed({
+      environmentId: serverThread.environmentId,
+      input: {
+        threadId: serverThread.id,
+        viewedAt: completedAt,
+      },
+    });
   }, [
-    markThreadVisited,
+    markThreadViewed,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.latestTurn?.completedAt,
+    serverThreadSupportsViewStatus,
   ]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
@@ -4136,6 +4146,10 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadShell !== null && supportsSnooze
       ? threadWokeAt(activeThreadShell, { now: snoozeNow })
       : null;
+  const activeThreadSupportsViewStatus =
+    activeThreadRef !== null &&
+    serverConfigs.get(activeThreadRef.environmentId)?.environment.capabilities.threadViewStatus ===
+      true;
   useEffect(() => {
     if (!activeThreadSnoozed) return;
     const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
@@ -4147,36 +4161,42 @@ function ChatViewContent(props: ChatViewProps) {
     return () => window.clearTimeout(id);
   }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
   const acknowledgeActiveThreadWoke = useCallback(() => {
-    if (activeThreadRef === null || activeThreadWokeAt === null) return;
-    markThreadVisited(scopedThreadKey(activeThreadRef), activeThreadWokeAt);
-  }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
+    if (activeThreadRef === null || activeThreadWokeAt === null || !activeThreadSupportsViewStatus)
+      return;
+    void markThreadViewed({
+      environmentId: activeThreadRef.environmentId,
+      input: {
+        threadId: activeThreadRef.threadId,
+        viewedAt: activeThreadWokeAt,
+      },
+    });
+  }, [activeThreadRef, activeThreadSupportsViewStatus, activeThreadWokeAt, markThreadViewed]);
   // Mirror of the sidebar's Woke pill for the open thread. It uses the same
-  // visit comparison and change request settle rule.
-  const activeThreadLastVisitedAt = useUiStateStore((store) =>
-    activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
-  );
+  // server view comparison and change request settle rule.
+  const activeThreadLastViewedAt = activeThreadShell?.lastViewedAt;
   const activeThreadWokeVisible = useMemo(() => {
-    if (activeThreadWokeAt === null) return false;
     if (changeRequestAutoSettles(activeThreadPr?.state, autoSettleOnMerge)) return false;
+    if (
+      !hasUnseenWake({
+        viewStatusSupported: activeThreadSupportsViewStatus,
+        wokeAt: activeThreadWokeAt,
+        lastViewedAt: activeThreadLastViewedAt,
+      })
+    )
+      return false;
+    if (activeThreadWokeAt === null) return false;
     const wokeAtMs = Date.parse(activeThreadWokeAt);
-    if (Number.isNaN(wokeAtMs)) return false;
     // Having the thread open counts as a visit at completedAt (the effect
     // above stamps it); folding that floor in here keeps a completion-
-    // triggered wake from flashing a banner for one frame before the stamp
-    // lands. An unparseable stored visit counts as never-visited: corrupt
-    // local data must not eat the wake signal.
-    const storedVisitMs = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
+    // triggered wake from flashing a banner for one frame before the stamp lands.
     const completedAtMs = activeLatestTurn?.completedAt
       ? Date.parse(activeLatestTurn.completedAt)
       : NaN;
-    const lastVisitedMs = Math.max(
-      Number.isNaN(storedVisitMs) ? -Infinity : storedVisitMs,
-      Number.isNaN(completedAtMs) ? -Infinity : completedAtMs,
-    );
-    return lastVisitedMs < wokeAtMs;
+    return Number.isNaN(completedAtMs) || completedAtMs < wokeAtMs;
   }, [
     activeLatestTurn?.completedAt,
-    activeThreadLastVisitedAt,
+    activeThreadSupportsViewStatus,
+    activeThreadLastViewedAt,
     activeThreadPr?.state,
     activeThreadWokeAt,
     autoSettleOnMerge,
