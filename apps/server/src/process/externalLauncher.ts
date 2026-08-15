@@ -65,7 +65,9 @@ interface TargetPathAndPosition {
   readonly column: Option.Option<string>;
 }
 
-const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+// `path:12`, `path:12:5`, and `path:12-40` — a span's end is matched to strip
+// it, never captured.
+const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+)|-\d+)?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -130,11 +132,22 @@ function resolveCommandEditorArgs(
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
+  // No editor CLI accepts a `path:20-40` span; rebuilding leaves every other
+  // shape unchanged.
+  const positionalTarget = Option.match(parsedTarget, {
+    onNone: () => target,
+    onSome: ({ path, line, column }) =>
+      `${path}:${line}${Option.match(column, {
+        onNone: () => "",
+        onSome: (value) => `:${value}`,
+      })}`,
+  });
+
   switch (editor.launchStyle) {
     case "direct-path":
-      return [target];
+      return [positionalTarget];
     case "goto":
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      return Option.isSome(parsedTarget) ? ["--goto", positionalTarget] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],

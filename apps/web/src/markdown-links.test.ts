@@ -273,3 +273,45 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md")).toBeNull();
   });
 });
+
+describe("line span references", () => {
+  const cwd = "/workspace";
+
+  it("reads a :start-end suffix as a span", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/index.ts:20-40", cwd)).toMatchObject({
+      filePath: "/workspace/src/index.ts",
+      line: 20,
+      endLine: 40,
+    });
+  });
+
+  it("reads a span on a bare filename, which needs the suffix to link at all", () => {
+    expect(resolveInlineCodeFileLinkMeta("index.ts:20-40", cwd)).toMatchObject({
+      line: 20,
+      endLine: 40,
+      workspaceRelativePath: "index.ts",
+    });
+  });
+
+  it("reads GitHub's #L20-L40 hash form", () => {
+    expect(resolveMarkdownFileLinkMeta("src/index.ts#L20-L40", cwd)).toMatchObject({
+      line: 20,
+      endLine: 40,
+    });
+  });
+
+  it("ignores a span that does not run forwards", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/index.ts:40-20", cwd)?.endLine).toBeUndefined();
+    expect(resolveInlineCodeFileLinkMeta("src/index.ts:20-20", cwd)?.endLine).toBeUndefined();
+  });
+
+  it("leaves single-line and line:column references alone", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/index.ts:20", cwd)).toMatchObject({ line: 20 });
+    expect(resolveInlineCodeFileLinkMeta("src/index.ts:20", cwd)?.endLine).toBeUndefined();
+    expect(resolveInlineCodeFileLinkMeta("src/index.ts:20:5", cwd)).toMatchObject({
+      line: 20,
+      column: 5,
+    });
+    expect(resolveInlineCodeFileLinkMeta("src/index.ts:20:5", cwd)?.endLine).toBeUndefined();
+  });
+});

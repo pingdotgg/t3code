@@ -137,18 +137,42 @@ function inferHomeFromCwd(cwd: string): string | undefined {
   return undefined;
 }
 
+export function formatPathPosition(
+  line: string | undefined,
+  endLine: string | undefined,
+  column: string | undefined,
+): string {
+  if (!line) return "";
+  if (endLine) return `:${line}-${endLine}`;
+  return `:${line}${column ? `:${column}` : ""}`;
+}
+
 export function splitPathAndPosition(value: string): {
   path: string;
   line: string | undefined;
+  /** Set only for a `:start-end` span; a span never carries a column. */
+  endLine: string | undefined;
   column: string | undefined;
 } {
   let path = value;
   let column: string | undefined;
   let line: string | undefined;
 
+  // A span is checked first: its trailing number would otherwise read as a
+  // column and leave `-` stranded on the path.
+  const spanMatch = path.match(/:(\d+)-(\d+)$/);
+  if (spanMatch?.[1] && spanMatch[2]) {
+    return {
+      path: path.slice(0, -spanMatch[0].length),
+      line: spanMatch[1],
+      endLine: spanMatch[2],
+      column: undefined,
+    };
+  }
+
   const columnMatch = path.match(/:(\d+)$/);
   if (!columnMatch?.[1]) {
-    return { path, line: undefined, column: undefined };
+    return { path, line: undefined, endLine: undefined, column: undefined };
   }
 
   column = columnMatch[1];
@@ -163,7 +187,7 @@ export function splitPathAndPosition(value: string): {
     column = undefined;
   }
 
-  return { path, line, column };
+  return { path, line, endLine: undefined, column };
 }
 
 export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
@@ -267,7 +291,7 @@ export function isTerminalLinkActivation(
 }
 
 export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
-  const { path, line, column } = splitPathAndPosition(rawPath);
+  const { path, line, endLine, column } = splitPathAndPosition(rawPath);
 
   let resolvedPath = path;
   if (path.startsWith("~/")) {
@@ -281,6 +305,5 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
     resolvedPath = joinPath(cwd, path, separator);
   }
 
-  if (!line) return resolvedPath;
-  return `${resolvedPath}:${line}${column ? `:${column}` : ""}`;
+  return `${resolvedPath}${formatPathPosition(line, endLine, column)}`;
 }

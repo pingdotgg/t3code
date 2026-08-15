@@ -5,10 +5,16 @@ const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
 const WINDOWS_UNC_PATH_PATTERN = /^\\\\/;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
-const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}$/;
-const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
-const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const POSITION_SUFFIX_SOURCE = "(?::\\d+(?::\\d+|-\\d+)?)?";
+const RELATIVE_FILE_PATH_PATTERN = new RegExp(
+  `^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+${POSITION_SUFFIX_SOURCE}$`,
+);
+const RELATIVE_FILE_NAME_PATTERN = new RegExp(
+  `^[A-Za-z0-9._-]+\\.[A-Za-z0-9_-]+${POSITION_SUFFIX_SOURCE}$`,
+);
+// `:12`, `:12:5`, and the span form `:12-40`.
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
 // prefixes like /app/ or /chat/ so SPA routes never read as files.
 const POSIX_FILE_ROOT_PREFIXES = [
@@ -45,6 +51,8 @@ export interface MarkdownFileLinkMeta {
   workspaceRelativePath: string | null;
   basename: string;
   line?: number;
+  /** Present when the reference names a span of lines (`Foo.ts:20-40`). */
+  endLine?: number;
   column?: number;
 }
 
@@ -118,6 +126,10 @@ function looksLikePosixFilesystemPath(path: string): boolean {
 
 function appendLineColumnFromHash(path: string, hash: string): string {
   if (!hash || POSITION_SUFFIX_PATTERN.test(path)) return path;
+  const spanMatch = hash.match(/^#L(\d+)-L?(\d+)$/i);
+  if (spanMatch?.[1] && spanMatch[2]) {
+    return `${path}:${spanMatch[1]}-${spanMatch[2]}`;
+  }
   const match = hash.match(/^#L(\d+)(?:C(\d+))?$/i);
   if (!match?.[1]) return path;
   const line = match[1];
@@ -190,7 +202,7 @@ const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
-const BARE_EXTENSIONLESS_POSITION_PATTERN = /^[A-Za-z0-9_-]+(?::\d+){1,2}$/;
+const BARE_EXTENSIONLESS_POSITION_PATTERN = /^[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?$/;
 // Any `Name:digits` shape also matches `error:1`, `port:3000`, `TODO:12`, so
 // extensionless linking is limited to conventional filenames.
 const EXTENSIONLESS_FILE_NAMES = new Set([
@@ -386,10 +398,16 @@ export function resolveMarkdownFileLinkMeta(
 }
 
 function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): MarkdownFileLinkMeta {
-  const { path, line, column } = splitPathAndPosition(targetPath);
+  const { path, line, endLine, column } = splitPathAndPosition(targetPath);
   const parsedLine = line ? Number.parseInt(line, 10) : Number.NaN;
+  const parsedEndLine = endLine ? Number.parseInt(endLine, 10) : Number.NaN;
   const parsedColumn = column ? Number.parseInt(column, 10) : Number.NaN;
   const lineNumber = Number.isFinite(parsedLine) ? parsedLine : undefined;
+  // A backwards or degenerate span (`:40-20`, `:20-20`) is just its start line.
+  const endLineNumber =
+    Number.isFinite(parsedEndLine) && lineNumber !== undefined && parsedEndLine > lineNumber
+      ? parsedEndLine
+      : undefined;
   const columnNumber = Number.isFinite(parsedColumn) ? parsedColumn : undefined;
 
   return {
@@ -399,6 +417,7 @@ function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): Markdown
     workspaceRelativePath: workspaceRelativePath(path, cwd),
     basename: basenameOfPath(path),
     ...(lineNumber !== undefined ? { line: lineNumber } : {}),
+    ...(endLineNumber !== undefined ? { endLine: endLineNumber } : {}),
     ...(columnNumber !== undefined ? { column: columnNumber } : {}),
   };
 }

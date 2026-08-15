@@ -1,4 +1,4 @@
-import { splitPathAndPosition } from "./terminal-links";
+import { formatPathPosition, splitPathAndPosition } from "./terminal-links";
 
 function normalizePathSeparators(path: string): string {
   return path.replaceAll("\\", "/");
@@ -25,7 +25,7 @@ export function formatWorkspaceRelativePath(
   pathWithPosition: string,
   workspaceRoot: string | undefined,
 ): string {
-  const { path, line, column } = splitPathAndPosition(pathWithPosition);
+  const { path, line, endLine, column } = splitPathAndPosition(pathWithPosition);
   const normalizedPath = canonicalizeWindowsDrivePath(normalizePathSeparators(path));
 
   let displayPath = normalizedPath;
@@ -52,6 +52,5 @@ export function formatWorkspaceRelativePath(
     }
   }
 
-  if (!line) return displayPath;
-  return `${displayPath}:${line}${column ? `:${column}` : ""}`;
+  return `${displayPath}${formatPathPosition(line, endLine, column)}`;
 }

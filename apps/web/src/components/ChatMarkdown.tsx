@@ -786,6 +786,7 @@ interface MarkdownFileLinkProps {
   displayPath: string;
   workspaceRelativePath: string | null;
   line?: number | undefined;
+  endLine?: number | undefined;
   label: string;
   copyMarkdown: string;
   theme: "light" | "dark";
@@ -1091,6 +1092,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   displayPath,
   workspaceRelativePath,
   line,
+  endLine,
   label,
   copyMarkdown,
   theme,
@@ -1139,8 +1141,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleOpenInEditor();
       return;
     }
-    useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath, line);
-  }, [handleOpenInEditor, line, threadRef, workspaceRelativePath]);
+    useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath, line, endLine);
+  }, [endLine, handleOpenInEditor, line, threadRef, workspaceRelativePath]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -1311,6 +1313,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.displayPath === next.displayPath &&
     previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.line === next.line &&
+    previous.endLine === next.endLine &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
@@ -1453,7 +1456,9 @@ function ChatMarkdown({
       }
       if (fileLinkMeta.line) {
         labelParts.push(
-          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
+          fileLinkMeta.endLine
+            ? `L${fileLinkMeta.line}-${fileLinkMeta.endLine}`
+            : `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
         );
       }
 
@@ -1465,6 +1470,7 @@ function ChatMarkdown({
           displayPath={fileLinkMeta.displayPath}
           workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
           line={fileLinkMeta.line}
+          endLine={fileLinkMeta.endLine}
           label={labelParts.join(" · ")}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}

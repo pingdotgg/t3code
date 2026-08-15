@@ -43,6 +43,8 @@ export type RightPanelSurface =
       kind: "file";
       relativePath: string;
       revealLine: number | null;
+      /** End of a revealed span; null when the reference named a single line. */
+      revealEndLine: number | null;
       revealRequestId: number;
     }
   | {
@@ -89,7 +91,7 @@ interface RightPanelStoreState {
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number, endLine?: number) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: { environmentId?: string; projectId: string; repository: string; number: number },
@@ -147,12 +149,14 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
 const fileSurface = (
   relativePath: string,
   revealLine: number | null,
+  revealEndLine: number | null,
   revealRequestId: number,
 ): RightPanelSurface => ({
   id: `file:${relativePath}`,
   kind: "file",
   relativePath,
   revealLine,
+  revealEndLine,
   revealRequestId,
 });
 
@@ -278,7 +282,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
+                      const revealEndLine =
+                        typeof surface.revealEndLine === "number" &&
+                        Number.isFinite(surface.revealEndLine) &&
+                        revealLine !== null &&
+                        surface.revealEndLine > revealLine
+                          ? Math.trunc(surface.revealEndLine)
+                          : null;
+                      return [{ ...surface, revealLine, revealEndLine, revealRequestId }];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -390,7 +401,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface(current, pullRequestSurface(target));
           }),
         })),
-      openFile: (ref, relativePath, line) =>
+      openFile: (ref, relativePath, line, endLine) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
@@ -401,9 +412,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
             );
+            const normalizedLine = normalizeRevealLine(line);
+            const normalizedEndLine = normalizeRevealLine(endLine);
             const surface = fileSurface(
               relativePath,
-              normalizeRevealLine(line),
+              normalizedLine,
+              normalizedLine !== null &&
+                normalizedEndLine !== null &&
+                normalizedEndLine > normalizedLine
+                ? normalizedEndLine
+                : null,
               (existing?.revealRequestId ?? 0) + 1,
             );
             return {
