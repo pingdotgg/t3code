@@ -2412,7 +2412,13 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
             ) : null}
           </span>
         </div>
-        <Button type="button" size="xs" variant="outline" onClick={onOpenAgents}>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          aria-label={live ? "Open agents" : "View agents"}
+          onClick={onOpenAgents}
+        >
           <EyeIcon className="size-3" />
           <span className="hidden sm:inline">{live ? "Open agents" : "View agents"}</span>
         </Button>

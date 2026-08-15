@@ -1626,7 +1626,7 @@ export function PullRequestDetailPanel({
         {detail ? (
           <nav
             className={cn(
-              "col-span-2 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-border/60 px-4",
+              "col-span-2 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-border/60 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
               condensed ? "py-1.5" : "py-2",
             )}
             aria-label="Pull request tabs"
