@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -81,14 +82,20 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
+  it.effect("keeps discovered skills when ACP model discovery is unavailable", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-success-" });
+          const skillPath = path.join(dir, ".grok", "skills", "review", "SKILL.md");
           const grokPath = path.join(dir, "grok");
+          yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+          yield* fs.writeFileString(
+            skillPath,
+            ["---", "name: review", "description: Review the change.", "---"].join("\n"),
+          );
           yield* fs.writeFileString(
             grokPath,
             ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
@@ -97,6 +104,8 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.env,
+            dir,
           );
         }),
       );
@@ -105,6 +114,96 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
       expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.skills.find((skill) => skill.name === "review")).toEqual({
+        name: "review",
+        description: "Review the change.",
+        path: expect.stringContaining("/.grok/skills/review/SKILL.md"),
+        scope: "project",
+        enabled: true,
+      });
+    }),
+  );
+
+  it.effect("discovers user skills from GROK_HOME", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-home-" });
+          const workspace = path.join(dir, "workspace");
+          const grokHome = path.join(dir, "custom-grok-home");
+          const skillPath = path.join(grokHome, "skills", "review", "SKILL.md");
+          const grokPath = path.join(dir, "grok");
+          yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+          yield* fs.makeDirectory(workspace, { recursive: true });
+          yield* fs.writeFileString(
+            skillPath,
+            ["---", "name: review", "description: Review from GROK_HOME.", "---"].join("\n"),
+          );
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, GROK_HOME: grokHome },
+            workspace,
+          );
+        }),
+      );
+
+      expect(snapshot.skills.find((skill) => skill.name === "review")).toEqual({
+        name: "review",
+        description: "Review from GROK_HOME.",
+        path: expect.stringContaining("/custom-grok-home/skills/review/SKILL.md"),
+        scope: "user",
+        enabled: true,
+      });
+    }),
+  );
+
+  it.effect("discovers user skills from the provider environment home", () =>
+    Effect.gen(function* () {
+      const { snapshot, skillPath } = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-env-home-" });
+          const workspace = path.join(dir, "workspace");
+          const instanceHome = path.join(dir, "instance-home");
+          const skillPath = path.join(instanceHome, ".agents", "skills", "review", "SKILL.md");
+          const grokPath = path.join(dir, "grok");
+          yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+          yield* fs.makeDirectory(workspace, { recursive: true });
+          yield* fs.writeFileString(
+            skillPath,
+            ["---", "name: review", "description: Review from instance home.", "---"].join("\n"),
+          );
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          const snapshot = yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, HOME: instanceHome, GROK_HOME: undefined },
+            workspace,
+          ).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+          return { snapshot, skillPath };
+        }),
+      );
+
+      expect(snapshot.skills.find((skill) => skill.name === "review")).toEqual({
+        name: "review",
+        description: "Review from instance home.",
+        path: skillPath,
+        scope: "user",
+        enabled: true,
+      });
     }),
   );
 });
