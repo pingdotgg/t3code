@@ -127,7 +127,7 @@ export function ContextWindowMeter(props: {
             </div>
           ) : null}
           {usage.compactsAutomatically ? (
-            <div className="mt-1 text-pretty text-[11px] font-medium text-muted-foreground/70">
+            <div className="mt-1 text-pretty text-secondary-label text-[11px] font-medium">
               {formatContextWindowCompactionMessage(modelDisplayName)}
             </div>
           ) : null}
