@@ -1,11 +1,42 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  buildToolCallExpandedBody,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
 } from "./MessagesTimeline.logic";
+
+describe("buildToolCallExpandedBody", () => {
+  it("renders duplicate command metadata only once", () => {
+    const rawCommand = "/bin/zsh -lc 'npx --yes react-doctor@0.9.12 --help'";
+
+    expect(
+      buildToolCallExpandedBody(
+        {
+          command: "npx --yes react-doctor@0.9.12 --help",
+          rawCommand,
+          detail: rawCommand,
+        },
+        undefined,
+      ),
+    ).toBe(rawCommand);
+  });
+
+  it("keeps command output that differs from the command", () => {
+    expect(
+      buildToolCallExpandedBody(
+        {
+          command: "pwd",
+          rawCommand: "/bin/zsh -lc 'pwd'",
+          detail: "/Users/imran/projects/t3code",
+        },
+        undefined,
+      ),
+    ).toBe("/bin/zsh -lc 'pwd'\n\n/Users/imran/projects/t3code");
+  });
+});
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
