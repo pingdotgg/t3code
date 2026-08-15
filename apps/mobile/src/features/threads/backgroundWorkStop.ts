@@ -86,8 +86,11 @@ export function backgroundWorkStopConfirmation(onConfirm: () => void) {
 export function buildBackgroundWorkInterruptInput(
   thread: Pick<OrchestrationThread, "id" | "session">,
   commandId: CommandId,
-  serverVersion: string | null,
+  serverVersion: string | null | undefined,
 ) {
+  if (serverVersion === undefined) {
+    return null;
+  }
   const supportsGuardedInterrupt =
     serverVersion !== null && satisfiesSemverRange(serverVersion, ">=0.0.33");
   if (supportsGuardedInterrupt && thread.session?.status === "starting") {

@@ -121,6 +121,7 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  readonly stopThreadCapabilityPending: boolean;
   readonly stopThreadInFlight: boolean;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
@@ -256,12 +257,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
   }, []);
   const confirmStopBackgroundWork = useCallback(() => {
-    if (props.stopThreadInFlight) {
+    if (props.stopThreadCapabilityPending || props.stopThreadInFlight) {
       return;
     }
     const confirmation = backgroundWorkStopConfirmation(props.onStopThread);
     Alert.alert(confirmation.title, confirmation.message, [...confirmation.actions]);
-  }, [props.onStopThread, props.stopThreadInFlight]);
+  }, [props.onStopThread, props.stopThreadCapabilityPending, props.stopThreadInFlight]);
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + IOS_NAV_BAR_HEIGHT;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -663,17 +664,22 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   </Text>
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Stop background work"
-                    disabled={props.stopThreadInFlight}
+                    accessibilityLabel={
+                      props.stopThreadCapabilityPending
+                        ? "Loading server configuration"
+                        : "Stop background work"
+                    }
+                    disabled={props.stopThreadCapabilityPending || props.stopThreadInFlight}
                     hitSlop={8}
                     onPress={confirmStopBackgroundWork}
                     className={cn(
                       "min-h-7 justify-center px-1.5",
-                      props.stopThreadInFlight && "opacity-50",
+                      (props.stopThreadCapabilityPending || props.stopThreadInFlight) &&
+                        "opacity-50",
                     )}
                   >
                     <Text className="font-t3-bold text-xs text-rose-600 dark:text-rose-400">
-                      Stop
+                      {props.stopThreadCapabilityPending ? "Loading server…" : "Stop"}
                     </Text>
                   </Pressable>
                 </View>
@@ -750,7 +756,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       collapsed={userInputCollapsed}
                       onToggleCollapsed={handleToggleUserInputCollapsed}
                       onStopThread={props.onStopThread}
-                      stopThreadDisabled={props.stopThreadInFlight}
+                      stopThreadDisabled={
+                        props.stopThreadCapabilityPending || props.stopThreadInFlight
+                      }
                       cardProgress={userInputCardProgress}
                       cardCoverage={userInputCardCoverage}
                       onInputFocusChange={handleOwnedInputFocusChange}
@@ -790,7 +798,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onNativePasteImages={props.onNativePasteImages}
                 onRemoveDraftImage={props.onRemoveDraftImage}
                 onStopThread={props.onStopThread}
-                stopThreadDisabled={props.stopThreadInFlight}
+                stopThreadDisabled={props.stopThreadCapabilityPending || props.stopThreadInFlight}
                 onSendMessage={handleSendMessage}
                 onReconnectEnvironment={props.onReconnectEnvironment}
                 onUpdateModelSelection={props.onUpdateThreadModelSelection}

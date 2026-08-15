@@ -225,6 +225,7 @@ function ThreadRouteContent(
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const [pendingStopCommandId, setPendingStopCommandId] = useState<CommandId | null>(null);
+  const stopThreadCapabilityPending = selectedEnvironmentServerConfig === null;
   const [stopThreadGuard] = useState(() =>
     createBackgroundWorkStopGuard(setPendingStopCommandId, {
       onTimeout: (outcome) => {
@@ -522,11 +523,18 @@ function ThreadRouteContent(
     if (!selectedThread) {
       return;
     }
+    if (selectedEnvironmentServerConfig === null) {
+      Alert.alert(
+        "Server configuration loading",
+        "Wait for the environment configuration to load before stopping work.",
+      );
+      return;
+    }
     const commandId = CommandId.make(uuidv4());
     const interruptInput = buildBackgroundWorkInterruptInput(
       selectedThread,
       commandId,
-      selectedEnvironmentServerConfig?.environment.serverVersion ?? null,
+      selectedEnvironmentServerConfig.environment.serverVersion ?? null,
     );
     if (interruptInput === null) {
       Alert.alert(
@@ -545,12 +553,7 @@ function ThreadRouteContent(
       }
       return result;
     });
-  }, [
-    interruptThreadTurn,
-    selectedEnvironmentServerConfig?.environment.serverVersion,
-    selectedThread,
-    stopThreadGuard,
-  ]);
+  }, [interruptThreadTurn, selectedEnvironmentServerConfig, selectedThread, stopThreadGuard]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -853,6 +856,7 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
+          stopThreadCapabilityPending={stopThreadCapabilityPending}
           stopThreadInFlight={pendingStopCommandId !== null}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}

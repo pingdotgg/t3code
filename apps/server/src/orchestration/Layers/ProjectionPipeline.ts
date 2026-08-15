@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  EventId,
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
@@ -110,6 +111,29 @@ interface ProjectionSideEffects {
     ThreadId,
     ReadonlyArray<{ readonly activityId: string; readonly kind: string; readonly payload: unknown }>
   >;
+}
+
+interface BootstrapRevertLivenessReconciliation {
+  readonly latestReceiptActivityIdByTaskId: Map<string, EventId>;
+}
+
+function taskLifecycleTaskId(activity: {
+  readonly kind: string;
+  readonly payload: unknown;
+}): string | null {
+  if (
+    activity.kind !== "task.started" &&
+    activity.kind !== "task.progress" &&
+    activity.kind !== "task.updated" &&
+    activity.kind !== "task.completed"
+  ) {
+    return null;
+  }
+  if (typeof activity.payload !== "object" || activity.payload === null) {
+    return null;
+  }
+  const taskId = (activity.payload as Record<string, unknown>).taskId;
+  return typeof taskId === "string" ? taskId : null;
 }
 
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
@@ -1703,7 +1727,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
       projector: ProjectorDefinition,
       event: OrchestrationEvent,
-      replayedRevertThreadIds?: Set<ThreadId>,
+      replayedRevertLiveness?: Map<ThreadId, BootstrapRevertLivenessReconciliation>,
     ) {
       const sideEffects: ProjectionSideEffects = {
         deletedThreadIds: new Set<string>(),
@@ -1725,7 +1749,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
       for (const [threadId, activities] of sideEffects.livenessRebuilds) {
         threadBackgroundLiveness.rebuildThreadLiveness(threadId, activities);
-        replayedRevertThreadIds?.add(threadId);
+        replayedRevertLiveness?.set(threadId, {
+          latestReceiptActivityIdByTaskId: new Map(),
+        });
+      }
+
+      if (
+        replayedRevertLiveness !== undefined &&
+        projector.name === ORCHESTRATION_PROJECTOR_NAMES.threadActivities &&
+        event.type === "thread.activity-appended"
+      ) {
+        const reconciliation = replayedRevertLiveness.get(event.payload.threadId);
+        const taskId = taskLifecycleTaskId(event.payload.activity);
+        if (
+          reconciliation !== undefined &&
+          taskId !== null &&
+          threadBackgroundLiveness.getThreadLiveAgentIds(event.payload.threadId).has(taskId)
+        ) {
+          reconciliation.latestReceiptActivityIdByTaskId.set(taskId, event.payload.activity.id);
+        }
       }
 
       yield* runAttachmentSideEffects(sideEffects).pipe(
@@ -1742,7 +1784,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const bootstrapProjector = (
       projector: ProjectorDefinition,
-      replayedRevertThreadIds: Set<ThreadId>,
+      replayedRevertLiveness: Map<ThreadId, BootstrapRevertLivenessReconciliation>,
     ) =>
       projectionStateRepository
         .getByProjector({
@@ -1754,7 +1796,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               eventStore.readFromSequence(
                 Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
               ),
-              (event) => runProjectorForEvent(projector, event, replayedRevertThreadIds),
+              (event) => runProjectorForEvent(projector, event, replayedRevertLiveness),
             ),
           ),
         );
@@ -1773,17 +1815,26 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       );
 
     const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.gen(function* () {
-      const replayedRevertThreadIds = new Set<ThreadId>();
+      const replayedRevertLiveness = new Map<ThreadId, BootstrapRevertLivenessReconciliation>();
       yield* Effect.forEach(
         projectors,
-        (projector) => bootstrapProjector(projector, replayedRevertThreadIds),
+        (projector) => bootstrapProjector(projector, replayedRevertLiveness),
         { concurrency: 1 },
       );
       yield* Effect.forEach(
-        replayedRevertThreadIds,
-        Effect.fn("reconcileBootstrapRevertLiveness")(function* (threadId) {
-          const activities = (yield* projectionThreadActivityRepository.listByThreadId({
+        replayedRevertLiveness,
+        Effect.fn("reconcileBootstrapRevertLiveness")(function* ([threadId, reconciliation]) {
+          const activityIds = new Set(
+            [...threadBackgroundLiveness.getThreadLiveAgentActivityIds(threadId)].map(
+              (activityId) => EventId.make(activityId),
+            ),
+          );
+          for (const activityId of reconciliation.latestReceiptActivityIdByTaskId.values()) {
+            activityIds.add(activityId);
+          }
+          const activities = (yield* projectionThreadActivityRepository.listByActivityIds({
             threadId,
+            activityIds: [...activityIds],
           }))
             .slice()
             .sort(

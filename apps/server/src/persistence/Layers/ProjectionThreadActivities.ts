@@ -10,6 +10,7 @@ import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 
 import {
   DeleteProjectionThreadActivitiesInput,
+  ListProjectionThreadActivitiesByIdsInput,
   ListProjectionThreadActivitiesInput,
   ProjectionThreadActivity,
   ProjectionThreadActivityRepository,
@@ -97,6 +98,28 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       `,
   });
 
+  const listProjectionThreadActivityRowsByIds = SqlSchema.findAll({
+    Request: ListProjectionThreadActivitiesByIdsInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, activityIds }) =>
+      sql`
+        SELECT
+          activities.activity_id AS "activityId",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          activities.payload_json AS "payload",
+          activities.sequence,
+          activities.created_at AS "createdAt"
+        FROM json_each(${JSON.stringify(activityIds)}) AS ids
+        CROSS JOIN projection_thread_activities AS activities
+          ON activities.activity_id = ids.value
+        WHERE activities.thread_id = ${threadId}
+      `,
+  });
+
   const deleteProjectionThreadActivityRows = SqlSchema.void({
     Request: DeleteProjectionThreadActivitiesInput,
     execute: ({ threadId }) =>
@@ -139,6 +162,29 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       ),
     );
 
+  const listByActivityIds: ProjectionThreadActivityRepositoryShape["listByActivityIds"] = (input) =>
+    listProjectionThreadActivityRowsByIds(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadActivityRepository.listByActivityIds:query",
+          "ProjectionThreadActivityRepository.listByActivityIds:decodeRows",
+        ),
+      ),
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          activityId: row.activityId,
+          threadId: row.threadId,
+          turnId: row.turnId,
+          tone: row.tone,
+          kind: row.kind,
+          summary: row.summary,
+          payload: row.payload,
+          ...(row.sequence !== null ? { sequence: row.sequence } : {}),
+          createdAt: row.createdAt,
+        })),
+      ),
+    );
+
   const deleteByThreadId: ProjectionThreadActivityRepositoryShape["deleteByThreadId"] = (input) =>
     deleteProjectionThreadActivityRows(input).pipe(
       Effect.mapError(
@@ -149,6 +195,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   return {
     upsert,
     listByThreadId,
+    listByActivityIds,
     deleteByThreadId,
   } satisfies ProjectionThreadActivityRepositoryShape;
 });

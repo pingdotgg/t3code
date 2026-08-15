@@ -38,6 +38,13 @@ export const ListProjectionThreadActivitiesInput = Schema.Struct({
 });
 export type ListProjectionThreadActivitiesInput = typeof ListProjectionThreadActivitiesInput.Type;
 
+export const ListProjectionThreadActivitiesByIdsInput = Schema.Struct({
+  threadId: ThreadId,
+  activityIds: Schema.Array(EventId),
+});
+export type ListProjectionThreadActivitiesByIdsInput =
+  typeof ListProjectionThreadActivitiesByIdsInput.Type;
+
 export const DeleteProjectionThreadActivitiesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -65,6 +72,11 @@ export interface ProjectionThreadActivityRepositoryShape {
    */
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /** List only the explicitly bounded activity anchors for one thread. */
+  readonly listByActivityIds: (
+    input: ListProjectionThreadActivitiesByIdsInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**

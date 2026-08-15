@@ -71,6 +71,15 @@ describe("backgroundWorkStopConfirmation", () => {
     });
   });
 
+  it("defers Stop while the server capability is unavailable", () => {
+    const threadId = ThreadId.make("thread-background");
+    const commandId = CommandId.make("stop-command");
+
+    expect(
+      buildBackgroundWorkInterruptInput({ id: threadId, session: null }, commandId, undefined),
+    ).toBeNull();
+  });
+
   it("keeps guarded interrupts unchanged for servers with conditional Stop support", () => {
     const threadId = ThreadId.make("thread-background");
     const activeTurnId = TurnId.make("turn-running");
