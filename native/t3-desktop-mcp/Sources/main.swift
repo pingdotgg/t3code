@@ -1371,6 +1371,9 @@ enum Chrome {
     /// Return the agent's window id, creating the window if needed.
     static func ensureAgentWindow() -> WindowOutcome {
         withStateLock {
+            // Another MCP process may have created and persisted a window while
+            // this process held a stale in-memory cache — reload under the lock.
+            didLoadState = false
             if let id = liveAgentWindowID() { return .success(id) }
 
             let created = run("""
