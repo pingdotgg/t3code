@@ -42,7 +42,30 @@ function normalizeEntry(value: string): string {
   return value.trim();
 }
 
-function ExclusionList({
+function PrivacyExclusionRemoveButton({
+  item,
+  disabled,
+  onRemove,
+}: {
+  item: string;
+  disabled?: boolean;
+  onRemove: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      size="icon-xs"
+      variant="ghost"
+      disabled={disabled}
+      aria-label={`Remove ${item}`}
+      onClick={onRemove}
+    >
+      <XIcon className="size-3.5" />
+    </Button>
+  );
+}
+
+function PrivacyExclusionList({
   title,
   addLabel,
   placeholder,
@@ -132,16 +155,11 @@ function ExclusionList({
                   className="h-auto max-w-full justify-between gap-2 px-2 py-1 text-left font-normal"
                 >
                   <span className="min-w-0 truncate">{item}</span>
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
+                  <PrivacyExclusionRemoveButton
+                    item={item}
                     disabled={disabled}
-                    aria-label={`Remove ${item}`}
-                    onClick={() => onChange(items.filter((entry) => entry !== item))}
-                  >
-                    <XIcon className="size-3.5" />
-                  </Button>
+                    onRemove={() => onChange(items.filter((entry) => entry !== item))}
+                  />
                 </Badge>
               </li>
             ))}
@@ -188,7 +206,7 @@ function ComputerHistoryPrivacyDialog({
         </DialogHeader>
         <DialogPanel className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <ExclusionList
+            <PrivacyExclusionList
               title="Exclude these apps"
               addLabel="Add app"
               placeholder="App name or bundle id"
@@ -196,7 +214,7 @@ function ComputerHistoryPrivacyDialog({
               onChange={setDraftApps}
               disabled={disabled}
             />
-            <ExclusionList
+            <PrivacyExclusionList
               title="Exclude these websites"
               addLabel="Add website"
               placeholder="Hostname or URL fragment"
@@ -210,7 +228,9 @@ function ComputerHistoryPrivacyDialog({
           </p>
         </DialogPanel>
         <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+          <DialogClose render={<Button type="button" variant="outline" size="sm" />}>
+            Cancel
+          </DialogClose>
           <Button
             type="button"
             disabled={disabled}

@@ -151,9 +151,10 @@ impl BrowserBridge {
     fn dispatch(&mut self, command: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = json!({ "id": id, "command": command, "params": params });
-        let gen_at_send = self.connection_gen.load(Ordering::SeqCst);
 
-        {
+        // Sample connection generation under the outgoing lock so a reconnect
+        // between load and write cannot pair a new SendHalf with an old gen.
+        let gen_at_send = {
             let mut guard = self
                 .outgoing
                 .lock()
@@ -161,11 +162,13 @@ impl BrowserBridge {
             let stream = guard
                 .as_mut()
                 .ok_or_else(|| "the extension disconnected".to_string())?;
+            let generation = self.connection_gen.load(Ordering::SeqCst);
             writeln!(stream, "{request}").map_err(|error| format!("could not reach the extension: {error}"))?;
             stream
                 .flush()
                 .map_err(|error| format!("could not reach the extension: {error}"))?;
-        }
+            generation
+        };
 
         // Replies carry the originating id, so a slow answer to an earlier call
         // cannot be mistaken for this one's. Disconnect sentinels are scoped to
