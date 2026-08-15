@@ -540,22 +540,17 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
     // haystack — titles like "Issue #123" or "What is life?" would cut off the
     // real page URL before host extraction.
     let candidates = url_candidates(haystack);
-    if candidates.is_empty() {
+    // Only the first URL token — outline/link URLs must not drive include/exclude
+    // (macOS already ignores link AXURLs for the same reason).
+    let Some(raw_url) = candidates.into_iter().next() else {
         return false;
+    };
+    let page = strip_query_and_fragment(&raw_url).to_lowercase();
+    if needle.contains('/') {
+        return page.contains(&needle);
     }
-    for raw_url in candidates {
-        let page = strip_query_and_fragment(&raw_url).to_lowercase();
-        if needle.contains('/') {
-            if page.contains(&needle) {
-                return true;
-            }
-            continue;
-        }
-        if let Some(host) = extract_hosts(&page).into_iter().next() {
-            if host == needle || host.ends_with(&format!(".{needle}")) {
-                return true;
-            }
-        }
+    if let Some(host) = extract_hosts(&page).into_iter().next() {
+        return host == needle || host.ends_with(&format!(".{needle}"));
     }
     false
 }
@@ -909,6 +904,11 @@ mod tests {
         assert!(host_matches(hay, "trusted.example"));
         assert!(!host_matches(
             "Issue #123 https://untrusted.example/?next=https://trusted.example",
+            "trusted.example"
+        ));
+        // Later outline/link URLs must not admit an untrusted page.
+        assert!(!host_matches(
+            "https://untrusted.example/page https://trusted.example/link",
             "trusted.example"
         ));
     }
