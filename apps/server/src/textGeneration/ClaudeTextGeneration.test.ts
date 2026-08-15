@@ -1,13 +1,13 @@
-import { isHostWindows } from "@t3tools/shared/hostProcess";
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { isHostWindows } from "@t3tools/shared/hostProcess";
+import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -77,7 +77,7 @@ function makeFakeClaudeBinary(dir: string) {
         "}",
         "",
         'process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT ?? "");',
-        "process.exit(Number(process.env.T3_FAKE_CLAUDE_EXIT_CODE ?? 0));",
+        "process.exitCode = Number(process.env.T3_FAKE_CLAUDE_EXIT_CODE ?? 0);",
         "",
       ].join("\n"),
     );
