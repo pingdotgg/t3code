@@ -497,10 +497,16 @@ export const make = Effect.gen(function* () {
         menuTemplate.push({ type: "separator" });
       }
 
+      // The terminal renders on a canvas, but it focuses a hidden textarea so
+      // Electron's Paste role can send clipboard text to that input. Electron
+      // reports the canvas itself as non-editable, so enable Paste for canvases.
       menuTemplate.push(
         { role: "cut", enabled: params.editFlags.canCut },
         { role: "copy", enabled: params.editFlags.canCopy },
-        { role: "paste", enabled: params.editFlags.canPaste },
+        {
+          role: "paste",
+          enabled: params.editFlags.canPaste || params.mediaType === "canvas",
+        },
         { role: "selectAll", enabled: params.editFlags.canSelectAll },
       );
 

@@ -247,7 +247,12 @@ describe("isTerminalPasteShortcut", () => {
     expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "MacIntel")).toBe(false);
   });
 
-  it("preserves Ctrl+V and uses Ctrl+Shift+V elsewhere", () => {
+  it("uses Ctrl+V and Ctrl+Shift+V on Windows", () => {
+    expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "Win32")).toBe(true);
+    expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Win32")).toBe(true);
+  });
+
+  it("preserves Ctrl+V and uses Ctrl+Shift+V on Linux", () => {
     expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
     expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
