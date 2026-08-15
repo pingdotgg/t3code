@@ -18,7 +18,10 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  isClientOnlyComposerCommand,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
@@ -75,6 +78,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { openFeedbackIssueForm } from "../../lib/feedback";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -406,6 +410,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  clientOnlyCommand: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -434,6 +439,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        clientOnlyCommand={props.clientOnlyCommand}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -1011,6 +1017,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
+  const isClientOnlyCommand = useMemo(() => isClientOnlyComposerCommand(prompt), [prompt]);
 
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
@@ -1038,6 +1045,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
+        {
+          id: "slash:feedback:bug",
+          type: "slash-command",
+          command: "feedback",
+          label: "/feedback",
+          description: "Report a bug",
+          feedbackType: "bug",
+        },
+        {
+          id: "slash:feedback:feature",
+          type: "slash-command",
+          command: "feedback",
+          label: "/feedback",
+          description: "Suggest a feature",
+          feedbackType: "feature",
+        },
         {
           id: "slash:model",
           type: "slash-command",
@@ -1232,15 +1255,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isSendDisabled ||
-    isConnecting ||
-    noProviderAvailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+    !isClientOnlyCommand &&
+    (phase === "running" ||
+      isSendBusy ||
+      isSendDisabled ||
+      isConnecting ||
+      noProviderAvailable ||
+      projectSelectionRequired ||
+      environmentUnavailable !== null ||
+      !composerSendState.hasSendableContent);
+  const collapsedComposerPrimaryActionLabel = isClientOnlyCommand
+    ? "Open feedback form"
+    : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -1677,6 +1703,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if (item.command === "feedback") {
+          void openFeedbackIssueForm(item.feedbackType ?? "bug")
+            .then(() => {
+              const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+                expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+                focusEditorAfterReplace: false,
+              });
+              if (applied) {
+                setComposerHighlightedItemId(null);
+              }
+            })
+            .catch((error: unknown) => {
+              toastManager.add({
+                type: "error",
+                title: "Could not open feedback form",
+                description: error instanceof Error ? error.message : "Opening the form failed.",
+              });
+            });
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1807,7 +1853,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if (noProviderAvailable || isSendDisabled) {
+      const isClientOnlyCommand = isClientOnlyComposerCommand(promptRef.current);
+      if (!isClientOnlyCommand && (noProviderAvailable || isSendDisabled)) {
         event?.preventDefault();
         return;
       }
@@ -1815,7 +1862,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // image: the turn snapshot wouldn't include it, and it would surface
       // in the *next* draft instead. Only oversized images hit this — small
       // files clear the pending counter within a microtask.
-      if (activeThreadId && (pendingImageCompressionsRef.current.get(activeThreadId) ?? 0) > 0) {
+      if (
+        !isClientOnlyCommand &&
+        activeThreadId &&
+        (pendingImageCompressionsRef.current.get(activeThreadId) ?? 0) > 0
+      ) {
         event?.preventDefault();
         toastManager.add({
           type: "info",
@@ -1835,6 +1886,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isSendDisabled,
       noProviderAvailable,
       onSend,
+      promptRef,
       shouldBlurMobileComposerOnSubmit,
     ],
   );
@@ -3200,6 +3252,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
+                  clientOnlyCommand={isClientOnlyCommand}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

@@ -9,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   detectComposerTrigger,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -17,6 +18,7 @@ import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
+  Alert,
   ActivityIndicator,
   Image,
   Platform,
@@ -65,6 +67,7 @@ import {
 } from "@t3tools/shared/searchRanking";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { openMobileFeedbackFromDraft } from "../../lib/feedback";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import {
   type ExistingThreadSettingsRouteSession,
@@ -386,6 +389,22 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       const q = composerTrigger.query.toLowerCase();
       const allBuiltIn = [
         {
+          id: "cmd:feedback:bug",
+          type: "slash-command" as const,
+          command: "feedback",
+          label: "/feedback",
+          description: "Report a bug",
+          feedbackType: "bug" as const,
+        },
+        {
+          id: "cmd:feedback:feature",
+          type: "slash-command" as const,
+          command: "feedback",
+          label: "/feedback",
+          description: "Suggest a feature",
+          feedbackType: "feature" as const,
+        },
+        {
           id: "cmd:model",
           type: "slash-command" as const,
           command: "model",
@@ -532,6 +551,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
     try {
+      if (parseStandaloneComposerSlashCommand(draftMessage) === "feedback") {
+        Alert.alert("Send feedback", "What would you like to share?", [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Bug report",
+            onPress: () => {
+              void openMobileFeedbackFromDraft("bug", () => onChangeDraftMessage(""));
+            },
+          },
+          {
+            text: "Feature request",
+            onPress: () => {
+              void openMobileFeedbackFromDraft("feature", () => onChangeDraftMessage(""));
+            },
+          },
+        ]);
+        return;
+      }
       await onSendMessage();
       // Sending a prompt starts agent work: arm the lock-screen card while the
       // app is foregrounded and the activity token can be registered. Armed
@@ -547,6 +584,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
   }, [
     onSendMessage,
+    draftMessage,
+    onChangeDraftMessage,
     props.environmentId,
     props.environmentLabel,
     props.selectedThread.id,
@@ -569,6 +608,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         setComposerSelection({ start: result.cursor, end: result.cursor });
         onChangeDraftMessage(result.text);
         onUpdateInteractionMode(item.command);
+        return;
+      }
+
+      if (item.type === "slash-command" && item.command === "feedback") {
+        const result = replaceTextRange(
+          draftMessage,
+          composerTrigger.rangeStart,
+          composerTrigger.rangeEnd,
+          "",
+        );
+        void openMobileFeedbackFromDraft(item.feedbackType ?? "bug", () => {
+          setComposerSelection({ start: result.cursor, end: result.cursor });
+          onChangeDraftMessage(result.text);
+        });
         return;
       }
 

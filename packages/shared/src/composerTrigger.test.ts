@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeComposerFileLink, serializeComposerMentionPath } from "./composerTrigger.ts";
+import {
+  isClientOnlyComposerCommand,
+  parseStandaloneComposerSlashCommand,
+  serializeComposerFileLink,
+  serializeComposerMentionPath,
+} from "./composerTrigger.ts";
 
 describe("serializeComposerMentionPath", () => {
   it("keeps simple mention paths unquoted", () => {
@@ -39,5 +44,28 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("parses standalone feedback commands without swallowing message text", () => {
+    expect(parseStandaloneComposerSlashCommand(" /FeEdBaCk ")).toBe("feedback");
+    expect(parseStandaloneComposerSlashCommand("/feedback here are details")).toBeNull();
+  });
+});
+
+describe("isClientOnlyComposerCommand", () => {
+  it.each([
+    "provider unavailable",
+    "environment reconnecting",
+    "pending user input",
+    "plan follow-up",
+    "send disabled",
+  ])("routes /feedback before the %s guard", () => {
+    expect(isClientOnlyComposerCommand(" /FeEdBaCk ")).toBe(true);
+  });
+
+  it("does not intercept feedback text that should be sent to the provider", () => {
+    expect(isClientOnlyComposerCommand("/feedback please investigate this")).toBe(false);
   });
 });
