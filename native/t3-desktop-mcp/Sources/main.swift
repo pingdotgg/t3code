@@ -502,7 +502,8 @@ func backgroundClick(_ target: WindowTarget, at point: CGPoint, clickCount: Int)
     }
     usleep(12_000)
     var delivered = false
-    for i in 1...max(1, clickCount) {
+    guard clickCount > 0 else { return false }
+    for i in 1...clickCount {
         if let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left) {
             SkyLight.postMouse(down, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
                                screen: point, clickState: Int64(i), button: 0, subtype: 3, groupID: group)
@@ -596,6 +597,14 @@ func backgroundRightClick(_ target: WindowTarget, at point: CGPoint) -> Bool {
 
 func backgroundDrag(_ target: WindowTarget, from start: CGPoint, to end: CGPoint) -> Bool {
     guard SkyLight.available else { return false }
+    // SkyLight posts are addressed to one window. A mouseUp aimed at another
+    // window (or the desktop) would still be delivered to `target`, so refuse
+    // cross-window background drags instead of mis-routing the release.
+    if !target.frame.contains(end) {
+        guard let dest = windowTarget(under: end), dest.wid == target.wid, dest.pid == target.pid else {
+            return false
+        }
+    }
     CursorOverlay.shared.press(at: start)
     guard SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid) else { return false }
     usleep(80_000)
@@ -786,6 +795,9 @@ func resolveTargetPid(_ args: [String: Any], element: AXUIElement? = nil) -> pid
 
 func toolClick(_ args: [String: Any]) -> String {
     let clickCount = (args["click_count"] as? Int) ?? 1
+    guard clickCount > 0 else {
+        return "error: click_count must be a positive integer"
+    }
 
     if let id = args["element_id"] as? String {
         guard let el = Registry.get(id) else {
@@ -965,26 +977,11 @@ func captureWindowPNG(pid: pid_t, maxWidth: Int) -> Data? {
     return box.get()
 }
 
-/// Synchronizes capture results so a timed-out waiter never races a late write.
-private final class CaptureBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Data?
-    func set(_ data: Data?) {
-        lock.lock()
-        value = data
-        lock.unlock()
-    }
-    func get() -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
-}
-
 /// Capture a whole display. Window capture covers one app; this is for seeing
 /// the desktop as a whole, including every monitor the user has attached.
 func captureDisplayPNG(index: Int, maxWidth: Int) -> (data: Data, width: Int, height: Int)? {
     let semaphore = DispatchSemaphore(value: 0)
+    let lock = NSLock()
     var result: (Data, Int, Int)?
     Task.detached {
         defer { semaphore.signal() }
@@ -1003,13 +1000,22 @@ func captureDisplayPNG(index: Int, maxWidth: Int) -> (data: Data, width: Int, he
                 contentFilter: SCContentFilter(display: display, excludingWindows: []),
                 configuration: config)
             if let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+                lock.lock()
                 result = (png, display.width, display.height)
+                lock.unlock()
             }
         } catch {
+            lock.lock()
             result = nil
+            lock.unlock()
         }
     }
-    _ = semaphore.wait(timeout: .now() + 20)
+    // On timeout the task may still write `result` — do not read it.
+    if semaphore.wait(timeout: .now() + 20) == .timedOut {
+        return nil
+    }
+    lock.lock()
+    defer { lock.unlock() }
     return result
 }
 
@@ -1101,6 +1107,14 @@ func toolDrag(_ args: [String: Any]) -> String {
     let element = (args["from_element_id"] as? String).flatMap { Registry.get($0) }
     let target = element.flatMap { windowTarget(for: $0) }
         ?? resolveTargetPid(args).flatMap { windowTarget(forPid: $0) }
+    if let target, !target.frame.contains(end) {
+        if let dest = windowTarget(under: end), dest.wid != target.wid || dest.pid != target.pid {
+            return "error: cross-window drag is not supported — keep the drag inside one window"
+        }
+        if windowTarget(under: end) == nil {
+            return "error: drag destination is outside the source window"
+        }
+    }
     if let target, backgroundDrag(target, from: start, to: end) {
         return "dragged from (\(Int(start.x)), \(Int(start.y))) to (\(Int(end.x)), \(Int(end.y))) in background"
     }

@@ -111,7 +111,10 @@ impl AgentCursor {
         if !ENABLED.load(Ordering::Relaxed) {
             return;
         }
-        TASK_HIDE_GEN.fetch_add(1, Ordering::Relaxed);
+        // Cancel any armed fade before bumping the generation so an expired
+        // watcher cannot hide after this call.
+        FADE_DEADLINE_MS.store(0, Ordering::SeqCst);
+        TASK_HIDE_GEN.fetch_add(1, Ordering::SeqCst);
     }
 
     /// A Computer Use `tools/call` finished. Fade once tools stop for this task.
@@ -126,12 +129,12 @@ impl AgentCursor {
         if !used {
             return;
         }
-        let generation = TASK_HIDE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+        let generation = TASK_HIDE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
         let delay = task_fade_grace();
-        FADE_TARGET_GEN.store(generation, Ordering::Relaxed);
+        FADE_TARGET_GEN.store(generation, Ordering::SeqCst);
         FADE_DEADLINE_MS.store(
             now_unix_ms().saturating_add(delay.as_millis() as u64),
-            Ordering::Relaxed,
+            Ordering::SeqCst,
         );
         ensure_fade_watcher();
     }
@@ -158,20 +161,22 @@ fn ensure_fade_watcher() {
         .spawn(|| {
             loop {
                 thread::sleep(Duration::from_millis(50));
-                let deadline = FADE_DEADLINE_MS.load(Ordering::Relaxed);
+                let deadline = FADE_DEADLINE_MS.load(Ordering::SeqCst);
                 if deadline == 0 || now_unix_ms() < deadline {
                     continue;
                 }
-                let target = FADE_TARGET_GEN.load(Ordering::Relaxed);
+                let target = FADE_TARGET_GEN.load(Ordering::SeqCst);
                 // Clear only if this deadline is still armed (a newer finish
                 // may have replaced it while we slept).
                 if FADE_DEADLINE_MS
-                    .compare_exchange(deadline, 0, Ordering::Relaxed, Ordering::Relaxed)
+                    .compare_exchange(deadline, 0, Ordering::SeqCst, Ordering::SeqCst)
                     .is_err()
                 {
                     continue;
                 }
-                if TASK_HIDE_GEN.load(Ordering::Relaxed) == target {
+                // Re-check after disarming: `note_desktop_tool_started` may have
+                // bumped the generation between the load and the CAS.
+                if TASK_HIDE_GEN.load(Ordering::SeqCst) == target {
                     AgentCursor::shared().hide();
                 }
             }

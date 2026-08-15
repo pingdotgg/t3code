@@ -283,19 +283,44 @@ impl LinuxDesktop {
         match target {
             Point::Screen(x, y) => Ok((x, y)),
             Point::Element(id) => {
+                let reference = self.element(id)?;
                 // Native Wayland clients report window-relative geometry; XTEST
-                // would treat those as absolute screen coords. Refuse for every
-                // coordinate path (click, right-click, drag), not only singles.
-                if crate::capture::on_wayland() {
+                // would treat those as absolute screen coords. XWayland/X11 apps
+                // still publish real screen extents and appear in `_NET_CLIENT_LIST`.
+                if crate::capture::on_wayland() && !self.element_is_x11_backed(&reference) {
                     return Err(DesktopError::new(format!(
                         "e{id} cannot be targeted via coordinates on Wayland — AT-SPI bounds \
                          are window-relative. Use screenshot + absolute screen coordinates, \
                          invoke a single-click action, or activate an X11/XWayland client"
                     )));
                 }
-                self.center(&self.element(id)?)
+                self.center(&reference)
             }
         }
+    }
+
+    /// True when the element's a11y bus name maps to a pid that owns an X11
+    /// window — X11 or XWayland clients. Native Wayland apps do not.
+    fn element_is_x11_backed(&self, element: &ElementRef) -> bool {
+        let pid = self.pid_for_bus(&element.bus);
+        pid != 0 && largest_window_id_for_pid(pid).is_ok()
+    }
+
+    fn pid_for_bus(&self, bus: &str) -> u32 {
+        let Ok(connection) = self.bus() else {
+            return 0;
+        };
+        block_on(async {
+            let Ok(dbus) = zbus::fdo::DBusProxy::new(connection.connection()).await else {
+                return 0u32;
+            };
+            let Ok(bus_name) = zbus::names::BusName::try_from(bus) else {
+                return 0;
+            };
+            dbus.get_connection_unix_process_id(bus_name)
+                .await
+                .unwrap_or(0)
+        })
     }
 
     fn move_pointer(&self, x: f64, y: f64) -> Result<()> {
@@ -663,9 +688,8 @@ fn match_application(
 
 /// Largest window owned by `pid` (including minimized), for EWMH activation.
 fn largest_window_id_for_pid(pid: u32) -> Result<u32> {
-    // Same PreferX11 guard as capture: without it xcap may return Wayland ids
-    // that cannot be used as X11 XIDs for EWMH raise.
-    let _display = crate::capture::PreferX11::engage();
+    // `Window::all` uses X11/`xcb` when `DISPLAY` is set — do not mutate
+    // `WAYLAND_DISPLAY` (UB with concurrent threads).
     let windows = std::panic::catch_unwind(Window::all)
         .map_err(|_| DesktopError::new("window enumeration is not supported by this display server"))?
         .map_err(|error| DesktopError::new(format!("failed to enumerate windows: {error}")))?;
@@ -819,6 +843,14 @@ impl Desktop for LinuxDesktop {
     }
 
     fn resolve_pid(&mut self, app: &str) -> Result<u32> {
+        // Prefer AT-SPI's application list (same names `list_apps` shows when
+        // a11y is up) before falling back to xcap window grouping.
+        if let Ok(applications) = self.applications()
+            && let Ok((_, _, pid)) = match_application(&applications, app)
+            && pid != 0
+        {
+            return Ok(pid);
+        }
         apps::resolve_pid(app)
     }
 
@@ -907,8 +939,8 @@ impl Desktop for LinuxDesktop {
             let reference = self.element(id)?;
             if click_count <= 1 {
                 // Wait for the agent pointer to land before invoking, matching Win/Mac.
-                // Skip on Wayland — AT-SPI bounds are window-relative and would mis-fly.
-                if !crate::capture::on_wayland() {
+                // Skip native Wayland — AT-SPI bounds are window-relative and would mis-fly.
+                if !crate::capture::on_wayland() || self.element_is_x11_backed(&reference) {
                     if let Ok((x, y)) = self.center(&reference) {
                         AgentCursor::shared().press(x, y);
                     }
@@ -918,9 +950,8 @@ impl Desktop for LinuxDesktop {
                 }
             }
             // Native Wayland clients report window-relative geometry; XTEST
-            // clicks would land on the wrong place. Refuse the coordinate
-            // fallback for every click count, not just singles.
-            if crate::capture::on_wayland() {
+            // clicks would land on the wrong place. XWayland/X11 apps are fine.
+            if crate::capture::on_wayland() && !self.element_is_x11_backed(&reference) {
                 return Err(DesktopError::new(format!(
                     "e{id} cannot be clicked via coordinates on Wayland — AT-SPI bounds are \
                      window-relative. Use screenshot + absolute screen coordinates, invoke a \
@@ -996,10 +1027,11 @@ impl Desktop for LinuxDesktop {
             }
             // Fall back to focusing and using the keyboard. Only click when
             // focus failed — clicking a focused field can move the caret.
-            // On Wayland, never use coordinate clicks (bounds are window-relative).
+            // On Wayland, never use coordinate clicks for native clients
+            // (bounds are window-relative). XWayland still has absolute geometry.
             let focused = self.grab_focus(&reference).unwrap_or(false);
             if !focused {
-                if crate::capture::on_wayland() {
+                if crate::capture::on_wayland() && !self.element_is_x11_backed(&reference) {
                     return Err(DesktopError::new(format!(
                         "could not focus e{id} for typing on Wayland — click the field first, \
                          or use set_value (coordinate fallback is unsafe here)"
@@ -1037,6 +1069,14 @@ impl Desktop for LinuxDesktop {
     }
 
     fn press_key(&mut self, key: &str, modifiers: &[String]) -> Result<String> {
+        // XTEST reaches X11/XWayland clients only. On a Wayland session, refuse
+        // rather than silently dropping keys for native Wayland apps.
+        if crate::capture::on_wayland() {
+            return Err(DesktopError::new(
+                "press_key is not supported on Wayland — synthetic XTEST keys do not reach \
+                 native Wayland apps. Use type_text or set_value on an element, or run under X11",
+            ));
+        }
         let keysym = if let Some(named) = named_keysym(key) {
             named
         } else {

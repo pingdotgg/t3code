@@ -97,8 +97,56 @@ impl BrowserBridge {
             ));
         }
 
+        let params = self.params_for(command, args)?;
+        let result = self.dispatch(command, params)?;
+        Ok(describe(command, &result, args))
+    }
+
+    /// Build extension params, resolving 1-based `index` to an owned `tabId`
+    /// for select_tab / close_tab when `tab_id` was omitted.
+    fn params_for(&mut self, command: &str, args: &Value) -> Result<Value, String> {
+        let mut params = normalise(command, args);
+        if matches!(command, "select_tab" | "close_tab") {
+            let needs_tab = params
+                .get("tabId")
+                .and_then(Value::as_i64)
+                .is_none();
+            if needs_tab {
+                if let Some(index) = args.get("index").and_then(Value::as_i64) {
+                    let tab_id = self.tab_id_for_index(index)?;
+                    if let Some(map) = params.as_object_mut() {
+                        map.insert("tabId".into(), json!(tab_id));
+                        map.remove("index");
+                    }
+                }
+            }
+        }
+        Ok(params)
+    }
+
+    fn tab_id_for_index(&mut self, index: i64) -> Result<i64, String> {
+        if index < 1 {
+            return Err("index must be a 1-based tab position from browser_list_tabs".into());
+        }
+        let listed = self.dispatch("list_tabs", json!({}))?;
+        let tabs = listed
+            .get("tabs")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "the extension returned no tab list".to_string())?;
+        let idx = (index - 1) as usize;
+        tabs.get(idx)
+            .and_then(|tab| tab.get("tabId").and_then(Value::as_i64))
+            .ok_or_else(|| {
+                format!(
+                    "no agent tab at index {index} — call browser_list_tabs ({} open)",
+                    tabs.len()
+                )
+            })
+    }
+
+    fn dispatch(&mut self, command: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = json!({ "id": id, "command": command, "params": normalise(command, args) });
+        let request = json!({ "id": id, "command": command, "params": params });
 
         {
             let mut guard = self
@@ -130,8 +178,7 @@ impl BrowserBridge {
                 continue;
             }
             if reply.get("ok").and_then(Value::as_bool) == Some(true) {
-                let result = reply.get("result").cloned().unwrap_or(json!({}));
-                return Ok(describe(command, &result, args));
+                return Ok(reply.get("result").cloned().unwrap_or(json!({})));
             }
             return Err(reply
                 .get("error")
@@ -213,8 +260,8 @@ fn normalise(_command: &str, args: &Value) -> Value {
             map.insert(key.into(), value.clone());
         }
     }
-    // Do not promote 1-based `index` to `tabId` — select_tab/close_tab require a
-    // real Chrome tab id (or AppleScript fallback handles index separately).
+    // Keep `index` in the wire params for commands that still accept it; select_tab
+    // / close_tab resolve index → tabId in `BrowserBridge::params_for` before dispatch.
     params
 }
 
@@ -421,8 +468,8 @@ mod tests {
     }
 
     #[test]
-    fn tab_commands_do_not_promote_index_to_tab_id() {
-        // 1-based index is AppleScript-fallback only; the extension needs tabId.
+    fn tab_commands_keep_index_in_normalise_for_bridge_resolution() {
+        // `normalise` leaves index alone; `params_for` resolves it to tabId via list_tabs.
         let params = normalise("select_tab", &json!({ "index": 2 }));
         assert_eq!(params.get("index"), Some(&json!(2)));
         assert!(params.get("tabId").is_none());
