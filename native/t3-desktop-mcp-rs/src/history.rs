@@ -532,8 +532,13 @@ fn website_allowed(
 }
 
 fn host_matches(haystack: &str, needle: &str) -> bool {
-    let needle = needle.trim().trim_matches('/').to_lowercase();
-    if needle.is_empty() {
+    let raw_needle = needle.trim().to_lowercase();
+    if raw_needle.is_empty() {
+        return false;
+    }
+    let is_path_needle = raw_needle.contains('/');
+    let needle = raw_needle.trim_matches('/').to_lowercase();
+    if needle.is_empty() && !is_path_needle {
         return false;
     }
     // Match against URL tokens only. Never strip ?/# from the whole title+outline
@@ -546,8 +551,8 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
         return false;
     };
     let page = strip_query_and_fragment(&raw_url).to_lowercase();
-    if needle.contains('/') {
-        return path_needle_matches(&page, &needle);
+    if is_path_needle {
+        return path_needle_matches(&page, &raw_needle);
     }
     if let Some(host) = extract_hosts(&page).into_iter().next() {
         return host == needle || host.ends_with(&format!(".{needle}"));
@@ -555,31 +560,53 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
     false
 }
 
-fn path_needle_matches(page: &str, needle: &str) -> bool {
-    // `trusted.example/path` must not match `https://evil.example/trusted.example/path`.
+fn path_needle_matches(page: &str, raw_needle: &str) -> bool {
+    let needle = raw_needle.trim().to_lowercase();
+    // Full URL needles: https://example.com/private
+    if needle.contains("://") {
+        let filter_page = strip_query_and_fragment(&needle).to_lowercase();
+        let Some(want_host) = extract_hosts(&filter_page).into_iter().next() else {
+            return false;
+        };
+        let Some(have_host) = extract_hosts(page).into_iter().next() else {
+            return false;
+        };
+        if !(have_host == want_host || have_host.ends_with(&format!(".{want_host}"))) {
+            return false;
+        }
+        return path_prefix_match(&page_path(page), &page_path(&filter_page));
+    }
+    // Absolute path needles: /private
+    if needle.starts_with('/') {
+        let want = needle.trim_end_matches('/');
+        let want = if want.is_empty() { "/" } else { want };
+        return path_prefix_match(&page_path(page), want);
+    }
+    // Host-qualified: localhost/admin, trusted.example/path, [::1]/x
     if let Some((host_part, path_part)) = needle.split_once('/') {
-        if !host_part.is_empty() && (host_part.contains('.') || host_part.starts_with('[')) {
+        if !host_part.is_empty() {
             let Some(host) = extract_hosts(page).into_iter().next() else {
                 return false;
             };
-            if !(host == host_part || host.ends_with(&format!(".{host_part}"))) {
+            let host_ok = host == host_part || host.ends_with(&format!(".{host_part}"));
+            if !host_ok {
                 return false;
             }
-            let path = page_path(page);
             let want = if path_part.is_empty() {
                 "/".to_string()
             } else {
-                format!("/{path_part}")
+                format!("/{}", path_part.trim_end_matches('/'))
             };
-            return path == want || path.starts_with(&format!("{want}/")) || path.starts_with(&want);
+            return path_prefix_match(&page_path(page), &want);
         }
     }
-    let path = page_path(page);
-    let want = if needle.starts_with('/') {
-        needle.to_string()
-    } else {
-        format!("/{needle}")
-    };
+    false
+}
+
+fn path_prefix_match(path: &str, want: &str) -> bool {
+    let path = if path.is_empty() { "/" } else { path };
+    let want = if want.is_empty() { "/" } else { want };
+    // Segment boundary only — `/account` must not match `/accounting`.
     path == want || path.starts_with(&format!("{want}/"))
 }
 
@@ -971,5 +998,15 @@ mod tests {
             "https://evil.example/trusted.example/path",
             "trusted.example/path"
         ));
+        assert!(!host_matches(
+            "https://trusted.example/accounting",
+            "trusted.example/account"
+        ));
+        assert!(host_matches("https://example.com/private", "/private"));
+        assert!(host_matches(
+            "https://example.com/private",
+            "https://example.com/private"
+        ));
+        assert!(host_matches("http://localhost/admin", "localhost/admin"));
     }
 }

@@ -280,35 +280,52 @@ private final class DaemonState {
   }
 
   private static func hostMatches(url: String, needle: String) -> Bool {
-    let needle = needle.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
-    guard !needle.isEmpty else { return false }
+    let rawNeedle = needle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !rawNeedle.isEmpty else { return false }
+    let isPathNeedle = rawNeedle.contains("/")
+    let needle = rawNeedle.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    if needle.isEmpty && !isPathNeedle { return false }
     // Strip query/fragment so nested URLs in ?next= cannot spoof includeOnly matches.
     let page = Self.stripQueryAndFragment(url).lowercased()
-    if needle.contains("/") {
-      return pathNeedleMatches(page: page, needle: needle)
+    if isPathNeedle {
+      return pathNeedleMatches(page: page, rawNeedle: rawNeedle)
     }
-    // Hostname / bare-label needles compare against the page host only.
     guard let host = urlHosts(page).first else {
       return page == needle || page.hasSuffix(".\(needle)")
     }
     return host == needle || host.hasSuffix(".\(needle)")
   }
 
-  private static func pathNeedleMatches(page: String, needle: String) -> Bool {
-    // `trusted.example/path` must not match `https://evil.example/trusted.example/path`.
+  private static func pathNeedleMatches(page: String, rawNeedle: String) -> Bool {
+    let needle = rawNeedle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if needle.contains("://") {
+      let filterPage = stripQueryAndFragment(needle).lowercased()
+      guard let wantHost = urlHosts(filterPage).first, let haveHost = urlHosts(page).first else {
+        return false
+      }
+      guard haveHost == wantHost || haveHost.hasSuffix(".\(wantHost)") else { return false }
+      return pathPrefixMatch(pagePath(page), pagePath(filterPage))
+    }
+    if needle.hasPrefix("/") {
+      let want = needle.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      let wantPath = want.isEmpty ? "/" : "/\(want)"
+      return pathPrefixMatch(pagePath(page), wantPath)
+    }
     if let slash = needle.firstIndex(of: "/") {
       let hostPart = String(needle[..<slash])
       let pathPart = String(needle[needle.index(after: slash)...])
-      if !hostPart.isEmpty && (hostPart.contains(".") || hostPart.hasPrefix("[")) {
-        guard let host = urlHosts(page).first else { return false }
-        guard host == hostPart || host.hasSuffix(".\(hostPart)") else { return false }
-        let path = pagePath(page)
-        let want = pathPart.isEmpty ? "/" : "/\(pathPart)"
-        return path == want || path.hasPrefix("\(want)/") || path.hasPrefix(want)
-      }
+        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      guard !hostPart.isEmpty, let host = urlHosts(page).first else { return false }
+      guard host == hostPart || host.hasSuffix(".\(hostPart)") else { return false }
+      let want = pathPart.isEmpty ? "/" : "/\(pathPart)"
+      return pathPrefixMatch(pagePath(page), want)
     }
-    let path = pagePath(page)
-    let want = needle.hasPrefix("/") ? needle : "/\(needle)"
+    return false
+  }
+
+  private static func pathPrefixMatch(_ path: String, _ want: String) -> Bool {
+    let path = path.isEmpty ? "/" : path
+    let want = want.isEmpty ? "/" : want
     return path == want || path.hasPrefix("\(want)/")
   }
 
