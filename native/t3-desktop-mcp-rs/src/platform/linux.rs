@@ -907,8 +907,11 @@ impl Desktop for LinuxDesktop {
             let reference = self.element(id)?;
             if click_count <= 1 {
                 // Wait for the agent pointer to land before invoking, matching Win/Mac.
-                if let Ok((x, y)) = self.center(&reference) {
-                    AgentCursor::shared().press(x, y);
+                // Skip on Wayland — AT-SPI bounds are window-relative and would mis-fly.
+                if !crate::capture::on_wayland() {
+                    if let Ok((x, y)) = self.center(&reference) {
+                        AgentCursor::shared().press(x, y);
+                    }
                 }
                 if self.invoke(&reference).is_ok() {
                     return Ok(format!("pressed e{id}"));
@@ -955,18 +958,22 @@ impl Desktop for LinuxDesktop {
         let (to_x, to_y) = self.point_coordinates(to)?;
         AgentCursor::shared().show(from_x, from_y);
         self.move_pointer(from_x, from_y)?;
+        // Fly the overlay to the destination *before* button-down so the
+        // blocking wait cannot hold a stationary press (Bugbot: drag timing).
+        AgentCursor::shared().press(to_x, to_y);
         self.button(BUTTON_LEFT, true)?;
         // A single jump can read as a click to apps that track motion, so step.
         // Release the button before propagating any motion error, or the
         // session is left mid-drag.
-        AgentCursor::shared().press(to_x, to_y);
         let motion = (|| -> Result<()> {
             for step in 1..=10 {
                 let progress = f64::from(step) / 10.0;
-                self.move_pointer(
-                    from_x + (to_x - from_x) * progress,
-                    from_y + (to_y - from_y) * progress,
-                )?;
+                let x = from_x + (to_x - from_x) * progress;
+                let y = from_y + (to_y - from_y) * progress;
+                if step % 3 == 0 {
+                    AgentCursor::shared().glide(x, y);
+                }
+                self.move_pointer(x, y)?;
             }
             Ok(())
         })();

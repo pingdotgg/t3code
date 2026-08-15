@@ -77,6 +77,13 @@ impl AgentCursor {
         }
     }
 
+    /// Non-blocking hop for mid-drag visuals (must not sleep while a button is down).
+    pub fn glide(&self, x: f64, y: f64) {
+        if ENABLED.load(Ordering::Relaxed) {
+            move_no_wait(x, y);
+        }
+    }
+
     pub fn hide(&self) {
         if !ENABLED.load(Ordering::Relaxed) {
             return;
@@ -131,7 +138,8 @@ fn task_fade_grace() -> Duration {
     match std::env::var("T3_DESKTOP_AGENT_CURSOR_TASK_FADE_SECS") {
         Ok(raw) => {
             if let Ok(secs) = raw.trim().parse::<f64>() {
-                if secs >= 0.0 {
+                // from_secs_f64 panics on inf/NaN/overflow — reject those.
+                if secs.is_finite() && (0.0..3600.0).contains(&secs) {
                     return Duration::from_secs_f64(secs);
                 }
             }
@@ -160,6 +168,14 @@ fn move_and_wait(x: f64, y: f64, press: bool) {
     if wait > 0 {
         thread::sleep(Duration::from_micros(wait));
     }
+}
+
+/// Fire-and-forget move for mid-drag hops — never blocks with the button held.
+fn move_no_wait(x: f64, y: f64) {
+    if let Ok(mut last) = LAST_POINT.lock() {
+        *last = Some((x, y));
+    }
+    post(WM_AGENT_MOVE, x, y);
 }
 
 /// Approximate flight time for the curved path so clicks wait until landing.

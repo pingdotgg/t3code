@@ -71,6 +71,12 @@ final class AgentCursor {
         moveAndWait(to: point, press: true)
     }
 
+    /// Non-blocking hop for mid-drag visuals (must not sleep while a button is down).
+    func glide(at point: CGPoint) {
+        guard agentCursorEnabled else { return }
+        moveNoWait(to: point)
+    }
+
     func hide() {
         lock.lock()
         defer { lock.unlock() }
@@ -124,7 +130,7 @@ final class AgentCursor {
     private static func taskFadeGraceSeconds() -> TimeInterval {
         if let raw = ProcessInfo.processInfo.environment["T3_DESKTOP_AGENT_CURSOR_TASK_FADE_SECS"],
            let value = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-           value >= 0
+           value.isFinite, value >= 0, value < 3600
         {
             return value
         }
@@ -153,6 +159,16 @@ final class AgentCursor {
         var total = wait
         if needsStartupSlack { total += 220_000 }
         if total > 0 { usleep(total) }
+    }
+
+    private func moveNoWait(to point: CGPoint) {
+        lock.lock()
+        ensureRunning()
+        if connection != nil || listenerFD >= 0 {
+            sendLocked(["x": Int(point.x), "y": Int(point.y)])
+            lastPoint = point
+        }
+        lock.unlock()
     }
 
     /// Approximate flight time matching OverlayController's cubic path.
@@ -553,6 +569,9 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
     private var pathActive = false
     private var arcSign: CGFloat = 1
     private var lastTickAt: CFTimeInterval?
+    /// Bumped on each fadeOut / begin so a stale fade completion cannot orderOut
+    /// a pointer that already reappeared.
+    private var fadeGeneration: UInt64 = 0
 
     init(socketPath: String) {
         self.socketPath = socketPath
@@ -670,6 +689,7 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
 
         let fresh = current == nil || !panel.isVisible || panel.alphaValue < 0.05
         if fresh {
+            fadeGeneration &+= 1
             current = point
             velocity = .zero
             pathActive = false
@@ -688,6 +708,7 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
         }
 
         // Cancel any in-flight fade-out / keep fully visible while moving.
+        fadeGeneration &+= 1
         panel.alphaValue = 1
         let from = current ?? point
         let dx = point.x - from.x
@@ -852,11 +873,15 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
     private func fadeOut() {
         guard let panel, panel.isVisible else { return }
         pathActive = false
+        fadeGeneration &+= 1
+        let generation = fadeGeneration
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.35
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self else { return }
+            // Ignore completions from a fade that was superseded by a new move.
+            guard generation == self.fadeGeneration else { return }
             if panel.alphaValue < 0.05 {
                 panel.orderOut(nil)
                 self.animation?.invalidate()

@@ -623,7 +623,7 @@ func backgroundDrag(_ target: WindowTarget, from start: CGPoint, to end: CGPoint
         let t = Double(i) / Double(steps)
         let step = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
         send(.leftMouseDragged, step, 1, 0)
-        if i % 4 == 0 { CursorOverlay.shared.show(at: step) }
+        if i % 4 == 0 { CursorOverlay.shared.glide(at: step) }
         usleep(15_000)
     }
     usleep(40_000)
@@ -1958,6 +1958,9 @@ final class CursorOverlay {
 
     /// Move the agent pointer.
     func press(at point: CGPoint) { AgentCursor.shared.press(at: point) }
+
+    /// Non-blocking hop for mid-drag visuals.
+    func glide(at point: CGPoint) { AgentCursor.shared.glide(at: point) }
 }
 
 // MARK: - JSON-RPC over stdio

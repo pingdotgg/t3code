@@ -499,6 +499,7 @@ impl Desktop for WindowsDesktop {
         mouse
             .move_to(&UIPoint::new(from_x as i32, from_y as i32))
             .map_err(|error| DesktopError::new(format!("could not reach the drag origin: {error}")))?;
+        // Fly overlay to the end before the real drag starts (button still up).
         AgentCursor::shared().press(to_x, to_y);
         mouse
             .drag_to(MouseButton::LEFT, &UIPoint::new(to_x as i32, to_y as i32))
