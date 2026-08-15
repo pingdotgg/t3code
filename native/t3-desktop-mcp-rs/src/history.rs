@@ -163,12 +163,17 @@ pub fn run(root: PathBuf) -> Result<(), String> {
         match sample_frontmost(&mut *desktop) {
             Ok(sample) => {
                 let haystack = website_haystack(&sample);
+                let session_key = private_session_key(&sample);
                 if is_private_browsing_context(
                     haystack.as_deref(),
                     sample.window_title.as_deref(),
                     &sample.app_name,
                 ) {
-                    sticky_private_windows.insert(private_session_key(&sample));
+                    sticky_private_windows.insert(session_key.clone());
+                } else {
+                    // A normal tab clears a prior sticky flag (e.g. after leaving
+                    // about:privatebrowsing or a mis-detected new-tab URL).
+                    sticky_private_windows.remove(&session_key);
                 }
                 let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
                     && !sticky_private_windows.contains(&private_session_key(&sample))
@@ -254,7 +259,7 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
     // focus is unknown would attribute activity to an arbitrary process.
     let front = listing
         .lines()
-        .find(|line| line.contains("FRONTMOST"))
+        .find(|line| line.split_whitespace().last() == Some("FRONTMOST"))
         .ok_or_else(|| DesktopError::new("no frontmost app"))?;
     let (app_name, app_id, pid) = parse_app_line(front)
         .ok_or_else(|| DesktopError::new(format!("could not parse frontmost app line: {front}")))?;
@@ -298,9 +303,19 @@ fn private_session_key(sample: &Sample) -> String {
 
 fn is_browser_app(app_name: &str) -> bool {
     let app = app_name.to_lowercase();
-    ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera"]
-        .iter()
-        .any(|needle| app.contains(needle))
+    [
+        "chrome",
+        "chromium",
+        "firefox",
+        "safari",
+        "edge",
+        "brave",
+        "opera",
+        "arc",
+        "vivaldi",
+    ]
+    .iter()
+    .any(|needle| app.contains(needle))
 }
 
 fn is_private_browsing_context(
@@ -321,9 +336,9 @@ fn is_private_browsing_context(
     let combined = parts.join("\n");
     combined.contains("about:privatebrowsing")
         || combined.contains("private browsing")
-        || combined.contains("chrome://newtab")
-        || combined.contains("edge://newtab")
         || combined.contains("(private)")
+        || combined.contains("incognito")
+        || combined.contains("inprivate")
         || combined.contains("incognito")
         || combined.contains("inprivate")
 }
@@ -470,6 +485,12 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
     let needle = needle.trim().trim_matches('/').to_lowercase();
     if needle.is_empty() {
         return false;
+    }
+    // Path or bare-label needles (no hostname dots) also match URL/path fragments.
+    if needle.contains('/') || !needle.contains('.') {
+        if haystack.contains(&needle) {
+            return true;
+        }
     }
     if haystack.contains("://") {
         if let Some(host) = extract_host(haystack) {

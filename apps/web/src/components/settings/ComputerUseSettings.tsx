@@ -141,13 +141,18 @@ export function ComputerUseSettings() {
       setPermError(BRIDGE_UNSUPPORTED_MESSAGE);
       return false;
     }
-    const opened = await bridge.openComputerUsePrivacySettings(pane);
-    if (!opened) {
+    try {
+      const opened = await bridge.openComputerUsePrivacySettings(pane);
+      if (!opened) {
+        setPermError("Could not open System Settings. Open Privacy & Security manually.");
+        return false;
+      }
+      window.setTimeout(() => void refreshPermissions(), 1500);
+      return true;
+    } catch {
       setPermError("Could not open System Settings. Open Privacy & Security manually.");
       return false;
     }
-    window.setTimeout(() => void refreshPermissions(), 1500);
-    return true;
   };
 
   const chromeStatus = permState?.chromeExtension;
