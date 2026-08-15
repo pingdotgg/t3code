@@ -799,6 +799,31 @@ function coerceProviderOptionSelections(
 }
 
 /**
+ * Read a provider-keyed option bag without baking the currently installed
+ * drivers into draft persistence. `ProviderDriverKind` is deliberately open,
+ * so migrations and store updates must preserve any valid driver slug.
+ */
+function providerModelOptionEntries(
+  value: unknown,
+): ReadonlyArray<
+  readonly [ProviderDriverKind, ReadonlyArray<ProviderOptionSelection> | undefined]
+> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const result: Array<
+    readonly [ProviderDriverKind, ReadonlyArray<ProviderOptionSelection> | undefined]
+  > = [];
+  for (const [rawProvider, rawSelections] of Object.entries(value)) {
+    const provider = normalizeProviderDriverKind(rawProvider);
+    if (provider) {
+      result.push([provider, coerceProviderOptionSelections(rawSelections)]);
+    }
+  }
+  return result;
+}
+
+/**
  * Normalize a per-provider options bag from either the v3 or legacy v2 shape.
  *
  * `provider` and `legacy` parameters are migration-only inputs used to
@@ -810,12 +835,10 @@ function normalizeProviderModelOptions(
   provider?: ProviderDriverKind | null,
   legacy?: LegacyCodexFields,
 ): ProviderOptionSelectionsByProvider | null {
-  const candidate = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
   const result: ProviderOptionSelectionsByProvider = {};
-  for (const providerKey of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
-    const selections = coerceProviderOptionSelections(candidate?.[providerKey]);
+  for (const [provider, selections] of providerModelOptionEntries(value)) {
     if (selections) {
-      result[providerKey] = selections;
+      result[provider] = selections;
     }
   }
 
@@ -971,10 +994,8 @@ function legacyToModelSelectionByProvider(
 ): Partial<Record<ProviderInstanceId, ModelSelection>> {
   const result: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
   if (modelOptions) {
-    for (const provider of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
-      const options = modelOptions[provider];
+    for (const [driverKind, options] of providerModelOptionEntries(modelOptions)) {
       if (options && options.length > 0) {
-        const driverKind = ProviderDriverKind.make(provider);
         const instanceKey = defaultInstanceIdForDriver(driverKind);
         result[instanceKey] = createModelSelection(
           instanceKey,
@@ -2773,10 +2794,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = { ...base.modelSelectionByProvider };
-            for (const provider of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
-              if (!modelOptions || !(provider in modelOptions)) continue;
-              const opts = modelOptions[provider];
-              const driverKind = ProviderDriverKind.make(provider);
+            for (const [driverKind, opts] of providerModelOptionEntries(modelOptions)) {
               const instanceKey = defaultInstanceIdForDriver(driverKind);
               const current = nextMap[instanceKey];
               if (opts && opts.length > 0) {

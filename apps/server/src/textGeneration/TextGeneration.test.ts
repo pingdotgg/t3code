@@ -5,7 +5,12 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -27,20 +32,43 @@ const makeStubTextGeneration = (
 const makeStubInstance = (
   instanceId: ProviderInstanceId,
   textGeneration: TextGeneration.TextGeneration["Service"],
+  options?: {
+    readonly driverKind?: ProviderDriverKind;
+    readonly currentModels?: ReadonlyArray<ServerProviderModel>;
+    readonly refreshedModels?: ReadonlyArray<ServerProviderModel>;
+    readonly onRefresh?: () => void;
+  },
 ): ProviderInstance =>
   ({
     instanceId,
-    driverKind: instanceId as unknown as ProviderInstance["driverKind"],
+    driverKind: options?.driverKind ?? (instanceId as unknown as ProviderInstance["driverKind"]),
     continuationIdentity: {
-      driverKind: instanceId as unknown as ProviderInstance["driverKind"],
+      driverKind: options?.driverKind ?? (instanceId as unknown as ProviderInstance["driverKind"]),
       continuationKey: `${instanceId}:test`,
     },
     displayName: undefined,
     enabled: true,
-    snapshot: {} as ProviderInstance["snapshot"],
+    snapshot: {
+      maintenanceCapabilities: {} as ProviderInstance["snapshot"]["maintenanceCapabilities"],
+      getSnapshot: Effect.succeed({ models: options?.currentModels ?? [] } as ServerProvider),
+      refresh: Effect.sync(() => {
+        options?.onRefresh?.();
+        return {
+          models: options?.refreshedModels ?? options?.currentModels ?? [],
+        } as ServerProvider;
+      }),
+      streamChanges: Stream.empty,
+    },
     adapter: {} as ProviderInstance["adapter"],
     textGeneration,
   }) satisfies ProviderInstance;
+
+const serverModel = (slug: string, isCustom = false): ServerProviderModel => ({
+  slug,
+  name: slug,
+  isCustom,
+  capabilities: null,
+});
 
 const makeStubRegistry = (
   instances: ReadonlyArray<ProviderInstance>,
@@ -116,6 +144,114 @@ describe("makeTextGenerationFromRegistry", () => {
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
       }
+    }),
+  );
+
+  it.effect("resolves a provisional OMP model from the refreshed live inventory", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("omp");
+      let refreshCount = 0;
+      let dispatchedSelection:
+        | Parameters<
+            TextGeneration.TextGeneration["Service"]["generateBranchName"]
+          >[0]["modelSelection"]
+        | undefined;
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateBranchName: (input) => {
+            dispatchedSelection = input.modelSelection;
+            return Effect.succeed({ branch: "omp-branch" });
+          },
+        }),
+        {
+          driverKind: ProviderDriverKind.make("omp"),
+          currentModels: [],
+          refreshedModels: [
+            serverModel("anthropic/claude-sonnet-4-6"),
+            serverModel("local/qwen", true),
+          ],
+          onRefresh: () => {
+            refreshCount += 1;
+          },
+        },
+      );
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+
+      const result = yield* tg.generateBranchName({
+        cwd: process.cwd(),
+        message: "Use the live OMP model inventory",
+        modelSelection: createModelSelection(instanceId, "gpt-5.4-mini", [
+          { id: "thinking", value: "high" },
+        ]),
+      });
+
+      expect(result.branch).toBe("omp-branch");
+      expect(refreshCount).toBe(1);
+      expect(dispatchedSelection).toEqual({
+        instanceId,
+        model: "anthropic/claude-sonnet-4-6",
+      });
+    }),
+  );
+
+  it.effect("fails clearly when OMP refresh still exposes no models", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("omp");
+      const instance = makeStubInstance(instanceId, makeStubTextGeneration({}), {
+        driverKind: ProviderDriverKind.make("omp"),
+        currentModels: [],
+        refreshedModels: [],
+      });
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+
+      const result = yield* tg
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "anything",
+          modelSelection: createModelSelection(instanceId, "gpt-5.4-mini"),
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure.operation).toBe("generateBranchName");
+        expect(result.failure.detail).toContain("has no available models");
+      }
+    }),
+  );
+  it.effect("refreshes a non-empty OMP cache when the requested model is missing", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("omp");
+      let refreshCount = 0;
+      let dispatchedModel: string | undefined;
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateBranchName: (input) => {
+            dispatchedModel = input.modelSelection.model;
+            return Effect.succeed({ branch: "omp-branch" });
+          },
+        }),
+        {
+          driverKind: ProviderDriverKind.make("omp"),
+          currentModels: [serverModel("stale/model")],
+          refreshedModels: [serverModel("new/model")],
+          onRefresh: () => {
+            refreshCount += 1;
+          },
+        },
+      );
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+
+      yield* tg.generateBranchName({
+        cwd: process.cwd(),
+        message: "Use the refreshed OMP model",
+        modelSelection: createModelSelection(instanceId, "new/model"),
+      });
+
+      expect(refreshCount).toBe(1);
+      expect(dispatchedModel).toBe("new/model");
     }),
   );
 });

@@ -416,6 +416,32 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         );
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+  it.effect("does not invent a static model selector when only OMP is enabled", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const provisionalModel = "gpt-5.4-mini";
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          grok: { enabled: false },
+          cursor: { enabled: false },
+          opencode: { enabled: false },
+          omp: { enabled: true },
+        },
+        textGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: provisionalModel,
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: ProviderInstanceId.make("omp"),
+        model: provisionalModel,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 
   it.effect("drops stale text generation options when resetting model selection", () =>
     Effect.gen(function* () {
