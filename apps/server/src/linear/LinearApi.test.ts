@@ -225,3 +225,52 @@ it.effect("fetchIssues fails when Linear returns an issue together with errors",
     assert.strictEqual(error._tag, "LinearRequestError");
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("probeAuth reports unverified for a malformed GraphQL envelope", () => {
+  const { layer } = makeLayer({
+    response: () => graphqlResponse({}),
+  });
+  return Effect.gen(function* () {
+    const linear = yield* LinearApi.LinearApi;
+    const status = yield* linear.probeAuth;
+    assert.strictEqual(status.status, "unverified");
+    assert.strictEqual(status.hasStoredToken, true);
+    assert.strictEqual(status.detail, "Couldn't reach Linear to verify the token.");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("probeAuth reports unverified when the viewer field is missing", () => {
+  const { layer } = makeLayer({
+    response: () => graphqlResponse({ data: {} }),
+  });
+  return Effect.gen(function* () {
+    const linear = yield* LinearApi.LinearApi;
+    const status = yield* linear.probeAuth;
+    assert.strictEqual(status.status, "unverified");
+    assert.strictEqual(status.hasStoredToken, true);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("fetchIssues fails on a malformed GraphQL envelope", () => {
+  const { layer } = makeLayer({
+    response: () => graphqlResponse({}),
+  });
+  return Effect.gen(function* () {
+    const linear = yield* LinearApi.LinearApi;
+    const error = yield* linear.fetchIssues({ ids: ["issue-1"] }).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "LinearRequestError");
+    assert.strictEqual(error.detail, "Linear returned a malformed GraphQL response.");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("searchIssues fails on a malformed GraphQL envelope", () => {
+  const { layer } = makeLayer({
+    response: () => graphqlResponse({}),
+  });
+  return Effect.gen(function* () {
+    const linear = yield* LinearApi.LinearApi;
+    const error = yield* linear.searchIssues({ query: "eng", limit: 10 }).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "LinearRequestError");
+    assert.strictEqual(error.detail, "Linear returned a malformed GraphQL response.");
+  }).pipe(Effect.provide(layer));
+});

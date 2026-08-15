@@ -319,6 +319,26 @@ function isNotFoundMessage(message: string | undefined): boolean {
   return lowered.includes("not found") || lowered.includes("could not find");
 }
 
+function hasGraphqlPayload(envelope: {
+  readonly data?: unknown;
+  readonly errors?: ReadonlyArray<unknown>;
+}): boolean {
+  return (
+    envelope.data !== undefined || (envelope.errors !== undefined && envelope.errors.length > 0)
+  );
+}
+
+function hasOwnField(data: object, key: string): boolean {
+  return Object.hasOwn(data, key);
+}
+
+function malformedGraphqlError(operation: LinearApiOperation): LinearRequestError {
+  return new LinearRequestError({
+    operation,
+    detail: "Linear returned a malformed GraphQL response.",
+  });
+}
+
 export class LinearApi extends Context.Service<
   LinearApi,
   {
@@ -423,6 +443,19 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
               ),
+              Effect.flatMap((envelope) => {
+                if (
+                  hasGraphqlPayload(
+                    envelope as {
+                      readonly data?: unknown;
+                      readonly errors?: ReadonlyArray<unknown>;
+                    },
+                  )
+                ) {
+                  return Effect.succeed(envelope);
+                }
+                return Effect.fail(malformedGraphqlError(operation));
+              }),
             ),
           orElse: (failed) =>
             failed.status === 401 || failed.status === 403
@@ -493,7 +526,11 @@ export const make = Effect.gen(function* () {
                     }),
                   );
                 }
-                const viewer = envelope.data?.viewer ?? undefined;
+                const data = envelope.data;
+                if (data == null || !hasOwnField(data, "viewer")) {
+                  return Effect.fail(malformedGraphqlError("probeAuth"));
+                }
+                const viewer = data.viewer ?? undefined;
                 if (viewer === undefined) {
                   return Effect.succeed<LinearAuthStatus>({
                     status: "unauthenticated",
@@ -557,7 +594,11 @@ export const make = Effect.gen(function* () {
         if (envelope.errors !== undefined && envelope.errors.length > 0) {
           return failFromGraphQlErrors("searchIssues", envelope.errors);
         }
-        const connection = envelope.data?.searchIssues ?? envelope.data?.issues ?? null;
+        const data = envelope.data;
+        if (data == null || !(hasOwnField(data, "searchIssues") || hasOwnField(data, "issues"))) {
+          return Effect.fail(malformedGraphqlError("searchIssues"));
+        }
+        const connection = data.searchIssues ?? data.issues ?? null;
         const nodes = connection?.nodes ?? [];
         return Effect.succeed({
           issues: nodes.map(toSummary),
@@ -586,7 +627,11 @@ export const make = Effect.gen(function* () {
           }
           return failFromGraphQlErrors("fetchIssues", envelope.errors);
         }
-        const issue = envelope.data?.issue ?? null;
+        const data = envelope.data;
+        if (data == null || !hasOwnField(data, "issue")) {
+          return Effect.fail(malformedGraphqlError("fetchIssues"));
+        }
+        const issue = data.issue ?? null;
         if (issue !== null) {
           return Effect.succeed(toDetail(issue));
         }
