@@ -29,7 +29,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 
 /** Shown when the desktop host lacks the Computer Use permissions bridge API. */
 const BRIDGE_UNSUPPORTED_MESSAGE = "Update T3 Code to check Computer Use permissions";
@@ -319,7 +319,7 @@ export function ComputerUseSettings() {
               </CollapsibleTrigger>
             }
           >
-            <CollapsibleContent id="computer-use-more-browsers">
+            <CollapsiblePanel id="computer-use-more-browsers">
               <div className="mt-2 space-y-3 rounded-xl bg-muted/20 px-3 py-3">
                 <div className="flex items-center gap-3">
                   <EdgeIcon className="size-6" />
@@ -347,7 +347,7 @@ export function ComputerUseSettings() {
                   </div>
                 </div>
               </div>
-            </CollapsibleContent>
+            </CollapsiblePanel>
           </SettingsRow>
         </Collapsible>
       </SettingsSection>
