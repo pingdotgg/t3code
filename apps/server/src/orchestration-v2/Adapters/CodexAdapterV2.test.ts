@@ -3388,6 +3388,235 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  const ORPHAN_WAIT_SCENARIO = "codex-orphaned-dynamic-tool";
+  const ORPHAN_WAIT_NATIVE_THREAD = "native-codex-orphan-wait-thread";
+  const ORPHAN_WAIT_NATIVE_TURN = "native-codex-orphan-wait-turn";
+  const ORPHAN_WAIT_ITEM = "exec-4669f3bb-78c9-4af1-b44e-daa340d2c538";
+  const PERSISTENT_MONITOR_ITEM = "exec-persistent-monitor";
+  const COMPLETED_WAIT_ITEM = "exec-completed-wait";
+  const ORPHAN_WAIT_PROMPT = "Wait on two nested tasks, then finish.";
+
+  const orphanedDynamicToolTranscript = makeCodexReplayTranscript({
+    scenario: ORPHAN_WAIT_SCENARIO,
+    entries: [
+      ...codexReplayPreamble({
+        nativeThreadId: ORPHAN_WAIT_NATIVE_THREAD,
+        nativeTurnId: ORPHAN_WAIT_NATIVE_TURN,
+        prompt: ORPHAN_WAIT_PROMPT,
+      }),
+      {
+        type: "emit_inbound",
+        label: "item/started/completed-wait",
+        frame: {
+          method: "item/started",
+          params: {
+            item: {
+              type: "mcpToolCall",
+              id: COMPLETED_WAIT_ITEM,
+              server: "t3-code",
+              tool: "t3_thread_wait",
+              status: "inProgress",
+              arguments: { threadId: "thread:completed-wait", timeoutMs: 30000 },
+            },
+            threadId: ORPHAN_WAIT_NATIVE_THREAD,
+            turnId: ORPHAN_WAIT_NATIVE_TURN,
+            startedAtMs: 1782622440500,
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "item/completed/completed-wait",
+        frame: {
+          method: "item/completed",
+          params: {
+            item: {
+              type: "mcpToolCall",
+              id: COMPLETED_WAIT_ITEM,
+              server: "t3-code",
+              tool: "t3_thread_wait",
+              status: "completed",
+              arguments: { threadId: "thread:completed-wait", timeoutMs: 30000 },
+              result: { content: [{ type: "text", text: "idle" }] },
+            },
+            threadId: ORPHAN_WAIT_NATIVE_THREAD,
+            turnId: ORPHAN_WAIT_NATIVE_TURN,
+            completedAtMs: 1782622441500,
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "item/started/orphan-wait",
+        frame: {
+          method: "item/started",
+          params: {
+            item: {
+              type: "mcpToolCall",
+              id: ORPHAN_WAIT_ITEM,
+              server: "t3-code",
+              tool: "t3_thread_wait",
+              status: "inProgress",
+              arguments: {
+                threadId:
+                  "thread:delegated-task:command%3Amcp%3Aaafffab1-e811-458a-ae83-558e542c61ff%3Adelegate-task%3Areview-mobile-reconnect-opus-20260815",
+                timeoutMs: 30000,
+              },
+            },
+            threadId: ORPHAN_WAIT_NATIVE_THREAD,
+            turnId: ORPHAN_WAIT_NATIVE_TURN,
+            startedAtMs: 1782622442500,
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "item/started/persistent-monitor",
+        frame: {
+          method: "item/started",
+          params: {
+            item: {
+              type: "dynamicToolCall",
+              id: PERSISTENT_MONITOR_ITEM,
+              namespace: "grok",
+              tool: "monitor",
+              status: "inProgress",
+              arguments: { persistent: true, command: "tail -f" },
+            },
+            threadId: ORPHAN_WAIT_NATIVE_THREAD,
+            turnId: ORPHAN_WAIT_NATIVE_TURN,
+            startedAtMs: 1782622443500,
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "turn/completed",
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: ORPHAN_WAIT_NATIVE_THREAD,
+            turn: makeCodexReplayTurn({
+              id: ORPHAN_WAIT_NATIVE_TURN,
+              status: "completed",
+            }),
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "item/completed/persistent-monitor",
+        afterMs: 30_000,
+        frame: {
+          method: "item/completed",
+          params: {
+            item: {
+              type: "dynamicToolCall",
+              id: PERSISTENT_MONITOR_ITEM,
+              namespace: "grok",
+              tool: "monitor",
+              status: "completed",
+              arguments: { persistent: true, command: "tail -f" },
+              result: { content: [{ type: "text", text: "stopped" }] },
+            },
+            threadId: ORPHAN_WAIT_NATIVE_THREAD,
+            turnId: ORPHAN_WAIT_NATIVE_TURN,
+            completedAtMs: 1782622473500,
+          },
+        },
+      },
+    ],
+  });
+
+  it.effect(
+    "terminalizes leftover nonpersistent dynamic tools when a completed turn never closes them",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeCodexReplayHarness(orphanedDynamicToolTranscript);
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-codex-orphan-wait"),
+              text: ORPHAN_WAIT_PROMPT,
+            }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "completed terminal");
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+
+          const terminalIndex = harness.events.findIndex((event) => event.type === "turn.terminal");
+          const cancelledWait = harness.events.find(
+            (event, index) =>
+              index < terminalIndex &&
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.nativeItemRef?.nativeId === ORPHAN_WAIT_ITEM &&
+              event.turnItem.status === "cancelled",
+          );
+          assert.isDefined(cancelledWait);
+          assert.isAbove(
+            terminalIndex,
+            harness.events.indexOf(cancelledWait!),
+            "orphaned wait terminalization must precede turn.terminal",
+          );
+
+          const completedWaitStatuses = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === COMPLETED_WAIT_ITEM
+              ? [event.turnItem.status]
+              : [],
+          );
+          assert.isTrue(
+            completedWaitStatuses.includes("completed"),
+            "the wait that received item/completed must stay completed",
+          );
+          assert.isFalse(
+            completedWaitStatuses.includes("cancelled"),
+            "a completed wait must not be rewritten as cancelled",
+          );
+
+          const persistentMonitorStatuses = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === PERSISTENT_MONITOR_ITEM
+              ? [event.turnItem.status]
+              : [],
+          );
+          assert.isTrue(persistentMonitorStatuses.includes("running"));
+          assert.isFalse(
+            persistentMonitorStatuses.includes("cancelled"),
+            "persistent monitors must remain running after the root turn completes",
+          );
+          assert.isTrue(
+            yield* harness.hasPendingBackgroundWork,
+            "persistent dynamic tools must keep the session residency pin until they complete",
+          );
+
+          yield* TestClock.adjust("30 seconds");
+          const lateMonitorUpdateIndex = () =>
+            harness.events.findIndex(
+              (event, index) =>
+                index > terminalIndex &&
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "dynamic_tool" &&
+                event.turnItem.nativeItemRef?.nativeId === PERSISTENT_MONITOR_ITEM &&
+                event.turnItem.status === "completed",
+            );
+          yield* awaitUntil(
+            () => lateMonitorUpdateIndex() > terminalIndex,
+            "post-settle persistent tool completion",
+          );
+          assert.lengthOf(harness.terminalEvents(), 1);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+  );
+
   const RESUME_SCENARIO = "codex-resume-subagent";
   const RESUME_NATIVE_THREAD = "native-codex-resume-thread";
   const RESUME_NATIVE_TURN = "native-codex-resume-root-turn";
