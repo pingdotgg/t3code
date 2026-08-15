@@ -374,7 +374,7 @@ export function PullRequestCodeTab({
         // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
         // key of position alone would keep handing back the parse of the patch it replaced.
         const sliceKey = `${scopeKey}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
-        const parseCacheKey = `pull-request:${syntaxThemeName}:${sliceKey}`;
+        const parseCacheKey = `pull-request:${sliceKey}`;
         const cached = parseCache.current.get(parseCacheKey);
         if (cached) return cached;
         const parsed = getRenderablePatch(slice.patch, `pull-request:${sliceKey}`, {
