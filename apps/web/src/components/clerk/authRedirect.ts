@@ -15,5 +15,7 @@ export function resolveClerkSignInProps(href: string, isElectron: boolean): Cler
       signUpForceRedirectUrl: redirectUrl.toString(),
     };
   }
-  return { forceRedirectUrl: href };
+  // The sign-in modal can switch to sign-up, which follows its own redirect
+  // target; without one Clerk falls back to the URL the modal was opened from.
+  return { forceRedirectUrl: href, signUpForceRedirectUrl: href };
 }

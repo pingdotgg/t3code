@@ -60,6 +60,23 @@ export function buildConnectCliClerkAuthorizeUrl(request: ConnectAuthorizeReques
   });
 }
 
+/**
+ * Where Clerk sends the browser once the sign-in modal on /connect completes.
+ * It has to be the authorize endpoint rather than this page: /connect carries
+ * the CLI request in its fragment, so navigating back to the same URL is a
+ * same-document fragment navigation the browser never reloads — and Clerk
+ * treats any post-sign-in navigation as a page unload and skips the state emit
+ * that would otherwise re-render the surface, so the session never arrives
+ * either. Falls back to the current URL when the authorize URL cannot be
+ * built, which only happens on a deployment without the CLI OAuth config.
+ */
+export function connectCliSignInRedirectUrl(
+  request: ConnectAuthorizeRequest,
+  currentHref: string,
+): string {
+  return buildConnectCliClerkAuthorizeUrl(request) ?? currentHref;
+}
+
 export function rememberConnectCliAuthState(state: string): void {
   try {
     window.sessionStorage.setItem(CONNECT_CLI_AUTH_STATE_STORAGE_KEY, state);

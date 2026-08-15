@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildConnectCliClerkAuthorizeUrl,
+  connectCliSignInRedirectUrl,
   hasConnectCliAuthConfig,
   readConnectCliCallbackResult,
 } from "./connectCliAuth";
@@ -67,6 +68,29 @@ describe("connectCliAuth", () => {
     expect(
       buildConnectCliClerkAuthorizeUrl({ state: "state-1", challenge: "challenge-1" }),
     ).toBeNull();
+  });
+
+  it("sends the sign-in redirect to the authorize endpoint, not back to /connect", () => {
+    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
+    vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
+
+    const connectUrl = "https://app.t3.codes/connect#state=state-1&challenge=challenge-1";
+    const redirectUrl = connectCliSignInRedirectUrl(
+      { state: "state-1", challenge: "challenge-1" },
+      connectUrl,
+    );
+
+    expect(redirectUrl).not.toBe(connectUrl);
+    expect(new URL(redirectUrl).pathname).toBe("/oauth/authorize");
+  });
+
+  it("falls back to the current URL when the authorize URL cannot be built", () => {
+    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
+
+    const connectUrl = "https://app.t3.codes/connect#state=state-1&challenge=challenge-1";
+    expect(
+      connectCliSignInRedirectUrl({ state: "state-1", challenge: "challenge-1" }, connectUrl),
+    ).toBe(connectUrl);
   });
 
   it("reads the code and state Clerk echoes back to the callback", () => {
