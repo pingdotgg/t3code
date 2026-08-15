@@ -4,6 +4,7 @@ import { LINEAR_FETCH_MAX_IDS, type LinearIssueSummary } from "@t3tools/contract
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLinearImport } from "../../hooks/useLinearImport";
+import { cn } from "../../lib/utils";
 import { onOpenLinearImport } from "../../linearImportBus";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -93,6 +94,7 @@ export function LinearImportDialog() {
   );
 
   const issues = searchQuery.data?.issues ?? [];
+  const atLimit = selectedIdSet.size >= LINEAR_FETCH_MAX_IDS;
 
   const toggleIssue = useCallback((issueId: string) => {
     setSelectedIdSet((current) => {
@@ -244,17 +246,26 @@ export function LinearImportDialog() {
                   ) : issues.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No issues match that search.</p>
                   ) : (
-                    issues.map((issue) => (
-                      <IssueRow
-                        key={issue.id}
-                        issue={issue}
-                        selected={selectedIdSet.has(issue.id)}
-                        onToggle={() => toggleIssue(issue.id)}
-                      />
-                    ))
+                    issues.map((issue) => {
+                      const selected = selectedIdSet.has(issue.id);
+                      return (
+                        <IssueRow
+                          key={issue.id}
+                          issue={issue}
+                          selected={selected}
+                          disabled={!selected && atLimit}
+                          onToggle={() => toggleIssue(issue.id)}
+                        />
+                      );
+                    })
                   )}
                 </div>
               </ScrollArea>
+              {atLimit ? (
+                <p className="text-xs text-muted-foreground">
+                  Import up to {LINEAR_FETCH_MAX_IDS} issues at a time. Deselect one to add another.
+                </p>
+              ) : null}
             </>
           )}
         </DialogPanel>
@@ -281,19 +292,28 @@ export function LinearImportDialog() {
 function IssueRow({
   issue,
   selected,
+  disabled,
   onToggle,
 }: {
   readonly issue: LinearIssueSummary;
   readonly selected: boolean;
+  readonly disabled: boolean;
   readonly onToggle: () => void;
 }) {
   return (
-    <label className="flex w-full cursor-pointer items-start gap-3 rounded-md px-2 py-2 text-left hover:bg-accent/60">
+    <label
+      className={cn(
+        "flex w-full items-start gap-3 rounded-md px-2 py-2 text-left",
+        disabled ? "cursor-not-allowed opacity-64" : "cursor-pointer hover:bg-accent/60",
+      )}
+    >
       <Checkbox
         checked={selected}
         className="mt-0.5"
+        disabled={disabled}
         onCheckedChange={(checked) => {
-          if (Boolean(checked) !== selected) onToggle();
+          if (disabled || Boolean(checked) === selected) return;
+          onToggle();
         }}
       />
       <span className="min-w-0 flex-1">

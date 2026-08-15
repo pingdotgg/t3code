@@ -113,27 +113,30 @@ export function formatLinearIssues(
 
   if (issues.length === 1) {
     const issue = issues[0]!;
-    return wrapUntrusted(
-      `Work on this Linear issue:\n\n${formatIssueBlock(
-        issue,
-        `## ${issue.identifier}: ${issue.title}`,
-      )}`,
-    );
+    return [
+      "Work on this Linear issue:",
+      "",
+      wrapUntrusted(formatIssueBlock(issue, `## ${issue.identifier}: ${issue.title}`)),
+    ].join("\n");
   }
 
   if (mode === "subtasks") {
     const blocks = issues.map((issue, index) =>
       formatIssueBlock(issue, `## Subtask ${index + 1} — ${issue.identifier}: ${issue.title}`),
     );
-    return wrapUntrusted(
-      `These related Linear issues should be implemented as subtasks:\n\n${blocks.join("\n\n")}`,
-    );
+    return [
+      "These related Linear issues should be implemented as subtasks:",
+      "",
+      wrapUntrusted(blocks.join("\n\n")),
+    ].join("\n");
   }
 
   const blocks = issues.map((issue) =>
     formatIssueBlock(issue, `## ${issue.identifier}: ${issue.title}`),
   );
-  return wrapUntrusted(
-    `Work on these Linear issues together as one task:\n\n${blocks.join("\n\n")}`,
-  );
+  return [
+    "Work on these Linear issues together as one task:",
+    "",
+    wrapUntrusted(blocks.join("\n\n")),
+  ].join("\n");
 }
