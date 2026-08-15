@@ -1,5 +1,8 @@
-const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 30_000;
-const NETWORK_GIT_COMMAND_TIMEOUT_MS = 300_000;
+export const GIT_COMMAND_TIMEOUT_MS = {
+  local: 30_000,
+  network: 5 * 60_000,
+  commit: 10 * 60_000,
+} as const;
 
 const NETWORK_GIT_SUBCOMMANDS = new Set(["fetch", "pull", "push"]);
 const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
@@ -28,7 +31,8 @@ function gitSubcommand(args: readonly string[]): string | null {
 
 export function resolveGitCommandTimeoutMs(args: readonly string[], timeoutMs?: number): number {
   if (timeoutMs !== undefined) return timeoutMs;
-  return NETWORK_GIT_SUBCOMMANDS.has(gitSubcommand(args) ?? "")
-    ? NETWORK_GIT_COMMAND_TIMEOUT_MS
-    : DEFAULT_GIT_COMMAND_TIMEOUT_MS;
+  const subcommand = gitSubcommand(args);
+  if (subcommand === "commit") return GIT_COMMAND_TIMEOUT_MS.commit;
+  if (NETWORK_GIT_SUBCOMMANDS.has(subcommand ?? "")) return GIT_COMMAND_TIMEOUT_MS.network;
+  return GIT_COMMAND_TIMEOUT_MS.local;
 }

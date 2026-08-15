@@ -103,7 +103,6 @@ export class GitManager extends Context.Service<
   }
 >()("t3/git/GitManager") {}
 
-const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
@@ -1606,7 +1605,6 @@ export const make = Effect.gen(function* () {
           }
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-      timeoutMs: COMMIT_TIMEOUT_MS,
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
     if (currentHookName !== null) {

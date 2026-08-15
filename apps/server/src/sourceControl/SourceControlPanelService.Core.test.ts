@@ -27,6 +27,7 @@ import * as SourceControlProvider from "./SourceControlProvider.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { GIT_COMMAND_TIMEOUT_MS } from "../vcs/GitCommandTimeout.ts";
 import { GitVcsDriver, type ExecuteGitInput, type ExecuteGitResult } from "../vcs/GitVcsDriver.ts";
 
 const branchRef: VcsRef = {
@@ -809,6 +810,7 @@ describe("SourceControlPanelService", () => {
           ["--literal-pathspecs", "reset", "--", "src/[literal].ts"],
         ],
       );
+      assert.isTrue(calls.every((call) => call.timeoutMs === GIT_COMMAND_TIMEOUT_MS.local));
     }).pipe(
       Effect.provide(
         makeTestLayer((input) =>
@@ -900,6 +902,10 @@ describe("SourceControlPanelService", () => {
         call.operation.startsWith("vcs.panel.commitStaged"),
       );
       assert.isTrue(selectedIndexCalls.every((call) => Boolean(call.env?.GIT_INDEX_FILE?.length)));
+      assert.strictEqual(
+        calls.find((call) => call.operation === "vcs.panel.commitStaged")?.timeoutMs,
+        GIT_COMMAND_TIMEOUT_MS.commit,
+      );
       assert.isUndefined(calls.at(-1)?.env?.GIT_INDEX_FILE);
     }).pipe(
       Effect.provide(
