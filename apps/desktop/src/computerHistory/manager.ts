@@ -224,7 +224,9 @@ export const make = Effect.gen(function* () {
       void writeUnavailableStatus(
         root,
         `failed to start computer-history daemon: ${error.message}`,
-      );
+      ).catch(() => {
+        // Best-effort status write — never crash the main process.
+      });
     });
     child.on("exit", () => {
       if (state.child === child && state.generation === generation) {
