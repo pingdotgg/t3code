@@ -23,6 +23,7 @@ import {
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import {
+  SettingIconAction,
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
@@ -132,16 +133,13 @@ function ExclusionList({
                   className="h-auto max-w-full justify-between gap-2 px-2 py-1 text-left font-normal"
                 >
                   <span className="min-w-0 truncate">{item}</span>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                  <SettingIconAction
                     disabled={disabled}
                     aria-label={`Remove ${item}`}
                     onClick={() => onChange(items.filter((entry) => entry !== item))}
                   >
                     <XIcon className="size-3.5" />
-                  </Button>
+                  </SettingIconAction>
                 </Badge>
               </li>
             ))}

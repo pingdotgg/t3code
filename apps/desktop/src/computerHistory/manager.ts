@@ -247,6 +247,8 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       }),
+    // Typed failure channel — callers recover with Effect.catch / Effect.ignore.
+    // Do not pipe Effect.orDie here; bootstrap and quit must stay non-defecting.
     stopDaemon: () =>
       Effect.tryPromise({
         try: () => stopDaemonImpl(),
