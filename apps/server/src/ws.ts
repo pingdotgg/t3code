@@ -1230,7 +1230,9 @@ const makeWsRpcLayer = (
                 input.requestCompletionMarker === true
                   ? Stream.concat(
                       Stream.fromEffect(
-                        Queue.offer(liveBuffer, { kind: "synchronized" as const }).pipe(
+                        Queue.offer(liveBuffer, {
+                          kind: "synchronized" as const,
+                        }).pipe(
                           Effect.andThen(Queue.takeAll(liveBuffer)),
                           Effect.flatMap(coalesceShellLiveInputs),
                         ),
@@ -1380,7 +1382,9 @@ const makeWsRpcLayer = (
                     input.requestCompletionMarker === true
                       ? Stream.concat(
                           Stream.fromEffect(
-                            Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                            Queue.offer(liveBuffer, {
+                              kind: "synchronized" as const,
+                            }),
                           ).pipe(Stream.drain),
                           bufferedLiveStream,
                         )
@@ -1422,7 +1426,9 @@ const makeWsRpcLayer = (
                 input.requestCompletionMarker === true
                   ? Stream.concat(
                       Stream.fromEffect(
-                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                        Queue.offer(liveBuffer, {
+                          kind: "synchronized" as const,
+                        }),
                       ).pipe(Stream.drain),
                       bufferedLiveStream,
                     )
@@ -1876,6 +1882,9 @@ const makeWsRpcLayer = (
                     ? { projectFaviconPath: project.value.faviconPath }
                     : {}),
                 });
+              }
+              if (input.resource._tag === "github-user-attachment") {
+                return yield* issueAssetUrl({ resource: input.resource });
               }
               const thread = yield* projectionSnapshotQuery
                 .getThreadShellById(input.resource.threadId)

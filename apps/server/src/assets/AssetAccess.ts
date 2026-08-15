@@ -2,6 +2,7 @@ import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
   AssetPreviewTypeValidationError,
+  AssetGitHubAttachmentUrlValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
   AssetProjectFaviconResolutionError,
@@ -88,6 +89,12 @@ const AssetClaimsSchema = Schema.Union([
     relativePath: Schema.NullOr(Schema.String),
     expiresAt: Schema.Number,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("github-user-attachment"),
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -95,7 +102,27 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset =
+  | { readonly kind: "file"; readonly path: string }
+  | { readonly kind: "github-user-attachment"; readonly url: string };
+
+export function isGitHubUserAttachmentUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "github.com" &&
+      url.port === "" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      /^\/user-attachments\/assets\/[0-9a-f-]+$/i.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -302,11 +329,16 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         );
       const relativePath = faviconPath ? path.relative(workspaceRoot, faviconPath) : null;
       if (relativePath && !isWorkspaceImagePreviewPath(relativePath)) {
-        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+        return yield* new AssetPreviewTypeValidationError({
+          resource: input.resource,
+        });
       }
       sourcePath = relativePath ?? undefined;
       const canonicalFaviconPath = relativePath
-        ? yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }).pipe(
+        ? yield* resolveCanonicalWorkspaceFile({
+            workspaceRoot,
+            relativePath,
+          }).pipe(
             Effect.mapError(
               (cause) =>
                 new AssetProjectFaviconInspectionError({
@@ -363,6 +395,21 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       break;
     }
+    case "github-user-attachment": {
+      if (!isGitHubUserAttachmentUrl(input.resource.url)) {
+        return yield* new AssetGitHubAttachmentUrlValidationError({
+          resource: input.resource,
+        });
+      }
+      claims = {
+        version: 1,
+        kind: "github-user-attachment",
+        url: input.resource.url,
+        expiresAt,
+      };
+      fileName = path.basename(new URL(input.resource.url).pathname);
+      break;
+    }
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -408,6 +455,15 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+
+  if (claims.kind === "github-user-attachment") {
+    return isGitHubUserAttachmentUrl(claims.url)
+      ? ({
+          kind: "github-user-attachment",
+          url: claims.url,
+        } satisfies ResolvedAsset)
+      : null;
+  }
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;

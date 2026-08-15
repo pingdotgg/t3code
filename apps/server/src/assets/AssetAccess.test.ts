@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import {
+  AssetGitHubAttachmentUrlValidationError,
+  AssetPreviewTypeValidationError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -31,6 +35,31 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect("signs only GitHub user attachment URLs", () =>
+    Effect.gen(function* () {
+      const url = "https://github.com/user-attachments/assets/dec6b30a-7724-4590-802a-af5586a2724d";
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "github-user-attachment", url },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({
+        kind: "github-user-attachment",
+        url,
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "github-user-attachment",
+          url: "https://example.com/user-attachments/assets/dec6b30a-7724-4590-802a-af5586a2724d",
+        },
+      }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(AssetGitHubAttachmentUrlValidationError);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -191,7 +220,9 @@ describe("AssetAccess", () => {
       const path = yield* Path.Path;
       const attachmentId = "thread-1-00000000-0000-4000-8000-000000000001";
       const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.png`);
-      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fileSystem.makeDirectory(config.attachmentsDir, {
+        recursive: true,
+      });
       yield* fileSystem.writeFile(attachmentPath, new Uint8Array([1, 2, 3]));
 
       const result = yield* issueAssetUrl({
@@ -299,7 +330,11 @@ describe("AssetAccess", () => {
       yield* fileSystem.writeFileString(path.join(root, "brand", "saved.svg"), "<svg>saved</svg>");
 
       const result = yield* issueAssetUrl({
-        resource: { _tag: "project-favicon", cwd: root, path: "brand/hint.svg" },
+        resource: {
+          _tag: "project-favicon",
+          cwd: root,
+          path: "brand/hint.svg",
+        },
         projectFaviconPath: "brand/saved.svg",
       });
 

@@ -19,6 +19,9 @@ export const AssetResource = Schema.Union([
     // project projection before it issues the signed URL.
     path: Schema.optional(ProjectFaviconPath),
   }),
+  Schema.TaggedStruct("github-user-attachment", {
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
@@ -91,6 +94,15 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedErrorClass<Ass
 ) {
   override get message(): string {
     return "Only browser documents and images can be previewed.";
+  }
+}
+
+export class AssetGitHubAttachmentUrlValidationError extends Schema.TaggedErrorClass<AssetGitHubAttachmentUrlValidationError>()(
+  "AssetGitHubAttachmentUrlValidationError",
+  { resource: AssetResource },
+) {
+  override get message(): string {
+    return "GitHub attachment URL is invalid.";
   }
 }
 
@@ -193,6 +205,7 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceRootNormalizationError,
   AssetWorkspacePathValidationError,
   AssetPreviewTypeValidationError,
+  AssetGitHubAttachmentUrlValidationError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceResolutionError,
