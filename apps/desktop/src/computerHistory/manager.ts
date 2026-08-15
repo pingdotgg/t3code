@@ -41,6 +41,7 @@ export class ComputerHistoryOperationError extends Schema.TaggedErrorClass<Compu
   "ComputerHistoryOperationError",
   {
     operation: Schema.Literals([
+      "mergePatchSettings",
       "ensureDaemon",
       "stopDaemon",
       "getStatus",
@@ -138,6 +139,9 @@ export const make = Effect.gen(function* () {
 
   // Serialize ensure/stop so a stale status poll cannot respawn after disable.
   let ensureChain: Promise<void> = Promise.resolve();
+  // Serialize settings patches so rapid IPC updates merge instead of clobbering.
+  let patchChain: Promise<ComputerHistorySettings | null> = Promise.resolve(null);
+  let lastMergedSettings: ComputerHistorySettings | null = null;
   const enqueueEnsure = (task: () => Promise<void>): Promise<void> => {
     const run = ensureChain.then(task, task);
     ensureChain = run.then(
@@ -266,10 +270,17 @@ export const make = Effect.gen(function* () {
         // Best-effort status write — never crash the main process.
       });
     });
-    child.on("exit", () => {
+    child.on("exit", (code, signal) => {
       if (state.child === child && state.generation === generation) {
         state.child = null;
       }
+      const detail =
+        code === null
+          ? `computer-history daemon exited (${signal ?? "signal"})`
+          : `computer-history daemon exited (code ${code})`;
+      void writeUnavailableStatus(root, detail).catch(() => {
+        // Best-effort status write — never crash the main process.
+      });
     });
   };
 
@@ -280,25 +291,41 @@ export const make = Effect.gen(function* () {
   ): Promise<ComputerHistorySettings> => {
     const root = resolveComputerHistoryRoot(stateDir);
     const control = await readControlFile(root);
+    const base = lastMergedSettings ?? persisted;
     const daemonRunning = Boolean(state.child && !state.child.killed);
     const enabled =
-      patch.enabled ?? (daemonRunning ? true : undefined) ?? control?.enabled ?? persisted.enabled;
-    return {
-      ...persisted,
+      patch.enabled ?? (daemonRunning ? true : undefined) ?? control?.enabled ?? base.enabled;
+    const merged = {
+      ...base,
       ...patch,
       enabled,
       ...(patch.apps === undefined ? {} : { apps: [...patch.apps] }),
       ...(patch.websites === undefined ? {} : { websites: [...patch.websites] }),
     };
+    lastMergedSettings = merged;
+    return merged;
+  };
+
+  const applyPatchSettings = (
+    stateDir: string,
+    persisted: ComputerHistorySettings,
+    patch: Partial<ComputerHistorySettings>,
+  ): Promise<ComputerHistorySettings> => {
+    const run = patchChain.then(() => mergePatchSettingsImpl(stateDir, persisted, patch));
+    patchChain = run.then(
+      (settings) => settings,
+      () => lastMergedSettings,
+    );
+    return run;
   };
 
   return ComputerHistoryManager.of({
     mergePatchSettings: (stateDir, persisted, patch) =>
       Effect.tryPromise({
-        try: () => mergePatchSettingsImpl(stateDir, persisted, patch),
+        try: () => applyPatchSettings(stateDir, persisted, patch),
         catch: (cause) =>
           new ComputerHistoryOperationError({
-            operation: "ensureDaemon",
+            operation: "mergePatchSettings",
             root: resolveComputerHistoryRoot(stateDir),
             cause,
           }),
@@ -315,6 +342,15 @@ export const make = Effect.gen(function* () {
           const root = resolveComputerHistoryRoot(stateDir);
           await ensureComputerHistoryLayout(root);
           const file = await readStatusFile(root);
+          const daemonRunning = Boolean(state.child && !state.child.killed);
+          const staleRunning =
+            settings.enabled &&
+            !daemonRunning &&
+            (file?.phase === "running" || file?.phase === "paused");
+          if (staleRunning) {
+            await writeUnavailableStatus(root, "computer-history daemon is not running");
+          }
+          const liveFile = staleRunning ? await readStatusFile(root) : file;
           const memoriesPath = NodePath.join(root, "memories", "resources");
           const codexMirrorPath = settings.mirrorToCodex
             ? NodePath.join(defaultCodexHome(), "memories", "extensions", "skysight", "resources")
@@ -324,15 +360,17 @@ export const make = Effect.gen(function* () {
             paused: settings.paused,
             phase: !settings.enabled
               ? "stopped"
-              : (file?.phase ?? (state.child ? "starting" : "stopped")),
-            accessibilityGranted: file?.accessibilityGranted ?? false,
+              : daemonRunning
+                ? (liveFile?.phase ?? "starting")
+                : (liveFile?.phase ?? "stopped"),
+            accessibilityGranted: liveFile?.accessibilityGranted ?? false,
             rootPath: root,
             memoriesPath,
             ...(codexMirrorPath ? { codexMirrorPath } : {}),
-            ...(file?.activeSegmentId ? { activeSegmentId: file.activeSegmentId } : {}),
-            eventCount: file?.eventCount ?? 0,
-            ...(file?.lastError ? { lastError: file.lastError } : {}),
-            platform: file?.platform ?? process.platform,
+            ...(liveFile?.activeSegmentId ? { activeSegmentId: liveFile.activeSegmentId } : {}),
+            eventCount: liveFile?.eventCount ?? 0,
+            ...(liveFile?.lastError ? { lastError: liveFile.lastError } : {}),
+            platform: liveFile?.platform ?? process.platform,
           } satisfies ComputerHistoryStatus;
         },
         catch: (cause) =>
