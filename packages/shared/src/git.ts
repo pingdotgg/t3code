@@ -115,12 +115,12 @@ export function sanitizeBranchPrefix(raw: string): string {
     .replace(/[^a-z0-9/_-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/\/+/g, "/")
-    .replace(/^\/+/, "")
+    .replace(/^[-/]+/, "")
     .slice(0, 64);
 }
 
 function stripLeadingNamespace(value: string, namespace: string): string {
-  return namespace.length > 0 && value.startsWith(namespace)
+  return /[/_-]$/.test(namespace) && value.startsWith(namespace)
     ? value.slice(namespace.length)
     : value;
 }

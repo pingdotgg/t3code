@@ -146,11 +146,18 @@ describe("buildGeneratedWorktreeBranchName", () => {
     );
   });
 
+  it("keeps a name that merely starts with a separator-less prefix", () => {
+    expect(buildGeneratedWorktreeBranchName("feat", "feature-x")).toBe("featfeature-x");
+  });
+
   it("filters characters git rejects in a prefix", () => {
     expect(buildGeneratedWorktreeBranchName("feat branch/", "multiselect toggle")).toBe(
       "feat-branch/multiselect-toggle",
     );
     expect(buildGeneratedWorktreeBranchName("//feat//", "multiselect toggle")).toBe(
+      "feat/multiselect-toggle",
+    );
+    expect(buildGeneratedWorktreeBranchName("-feat/", "multiselect toggle")).toBe(
       "feat/multiselect-toggle",
     );
   });
