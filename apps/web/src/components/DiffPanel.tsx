@@ -390,10 +390,10 @@ export default function DiffPanel({
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
     () =>
-      getRenderablePatch(selectedPatch, `diff-panel:${syntaxThemeName}`, {
+      getRenderablePatch(selectedPatch, "diff-panel", {
         compactPartialHunkOffsets: selectedTurnId === null,
       }),
-    [selectedPatch, selectedTurnId, syntaxThemeName],
+    [selectedPatch, selectedTurnId],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -898,6 +898,7 @@ export default function DiffPanel({
                   key={collapseScopeKey ?? reviewSectionId}
                   viewerRef={codeViewRef}
                   codeViewKey={codeViewMountKey}
+                  syntaxThemeName={syntaxThemeName}
                   className="h-full min-h-0 overflow-auto"
                   files={codeViewFiles}
                   sectionId={reviewSectionId}

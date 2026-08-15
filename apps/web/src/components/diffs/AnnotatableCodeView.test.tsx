@@ -43,7 +43,7 @@ describe("AnnotatableCodeView", () => {
     testState.codeViewOptions = null;
   });
 
-  it("versions same-path files by render content without changing their identity", () => {
+  it("keeps file identity stable while versioning content and syntax themes", () => {
     const firstPatchText = [
       "diff --git a/src/example.ts b/src/example.ts",
       "--- a/src/example.ts",
@@ -65,10 +65,14 @@ describe("AnnotatableCodeView", () => {
     if (firstPatch?.kind !== "files" || secondPatch?.kind !== "files") {
       throw new Error("Expected a renderable file patch.");
     }
-    const render = (fileDiff: (typeof firstPatch.files)[number]) =>
+    const render = (
+      fileDiff: (typeof firstPatch.files)[number],
+      syntaxThemeName: "pierre-dark" | "pierre-light" = "pierre-dark",
+    ) =>
       renderToStaticMarkup(
         <AnnotatableCodeView
           codeViewKey="test-view"
+          syntaxThemeName={syntaxThemeName}
           files={[
             {
               fileDiff,
@@ -89,16 +93,21 @@ describe("AnnotatableCodeView", () => {
     const firstItem = testState.codeViewItems?.[0];
     render(secondPatch.files[0]!);
     const secondItem = testState.codeViewItems?.[0];
+    render(secondPatch.files[0]!, "pierre-light");
+    const themedItem = testState.codeViewItems?.[0];
 
     expect(firstItem?.id).toBe("src/example.ts");
     expect(secondItem?.id).toBe("src/example.ts");
+    expect(themedItem?.id).toBe("src/example.ts");
     expect(secondItem?.version).not.toBe(firstItem?.version);
+    expect(themedItem?.version).not.toBe(secondItem?.version);
   });
 
   it("opens comments from Pierre's gutter action without ending line selection", () => {
     renderToStaticMarkup(
       <AnnotatableCodeView
         codeViewKey="test-view"
+        syntaxThemeName="pierre-dark"
         files={[]}
         sectionId="working-tree"
         sectionTitle="Working tree"

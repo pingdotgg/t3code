@@ -11,7 +11,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildFileDiffRenderKey, fnv1a32 } from "~/lib/diffRendering";
+import { buildFileDiffRenderKey, fnv1a32, type DiffThemeName } from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -73,6 +73,7 @@ function appendAnnotationEntry(
 
 interface AnnotatableCodeViewProps {
   codeViewKey: string;
+  syntaxThemeName: DiffThemeName;
   files: ReadonlyArray<{
     fileDiff: FileDiffMetadata;
     filePath: string;
@@ -98,6 +99,7 @@ interface DiffSelectionContext {
 
 export function AnnotatableCodeView({
   codeViewKey,
+  syntaxThemeName,
   files,
   sectionId,
   sectionTitle,
@@ -153,7 +155,7 @@ export function AnnotatableCodeView({
           annotations,
           collapsed,
           version: fnv1a32(
-            `${buildFileDiffRenderKey(fileDiff)}:${collapsed ? "1" : "0"}:${annotations
+            `${syntaxThemeName}:${buildFileDiffRenderKey(fileDiff)}:${collapsed ? "1" : "0"}:${annotations
               .flatMap((annotation) =>
                 annotation.metadata.entries.map(
                   (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
@@ -163,7 +165,7 @@ export function AnnotatableCodeView({
           ),
         };
       }),
-    [draft, files, reviewComments, sectionId],
+    [draft, files, reviewComments, sectionId, syntaxThemeName],
   );
 
   const removeEntry = useCallback(
