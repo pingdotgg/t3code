@@ -72,6 +72,7 @@ import {
 import {
   canSubmitNewTaskDraft,
   resolveNewTaskComposerSelection,
+  shouldApplyNewTaskCommandSelection,
   shouldInterpretNewTaskSubmit,
 } from "./new-task-submit";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
@@ -697,7 +698,14 @@ export function NewTaskDraftScreen(props: {
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem): void => {
       const draftKey = flow.draftKey;
-      if (!draftKey || !composerTrigger || item.type !== "slash-command") {
+      if (
+        !shouldApplyNewTaskCommandSelection({
+          incomingShareTransferPending: isIncomingShareTransferPending,
+        }) ||
+        !draftKey ||
+        !composerTrigger ||
+        item.type !== "slash-command"
+      ) {
         return;
       }
       const interactionMode = resolveSlashCommandInteractionMode({
@@ -730,6 +738,7 @@ export function NewTaskDraftScreen(props: {
       flow.prompt,
       flow.setInteractionMode,
       flow.setPrompt,
+      isIncomingShareTransferPending,
       planModeEnabled,
       updateComposerSelection,
     ],
@@ -782,6 +791,7 @@ export function NewTaskDraftScreen(props: {
         text: draft.text,
         incomingShareReady: isIncomingShareReady,
         importingShare: isImportingShare,
+        planModePreferenceLoaded: flow.planModePreferenceLoaded,
         submitting: flow.submitting,
         workspaceMode,
         selectedBranchName,
@@ -931,6 +941,7 @@ export function NewTaskDraftScreen(props: {
       text: flow.prompt,
       incomingShareReady: isIncomingShareReady,
       importingShare: isImportingShare,
+      planModePreferenceLoaded: flow.planModePreferenceLoaded,
       submitting: flow.submitting,
       workspaceMode: flow.workspaceMode,
       selectedBranchName: flow.selectedBranchName,

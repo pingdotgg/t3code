@@ -57,15 +57,24 @@ export function createPlanModePreferenceReconciliationKey(
 ): string {
   return JSON.stringify(
     states
-      .filter(
-        ({ connectionState, shellStatus }) =>
-          connectionState === "connected" && shellStatus === "live",
-      )
-      .map(({ environmentId, preferences }) => [
-        environmentId,
-        preferences?.planModeEnabled,
-        getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
-      ])
+      .map(({ environmentId, connectionState, shellStatus, preferences }) => {
+        if (connectionState === "connected" && shellStatus === "live") {
+          return [
+            environmentId,
+            "live",
+            preferences?.planModeEnabled,
+            getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
+          ];
+        }
+        if (
+          connectionState === "available" ||
+          connectionState === "error" ||
+          connectionState === "offline"
+        ) {
+          return [environmentId, "fallback"];
+        }
+        return [environmentId, "pending"];
+      })
       .sort(([left], [right]) => String(left).localeCompare(String(right))),
   );
 }

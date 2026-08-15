@@ -171,6 +171,34 @@ describe("synced client preferences", () => {
     ).toBe(true);
   });
 
+  it("closes device fallback gating when an offline environment starts reconnecting", () => {
+    const environment = {
+      environmentId: environmentId("environment-1"),
+      shellStatus: "cached",
+      preferences: undefined,
+    } as const;
+    const offlineKey = createPlanModePreferenceReconciliationKey([
+      { ...environment, connectionState: "offline" },
+    ]);
+    const connectingKey = createPlanModePreferenceReconciliationKey([
+      { ...environment, connectionState: "connecting" },
+    ]);
+    const reconnectingKey = createPlanModePreferenceReconciliationKey([
+      { ...environment, connectionState: "reconnecting" },
+    ]);
+
+    expect(connectingKey).toBe(reconnectingKey);
+    expect(connectingKey).not.toBe(offlineKey);
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: reconnectingKey,
+        appliedKey: offlineKey,
+      }),
+    ).toBe(false);
+  });
+
   it("bounds excessively future-skewed local stamps", () => {
     expect(
       nextMobileSyncedPreferencesUpdatedAt(

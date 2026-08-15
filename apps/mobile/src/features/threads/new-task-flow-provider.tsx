@@ -145,6 +145,7 @@ type NewTaskFlowContextValue = {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly planModeEnabled: boolean;
+  readonly planModePreferenceLoaded: boolean;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -1025,6 +1026,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       runtimeMode,
       interactionMode,
       planModeEnabled,
+      planModePreferenceLoaded,
       expandedProvider,
       environments,
       selectedProject,
@@ -1077,6 +1079,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       finishEditingPendingTask,
       interactionMode,
       planModeEnabled,
+      planModePreferenceLoaded,
       loadBranches,
       loadMoreBranches,
       projectScopes,

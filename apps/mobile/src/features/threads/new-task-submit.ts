@@ -4,6 +4,12 @@ export function shouldInterpretNewTaskSubmit(input: {
   return input.editingPendingTask === null;
 }
 
+export function shouldApplyNewTaskCommandSelection(input: {
+  readonly incomingShareTransferPending: boolean;
+}): boolean {
+  return !input.incomingShareTransferPending;
+}
+
 export function resolveNewTaskComposerSelection(input: {
   readonly previousDraftKey: string | null;
   readonly draftKey: string | null;
@@ -23,6 +29,7 @@ export function canSubmitNewTaskDraft(input: {
   readonly text: string;
   readonly incomingShareReady: boolean;
   readonly importingShare: boolean;
+  readonly planModePreferenceLoaded: boolean;
   readonly submitting: boolean;
   readonly workspaceMode: "local" | "worktree";
   readonly selectedBranchName: string | null;
@@ -31,6 +38,7 @@ export function canSubmitNewTaskDraft(input: {
     input.text.trim().length > 0 &&
     input.incomingShareReady &&
     !input.importingShare &&
+    input.planModePreferenceLoaded &&
     !input.submitting &&
     (input.workspaceMode !== "worktree" || Boolean(input.selectedBranchName))
   );

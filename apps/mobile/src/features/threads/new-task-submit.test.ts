@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   canSubmitNewTaskDraft,
   resolveNewTaskComposerSelection,
+  shouldApplyNewTaskCommandSelection,
   shouldInterpretNewTaskSubmit,
 } from "./new-task-submit";
 
@@ -11,6 +12,7 @@ describe("new-task submission eligibility", () => {
     text: "Implement the task",
     incomingShareReady: true,
     importingShare: false,
+    planModePreferenceLoaded: true,
     submitting: false,
     workspaceMode: "local" as const,
     selectedBranchName: null,
@@ -27,6 +29,10 @@ describe("new-task submission eligibility", () => {
 
   it("blocks submission while React state is active", () => {
     expect(canSubmitNewTaskDraft({ ...readyInput, submitting: true })).toBe(false);
+  });
+
+  it("blocks submission until the plan mode preference is hydrated", () => {
+    expect(canSubmitNewTaskDraft({ ...readyInput, planModePreferenceLoaded: false })).toBe(false);
   });
 
   it("requires non-empty text and a non-empty worktree branch", () => {
@@ -57,6 +63,11 @@ describe("new-task submission eligibility", () => {
   it("interprets submit-time commands only when creating a new task", () => {
     expect(shouldInterpretNewTaskSubmit({ editingPendingTask: null })).toBe(true);
     expect(shouldInterpretNewTaskSubmit({ editingPendingTask: {} })).toBe(false);
+  });
+
+  it("blocks command selection while an incoming share transfer is pending", () => {
+    expect(shouldApplyNewTaskCommandSelection({ incomingShareTransferPending: false })).toBe(true);
+    expect(shouldApplyNewTaskCommandSelection({ incomingShareTransferPending: true })).toBe(false);
   });
 
   it("resets selection to the hydrated draft end only when the draft key changes", () => {
