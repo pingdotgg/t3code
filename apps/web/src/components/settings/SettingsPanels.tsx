@@ -1890,6 +1890,7 @@ export function GeneralSettingsPanel() {
         />
         {settings.sidebarAutoSettleAfterDays !== null ? (
           <SettingsRow
+            className="bg-muted/20 sm:pl-9"
             title="Days of inactivity before auto-settle"
             description="Any new activity un-settles a thread automatically."
             control={
