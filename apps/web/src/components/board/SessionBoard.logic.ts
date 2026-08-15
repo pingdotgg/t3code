@@ -1,6 +1,59 @@
+import {
+  effectiveSettled,
+  effectiveSnoozed,
+  type ChangeRequestStateLike,
+} from "@t3tools/client-runtime/state/thread-settled";
+import type { OrchestrationThreadShell } from "@t3tools/contracts";
+
 import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
+import { isBoardFixedLaneId } from "../../board/boardLanes.ts";
 
 export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
+
+export type BoardThreadVisibility = "visible" | "archived" | "snoozed" | "settled";
+
+/**
+ * Lifecycle state stays server-backed and projects into its fixed board lane,
+ * while local workflow placement survives underneath so a woken or
+ * re-engaged thread returns to the same spatial slot.
+ */
+export function resolveBoardThreadVisibility(
+  thread: OrchestrationThreadShell,
+  options: {
+    /** Exact wall clock for second-precise snooze wake boundaries. */
+    readonly now: string;
+    /** Minute-quantized clock shared with the sidebar's settlement partition. */
+    readonly settlementNow: string;
+    readonly autoSettleAfterDays: number | null;
+    readonly supportsSettlement: boolean;
+    readonly supportsSnooze: boolean;
+    readonly changeRequestState: ChangeRequestStateLike | null;
+  },
+): BoardThreadVisibility {
+  if (thread.archivedAt !== null) return "archived";
+
+  // Snooze temporarily outranks pinning, matching the sidebar lifecycle.
+  if (options.supportsSnooze && effectiveSnoozed(thread, { now: options.now })) {
+    return "snoozed";
+  }
+
+  // Pinning protects a thread from automatic settlement. Explicit settle
+  // clears pinning server-side, so a conflict here can only be stale/raced.
+  if (thread.pinnedAt != null) return "visible";
+
+  if (
+    options.supportsSettlement &&
+    effectiveSettled(thread, {
+      now: options.settlementNow,
+      autoSettleAfterDays: options.autoSettleAfterDays,
+      changeRequestState: options.changeRequestState,
+    })
+  ) {
+    return "settled";
+  }
+
+  return "visible";
+}
 
 /** Every local lane keeps its chosen width for the whole composed board. */
 export function boardLaneGridTemplateColumns(
@@ -20,7 +73,6 @@ export interface BoardThreadPlacement {
   readonly projectKey: string;
   readonly projectTitle: string;
   readonly laneColumnKey: string;
-  readonly updatedAt: string;
 }
 
 export interface ProjectSwimlane<T extends BoardThreadPlacement> {
@@ -66,17 +118,13 @@ export function buildProjectSwimlanes<T extends BoardThreadPlacement>(
     });
   }
 
-  return swimlanes.toSorted((left, right) => {
-    const leftNewest = left.entries.reduce(
-      (newest, entry) => (entry.updatedAt > newest ? entry.updatedAt : newest),
-      "",
-    );
-    const rightNewest = right.entries.reduce(
-      (newest, entry) => (entry.updatedAt > newest ? entry.updatedAt : newest),
-      "",
-    );
-    return rightNewest.localeCompare(leftNewest);
-  });
+  return swimlanes.toSorted(
+    (left, right) =>
+      left.projectTitle.localeCompare(right.projectTitle, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      }) || left.projectKey.localeCompare(right.projectKey),
+  );
 }
 
 export function shouldHideSwimlaneProjectHeader(projectScopeKey: string | null): boolean {
@@ -110,20 +158,39 @@ export function laneColumnKeyFromSwimlaneDroppableId(droppableId: string): strin
 
 /** A local lane accepts cards from every connected environment. */
 export function resolveBoardLaneDrop<
-  Entry extends { readonly key: string },
+  Entry extends { readonly key: string; readonly laneColumnKey: string },
   Column extends { readonly key: string },
 >(input: {
   readonly activeId: string;
   readonly overId: string;
   readonly entries: ReadonlyArray<Entry>;
   readonly columns: ReadonlyArray<Column>;
-}): { readonly entry: Entry; readonly target: Column } | null {
+}): { readonly entry: Entry; readonly target: Column; readonly overEntry: Entry | null } | null {
   const entry = input.entries.find((candidate) => candidate.key === input.activeId);
   if (entry === undefined) return null;
-  const laneColumnKey = laneColumnKeyFromSwimlaneDroppableId(input.overId);
+  const overEntry = input.entries.find((candidate) => candidate.key === input.overId) ?? null;
+  const laneColumnKey =
+    overEntry?.laneColumnKey ?? laneColumnKeyFromSwimlaneDroppableId(input.overId);
   if (laneColumnKey === null) return null;
   const target = input.columns.find((column) => column.key === laneColumnKey);
-  return target === undefined ? null : { entry, target };
+  return target === undefined ? null : { entry, target, overEntry };
+}
+
+export function reorderBoardLaneKeys(input: {
+  readonly orderedKeys: ReadonlyArray<string>;
+  readonly activeKey: string;
+  readonly overKey: string;
+  readonly insertAfter: boolean;
+}): ReadonlyArray<string> {
+  const withoutActive = input.orderedKeys.filter((key) => key !== input.activeKey);
+  const overIndex = withoutActive.indexOf(input.overKey);
+  if (overIndex === -1) return input.orderedKeys;
+  const insertionIndex = overIndex + (input.insertAfter ? 1 : 0);
+  return [
+    ...withoutActive.slice(0, insertionIndex),
+    input.activeKey,
+    ...withoutActive.slice(insertionIndex),
+  ];
 }
 
 export interface BoardRect {
@@ -131,6 +198,38 @@ export interface BoardRect {
   readonly bottom: number;
   readonly left: number;
   readonly right: number;
+}
+
+export interface BoardScrollTarget {
+  readonly top: number;
+  readonly left: number;
+}
+
+/**
+ * Centers a card inside the actually usable board viewport. Sticky lane and
+ * project headers cover the top of the raw scroller rect, so scrollIntoView
+ * can otherwise leave a card looking half-revealed even though the browser
+ * considers it visible. Cards taller than the usable viewport align below
+ * those headers; showing the whole card is physically impossible in that
+ * case.
+ */
+export function resolveBoardScrollTarget(input: {
+  readonly card: BoardRect;
+  readonly viewport: BoardRect;
+  readonly scrollTop: number;
+  readonly scrollLeft: number;
+}): BoardScrollTarget {
+  const cardHeight = input.card.bottom - input.card.top;
+  const viewportHeight = input.viewport.bottom - input.viewport.top;
+  const top =
+    cardHeight <= viewportHeight
+      ? input.scrollTop +
+        (input.card.top + input.card.bottom - input.viewport.top - input.viewport.bottom) / 2
+      : input.scrollTop + input.card.top - input.viewport.top;
+  const left =
+    input.scrollLeft +
+    (input.card.left + input.card.right - input.viewport.left - input.viewport.right) / 2;
+  return { top: Math.max(0, top), left: Math.max(0, left) };
 }
 
 function visibleFraction(card: BoardRect, viewport: BoardRect): number {
@@ -183,7 +282,8 @@ export function laneIdForName(name: string, lanes: ReadonlyArray<BoardLane>): Bo
 }
 
 export function nextLaneOrder(lanes: ReadonlyArray<BoardLane>): number {
-  return lanes.length === 0 ? 0 : Math.max(...lanes.map((lane) => lane.order)) + 1;
+  const editableLanes = lanes.filter((lane) => !isBoardFixedLaneId(lane.id));
+  return editableLanes.length === 0 ? 0 : Math.max(...editableLanes.map((lane) => lane.order)) + 1;
 }
 
 export function reorderLaneUpdates(
@@ -191,9 +291,9 @@ export function reorderLaneUpdates(
   laneId: BoardLaneId,
   direction: "up" | "down",
 ): ReadonlyArray<{ readonly laneId: BoardLaneId; readonly order: number }> {
-  const ordered = lanes.toSorted(
-    (left, right) => left.order - right.order || left.id.localeCompare(right.id),
-  );
+  const ordered = lanes
+    .filter((lane) => !isBoardFixedLaneId(lane.id))
+    .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id));
   const laneIndex = ordered.findIndex((lane) => lane.id === laneId);
   const neighbourIndex = laneIndex + (direction === "up" ? -1 : 1);
   const lane = ordered[laneIndex];

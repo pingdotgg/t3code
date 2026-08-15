@@ -17,14 +17,12 @@ import { resolveStorage } from "../lib/storage";
  */
 
 const BOARD_CARD_STORAGE_KEY = "t3code:board-cards:v1";
-const BOARD_CARD_STORAGE_VERSION = 1;
+const BOARD_CARD_STORAGE_VERSION = 2;
 
-export const CARD_MIN_HEIGHT = 180;
+export const CARD_DEFAULT_HEIGHT = 520;
+export const CARD_MIN_HEIGHT = CARD_DEFAULT_HEIGHT;
 export const CARD_MAX_HEIGHT = 900;
-export const CARD_COMPACT_HEIGHT = 260;
-export const CARD_TALL_HEIGHT = 520;
-
-export type BoardCardSize = "compact" | "tall";
+const LEGACY_COMPACT_HEIGHT = 260;
 
 export interface BoardCardState {
   readonly heightPx: number;
@@ -33,17 +31,12 @@ export interface BoardCardState {
 interface BoardCardStoreState {
   readonly byThreadKey: Record<string, BoardCardState>;
   readonly setHeight: (ref: ScopedThreadRef, heightPx: number) => void;
-  readonly setSize: (ref: ScopedThreadRef, size: BoardCardSize) => void;
   readonly removeThread: (ref: ScopedThreadRef) => void;
 }
 
 export function clampCardHeight(heightPx: number): number {
-  if (!Number.isFinite(heightPx)) return CARD_COMPACT_HEIGHT;
+  if (!Number.isFinite(heightPx)) return CARD_DEFAULT_HEIGHT;
   return Math.min(CARD_MAX_HEIGHT, Math.max(CARD_MIN_HEIGHT, Math.round(heightPx)));
-}
-
-export function cardSizeForHeight(heightPx: number): BoardCardSize {
-  return heightPx >= (CARD_COMPACT_HEIGHT + CARD_TALL_HEIGHT) / 2 ? "tall" : "compact";
 }
 
 /** Clamps persisted heights on read, since storage is not trusted blindly. */
@@ -61,6 +54,24 @@ function normalizePersistedByThreadKey(persistedState: unknown): Record<string, 
   return byThreadKey;
 }
 
+function migratePersistedBoardCardState(persistedState: unknown, version: number): unknown {
+  const byThreadKey = normalizePersistedByThreadKey(persistedState);
+  if (version >= BOARD_CARD_STORAGE_VERSION) return { byThreadKey };
+
+  // Version 1 exposed compact/tall preset buttons. Compact was the default,
+  // so exact preset values are upgraded to the useful full-card default.
+  // Taller drag-resized heights remain personal and are preserved; every
+  // shorter legacy value is raised to the new minimum during normalization.
+  return {
+    byThreadKey: Object.fromEntries(
+      Object.entries(byThreadKey).map(([key, value]) => [
+        key,
+        value.heightPx === LEGACY_COMPACT_HEIGHT ? { heightPx: CARD_DEFAULT_HEIGHT } : value,
+      ]),
+    ),
+  };
+}
+
 export const useBoardCardStore = create<BoardCardStoreState>()(
   persist(
     (set) => ({
@@ -69,18 +80,6 @@ export const useBoardCardStore = create<BoardCardStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const next = clampCardHeight(heightPx);
-          if (state.byThreadKey[threadKey]?.heightPx === next) return state;
-          return {
-            byThreadKey: {
-              ...state.byThreadKey,
-              [threadKey]: { heightPx: next },
-            },
-          };
-        }),
-      setSize: (ref, size) =>
-        set((state) => {
-          const threadKey = scopedThreadKey(ref);
-          const next = size === "tall" ? CARD_TALL_HEIGHT : CARD_COMPACT_HEIGHT;
           if (state.byThreadKey[threadKey]?.heightPx === next) return state;
           return {
             byThreadKey: {
@@ -104,6 +103,7 @@ export const useBoardCardStore = create<BoardCardStoreState>()(
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       partialize: (state) => ({ byThreadKey: state.byThreadKey }),
+      migrate: migratePersistedBoardCardState,
       merge: (persistedState, currentState) => ({
         ...currentState,
         byThreadKey: normalizePersistedByThreadKey(persistedState),
@@ -116,5 +116,5 @@ export function selectCardHeight(
   byThreadKey: Record<string, BoardCardState>,
   ref: ScopedThreadRef,
 ): number {
-  return byThreadKey[scopedThreadKey(ref)]?.heightPx ?? CARD_COMPACT_HEIGHT;
+  return byThreadKey[scopedThreadKey(ref)]?.heightPx ?? CARD_DEFAULT_HEIGHT;
 }

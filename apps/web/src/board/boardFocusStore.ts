@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import type { DraftId } from "../composerDraftStore.ts";
+
 /**
  * Which session the board is pointed at, shared with the sidebar.
  *
@@ -24,23 +26,39 @@ export interface BoardFocusAcknowledgement {
   readonly requestNonce: number;
 }
 
+export type BoardExpandedTarget =
+  | { readonly kind: "thread"; readonly threadKey: string }
+  | { readonly kind: "draft"; readonly draftId: DraftId };
+
+function expandedTargetsEqual(
+  left: BoardExpandedTarget | null,
+  right: BoardExpandedTarget | null,
+): boolean {
+  if (left === right) return true;
+  if (left === null || right === null || left.kind !== right.kind) return false;
+  if (left.kind === "thread" && right.kind === "thread") {
+    return left.threadKey === right.threadKey;
+  }
+  return left.kind === "draft" && right.kind === "draft" && left.draftId === right.draftId;
+}
+
 interface BoardFocusStoreState {
   readonly request: BoardFocusRequest | null;
   readonly acknowledgedFocus: BoardFocusAcknowledgement | null;
   readonly focusedThreadKey: string | null;
-  readonly expandedThreadKey: string | null;
+  readonly expandedTarget: BoardExpandedTarget | null;
   readonly requestFocus: (threadKey: string) => void;
   readonly acknowledgeFocus: (threadKey: string, requestNonce: number) => void;
   readonly clearRequest: (threadKey: string, requestNonce: number) => void;
   readonly setFocused: (threadKey: string | null) => void;
-  readonly setExpanded: (threadKey: string | null) => void;
+  readonly setExpanded: (target: BoardExpandedTarget | null) => void;
 }
 
 export const useBoardFocusStore = create<BoardFocusStoreState>()((set) => ({
   request: null,
   acknowledgedFocus: null,
   focusedThreadKey: null,
-  expandedThreadKey: null,
+  expandedTarget: null,
   requestFocus: (threadKey) =>
     set((state) => ({
       request: {
@@ -82,9 +100,9 @@ export const useBoardFocusStore = create<BoardFocusStoreState>()((set) => ({
       }
       return { focusedThreadKey: threadKey, acknowledgedFocus };
     }),
-  setExpanded: (threadKey) =>
+  setExpanded: (target) =>
     set((state) =>
-      state.expandedThreadKey === threadKey ? state : { expandedThreadKey: threadKey },
+      expandedTargetsEqual(state.expandedTarget, target) ? state : { expandedTarget: target },
     ),
 }));
 

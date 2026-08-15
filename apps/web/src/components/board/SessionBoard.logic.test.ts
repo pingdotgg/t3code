@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { BoardLane } from "../../board/boardLaneStore.ts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+  type OrchestrationThreadShell,
+} from "@t3tools/contracts";
 
+import type { BoardLane } from "../../board/boardLaneStore.ts";
 import {
   boardLaneGridTemplateColumns,
   buildProjectSwimlanes,
@@ -11,11 +18,175 @@ import {
   laneIdForName,
   nextLaneOrder,
   reorderLaneUpdates,
+  reorderBoardLaneKeys,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
+  resolveBoardScrollTarget,
+  resolveBoardThreadVisibility,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
+
+const NOW = "2026-08-12T16:00:00.000Z";
+
+function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): OrchestrationThreadShell {
+  return {
+    id: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("project-1"),
+    title: "Thread",
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    latestTurn: {
+      turnId: TurnId.make("turn-1"),
+      state: "completed",
+      requestedAt: "2026-08-12T15:00:00.000Z",
+      startedAt: "2026-08-12T15:00:01.000Z",
+      completedAt: "2026-08-12T15:01:00.000Z",
+      assistantMessageId: null,
+    },
+    createdAt: "2026-08-12T14:00:00.000Z",
+    updatedAt: "2026-08-12T15:01:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    session: null,
+    latestUserMessageAt: "2026-08-12T15:00:00.000Z",
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    ...overrides,
+  };
+}
+
+const lifecycleOptions = {
+  now: NOW,
+  settlementNow: NOW,
+  autoSettleAfterDays: 3,
+  supportsSettlement: true,
+  supportsSnooze: true,
+  changeRequestState: null,
+} as const;
+
+describe("resolveBoardThreadVisibility", () => {
+  it("hides archived threads and classifies snoozed and settled threads", () => {
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({ archivedAt: "2026-08-12T15:30:00.000Z" }),
+        lifecycleOptions,
+      ),
+    ).toBe("archived");
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          snoozedAt: "2026-08-12T15:30:00.000Z",
+          snoozedUntil: "2026-08-12T17:00:00.000Z",
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("snoozed");
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          settledOverride: "settled",
+          settledAt: "2026-08-12T15:30:00.000Z",
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("settled");
+  });
+
+  it("returns a thread when its lifecycle blocker makes it active again", () => {
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          snoozedAt: "2026-08-12T15:30:00.000Z",
+          snoozedUntil: "2026-08-12T17:00:00.000Z",
+          hasPendingUserInput: true,
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("visible");
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          settledOverride: "settled",
+          settledAt: "2026-08-12T15:30:00.000Z",
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: "full-access",
+            activeTurnId: TurnId.make("turn-2"),
+            lastError: null,
+            updatedAt: "2026-08-12T15:45:00.000Z",
+          },
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("visible");
+  });
+
+  it("does not classify lifecycle states a connected server cannot manage", () => {
+    const thread = threadShell({
+      settledOverride: "settled",
+      settledAt: "2026-08-12T15:30:00.000Z",
+      snoozedAt: "2026-08-12T15:30:00.000Z",
+      snoozedUntil: "2026-08-12T17:00:00.000Z",
+    });
+    expect(
+      resolveBoardThreadVisibility(thread, {
+        ...lifecycleOptions,
+        supportsSettlement: false,
+        supportsSnooze: false,
+      }),
+    ).toBe("visible");
+  });
+
+  it("keeps pinned threads visible instead of auto-settling them for inactivity", () => {
+    const stalePinned = threadShell({
+      pinnedAt: "2026-08-01T00:00:00.000Z",
+      latestUserMessageAt: "2026-08-01T00:00:00.000Z",
+      latestTurn: null,
+    });
+    expect(resolveBoardThreadVisibility(stalePinned, lifecycleOptions)).toBe("visible");
+    expect(resolveBoardThreadVisibility({ ...stalePinned, pinnedAt: null }, lifecycleOptions)).toBe(
+      "settled",
+    );
+  });
+
+  it("matches sidebar settlement rules for open and completed pull requests", () => {
+    const stale = threadShell({
+      latestUserMessageAt: "2026-08-01T00:00:00.000Z",
+      latestTurn: null,
+    });
+
+    expect(
+      resolveBoardThreadVisibility(stale, {
+        ...lifecycleOptions,
+        changeRequestState: "open",
+      }),
+    ).toBe("visible");
+    expect(
+      resolveBoardThreadVisibility(threadShell(), {
+        ...lifecycleOptions,
+        changeRequestState: "merged",
+      }),
+    ).toBe("settled");
+    expect(
+      resolveBoardThreadVisibility(threadShell(), {
+        ...lifecycleOptions,
+        changeRequestState: "closed",
+      }),
+    ).toBe("settled");
+  });
+});
 
 type TestPlacement = {
   readonly projectKey: string;
@@ -56,6 +227,14 @@ const lanes: ReadonlyArray<BoardLane> = [
   },
 ];
 
+const lanesWithFixedLifecycle: ReadonlyArray<BoardLane> = [
+  { id: "triage", name: "Triage", description: "New work", order: 0 },
+  { id: "blocked", name: "Blocked", description: "Waiting", order: 1 },
+  { id: "ready", name: "Ready", description: "Ready", order: 2 },
+  { id: "snoozed", name: "Snoozed", description: "Later", order: 50 },
+  { id: "settled", name: "Settled", description: "Finished", order: 60 },
+];
+
 describe("laneIdForName", () => {
   it("creates a readable unique lane id without exposing id as an authoring field", () => {
     expect(laneIdForName("To Review", lanes)).toBe("to-review");
@@ -67,6 +246,10 @@ describe("nextLaneOrder", () => {
   it("places a new lane after the highest existing order", () => {
     expect(nextLaneOrder(lanes)).toBe(21);
   });
+
+  it("ignores fixed lifecycle tails when placing a new workflow lane", () => {
+    expect(nextLaneOrder(lanesWithFixedLifecycle)).toBe(3);
+  });
 });
 
 describe("reorderLaneUpdates", () => {
@@ -77,23 +260,32 @@ describe("reorderLaneUpdates", () => {
     ]);
     expect(reorderLaneUpdates(lanes, "done", "down")).toEqual([]);
   });
+
+  it("reorders only editable workflow lanes", () => {
+    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "ready", "up")).toEqual([
+      { laneId: "ready", order: 1 },
+      { laneId: "blocked", order: 2 },
+    ]);
+    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "blocked", "up")).toEqual([]);
+    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "ready", "down")).toEqual([]);
+  });
 });
 
 describe("buildProjectSwimlanes", () => {
-  it("groups threads under the right project", () => {
+  it("groups threads under projects sorted by name, not thread activity", () => {
     const entries = [
-      placement("env:alpha", "Alpha", "lane-a", "2026-01-03T00:00:00.000Z"),
-      placement("env:beta", "Beta", "lane-b", "2026-01-02T00:00:00.000Z"),
-      placement("env:alpha", "Alpha", "lane-c", "2026-01-01T00:00:00.000Z"),
+      placement("env:zeta", "Zeta", "lane-a", "2026-01-03T00:00:00.000Z"),
+      placement("env:alpha", "alpha", "lane-b", "2026-01-01T00:00:00.000Z"),
+      placement("env:zeta", "Zeta", "lane-c", "2026-01-04T00:00:00.000Z"),
     ];
 
     const swimlanes = buildProjectSwimlanes(entries, null);
 
     expect(swimlanes).toHaveLength(2);
     expect(swimlanes[0]?.projectKey).toBe("env:alpha");
-    expect(swimlanes[0]?.sessionCount).toBe(2);
-    expect(swimlanes[1]?.projectKey).toBe("env:beta");
-    expect(swimlanes[1]?.sessionCount).toBe(1);
+    expect(swimlanes[0]?.sessionCount).toBe(1);
+    expect(swimlanes[1]?.projectKey).toBe("env:zeta");
+    expect(swimlanes[1]?.sessionCount).toBe(2);
   });
 
   it("omits projects with no visible sessions after filtering", () => {
@@ -177,8 +369,8 @@ describe("swimlaneColumnDroppableId", () => {
 
 describe("resolveBoardLaneDrop", () => {
   const entries = [
-    { key: "env-a:thread-1", environmentId: "env-a" },
-    { key: "env-b:thread-2", environmentId: "env-b" },
+    { key: "env-a:thread-1", environmentId: "env-a", laneColumnKey: laneKeys[0] },
+    { key: "env-b:thread-2", environmentId: "env-b", laneColumnKey: laneKeys[1] },
   ];
   const columns = [{ key: laneKeys[0] }, { key: laneKeys[1] }];
 
@@ -190,7 +382,7 @@ describe("resolveBoardLaneDrop", () => {
         entries,
         columns,
       }),
-    ).toEqual({ entry: entries[0], target: columns[0] });
+    ).toEqual({ entry: entries[0], target: columns[0], overEntry: null });
   });
 
   it("allows a card from any environment to enter a local lane", () => {
@@ -201,7 +393,39 @@ describe("resolveBoardLaneDrop", () => {
         entries,
         columns,
       }),
-    ).toEqual({ entry: entries[0], target: columns[1] });
+    ).toEqual({ entry: entries[0], target: columns[1], overEntry: null });
+  });
+
+  it("uses another card as a precise within-lane drop target", () => {
+    expect(
+      resolveBoardLaneDrop({
+        activeId: entries[0]!.key,
+        overId: entries[1]!.key,
+        entries,
+        columns,
+      }),
+    ).toEqual({ entry: entries[0], target: columns[1], overEntry: entries[1] });
+  });
+});
+
+describe("reorderBoardLaneKeys", () => {
+  it("moves a card above or below the hovered member", () => {
+    expect(
+      reorderBoardLaneKeys({
+        orderedKeys: ["a", "b", "c"],
+        activeKey: "c",
+        overKey: "b",
+        insertAfter: false,
+      }),
+    ).toEqual(["a", "c", "b"]);
+    expect(
+      reorderBoardLaneKeys({
+        orderedKeys: ["a", "b", "c"],
+        activeKey: "a",
+        overKey: "b",
+        insertAfter: true,
+      }),
+    ).toEqual(["b", "a", "c"]);
   });
 });
 
@@ -309,5 +533,29 @@ describe("resolveBoardFocusAction", () => {
         acknowledgedRequestNonce: null,
       }),
     ).toBe("reveal");
+  });
+});
+
+describe("resolveBoardScrollTarget", () => {
+  it("centers a fitting card inside the unobscured viewport", () => {
+    expect(
+      resolveBoardScrollTarget({
+        card: { top: 500, bottom: 1020, left: 900, right: 1280 },
+        viewport: { top: 100, bottom: 900, left: 200, right: 1200 },
+        scrollTop: 300,
+        scrollLeft: 400,
+      }),
+    ).toEqual({ top: 560, left: 790 });
+  });
+
+  it("top-aligns a card that is taller than the available viewport", () => {
+    expect(
+      resolveBoardScrollTarget({
+        card: { top: 600, bottom: 1500, left: 100, right: 480 },
+        viewport: { top: 120, bottom: 820, left: 0, right: 1200 },
+        scrollTop: 250,
+        scrollLeft: 0,
+      }),
+    ).toEqual({ top: 730, left: 0 });
   });
 });

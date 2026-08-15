@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { DraftId } from "../composerDraftStore.ts";
 import { useBoardFocusStore } from "./boardFocusStore.ts";
 
 beforeEach(() => {
@@ -7,7 +8,7 @@ beforeEach(() => {
     request: null,
     acknowledgedFocus: null,
     focusedThreadKey: null,
-    expandedThreadKey: null,
+    expandedTarget: null,
   });
 });
 
@@ -62,5 +63,35 @@ describe("boardFocusStore", () => {
     expect(useBoardFocusStore.getState().acknowledgedFocus).toBeNull();
     store.setFocused("thread-b");
     expect(useBoardFocusStore.getState().focusedThreadKey).toBe("thread-b");
+  });
+
+  it("opens either a thread or a draft in the shared expanded surface", () => {
+    const store = useBoardFocusStore.getState();
+
+    store.setExpanded({ kind: "thread", threadKey: "thread-a" });
+    expect(useBoardFocusStore.getState().expandedTarget).toEqual({
+      kind: "thread",
+      threadKey: "thread-a",
+    });
+
+    const draftId = DraftId.make("draft-a");
+    store.setExpanded({ kind: "draft", draftId });
+    expect(useBoardFocusStore.getState().expandedTarget).toEqual({ kind: "draft", draftId });
+
+    store.setExpanded(null);
+    expect(useBoardFocusStore.getState().expandedTarget).toBeNull();
+  });
+
+  it("does not publish a store update for the same expanded target", () => {
+    const updates: unknown[] = [];
+    const unsubscribe = useBoardFocusStore.subscribe((state) => updates.push(state.expandedTarget));
+
+    useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey: "thread-a" });
+    useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey: "thread-a" });
+    useBoardFocusStore.getState().setExpanded(null);
+    useBoardFocusStore.getState().setExpanded(null);
+    unsubscribe();
+
+    expect(updates).toEqual([{ kind: "thread", threadKey: "thread-a" }, null]);
   });
 });

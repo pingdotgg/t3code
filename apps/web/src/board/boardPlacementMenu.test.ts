@@ -7,31 +7,37 @@ import {
 } from "./boardPlacementMenu.ts";
 
 const LANES: ReadonlyArray<BoardLane> = [
+  { id: "settled", name: "Settled", description: "Finished", order: -10 },
+  { id: "triage", name: "Triage", description: "New", order: 100 },
   { id: "shaping", name: "Grilling / shaping", description: "Shape it", order: 0 },
   { id: "ready", name: "Ready", description: "Ready", order: 1 },
+  { id: "snoozed", name: "Snoozed", description: "Later", order: -20 },
 ];
 
+const WORKFLOW_LANES = [LANES[1]!, LANES[2]!, LANES[3]!];
+
 describe("board placement context menu", () => {
-  it("offers every locally-defined lane and an explicit removal", () => {
+  it("offers ordered workflow lanes without lifecycle or removal actions", () => {
     expect(buildBoardPlacementContextMenuItems(LANES)).toEqual([
       {
         id: "place-in-lane",
         label: "Place in lane…",
-        children: LANES.map((lane) => ({
+        children: WORKFLOW_LANES.map((lane) => ({
           id: `place-in-lane:${lane.id}`,
           label: lane.name,
         })),
       },
-      { id: "remove-from-board", label: "Remove from board" },
     ]);
   });
 
-  it.each(LANES)("maps the $id placement action to its local lane", (lane) => {
+  it.each(WORKFLOW_LANES)("maps the $id placement action to its local lane", (lane) => {
     expect(boardLaneForPlacementAction(`place-in-lane:${lane.id}`, LANES)).toBe(lane.id);
   });
 
-  it("maps removal to null and ignores stale or unrelated actions", () => {
-    expect(boardLaneForPlacementAction("remove-from-board", LANES)).toBeNull();
+  it("ignores lifecycle, removed, stale, and unrelated actions", () => {
+    expect(boardLaneForPlacementAction("remove-from-board", LANES)).toBeUndefined();
+    expect(boardLaneForPlacementAction("place-in-lane:snoozed", LANES)).toBeUndefined();
+    expect(boardLaneForPlacementAction("place-in-lane:settled", LANES)).toBeUndefined();
     expect(boardLaneForPlacementAction("rename", LANES)).toBeUndefined();
     expect(boardLaneForPlacementAction("place-in-lane:retired", LANES)).toBeUndefined();
   });

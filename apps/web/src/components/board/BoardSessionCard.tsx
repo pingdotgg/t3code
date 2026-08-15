@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { useDraggable } from "@dnd-kit/core";
+import { useSortable } from "@dnd-kit/sortable";
 import type { LegendListRef } from "@legendapp/list/react";
 import type {
   ScopedThreadRef,
@@ -8,7 +8,25 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { ChevronsDownUpIcon, GripVerticalIcon, Maximize2Icon } from "lucide-react";
+import {
+  canSnooze,
+  type ChangeRequestStateLike,
+} from "@t3tools/client-runtime/state/thread-settled";
+import {
+  AlarmClockIcon,
+  AlarmClockOffIcon,
+  CheckIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleXIcon,
+  ClipboardCheckIcon,
+  GripVerticalIcon,
+  Maximize2Icon,
+  MessageCircleQuestionIcon,
+  RadarIcon,
+  Undo2Icon,
+} from "lucide-react";
 import {
   memo,
   useCallback,
@@ -24,7 +42,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import {
-  cardSizeForHeight,
   CARD_MAX_HEIGHT,
   CARD_MIN_HEIGHT,
   clampCardHeight,
@@ -32,10 +49,14 @@ import {
   useBoardCardStore,
 } from "../../board/boardCardStore.ts";
 import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
+import { SETTLED_BOARD_LANE_ID, SNOOZED_BOARD_LANE_ID } from "../../board/boardLaneStore.ts";
+import { isBoardLifecycleLaneId } from "../../board/boardLanes.ts";
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { useDiffPanelStore } from "../../diffPanelStore.ts";
 import { useRightPanelStore } from "../../rightPanelStore.ts";
 import { useTheme } from "../../hooks/useTheme.ts";
+import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
+import { useClientSettings } from "../../hooks/useSettings.ts";
 import { ensureLocalApi } from "../../localApi.ts";
 import {
   derivePendingApprovals,
@@ -44,23 +65,34 @@ import {
   type PendingUserInput,
 } from "../../session-logic.ts";
 import { readProject, useServerConfigs, useThread } from "../../state/entities.ts";
-import { useUiStateStore } from "../../uiStateStore.ts";
-import { useThreadContextMenu } from "../useThreadContextMenu.ts";
+import { useEnvironmentQuery } from "../../state/query.ts";
 import {
   resolveThreadRuntimeState,
   threadRuntimeStateAppearance,
-  type ThreadRuntimeState,
+  type ThreadRuntimeStateAppearance,
 } from "../../state/threadRuntimeState.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
+import { vcsEnvironment } from "../../state/vcs.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
+import { useUiStateStore } from "../../uiStateStore.ts";
 import { cn } from "~/lib/utils";
+import { hasUnseenCompletion } from "../Sidebar.logic.ts";
+import { resolveThreadPr } from "../ThreadStatusIndicators.tsx";
 import { useThreadTimeline } from "../chat/useThreadTimeline.ts";
 import { ChatComposer } from "../chat/ChatComposer.tsx";
+import { resolveRenameCommit } from "../threadRename.logic.ts";
+import { resolveSnoozePresets } from "../Sidebar.snooze.ts";
 import { useBoardThreadComposer } from "../chat/useThreadComposer.ts";
 import { Button } from "../ui/button.tsx";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
 import { toastManager } from "../ui/toast.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
+import {
+  boardCardVisitTimestamp,
+  shouldShowBoardStatusIcon,
+  type BoardCardVisualState,
+} from "./BoardSessionCard.logic.ts";
 import { useInViewport } from "./useInViewport.ts";
 import { MessagesTimeline } from "../chat/MessagesTimeline.tsx";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog.tsx";
@@ -68,6 +100,12 @@ import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview.tsx";
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const NOOP = () => {};
+const DONE_APPEARANCE = {
+  label: "Done",
+  borderClass: "border-emerald-500/50 dark:border-emerald-300/40",
+  textClass: "text-emerald-700 dark:text-emerald-300",
+  surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-emerald-500))]",
+} satisfies ThreadRuntimeStateAppearance;
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
@@ -79,7 +117,53 @@ export interface BoardSessionCardProps {
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
+  readonly changeRequestState: ChangeRequestStateLike | null;
+  readonly snoozeDropRequest?: {
+    readonly nonce: number;
+    readonly unsettleAfterSnooze: boolean;
+  } | null;
+  readonly onSnoozeDropRequestHandled?: (nonce: number) => void;
 }
+
+/**
+ * PR state participates in board lifecycle projection, so its subscription
+ * cannot live inside a card that disappears when a project or lifecycle lane
+ * is collapsed. SessionBoard mounts one reporter per eligible thread outside
+ * the visual lane tree and passes the resulting state back into visible cards.
+ */
+export const BoardChangeRequestStateReporter = memo(
+  function BoardChangeRequestStateReporter(props: {
+    readonly environmentId: SidebarThreadSummary["environmentId"];
+    readonly workspacePath: string;
+    readonly threads: ReadonlyArray<{
+      readonly cardKey: string;
+      readonly branch: string;
+      readonly sourceKey: string;
+    }>;
+    readonly onChangeRequestState: (
+      threadKey: string,
+      sourceKey: string,
+      state: ChangeRequestStateLike | null,
+    ) => void;
+  }) {
+    const gitStatus = useEnvironmentQuery(
+      vcsEnvironment.status({
+        environmentId: props.environmentId,
+        input: { cwd: props.workspacePath },
+      }),
+    );
+    useEffect(() => {
+      if (gitStatus.isPending) return;
+      for (const thread of props.threads) {
+        const state =
+          resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })?.state ??
+          null;
+        props.onChangeRequestState(thread.cardKey, thread.sourceKey, state);
+      }
+    }, [gitStatus.data, gitStatus.isPending, props]);
+    return null;
+  },
+);
 
 export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessionCardProps) {
   const {
@@ -93,25 +177,111 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     environmentConnection,
   } = props;
 
-  const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
-  const { openThreadContextMenu } = useThreadContextMenu({
-    onMarkUnread: markThreadUnread,
-  });
-
   const setHeight = useBoardCardStore((state) => state.setHeight);
-  const setSize = useBoardCardStore((state) => state.setSize);
   const heightPx = useBoardCardStore((state) => selectCardHeight(state.byThreadKey, threadRef));
+  const serverConfigs = useServerConfigs();
+  const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
+  const settlementSupported = capabilities?.threadSettlement === true;
+  const snoozeSupported = capabilities?.threadSnooze === true;
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
+  // Match the sidebar: resolve click-relative presets only while the menu is
+  // open instead of formatting local dates on every render of every card.
+  const snoozePresets = useMemo(
+    () => (snoozeMenuOpen ? resolveSnoozePresets(new Date(), timestampFormat) : []),
+    [snoozeMenuOpen, timestampFormat],
+  );
+  const showSnoozeButton = snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
+  const isLifecycleLane = isBoardLifecycleLaneId(laneId);
+  const isSnoozedLane = laneId === SNOOZED_BOARD_LANE_ID;
+  const isSettledLane = laneId === SETTLED_BOARD_LANE_ID;
+
+  const [renaming, setRenaming] = useState<{
+    readonly title: string;
+    readonly originalTitle: string;
+  } | null>(null);
+  const renameCommittedRef = useRef(false);
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const startRename = useCallback(() => {
+    renameCommittedRef.current = false;
+    setRenaming({ title: thread.title, originalTitle: thread.title });
+  }, [thread.title]);
+  const commitRename = useCallback(
+    (title: string) => {
+      const originalTitle = renaming?.originalTitle ?? thread.title;
+      setRenaming(null);
+      const resolution = resolveRenameCommit({ title, originalTitle });
+      if (resolution.action === "reject-empty") {
+        toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+        return;
+      }
+      if (resolution.action === "noop") return;
+      void updateThreadMetadata({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, title: resolution.title },
+      }).then((result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Failed to rename thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+      });
+    },
+    [renaming?.originalTitle, thread.title, threadRef, updateThreadMetadata],
+  );
+  const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
+  const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
+  const { openMenu, settle, unsettle, snooze, unsnooze } = useThreadActionMenu({
+    threadRef,
+    projectCwd: workspacePath,
+    changeRequestState: props.changeRequestState,
+    onStartRename: startRename,
+    boardLanes: lanes,
+  });
+  useEffect(() => {
+    if (props.snoozeDropRequest === null || props.snoozeDropRequest === undefined) return;
+    setSnoozeMenuOpen(true);
+  }, [props.snoozeDropRequest?.nonce]);
+
+  const handleSnoozeMenuOpenChange = useCallback(
+    (open: boolean) => {
+      setSnoozeMenuOpen(open);
+      if (!open && props.snoozeDropRequest) {
+        props.onSnoozeDropRequestHandled?.(props.snoozeDropRequest.nonce);
+      }
+    },
+    [props.onSnoozeDropRequestHandled, props.snoozeDropRequest],
+  );
+  const handleSnoozePreset = useCallback(
+    async (preset: (typeof snoozePresets)[number]) => {
+      const snoozed = await snooze(preset);
+      if (snoozed && props.snoozeDropRequest?.unsettleAfterSnooze) {
+        await unsettle();
+      }
+      handleSnoozeMenuOpenChange(false);
+    },
+    [handleSnoozeMenuOpenChange, props.snoozeDropRequest?.unsettleAfterSnooze, snooze, unsettle],
+  );
   // Expansion and focus live on the board's shared store, not on the card: the
   // sidebar opens and points at cards too, and there is only ever one of each.
-  const expanded = useBoardFocusStore((state) => state.expandedThreadKey === cardKey);
+  const expanded = useBoardFocusStore(
+    (state) =>
+      state.expandedTarget?.kind === "thread" && state.expandedTarget.threadKey === cardKey,
+  );
   const isFocused = useBoardFocusStore((state) => state.focusedThreadKey === cardKey);
   const focusRequestNonce = useBoardFocusStore((state) =>
     state.request?.threadKey === cardKey ? state.request.nonce : null,
   );
   const setExpandedKey = useBoardFocusStore((state) => state.setExpanded);
   const setFocusedKey = useBoardFocusStore((state) => state.setFocused);
+  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const setExpanded = useCallback(
-    (open: boolean) => setExpandedKey(open ? cardKey : null),
+    (open: boolean) => setExpandedKey(open ? { kind: "thread", threadKey: cardKey } : null),
     [cardKey, setExpandedKey],
   );
 
@@ -126,12 +296,24 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     setNodeRef,
     transform,
     isDragging: isDraggingSelf,
-  } = useDraggable({
+    transition,
+  } = useSortable({
     id: cardKey,
   });
+  const setCardNodeRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      slotRef.current = node;
+      setNodeRef(node);
+    },
+    [setNodeRef],
+  );
 
   const status = resolveThreadRuntimeState(thread);
-  const appearance = threadRuntimeStateAppearance(status);
+  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[cardKey]);
+  const visualStatus: BoardCardVisualState =
+    status === "idle" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status;
+  const appearance =
+    visualStatus === "done" ? DONE_APPEARANCE : threadRuntimeStateAppearance(visualStatus);
 
   const [draggingHeight, setDraggingHeight] = useState<number | null>(null);
   const teardownResizeRef = useRef<(() => void) | null>(null);
@@ -215,59 +397,77 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
 
   const effectiveHeight = draggingHeight ?? heightPx;
-  const size = cardSizeForHeight(effectiveHeight);
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
-      const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
-      void openThreadContextMenu(
-        {
-          threadRef,
-          thread,
-          workspacePath,
-          lanes,
-        },
-        { x: event.clientX, y: event.clientY },
-      );
+      openMenu({ x: event.clientX, y: event.clientY });
     },
-    [lanes, openThreadContextMenu, thread, threadRef],
+    [openMenu],
   );
+
+  const handleRenameKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        renameCommittedRef.current = true;
+        commitRename(event.currentTarget.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        renameCommittedRef.current = true;
+        setRenaming(null);
+      }
+    },
+    [commitRename],
+  );
+
+  const handleRenameBlur = useCallback(
+    (event: React.FocusEvent<HTMLInputElement>) => {
+      if (!renameCommittedRef.current) commitRename(event.currentTarget.value);
+    },
+    [commitRename],
+  );
+
+  const handleCardFocus = useCallback(() => {
+    setFocusedKey(cardKey);
+    const visitedAt = boardCardVisitTimestamp(thread);
+    if (visitedAt !== null) markThreadVisited(cardKey, visitedAt);
+  }, [cardKey, markThreadVisited, setFocusedKey, thread]);
 
   return (
     <div
-      ref={slotRef}
+      ref={setCardNodeRef}
       data-board-card={thread.id}
       data-board-card-key={cardKey}
       data-lane={laneId ?? "unknown"}
-      onPointerDownCapture={() => setFocusedKey(cardKey)}
-      style={
-        transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined
-      }
+      role="group"
+      tabIndex={0}
+      aria-label={thread.title}
+      onPointerDownCapture={handleCardFocus}
+      onFocusCapture={handleCardFocus}
+      className="outline-none"
+      style={{
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        transition,
+      }}
     >
       <div
         className={cn(
-          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm",
-          isFocused && "border-primary/60 ring-1 ring-primary/40",
+          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm",
+          appearance.borderClass,
+          appearance.surfaceClass,
+          isLifecycleLane && "border-border/60 bg-muted/35 text-muted-foreground",
+          isFocused && "ring-1 ring-primary/40",
           (isDraggingSelf || props.isDragging) && "opacity-60",
         )}
-        style={{ height: `${effectiveHeight}px` }}
+        style={isLifecycleLane ? undefined : { height: `${effectiveHeight}px` }}
         onContextMenu={handleContextMenu}
       >
-        <span
-          aria-hidden
-          className={cn(
-            "absolute inset-x-0 top-0 z-10 h-0.5",
-            appearance.accentClass,
-            appearance.pulse && "animate-status-pulse motion-reduce:animate-none",
-          )}
-        />
         <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
           <button
             type="button"
-            ref={setNodeRef}
             {...listeners}
             {...attributes}
             aria-label={`Drag ${thread.title}`}
@@ -276,9 +476,27 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             <GripVerticalIcon className="size-3.5" />
           </button>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
-              {thread.title}
-            </p>
+            {renaming ? (
+              <input
+                autoFocus
+                aria-label="Thread title"
+                value={renaming.title}
+                onChange={(event) =>
+                  setRenaming((current) =>
+                    current ? { ...current, title: event.currentTarget.value } : current,
+                  )
+                }
+                onFocus={(event) => event.currentTarget.select()}
+                onKeyDown={handleRenameKeyDown}
+                onBlur={handleRenameBlur}
+                onClick={(event) => event.stopPropagation()}
+                className="h-4 w-full rounded-sm border border-input bg-card px-1 text-[11px] font-medium leading-4 outline-none focus:border-foreground"
+              />
+            ) : (
+              <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
+                {thread.title}
+              </p>
+            )}
             <p className="truncate text-[10px] text-muted-foreground/60">
               {projectTitle}
               {thread.branch ? ` · ${thread.branch}` : ""}
@@ -293,16 +511,66 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 : ` · ${environmentConnection.phase}`}
             </p>
           </div>
-          <StatusDot status={status} />
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => setSize(threadRef, size === "tall" ? "compact" : "tall")}
-            aria-label={size === "tall" ? "Make card compact" : "Make card tall"}
-            className="text-muted-foreground/60 hover:text-foreground"
-          >
-            <ChevronsDownUpIcon className="size-3.5" />
-          </Button>
+          {isLifecycleLane ? null : (
+            <BoardStatusIcon status={visualStatus} appearance={appearance} />
+          )}
+          {(!isLifecycleLane && showSnoozeButton) || props.snoozeDropRequest ? (
+            <Menu open={snoozeMenuOpen} onOpenChange={handleSnoozeMenuOpenChange}>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Snooze session"
+                    className="text-muted-foreground/60 hover:text-foreground"
+                  />
+                }
+              >
+                <AlarmClockIcon className="size-3.5" />
+              </MenuTrigger>
+              <MenuPopup align="end" className="min-w-44">
+                {snoozePresets.map((preset) => (
+                  <MenuItem key={preset.id} onClick={() => void handleSnoozePreset(preset)}>
+                    {preset.label}
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {preset.whenLabel}
+                    </span>
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
+          ) : null}
+          {isSnoozedLane && snoozeSupported ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => void unsnooze()}
+              aria-label="Wake session"
+              className="text-muted-foreground/60 hover:text-foreground"
+            >
+              <AlarmClockOffIcon className="size-3.5" />
+            </Button>
+          ) : isSettledLane && settlementSupported ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => void unsettle()}
+              aria-label="Un-settle session"
+              className="text-muted-foreground/60 hover:text-foreground"
+            >
+              <Undo2Icon className="size-3.5" />
+            </Button>
+          ) : settlementSupported ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => void settle()}
+              aria-label="Settle session"
+              className="text-muted-foreground/60 hover:text-foreground"
+            >
+              <CheckIcon className="size-3.5" />
+            </Button>
+          ) : null}
           <Button
             size="icon-xs"
             variant="ghost"
@@ -315,40 +583,43 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           </Button>
         </header>
 
-        {(isNearViewport || isFocused) && !expanded ? (
-          <BoardCardChatSurface
-            cardKey={cardKey}
-            cardElementRef={slotRef}
-            threadRef={threadRef}
-            thread={thread}
-            environmentLabel={environmentLabel}
-            environmentConnection={environmentConnection}
-            focusRequestNonce={focusRequestNonce}
-          />
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-[10px] text-muted-foreground/50">
-            Scroll into view to connect
-          </div>
-        )}
+        {isLifecycleLane ? null : (
+          <>
+            {(isNearViewport || isFocused) && !expanded ? (
+              <BoardCardChatSurface
+                cardKey={cardKey}
+                cardElementRef={slotRef}
+                threadRef={threadRef}
+                thread={thread}
+                environmentLabel={environmentLabel}
+                environmentConnection={environmentConnection}
+                focusRequestNonce={focusRequestNonce}
+              />
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-[10px] text-muted-foreground/50">
+                Scroll into view to connect
+              </div>
+            )}
 
-        <button
-          type="button"
-          onPointerDown={handleResizePointerDown}
-          onKeyDown={handleResizeKeyDown}
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label={`Resize ${thread.title} card. Use arrow keys to resize.`}
-          aria-valuemin={CARD_MIN_HEIGHT}
-          aria-valuemax={CARD_MAX_HEIGHT}
-          aria-valuenow={effectiveHeight}
-          data-testid={`board-card-resize-${thread.id}`}
-          className="h-2 shrink-0 cursor-ns-resize touch-none border-0 border-t border-border/40 bg-transparent p-0 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:h-6"
-        />
+            <button
+              type="button"
+              onPointerDown={handleResizePointerDown}
+              onKeyDown={handleResizeKeyDown}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={`Resize ${thread.title} card. Use arrow keys to resize.`}
+              aria-valuemin={CARD_MIN_HEIGHT}
+              aria-valuemax={CARD_MAX_HEIGHT}
+              aria-valuenow={effectiveHeight}
+              data-testid={`board-card-resize-${thread.id}`}
+              className="h-2 shrink-0 cursor-ns-resize touch-none border-0 border-t border-border/40 bg-transparent p-0 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:h-6"
+            />
+          </>
+        )}
       </div>
 
       <BoardCardExpandedSheet
-        threadRef={threadRef}
-        title={thread.title}
+        target={{ kind: "thread", threadRef, title: thread.title }}
         open={expanded}
         onOpenChange={setExpanded}
       />
@@ -558,7 +829,9 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
       <AttentionStrip
         pendingApprovals={pendingApprovals}
         pendingUserInputs={pendingUserInputs}
-        onOpen={() => useBoardFocusStore.getState().setExpanded(cardKey)}
+        onOpen={() =>
+          useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey: cardKey })
+        }
       />
 
       <div className="shrink-0 border-t border-border/60 px-1.5 py-1">
@@ -618,20 +891,53 @@ function AttentionStrip({
   );
 }
 
-// Matches resolveThreadStatusPill's colorClass for the same states (Sidebar.logic.ts)
-// so the strip's headings read the same hue as the sidebar pill for approval/input.
-function StatusDot({ status }: { readonly status: ThreadRuntimeState }) {
-  const appearance = threadRuntimeStateAppearance(status);
+function BoardStatusIcon({
+  status,
+  appearance,
+}: {
+  readonly status: BoardCardVisualState;
+  readonly appearance: ThreadRuntimeStateAppearance;
+}) {
+  if (!shouldShowBoardStatusIcon(status)) return null;
+  let Icon = CircleCheckIcon;
+  switch (status) {
+    case "working":
+    case "connecting":
+      Icon = CircleDashedIcon;
+      break;
+    case "approval":
+      Icon = CircleAlertIcon;
+      break;
+    case "input":
+      Icon = MessageCircleQuestionIcon;
+      break;
+    case "failed":
+      Icon = CircleXIcon;
+      break;
+    case "plan-ready":
+      Icon = ClipboardCheckIcon;
+      break;
+    case "monitoring":
+      Icon = RadarIcon;
+      break;
+    case "done":
+      break;
+    case "idle":
+      return null;
+  }
   return (
     <span
+      role="img"
+      aria-label={appearance.label}
       data-testid="board-card-status"
       data-status={status}
       title={appearance.label}
       className={cn(
-        "mt-1 size-1.5 shrink-0 rounded-full",
-        appearance.accentClass,
-        appearance.pulse && "animate-status-pulse motion-reduce:animate-none",
+        "mt-0.5 inline-flex shrink-0 items-center justify-center",
+        appearance.textClass,
       )}
-    />
+    >
+      <Icon aria-hidden className="size-4" />
+    </span>
   );
 }

@@ -7,6 +7,7 @@ import {
 import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
+import { useBoardFocusStore } from "../board/boardFocusStore";
 import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
@@ -29,6 +30,7 @@ import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefau
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { resolveNewThreadPresentation } from "./useHandleNewThread.logic";
 import { useClientSettings } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
@@ -87,6 +89,33 @@ export function useNewThreadHandler() {
       // prepared checkout, a task to write — addresses that one rather than looking the project
       // up again and finding whichever draft it happens to hold.
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
+      const sourcePathname = router.state.location.pathname;
+      const isExpandedDraft = (draftId: DraftId): boolean => {
+        if (sourcePathname !== "/board") return false;
+        const target = useBoardFocusStore.getState().expandedTarget;
+        return target?.kind === "draft" && target.draftId === draftId;
+      };
+      const presentDraft = async (openedDraftId: DraftId): Promise<void> => {
+        const presentation = resolveNewThreadPresentation({
+          sourcePathname,
+          currentPathname: router.state.location.pathname,
+          draftId: openedDraftId,
+          replace: options?.replace ?? false,
+        });
+        if (presentation.kind === "none") return;
+        if (presentation.kind === "expanded-draft") {
+          useBoardFocusStore.getState().setExpanded({
+            kind: "draft",
+            draftId: presentation.draftId,
+          });
+          return;
+        }
+        await router.navigate({
+          to: "/draft/$draftId",
+          params: { draftId: presentation.draftId },
+          replace: presentation.replace,
+        });
+      };
       const {
         getComposerDraft,
         getDraftSessionByLogicalProjectKey,
@@ -214,8 +243,9 @@ export function useNewThreadHandler() {
       if (emptyStoredDraftThread) {
         return (async () => {
           const isDraftAlreadyOpen =
-            currentRouteTarget?.kind === "draft" &&
-            currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
+            (currentRouteTarget?.kind === "draft" &&
+              currentRouteTarget.draftId === emptyStoredDraftThread.draftId) ||
+            isExpandedDraft(emptyStoredDraftThread.draftId);
           const hasExplicitWorkspaceOption =
             hasBranchOption ||
             hasWorktreePathOption ||
@@ -244,8 +274,9 @@ export function useNewThreadHandler() {
             // the winner already did this work.
             const routeTargetNow = getCurrentRouteTarget();
             const openedMeanwhile =
-              routeTargetNow?.kind === "draft" &&
-              routeTargetNow.draftId === emptyStoredDraftThread.draftId;
+              (routeTargetNow?.kind === "draft" &&
+                routeTargetNow.draftId === emptyStoredDraftThread.draftId) ||
+              isExpandedDraft(emptyStoredDraftThread.draftId);
             const promotedMeanwhile =
               storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
             const remappedMeanwhile =
@@ -312,11 +343,7 @@ export function useNewThreadHandler() {
           ) {
             return opened;
           }
-          await router.navigate({
-            to: "/draft/$draftId",
-            params: { draftId: emptyStoredDraftThread.draftId },
-            replace: options?.replace ?? false,
-          });
+          await presentDraft(emptyStoredDraftThread.draftId);
           return opened;
         })();
       }
@@ -386,11 +413,7 @@ export function useNewThreadHandler() {
             ...pickExplicitWorkspaceOptions(options),
           });
           carryComposerContentTo(racedDraft.draftId);
-          await router.navigate({
-            to: "/draft/$draftId",
-            params: { draftId: racedDraft.draftId },
-            replace: options?.replace ?? false,
-          });
+          await presentDraft(racedDraft.draftId);
           return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
         }
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
@@ -419,11 +442,7 @@ export function useNewThreadHandler() {
         }
         carryComposerContentTo(draftId);
 
-        await router.navigate({
-          to: "/draft/$draftId",
-          params: { draftId },
-          replace: options?.replace ?? false,
-        });
+        await presentDraft(draftId);
         return { draftId, threadId };
       })();
     },

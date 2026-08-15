@@ -49,12 +49,12 @@ export function resolveThreadRuntimeState(thread: ThreadRuntimeStateInput): Thre
 export interface ThreadRuntimeStateAppearance {
   /** Human label, matching the wording the sidebar status pills already use. */
   readonly label: string;
-  /** Background utility for a status dot or edge accent. */
-  readonly accentClass: string;
+  /** Full card border set in the state's hue. */
+  readonly borderClass: string;
   /** Foreground utility for status text set in the state's hue. */
   readonly textClass: string;
-  /** Whether the state is in motion and should pulse. */
-  readonly pulse: boolean;
+  /** Card surface mixed very lightly toward the state's hue. */
+  readonly surfaceClass: string;
 }
 
 // One hue per runtime state, shared by every surface that shows thread status.
@@ -68,51 +68,51 @@ const THREAD_RUNTIME_STATE_APPEARANCE: Readonly<
 > = {
   approval: {
     label: "Approval",
-    accentClass: "bg-amber-500 dark:bg-amber-300/90",
+    borderClass: "border-amber-500/50 dark:border-amber-300/40",
     textClass: "text-amber-600 dark:text-amber-300/90",
-    pulse: false,
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-amber-500))]",
   },
   input: {
     label: "Input",
-    accentClass: "bg-indigo-500 dark:bg-indigo-300/90",
+    borderClass: "border-indigo-500/50 dark:border-indigo-300/40",
     textClass: "text-indigo-600 dark:text-indigo-300/90",
-    pulse: false,
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-indigo-500))]",
   },
   working: {
     label: "Working",
-    accentClass: "bg-sky-500 dark:bg-sky-300/80",
+    borderClass: "border-sky-500/50 dark:border-sky-300/40",
     textClass: "text-sky-600 dark:text-sky-300/80",
-    pulse: true,
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-sky-500))]",
   },
   monitoring: {
     label: "Monitoring",
-    accentClass: "bg-sky-500 dark:bg-sky-300/80",
+    borderClass: "border-sky-500/50 dark:border-sky-300/40",
     textClass: "text-sky-600 dark:text-sky-300/80",
-    pulse: false,
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-sky-500))]",
   },
   connecting: {
     label: "Connecting",
-    accentClass: "bg-sky-500 dark:bg-sky-300/80",
+    borderClass: "border-sky-500/50 dark:border-sky-300/40",
     textClass: "text-sky-600 dark:text-sky-300/80",
-    pulse: true,
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-sky-500))]",
   },
   failed: {
     label: "Failed",
-    accentClass: "bg-red-500 dark:bg-red-300/90",
+    borderClass: "border-red-500/50 dark:border-red-300/40",
     textClass: "text-red-600 dark:text-red-300/90",
-    pulse: false,
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-red-500))]",
   },
   "plan-ready": {
     label: "Plan ready",
-    accentClass: "bg-violet-500 dark:bg-violet-300/90",
+    borderClass: "border-violet-500/50 dark:border-violet-300/40",
     textClass: "text-violet-600 dark:text-violet-300/90",
-    pulse: false,
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-violet-500))]",
   },
   idle: {
     label: "Idle",
-    accentClass: "bg-muted-foreground/40",
+    borderClass: "border-border/70",
     textClass: "text-muted-foreground",
-    pulse: false,
+    surfaceClass: "bg-card",
   },
 };
 
