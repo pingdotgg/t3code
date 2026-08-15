@@ -1950,9 +1950,7 @@ function PullRequestRefreshControl({
       aria-label="Refresh pull requests"
       onClick={onRefresh}
     >
-      <RefreshCwIcon
-        className={cn(compact ? "size-3.5" : "size-4", refreshing && "animate-spin")}
-      />
+      <RefreshCwIcon className={cn("size-4", refreshing && "animate-spin")} />
     </Button>
   );
 }
