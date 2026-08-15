@@ -52,6 +52,7 @@ import {
   useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
+import { vcsEnvironment } from "../../state/vcs";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
@@ -139,6 +140,7 @@ type NewTaskFlowContextValue = {
   readonly branchesFetchingNextPage: boolean;
   readonly hasMoreBranches: boolean;
   readonly availableBranches: ReadonlyArray<VcsRef>;
+  readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly planModeEnabled: boolean;
@@ -553,6 +555,22 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ),
     [allBranchRefs],
   );
+  // The ref actually checked out in the project root, serialized onto new
+  // local threads. It comes from the live status stream rather than listRefs'
+  // `current` flag, which is served from a cache that can lag an out-of-band
+  // `git switch` by minutes — and from the same value the PR badge compares
+  // against. Detached HEAD and non-repository projects report no ref, so this
+  // stays null instead of fabricating a branch. The status family is
+  // deduplicated per (environmentId, cwd) with the thread rows.
+  const projectGitStatus = useEnvironmentQuery(
+    branchTarget.environmentId !== null && branchTarget.cwd !== null
+      ? vcsEnvironment.status({
+          environmentId: branchTarget.environmentId,
+          input: { cwd: branchTarget.cwd },
+        })
+      : null,
+  );
+  const currentCheckoutBranchName = projectGitStatus.data?.refName ?? null;
 
   const filteredBranches = useMemo(() => {
     const query = branchQuery.trim().toLowerCase();
@@ -859,6 +877,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
+          // Only an explicit picker choice, never the current checkout: a
+          // queued local task drains days later against whatever is checked
+          // out then, so recording a queue-time guess would pin a stale label
+          // to a thread that ran somewhere else.
           branch: workspaceSelection?.branch ?? null,
           worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
           // The draft only carries the flag when the user touched it; fall
@@ -996,6 +1018,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       branchesFetchingNextPage,
       hasMoreBranches,
       availableBranches,
+      currentCheckoutBranchName,
       runtimeMode,
       interactionMode,
       planModeEnabled,
@@ -1043,6 +1066,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       branchesFetchingNextPage,
       buildPendingTaskMessage,
       cancelEditingPendingTask,
+      currentCheckoutBranchName,
       editingPendingTask,
       environments,
       expandedProvider,
