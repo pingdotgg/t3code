@@ -2951,6 +2951,306 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  const streamEvent = (uuid: string, event: unknown, parentToolUseId: string | null = null) =>
+    ({
+      type: "stream_event",
+      session_id: "sdk-session-message-scoped",
+      uuid,
+      parent_tool_use_id: parentToolUseId,
+      event,
+    }) as unknown as SDKMessage;
+
+  const messageStart = (uuid: string, messageId: string, parentToolUseId: string | null = null) =>
+    streamEvent(uuid, { type: "message_start", message: { id: messageId } }, parentToolUseId);
+
+  const textBlockStart = (uuid: string, index: number) =>
+    streamEvent(uuid, {
+      type: "content_block_start",
+      index,
+      content_block: { type: "text", text: "" },
+    });
+
+  const textDelta = (uuid: string, index: number, text: string) =>
+    streamEvent(uuid, {
+      type: "content_block_delta",
+      index,
+      delta: { type: "text_delta", text },
+    });
+
+  const blockStop = (uuid: string, index: number, parentToolUseId: string | null = null) =>
+    streamEvent(uuid, { type: "content_block_stop", index }, parentToolUseId);
+
+  const successResult = (uuid: string) =>
+    ({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      errors: [],
+      session_id: "sdk-session-message-scoped",
+      uuid,
+    }) as unknown as SDKMessage;
+
+  const assistantSnapshot = (uuid: string, messageId: string, texts: ReadonlyArray<string>) =>
+    ({
+      type: "assistant",
+      session_id: "sdk-session-message-scoped",
+      uuid,
+      parent_tool_use_id: null,
+      message: {
+        id: messageId,
+        content: texts.map((text) => ({ type: "text", text })),
+      },
+    }) as unknown as SDKMessage;
+
+  const assistantTextDeltas = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
+    events.filter(
+      (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+    );
+
+  const deltaText = (event: ProviderRuntimeEvent | undefined) =>
+    event?.type === "content.delta" ? event.payload.delta : undefined;
+
+  it.effect("repairs a stalled text stream from the snapshot of the message it belongs to", () => {
+    const harness = makeHarness();
+    const fullText = "PR is open: https://example.test/pull/1";
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // One short of the full sequence on purpose: without the repair the stream still reaches
+      // 10 events (ending in turn.completed), so a regression fails on the assertion below
+      // instead of hanging until the test timeout.
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "go",
+        attachments: [],
+      });
+
+      // First message of the turn streams and closes normally.
+      harness.query.emit(messageStart("stalled-msg-start-1", "msg-first"));
+      harness.query.emit(textBlockStart("stalled-start-1", 0));
+      harness.query.emit(textDelta("stalled-delta-1", 0, "Pushing now."));
+      harness.query.emit(blockStop("stalled-stop-1", 0));
+
+      // Second message: the stream dies after one delta. No content_block_stop ever arrives,
+      // and the finished message is handed over as a single snapshot instead.
+      harness.query.emit(messageStart("stalled-msg-start-2", "msg-second"));
+      harness.query.emit(textBlockStart("stalled-start-2", 0));
+      harness.query.emit(textDelta("stalled-delta-2", 0, "P"));
+      harness.query.emit(assistantSnapshot("stalled-snapshot", "msg-second", [fullText]));
+      harness.query.emit(successResult("stalled-result"));
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+          "content.delta",
+          "item.completed",
+          "content.delta",
+          "content.delta",
+          "item.completed",
+        ],
+      );
+
+      const deltas = assistantTextDeltas(runtimeEvents);
+      assert.equal(deltas.length, 3);
+
+      // The repair ships only the suffix the client never saw, so appending the deltas of the
+      // second message reconstructs the full text exactly once.
+      const secondMessageDeltas = deltas.slice(1);
+      assert.equal(secondMessageDeltas.map(deltaText).join(""), fullText);
+
+      // Both deltas of the second message belong to one item: the whole bug was the repair
+      // landing on the item of an earlier message.
+      assert.equal(new Set(secondMessageDeltas.map((event) => String(event.itemId))).size, 1);
+      assert.notEqual(String(deltas[0]?.itemId), String(deltas[1]?.itemId));
+
+      const completions = runtimeEvents.filter(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      assert.equal(completions.length, 2);
+      assert.equal(String(completions[1]?.itemId), String(deltas[1]?.itemId));
+      const repaired = completions[1];
+      if (repaired?.type === "item.completed") {
+        assert.equal(repaired.payload.detail, fullText);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("repairs only the unfinished block of a multi-block assistant message", () => {
+    const harness = makeHarness();
+    const firstText = "Looked at the logs. ";
+    const secondText = "Second block, finished only in the snapshot.";
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "go",
+        attachments: [],
+      });
+
+      // A single message with two text blocks: the first closes, the second stalls.
+      harness.query.emit(messageStart("multi-msg-start", "msg-multi"));
+      harness.query.emit(textBlockStart("multi-start-0", 0));
+      harness.query.emit(textDelta("multi-delta-0", 0, firstText));
+      harness.query.emit(blockStop("multi-stop-0", 0));
+      harness.query.emit(textBlockStart("multi-start-1", 1));
+      harness.query.emit(textDelta("multi-delta-1", 1, "Second block,"));
+      harness.query.emit(assistantSnapshot("multi-snapshot", "msg-multi", [firstText, secondText]));
+      harness.query.emit(successResult("multi-result"));
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const deltas = assistantTextDeltas(runtimeEvents);
+      assert.equal(deltas.length, 3);
+
+      // The closed block must not be replayed: its text is already on screen.
+      assert.equal(deltaText(deltas[0]), firstText);
+      assert.equal(deltas.slice(1).map(deltaText).join(""), secondText);
+      assert.equal(new Set(deltas.slice(1).map((event) => String(event.itemId))).size, 1);
+      assert.notEqual(String(deltas[0]?.itemId), String(deltas[1]?.itemId));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps two messages apart when the second reuses an unclosed block index", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "go",
+        attachments: [],
+      });
+
+      // First message never closes its block; the next message starts over at index 0.
+      harness.query.emit(messageStart("reuse-msg-start-1", "msg-alpha"));
+      harness.query.emit(textBlockStart("reuse-start-1", 0));
+      harness.query.emit(textDelta("reuse-delta-1", 0, "Alpha"));
+      harness.query.emit(messageStart("reuse-msg-start-2", "msg-beta"));
+      harness.query.emit(textBlockStart("reuse-start-2", 0));
+      harness.query.emit(textDelta("reuse-delta-2", 0, "Beta"));
+      harness.query.emit(successResult("reuse-result"));
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const deltas = assistantTextDeltas(runtimeEvents);
+      assert.equal(deltas.length, 2);
+      assert.equal(deltaText(deltas[0]), "Alpha");
+      assert.equal(deltaText(deltas[1]), "Beta");
+      // Two API messages must stay two chat messages, not one spliced "AlphaBeta".
+      assert.notEqual(String(deltas[0]?.itemId), String(deltas[1]?.itemId));
+
+      const completions = runtimeEvents.filter(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      assert.equal(completions.length, 2);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("ignores a subagent content_block_stop for the parent's text block", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "go",
+        attachments: [],
+      });
+
+      harness.query.emit(messageStart("sub-msg-start", "msg-parent"));
+      harness.query.emit(textBlockStart("sub-start", 0));
+      harness.query.emit(textDelta("sub-delta-1", 0, "Parent "));
+      // A subagent closes its own block 0 while the parent is still writing into block 0.
+      harness.query.emit(blockStop("sub-stop-subagent", 0, "toolu_subagent"));
+      harness.query.emit(textDelta("sub-delta-2", 0, "text."));
+      harness.query.emit(blockStop("sub-stop-parent", 0));
+      harness.query.emit(successResult("sub-result"));
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+          "content.delta",
+          "content.delta",
+          "item.completed",
+        ],
+      );
+
+      const deltas = assistantTextDeltas(runtimeEvents);
+      assert.equal(deltas.length, 2);
+      // The parent's message must stay whole and stay one item.
+      assert.equal(new Set(deltas.map((event) => String(event.itemId))).size, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("segments Claude assistant text blocks around tool calls", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

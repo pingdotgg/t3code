@@ -141,13 +141,27 @@ interface ClaudeTurnState {
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
   readonly capturedProposedPlanKeys: Set<string>;
-  nextSyntheticAssistantBlockIndex: number;
+  /**
+   * `Message.id` of the API message currently streaming, captured from `message_start`.
+   * A turn holds several API messages, and their content-block indexes restart at 0 in
+   * each one — this is what tells two blocks with the same index apart. Undefined until
+   * the first `message_start` (older SDKs and non-streaming paths never send one).
+   */
+  currentAssistantMessageId: string | undefined;
 }
 
 interface AssistantTextBlockState {
   readonly itemId: string;
+  /** Index of this block inside its own API message — matches `content_block_*.index`. */
   readonly blockIndex: number;
-  emittedTextDelta: boolean;
+  /** API message this block belongs to; undefined when no `message_start` was seen. */
+  readonly messageId: string | undefined;
+  /**
+   * Text already shipped to the client as `content.delta`. Every consumer appends deltas
+   * rather than replacing text, so this is what the user currently sees for this block —
+   * it lets a stalled stream be repaired by sending only the missing suffix.
+   */
+  streamedText: string;
   fallbackText: string;
   streamClosed: boolean;
   completionEmitted: boolean;
@@ -1347,7 +1361,22 @@ function nativeProviderRefs(
   return {};
 }
 
-function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
+interface SnapshotTextBlock {
+  /** Position inside `message.content`, which is the same index the stream events carry. */
+  readonly contentIndex: number;
+  readonly text: string;
+}
+
+/** `Message.id` of an assistant snapshot — the key that ties it to its `message_start`. */
+function assistantSnapshotMessageId(message: SDKMessage): string | undefined {
+  if (message.type !== "assistant") {
+    return undefined;
+  }
+  const id = (message.message as { id?: unknown } | undefined)?.id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+function extractAssistantTextBlocks(message: SDKMessage): Array<SnapshotTextBlock> {
   if (message.type !== "assistant") {
     return [];
   }
@@ -1357,8 +1386,8 @@ function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
     return [];
   }
 
-  const fragments: string[] = [];
-  for (const block of content) {
+  const fragments: Array<SnapshotTextBlock> = [];
+  for (const [contentIndex, block] of content.entries()) {
     if (!block || typeof block !== "object") {
       continue;
     }
@@ -1368,7 +1397,7 @@ function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
       typeof candidate.text === "string" &&
       candidate.text.length > 0
     ) {
-      fragments.push(candidate.text);
+      fragments.push({ contentIndex, text: candidate.text });
     }
   }
 
@@ -1792,6 +1821,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     options?: {
       readonly fallbackText?: string;
       readonly streamClosed?: boolean;
+      readonly messageId?: string | undefined;
     },
   ) {
     const turnState = context.turnState;
@@ -1799,8 +1829,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return undefined;
     }
 
+    const messageId =
+      options && "messageId" in options ? options.messageId : turnState.currentAssistantMessageId;
     const existing = turnState.assistantTextBlocks.get(blockIndex);
-    if (existing && !existing.completionEmitted) {
+    // A block belongs to exactly one API message. Content-block indexes restart at 0 in every
+    // message, so when a previous message left an unclosed block behind, reusing it by index
+    // alone spliced two separate answers into one chat message. Only reuse when the message
+    // matches — or when neither side knows its message (no `message_start`), which keeps the
+    // pre-existing behaviour for non-streaming paths.
+    const belongsToSameMessage =
+      existing?.messageId === undefined || messageId === undefined
+        ? true
+        : existing.messageId === messageId;
+    if (existing && !existing.completionEmitted && belongsToSameMessage) {
       if (existing.fallbackText.length === 0 && options?.fallbackText) {
         existing.fallbackText = options.fallbackText;
       }
@@ -1813,7 +1854,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const block: AssistantTextBlockState = {
       itemId: yield* randomUUIDv4,
       blockIndex,
-      emittedTextDelta: false,
+      messageId,
+      streamedText: "",
       fallbackText: options?.fallbackText ?? "",
       streamClosed: options?.streamClosed ?? false,
       completionEmitted: false,
@@ -1823,18 +1865,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return { blockIndex, block };
   });
 
+  /**
+   * Materializes a text block that the stream never announced — the message was delivered
+   * only as a snapshot. Keyed by the snapshot's own content index and message id so a repeat
+   * of the same snapshot finds the block again instead of emitting the text twice.
+   */
   const createSyntheticAssistantTextBlock = Effect.fn("createSyntheticAssistantTextBlock")(
-    function* (context: ClaudeSessionContext, fallbackText: string) {
+    function* (
+      context: ClaudeSessionContext,
+      fallbackText: string,
+      location: { readonly contentIndex: number; readonly messageId: string | undefined },
+    ) {
       const turnState = context.turnState;
       if (!turnState) {
         return undefined;
       }
 
-      const blockIndex = turnState.nextSyntheticAssistantBlockIndex;
-      turnState.nextSyntheticAssistantBlockIndex -= 1;
-      return yield* ensureAssistantTextBlock(context, blockIndex, {
+      return yield* ensureAssistantTextBlock(context, location.contentIndex, {
         fallbackText,
         streamClosed: true,
+        messageId: location.messageId,
       });
     },
   );
@@ -1857,7 +1907,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    if (!block.emittedTextDelta && block.fallbackText.length > 0) {
+    // The snapshot text can be ahead of what the delta stream actually delivered: when a
+    // stream stalls mid-message the CLI ships the finished message as one `claude/assistant`
+    // snapshot and never sends the remaining deltas (nor `content_block_stop`). Every consumer
+    // appends deltas, so emit only the part the client has not seen — sending the whole
+    // snapshot would render as the prefix twice. With nothing streamed this degrades to
+    // shipping the entire fallback, exactly as before.
+    const pendingText = block.fallbackText.startsWith(block.streamedText)
+      ? block.fallbackText.slice(block.streamedText.length)
+      : "";
+
+    if (pendingText.length > 0) {
+      block.streamedText = block.fallbackText;
       const deltaStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
         type: "content.delta",
@@ -1869,7 +1930,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId: asRuntimeItemId(block.itemId),
         payload: {
           streamKind: "assistant_text",
-          delta: block.fallbackText,
+          delta: pendingText,
         },
         providerRefs: nativeProviderRefs(context),
         ...(options?.rawMethod || options?.rawPayload
@@ -1930,34 +1991,57 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const orderedBlocks = turnState.assistantTextBlockOrder.map((block) => ({
-      blockIndex: block.blockIndex,
-      block,
-    }));
+    const snapshotMessageId = assistantSnapshotMessageId(message);
 
-    for (const [position, text] of snapshotTextBlocks.entries()) {
-      const existingEntry = orderedBlocks[position];
-      const entry =
-        existingEntry ??
-        (yield* createSyntheticAssistantTextBlock(context, text).pipe(
-          Effect.map((created) => {
-            if (!created) {
-              return undefined;
-            }
-            orderedBlocks.push(created);
-            return created;
-          }),
-        ));
-      if (!entry) {
+    for (const { contentIndex, text } of snapshotTextBlocks) {
+      // Match on the identity the data actually carries: the API message plus the position of
+      // the block inside it. Matching by position in the turn-wide block list used to pour a
+      // snapshot's text into blocks of *earlier* messages of the same turn, so the message
+      // whose stream broke was never repaired. When either side has no message id (no
+      // `message_start` was seen) fall back to the most recent block at that index.
+      const candidates = turnState.assistantTextBlockOrder.filter(
+        (block) => block.blockIndex === contentIndex,
+      );
+      const existing =
+        candidates.findLast(
+          (block) => block.messageId !== undefined && block.messageId === snapshotMessageId,
+        ) ??
+        candidates.findLast(
+          (block) => block.messageId === undefined || snapshotMessageId === undefined,
+        );
+
+      const block =
+        existing ??
+        (yield* createSyntheticAssistantTextBlock(context, text, {
+          contentIndex,
+          messageId: snapshotMessageId,
+        }))?.block;
+
+      // Already delivered — the ordinary stream → `content_block_stop` → snapshot order. Its
+      // text came from the deltas and re-emitting anything here would duplicate it.
+      if (!block || block.completionEmitted) {
         continue;
       }
 
-      if (entry.block.fallbackText.length === 0) {
-        entry.block.fallbackText = text;
+      if (!text.startsWith(block.streamedText)) {
+        // The client has already seen text this snapshot does not continue. Appending would
+        // corrupt the message, and there is no way to retract a delta, so leave it alone.
+        yield* Effect.logWarning("claude.assistant.snapshot-diverged", {
+          threadId: context.session.threadId,
+          messageId: snapshotMessageId,
+          contentIndex,
+          streamedLength: block.streamedText.length,
+          snapshotLength: text.length,
+        });
+        continue;
       }
 
-      if (entry.block.streamClosed && !entry.block.completionEmitted) {
-        yield* completeAssistantTextBlock(context, entry.block, {
+      block.fallbackText = text;
+
+      // A snapshot alone is not grounds for completing the block: late deltas may still
+      // follow. `content_block_stop` or the turn result closes it.
+      if (block.streamClosed) {
+        yield* completeAssistantTextBlock(context, block, {
           rawMethod: "claude/assistant",
           rawPayload: message,
         });
@@ -2424,6 +2508,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
     }
 
+    // Remember which API message the following content blocks belong to. Their indexes
+    // restart at 0 in every message, so without this two messages of one turn are
+    // indistinguishable. Subagent traffic must not overwrite the parent's message.
+    if (event.type === "message_start") {
+      if (streamParentToolUseId !== null && streamParentToolUseId !== undefined) {
+        return;
+      }
+      if (context.turnState) {
+        const startedMessageId = (event.message as { id?: unknown } | undefined)?.id;
+        context.turnState.currentAssistantMessageId =
+          typeof startedMessageId === "string" && startedMessageId.length > 0
+            ? startedMessageId
+            : undefined;
+      }
+      return;
+    }
+
     if (event.type === "message_delta") {
       if (message.parent_tool_use_id !== null && message.parent_tool_use_id !== undefined) {
         return;
@@ -2468,7 +2569,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                 }
               : undefined;
         if (assistantBlockEntry?.block && event.delta.type === "text_delta") {
-          assistantBlockEntry.block.emittedTextDelta = true;
+          assistantBlockEntry.block.streamedText += deltaText;
         }
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
@@ -2679,7 +2780,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (event.type === "content_block_stop") {
       const { index } = event;
-      const assistantBlock = context.turnState?.assistantTextBlocks.get(index);
+      // A subagent's stop frame reaches us (only its text/thinking start and deltas are
+      // dropped above) and carries the subagent's own block index. Closing the parent's block
+      // on it truncated the parent's message at whatever had streamed so far.
+      const assistantBlock =
+        streamParentToolUseId === null || streamParentToolUseId === undefined
+          ? context.turnState?.assistantTextBlocks.get(index)
+          : undefined;
       if (assistantBlock) {
         assistantBlock.streamClosed = true;
         yield* completeAssistantTextBlock(context, assistantBlock, {
@@ -2899,7 +3006,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
         capturedProposedPlanKeys: new Set(),
-        nextSyntheticAssistantBlockIndex: -1,
+        currentAssistantMessageId: undefined,
       };
       context.session = {
         ...context.session,
@@ -4418,7 +4525,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
         capturedProposedPlanKeys: new Set(),
-        nextSyntheticAssistantBlockIndex: -1,
+        currentAssistantMessageId: undefined,
       };
 
       const updatedAt = yield* nowIso;
