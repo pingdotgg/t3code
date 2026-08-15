@@ -214,12 +214,13 @@ const bootstrap = Effect.gen(function* () {
     const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))(
       raw,
     ).pipe(Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS));
-    // tryPromise-equivalent: ensureDaemon failures must not defect bootstrap.
+    // ensureDaemon keeps ComputerHistoryOperationError in the error channel so
+    // bootstrap can Effect.catch without turning spawn/layout failures into defects.
     const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
     yield* manager
       .ensureDaemon(environment.stateDir, decoded.computerHistory)
       .pipe(
-        Effect.catch((cause) =>
+        Effect.catchTag("ComputerHistoryOperationError", (cause) =>
           Effect.logWarning("Computer History daemon bootstrap skipped", { cause }),
         ),
       );
