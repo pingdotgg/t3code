@@ -173,6 +173,8 @@ private final class DaemonState {
     guard appOk else { return false }
 
     let isBrowser = Self.isBrowser(app)
+    let siteNeedles = websites.map { $0.lowercased() }
+    let includeOnly = websiteFilterMode == "includeOnly" && !siteNeedles.isEmpty
 
     // Private-mode markers may live in the title even when AXURL is an ordinary https URL.
     if isBrowser,
@@ -181,19 +183,20 @@ private final class DaemonState {
     {
       return false
     }
-    guard let url = context.url else { return true }
+    guard let url = context.url else {
+      return !includeOnly
+    }
     let lowered = url.lowercased()
     if isBrowser, Self.isPrivateBrowsing(text: lowered) {
       return false
     }
-    let siteNeedles = websites.map { $0.lowercased() }
     // Website filters only apply to URL-like haystacks, never plain window titles.
     let looksUrl = lowered.contains("://")
       || lowered.hasPrefix("about:")
       || lowered.hasPrefix("chrome:")
       || lowered.hasPrefix("edge:")
       || lowered.hasPrefix("brave:")
-    guard looksUrl else { return true }
+    guard looksUrl else { return !includeOnly }
     if siteNeedles.isEmpty {
       return websiteFilterMode == "exclude"
     }
@@ -265,21 +268,19 @@ private final class DaemonState {
       app.bundleURL?.path ?? "",
     ]
     .map { $0.lowercased() }
-    return ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera"].contains { needle in
+    return ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera", "arc", "vivaldi"].contains { needle in
       hay.contains { $0.contains(needle) }
     }
   }
 
   private static func isPrivateBrowsing(text: String) -> Bool {
-    text.contains("chrome://newtab")
-      || text.contains("chrome://private")
+    text.contains("chrome://private")
       || text.contains("chrome-search://local-ntp")
       || text.hasPrefix("about:privatebrowsing")
       || text.contains("about:privatebrowsing")
       || text.contains("private browsing")
-      || text.contains("edge://newtab")
       || text.contains("edge://private")
-      || text.contains("brave://newtab")
+      || text.contains("brave://private")
       || text.contains("opera://private")
       || text.contains("(private)")
       || text.contains("incognito")
@@ -289,6 +290,11 @@ private final class DaemonState {
   private static func hostMatches(url: String, needle: String) -> Bool {
     let needle = needle.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
     guard !needle.isEmpty else { return false }
+    if needle.contains("/") || !needle.contains(".") {
+      if url.contains(needle) {
+        return true
+      }
+    }
     if let host = urlHost(url) {
       return host == needle || host.hasSuffix(".\(needle)")
     }
@@ -302,21 +308,23 @@ private final class DaemonState {
     return host
   }
 
-  private func append(_ record: [String: Any]) {
+  @discardableResult
+  private func append(_ record: [String: Any]) -> Bool {
     guard let eventsHandle,
           let data = try? JSONSerialization.data(withJSONObject: record),
           var line = String(data: data, encoding: .utf8)
-    else { return }
+    else { return false }
     line.append("\n")
-    guard let bytes = line.data(using: .utf8) else { return }
+    guard let bytes = line.data(using: .utf8) else { return false }
     do {
       try eventsHandle.write(contentsOf: bytes)
     } catch {
       // Do not bump counters / rewrite metadata for a line that never landed.
-      return
+      return false
     }
     eventCount += 1
     writeMetadata(endedAt: nil, endReason: nil)
+    return true
   }
 
   private func rotateIfNeeded() {
@@ -353,7 +361,6 @@ private final class DaemonState {
     }
     let key = "\(app.processIdentifier):\(app.bundleIdentifier ?? "")"
     guard key != lastAppKey else { return }
-    lastAppKey = key
     rotateIfNeeded()
     var appPayload: [String: Any] = [
       "processIdentifier": app.processIdentifier,
@@ -380,7 +387,8 @@ private final class DaemonState {
     if let windowTitle {
       record["window"] = ["title": windowTitle]
     }
-    append(record)
+    guard append(record) else { return }
+    lastAppKey = key
   }
 
   func tick() {
@@ -415,7 +423,6 @@ private final class DaemonState {
 
     let focusKey = "\(app.processIdentifier)|\(windowTitle ?? "")|\(role ?? "")|\(desc ?? "")|\((value ?? "").prefix(40))"
     guard focusKey != lastFocusKey else { return }
-    lastFocusKey = focusKey
 
     var appPayload: [String: Any] = ["processIdentifier": app.processIdentifier]
     if let bid = app.bundleIdentifier { appPayload["bundleIdentifier"] = bid }
@@ -434,7 +441,8 @@ private final class DaemonState {
     ]
     if let windowTitle { record["window"] = ["title": windowTitle] }
     if !axPayload.isEmpty { record["ax"] = axPayload }
-    append(record)
+    guard append(record) else { return }
+    lastFocusKey = focusKey
   }
 }
 

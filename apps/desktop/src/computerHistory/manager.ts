@@ -271,8 +271,15 @@ export const make = Effect.gen(function* () {
       });
     });
     child.on("exit", (code, signal) => {
-      if (state.child === child && state.generation === generation) {
+      if (state.generation !== generation) {
+        return;
+      }
+      if (state.child === child) {
         state.child = null;
+      }
+      // Intentional stop (disable / layer shutdown) — do not mark unavailable.
+      if (state.stopping !== null) {
+        return;
       }
       const detail =
         code === null
@@ -292,9 +299,7 @@ export const make = Effect.gen(function* () {
     const root = resolveComputerHistoryRoot(stateDir);
     const control = await readControlFile(root);
     const base = lastMergedSettings ?? persisted;
-    const daemonRunning = Boolean(state.child && !state.child.killed);
-    const enabled =
-      patch.enabled ?? (daemonRunning ? true : undefined) ?? control?.enabled ?? base.enabled;
+    const enabled = patch.enabled ?? control?.enabled ?? base.enabled;
     const merged = {
       ...base,
       ...patch,
@@ -323,12 +328,14 @@ export const make = Effect.gen(function* () {
     mergePatchSettings: (stateDir, persisted, patch) =>
       Effect.tryPromise({
         try: () => applyPatchSettings(stateDir, persisted, patch),
-        catch: (cause) =>
-          new ComputerHistoryOperationError({
+        catch: (cause) => {
+          const root = resolveComputerHistoryRoot(stateDir);
+          return new ComputerHistoryOperationError({
             operation: "mergePatchSettings",
-            root: resolveComputerHistoryRoot(stateDir),
+            root,
             cause,
-          }),
+          });
+        },
       }),
     ensureDaemon: (stateDir, settings) =>
       runDaemonOp("ensureDaemon", resolveComputerHistoryRoot(stateDir), () =>
