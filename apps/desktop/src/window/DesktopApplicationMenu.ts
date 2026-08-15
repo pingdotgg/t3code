@@ -191,12 +191,10 @@ export const make = Effect.gen(function* () {
           { role: "forceReload" },
           { role: "toggleDevTools" },
           { type: "separator" },
-          /*
-            Not the zoom roles: those act on the focused webContents, so with
-            an embedded preview WebContentsView focused they zoom the guest
-            page and the app UI appears stuck. These always zoom the main
-            window (see DesktopWindow.zoomMain).
-          */
+          // Do not use Electron's zoom roles: they can keep targeting a
+          // previously focused preview guest. PreviewManager consumes guest
+          // shortcuts first; keyboard and mouse actions that reach this menu
+          // deliberately zoom the main T3 window.
           { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
           { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
           {

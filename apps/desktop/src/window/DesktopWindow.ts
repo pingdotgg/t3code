@@ -89,11 +89,10 @@ export class DesktopWindow extends Context.Service<
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-    // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
-    // menu roles act on whichever webContents has keyboard focus, so with an
-    // embedded preview WebContentsView (or DevTools) focused they zoom the
-    // guest page instead of the app UI. The menu routes here to always target
-    // the main window.
+    // Zooms the main window's own webContents. Electron's native zoom roles
+    // can keep targeting an embedded preview after focus returns to the app.
+    // PreviewManager consumes guest shortcuts before application-menu actions
+    // reach this explicit main-window fallback.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
     readonly syncAppearance: Effect.Effect<void>;
   }
@@ -457,6 +456,9 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = false;
+      // Electron otherwise copies the app renderer's current zoom into each
+      // new guest, coupling preview zoom to the surrounding T3 UI.
+      webPreferences.zoomFactor = 1;
     });
 
     window.webContents.on("context-menu", (event, params) => {
@@ -851,7 +853,7 @@ export const make = Effect.gen(function* () {
         return;
       }
       const webContents = window.value.webContents;
-      // Same step size as the Electron zoomIn/zoomOut menu roles.
+      // Same step size as Electron's zoomIn and zoomOut menu roles.
       webContents.setZoomLevel(
         direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
       );

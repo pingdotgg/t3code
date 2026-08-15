@@ -58,6 +58,31 @@ describe("isPreviewRefreshShortcut", () => {
   });
 });
 
+describe("getPreviewZoomShortcutDirection", () => {
+  const input = (overrides: Partial<Electron.Input> = {}) =>
+    ({
+      type: "keyDown",
+      key: "-",
+      meta: true,
+      control: false,
+      shift: false,
+      alt: false,
+      ...overrides,
+    }) as Electron.Input;
+
+  it("recognizes standard zoom chords without matching modified variants", () => {
+    expect(PreviewManager.getPreviewZoomShortcutDirection(input())).toBe("out");
+    expect(PreviewManager.getPreviewZoomShortcutDirection(input({ key: "=" }))).toBe("in");
+    expect(PreviewManager.getPreviewZoomShortcutDirection(input({ key: "+", shift: true }))).toBe(
+      "in",
+    );
+    expect(PreviewManager.getPreviewZoomShortcutDirection(input({ key: "0" }))).toBe("reset");
+    expect(PreviewManager.getPreviewZoomShortcutDirection(input({ alt: true }))).toBeNull();
+    expect(PreviewManager.getPreviewZoomShortcutDirection(input({ meta: false }))).toBeNull();
+    expect(PreviewManager.getPreviewZoomShortcutDirection(input({ type: "keyUp" }))).toBeNull();
+  });
+});
+
 const {
   browserWindowConstructor,
   createFromPath,

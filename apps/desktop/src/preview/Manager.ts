@@ -420,6 +420,18 @@ export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   !input.shift &&
   !input.alt;
 
+export type PreviewZoomShortcutDirection = "in" | "out" | "reset";
+
+export const getPreviewZoomShortcutDirection = (
+  input: Electron.Input,
+): PreviewZoomShortcutDirection | null => {
+  if (input.type !== "keyDown" || (!input.meta && !input.control) || input.alt) return null;
+  if (input.key === "+" || input.key === "=") return "in";
+  if (!input.shift && input.key === "-") return "out";
+  if (!input.shift && input.key === "0") return "reset";
+  return null;
+};
+
 const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
   if (value.kind === "pointer") {
@@ -1281,6 +1293,30 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const applyZoom = Effect.fn("PreviewManager.applyZoom")(function* (
+    tabId: string,
+    transform: (current: number) => number,
+  ) {
+    yield* withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (!tab) return;
+        const next = transform(tab.zoomFactor);
+        if (Math.abs(next - tab.zoomFactor) < ZOOM_EPSILON) return;
+        if (tab.webContentsId != null) {
+          const wc = webContents.fromId(tab.webContentsId);
+          if (wc && !wc.isDestroyed()) {
+            yield* attempt({ operation: "applyZoom", tabId, webContentsId: wc.id }, () =>
+              wc.setZoomFactor(next),
+            );
+          }
+        }
+        yield* update(tabId, { zoomFactor: next });
+      }),
+    );
+  });
+
   const attachListeners = Effect.fn("PreviewManager.attachListeners")(function* (
     tabId: string,
     wc: Electron.WebContents,
@@ -1519,6 +1555,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () =>
             wc.reload(),
           ).pipe(Effect.ignore),
+        );
+        return;
+      }
+      const zoomDirection = getPreviewZoomShortcutDirection(input);
+      if (zoomDirection !== null) {
+        event.preventDefault();
+        runFork(
+          applyZoom(tabId, (current) =>
+            zoomDirection === "reset" ? DEFAULT_ZOOM_FACTOR : nextZoomLevel(current, zoomDirection),
+          ),
         );
         return;
       }
@@ -2097,25 +2143,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return cancel;
       },
     );
-  });
-
-  const applyZoom = Effect.fn("PreviewManager.applyZoom")(function* (
-    tabId: string,
-    transform: (current: number) => number,
-  ) {
-    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-    if (!tab) return;
-    const next = transform(tab.zoomFactor);
-    if (Math.abs(next - tab.zoomFactor) < ZOOM_EPSILON) return;
-    if (tab.webContentsId != null) {
-      const wc = webContents.fromId(tab.webContentsId);
-      if (wc && !wc.isDestroyed()) {
-        yield* attempt({ operation: "applyZoom", tabId, webContentsId: wc.id }, () =>
-          wc.setZoomFactor(next),
-        );
-      }
-    }
-    yield* update(tabId, { zoomFactor: next });
   });
 
   // Emulated media lives on the CDP debugger session, not the WebContents, so

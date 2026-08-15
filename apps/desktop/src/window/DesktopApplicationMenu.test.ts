@@ -146,10 +146,9 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  // Zoom must route through DesktopWindow.zoomMain instead of the Electron
-  // zoom roles: the roles zoom whichever webContents has focus, which breaks
-  // app zoom while an embedded preview WebContentsView holds focus.
-  it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
+  // Zoom must route through DesktopWindow.zoomMain instead of Electron's zoom
+  // roles, which can keep targeting a preview guest after focus returns to T3.
+  it.effect("routes app zoom to the main window without native zoom roles", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
       const applicationMenuTemplate =
