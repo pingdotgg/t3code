@@ -40,6 +40,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useUnreadBackgroundThreadCount } from "../hooks/useUnreadBackgroundThreadCount";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -73,6 +74,7 @@ function SidebarControl() {
     environmentIdentificationMode === "artwork",
   );
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const unreadCount = useUnreadBackgroundThreadCount();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -90,15 +92,11 @@ function SidebarControl() {
       toggleSidebar();
     };
 
-    // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [keybindings, toggleSidebar]);
 
   return (
-    // The right-side layout controls carry mr-px (border compensation inside
-    // the panel), so the trigger mirrors it: both clusters sit one extra pixel
-    // off their edge and the titlebar reads symmetric.
     <div
       className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
       data-sidebar-control=""
@@ -107,6 +105,7 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
+              unreadCount={unreadCount}
               className={cn(
                 "pointer-events-auto",
                 isSidebarVisible &&

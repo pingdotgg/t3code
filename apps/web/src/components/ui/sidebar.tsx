@@ -318,14 +318,19 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  onClick,
+  unreadCount,
+  ...props
+}: React.ComponentProps<typeof Button> & { unreadCount?: number | undefined }) {
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
 
   return (
     <Button
       className={cn(
-        "size-[var(--workspace-titlebar-control-size)]! [-webkit-app-region:no-drag]",
+        "relative size-[var(--workspace-titlebar-control-size)]! [-webkit-app-region:no-drag]",
         className,
       )}
       data-sidebar="trigger"
@@ -340,6 +345,15 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      {unreadCount !== undefined && unreadCount > 0 ? (
+        <span
+          className="pointer-events-none absolute -right-0.5 -top-0.5 flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold leading-none text-white shadow-xs"
+          data-testid="sidebar-unread-badge"
+          aria-label={`${unreadCount} unread`}
+        >
+          {unreadCount > 9 ? "9+" : unreadCount}
+        </span>
+      ) : null}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );

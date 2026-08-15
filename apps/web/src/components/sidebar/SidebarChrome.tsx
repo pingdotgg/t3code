@@ -30,6 +30,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { useUnreadBackgroundThreadCount } from "../../hooks/useUnreadBackgroundThreadCount";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -46,6 +47,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
+  const unreadCount = useUnreadBackgroundThreadCount();
 
   return (
     <SidebarHeader
@@ -56,6 +58,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
       <SidebarTrigger
+        unreadCount={unreadCount}
         className={cn(
           "relative z-10 md:hidden",
           backdropVariant &&
