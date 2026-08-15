@@ -390,7 +390,7 @@ describe("applyShellStreamEvent", () => {
     expect(next.projects[0]?.repositoryIdentity).toEqual(liveIdentity);
   });
 
-  it("moves a thread between active and archive without duplicating it", () => {
+  it("keeps archive deltas out of the normal shell cache", () => {
     const archived = applyShellStreamEvent(v2ShellSnapshot, {
       kind: "thread.updated",
       sequence: 3,
@@ -398,7 +398,7 @@ describe("applyShellStreamEvent", () => {
       thread: { ...v2ThreadShell, archivedAt: v2ThreadShell.updatedAt },
     });
     expect(archived.threads).toEqual([]);
-    expect(archived.archivedThreads).toHaveLength(1);
+    expect(archived.archivedThreads).toEqual([]);
 
     const active = applyShellStreamEvent(archived, {
       kind: "thread.updated",
