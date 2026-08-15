@@ -33,6 +33,21 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings sound notifications", () => {
+  it("defaults sound notifications on", () => {
+    expect(decodeClientSettings({}).soundNotificationsEnabled).toBe(true);
+  });
+
+  it("decodes explicit sound notifications setting", () => {
+    expect(
+      decodeClientSettings({ soundNotificationsEnabled: false }).soundNotificationsEnabled,
+    ).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ soundNotificationsEnabled: false }).soundNotificationsEnabled,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);
