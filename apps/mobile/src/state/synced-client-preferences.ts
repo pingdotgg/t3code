@@ -109,14 +109,13 @@ export function useSyncedClientPreferences(): void {
       liveStates.filter(({ canPatch }) => canPatch).map(({ environmentId }) => environmentId),
     );
     for (const { environmentId, shell } of liveStates) {
-      const updatedAt =
-        shell.snapshot._tag === "Some"
-          ? getSyncedClientPreferenceUpdatedAt(
-              shell.snapshot.value.syncedClientPreferences,
-              "planModeEnabled",
-            )
-          : undefined;
-      reconciliationController.observe(environmentId, updatedAt);
+      const preferences =
+        shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
+      reconciliationController.observe(
+        environmentId,
+        preferences?.planModeEnabled,
+        getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
+      );
     }
     if (!connectionsLoaded) {
       setReconciledKey(null);

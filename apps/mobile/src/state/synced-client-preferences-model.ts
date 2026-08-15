@@ -138,8 +138,16 @@ function localPreferenceUpdatedAt(
 export function createPlanModePreferenceReconciliationController(
   scheduleRetry: PlanModePreferenceRetryScheduler = schedulePlanModePreferenceRetry,
 ) {
+  const reconciliationKey = (value: boolean | undefined, updatedAt: string | undefined) =>
+    value === undefined || updatedAt === undefined
+      ? undefined
+      : `${updatedAt}:${value ? "1" : "0"}`;
+  const targetReconciliationKey = (target: PlanModePreferencePatchTarget) =>
+    reconciliationKey(target.input.patch.planModeEnabled, target.input.updatedAt);
+
   interface Reconciliation {
     readonly target: PlanModePreferencePatchTarget;
+    readonly key: string | undefined;
     attempt: number;
     patch: () => Promise<SyncedClientPreferences | null>;
     persist: (patch: Partial<Preferences>) => void;
@@ -148,7 +156,7 @@ export function createPlanModePreferenceReconciliationController(
 
   interface EnvironmentReconciliation {
     reconciliation?: Reconciliation;
-    settledUpdatedAt?: string;
+    settledKey?: string;
   }
 
   const environmentReconciliations = new Map<EnvironmentId, EnvironmentReconciliation>();
@@ -185,7 +193,7 @@ export function createPlanModePreferenceReconciliationController(
           return;
         }
         state.reconciliation = undefined;
-        state.settledUpdatedAt = reconciliation.target.input.updatedAt;
+        state.settledKey = reconciliation.key;
         const localPatch = canonicalPlanModePreferencePatch(preferences);
         if (localPatch !== null) reconciliation.persist(localPatch);
       },
@@ -207,9 +215,14 @@ export function createPlanModePreferenceReconciliationController(
         }
       }
     },
-    observe(environmentId: EnvironmentId, updatedAt: string | undefined) {
+    observe(
+      environmentId: EnvironmentId,
+      value: boolean | undefined,
+      updatedAt: string | undefined,
+    ) {
       const reconciliation = environmentReconciliations.get(environmentId)?.reconciliation;
-      if (reconciliation?.target.input.updatedAt === updatedAt) cancel(environmentId);
+      const observedKey = reconciliationKey(value, updatedAt);
+      if (observedKey !== undefined && reconciliation?.key === observedKey) cancel(environmentId);
     },
     reconcile<E>(input: {
       readonly target: PlanModePreferencePatchTarget;
@@ -220,11 +233,12 @@ export function createPlanModePreferenceReconciliationController(
     }) {
       const { environmentId } = input.target;
       const state = environmentReconciliations.get(environmentId);
-      if (state === undefined || state.settledUpdatedAt === input.target.input.updatedAt) {
+      const key = targetReconciliationKey(input.target);
+      if (state === undefined || (key !== undefined && state.settledKey === key)) {
         return;
       }
       const current = state.reconciliation;
-      if (current?.target.input.updatedAt === input.target.input.updatedAt) {
+      if (key !== undefined && current?.key === key) {
         current.patch = async () => {
           const result = await input.patch(input.target);
           return result._tag === "Success" ? result.value : null;
@@ -233,9 +247,10 @@ export function createPlanModePreferenceReconciliationController(
         return;
       }
       if (current !== undefined) cancel(environmentId);
-      state.settledUpdatedAt = undefined;
+      state.settledKey = undefined;
       const reconciliation: Reconciliation = {
         target: input.target,
+        key,
         attempt: 0,
         patch: async () => {
           const result = await input.patch(input.target);

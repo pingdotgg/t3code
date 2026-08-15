@@ -539,6 +539,84 @@ describe("synced client preferences", () => {
     expect(reconciliation.environmentPatches[0]?.input.patch.planModeEnabled).toBe(true);
   });
 
+  it("reconciles the deterministic equal-stamp winner after topology changes", async () => {
+    const updatedAt = "2026-08-14T12:00:00.000Z";
+    const lowerEnvironmentId = environmentId("environment-1");
+    const higherEnvironmentId = environmentId("environment-2");
+    const initial = reconcilePlanModePreferences({
+      localPlanModeEnabled: false,
+      localUpdatedAt: updatedAt,
+      environments: [{ environmentId: lowerEnvironmentId, preferences: undefined }],
+      now: updatedAt,
+    });
+    const controller = createPlanModePreferenceReconciliationController();
+    const patch = vi.fn(async (target: (typeof initial.environmentPatches)[number]) =>
+      AsyncResult.success({
+        planModeEnabled: target.input.patch.planModeEnabled,
+        updatedAt: target.input.updatedAt,
+      }),
+    );
+    controller.setActiveEnvironmentIds([lowerEnvironmentId]);
+    controller.reconcile({ target: initial.environmentPatches[0]!, patch, persist: vi.fn() });
+    await flushReconciliation();
+
+    const environments = [
+      {
+        environmentId: lowerEnvironmentId,
+        preferences: { planModeEnabled: false, updatedAt },
+      },
+      {
+        environmentId: higherEnvironmentId,
+        preferences: { planModeEnabled: true, updatedAt },
+      },
+    ];
+    const ascending = reconcilePlanModePreferences({
+      localPlanModeEnabled: false,
+      localUpdatedAt: updatedAt,
+      environments,
+      now: updatedAt,
+    });
+    const descending = reconcilePlanModePreferences({
+      localPlanModeEnabled: false,
+      localUpdatedAt: updatedAt,
+      environments: [environments[1]!, environments[0]!],
+      now: updatedAt,
+    });
+    controller.reconcile({ target: ascending.environmentPatches[0]!, patch, persist: vi.fn() });
+    await flushReconciliation();
+
+    const expected = {
+      localPatch: {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: { planModeEnabled: updatedAt },
+      },
+      environmentPatches: [
+        {
+          environmentId: lowerEnvironmentId,
+          input: { patch: { planModeEnabled: true }, updatedAt },
+        },
+      ],
+    };
+    expect({
+      ascending,
+      descending,
+      patchedValues: patch.mock.calls.map(([target]) => target),
+    }).toEqual({
+      ascending: expected,
+      descending: expected,
+      patchedValues: [
+        {
+          environmentId: lowerEnvironmentId,
+          input: { patch: { planModeEnabled: false }, updatedAt },
+        },
+        {
+          environmentId: lowerEnvironmentId,
+          input: { patch: { planModeEnabled: true }, updatedAt },
+        },
+      ],
+    });
+  });
+
   it("reconciles when ES2023 change-by-copy array methods are unavailable", () => {
     const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
     Reflect.defineProperty(Array.prototype, "toSorted", {
