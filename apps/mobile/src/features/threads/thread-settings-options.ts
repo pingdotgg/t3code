@@ -1,5 +1,39 @@
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 
+export type ThreadSettingsOptionItem =
+  | {
+      readonly kind: "descriptor";
+      readonly descriptor: ProviderOptionDescriptor;
+    }
+  | { readonly kind: "interaction-mode" };
+
+/**
+ * Plan mode belongs directly after Fast Mode when that provider option is
+ * available. Providers without Fast Mode still get the new-task control at
+ * the end of their provider-specific options.
+ */
+export function buildThreadSettingsOptionItems(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  includeInteractionMode: boolean,
+): ReadonlyArray<ThreadSettingsOptionItem> {
+  const items: Array<ThreadSettingsOptionItem> = [];
+  let insertedInteractionMode = false;
+
+  for (const descriptor of descriptors) {
+    items.push({ kind: "descriptor", descriptor });
+    if (includeInteractionMode && descriptor.id === "fastMode") {
+      items.push({ kind: "interaction-mode" });
+      insertedInteractionMode = true;
+    }
+  }
+
+  if (includeInteractionMode && !insertedInteractionMode) {
+    items.push({ kind: "interaction-mode" });
+  }
+
+  return items;
+}
+
 /**
  * Desktop-oriented effort keywords that don't belong in the phone picker.
  * Prompt-injected values (ultrathink and friends) are filtered from the

@@ -64,6 +64,7 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { resolveNewTaskInteractionMode } from "./new-task-interaction-mode";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -654,9 +655,9 @@ export function NewTaskDraftScreen(props: {
       draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
-    const interactionMode = flow.planModeEnabled
-      ? (draft.interactionMode ?? flow.interactionMode)
-      : "default";
+    const interactionMode = resolveNewTaskInteractionMode(
+      draft.interactionMode ?? flow.interactionMode,
+    );
     const initialMessageText = draft.text.trim();
 
     if (
@@ -701,10 +702,12 @@ export function NewTaskDraftScreen(props: {
       if (editingPendingTask) {
         flow.finishEditingPendingTask();
       } else {
-        // Drop the workspace selection with the content: the next task should
-        // re-resolve mode/branch/origin from the server's configured defaults
-        // instead of resurrecting this task's picks.
-        clearComposerDraftContent(draftKey, { clearWorkspaceSelection: true });
+        // Drop one-task controls with the content: the next task should return
+        // to Build mode and re-resolve workspace settings from server defaults.
+        clearComposerDraftContent(draftKey, {
+          clearInteractionMode: true,
+          clearWorkspaceSelection: true,
+        });
       }
       navigation.getParent()?.goBack();
       return;
@@ -768,7 +771,10 @@ export function NewTaskDraftScreen(props: {
       }
       flow.finishEditingPendingTask();
     } else {
-      clearComposerDraftContent(draftKey, { clearWorkspaceSelection: true });
+      clearComposerDraftContent(draftKey, {
+        clearInteractionMode: true,
+        clearWorkspaceSelection: true,
+      });
     }
     navigation.dispatch(
       StackActions.replace("Thread", {

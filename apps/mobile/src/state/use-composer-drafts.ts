@@ -394,15 +394,24 @@ export function updateComposerDraftSettings(
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
-  options?: { readonly clearWorkspaceSelection?: boolean },
+  options?: {
+    readonly clearInteractionMode?: boolean;
+    readonly clearWorkspaceSelection?: boolean;
+  },
 ): Record<string, ComposerDraft> {
   const existing = current[draftKey];
   if (!existing) {
     return current;
   }
-  const { importedShareIds: _importedShareIds, workspaceSelection, ...retained } = existing;
+  const {
+    importedShareIds: _importedShareIds,
+    interactionMode,
+    workspaceSelection,
+    ...retained
+  } = existing;
   const draft = {
     ...retained,
+    ...(options?.clearInteractionMode || interactionMode === undefined ? {} : { interactionMode }),
     ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
       ? {}
       : { workspaceSelection }),
@@ -599,7 +608,10 @@ export async function restoreComposerDraftSnapshot(
 
 export function clearComposerDraftContent(
   draftKey: string,
-  options?: { readonly clearWorkspaceSelection?: boolean },
+  options?: {
+    readonly clearInteractionMode?: boolean;
+    readonly clearWorkspaceSelection?: boolean;
+  },
 ): void {
   updateComposerDrafts((current) => clearComposerDraftContentState(current, draftKey, options));
 }
