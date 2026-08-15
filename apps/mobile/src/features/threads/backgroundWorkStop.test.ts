@@ -15,6 +15,19 @@ import {
   findBackgroundWorkStopResolution,
 } from "./backgroundWorkStop";
 
+function createStopGuardState(options?: Parameters<typeof createBackgroundWorkStopGuard>[1]) {
+  let pending: CommandId | null = null;
+  const changes: Array<CommandId | null> = [];
+  const guard = createBackgroundWorkStopGuard((commandId) => {
+    pending = commandId;
+    changes.push(commandId);
+  }, options);
+  let commandSequence = 0;
+  const run = (interrupt: Parameters<typeof guard.run>[1]) =>
+    guard.run(CommandId.make(`stop-command-${++commandSequence}`), interrupt);
+  return { guard, run, changes, pending: () => pending };
+}
+
 describe("backgroundWorkStopConfirmation", () => {
   it("dispatches only after the destructive confirmation", () => {
     const stop = vi.fn();
@@ -74,9 +87,10 @@ describe("backgroundWorkStopConfirmation", () => {
     };
 
     expect(
-      buildBackgroundWorkInterruptInput({ id: threadId, session }, undefined, "0.0.33"),
+      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, "0.0.33"),
     ).toEqual({
       threadId,
+      commandId,
       expectedTurnId: null,
       expectedSessionUpdatedAt: session.updatedAt,
     });
@@ -150,50 +164,44 @@ describe("backgroundWorkStopConfirmation", () => {
           resolveInterrupt = resolve;
         }),
     );
-    const inFlightChanges: boolean[] = [];
-    const guard = createBackgroundWorkStopGuard((inFlight) => {
-      inFlightChanges.push(inFlight);
-    });
+    const state = createStopGuardState();
+    const { guard } = state;
 
-    const first = guard.run(interrupt);
+    const first = state.run(interrupt);
     expect(interrupt).toHaveBeenCalledOnce();
-    expect(guard.isInFlight()).toBe(true);
-    expect(inFlightChanges).toEqual([true]);
+    const firstCommandId = state.pending();
+    expect(firstCommandId).not.toBeNull();
+    expect(state.changes).toEqual([firstCommandId]);
 
     resolveInterrupt?.();
     await expect(first).resolves.toBe(true);
-    const second = guard.run(interrupt);
+    const second = state.run(interrupt);
     await expect(second).resolves.toBe(false);
-    expect(guard.isInFlight()).toBe(true);
-    expect(inFlightChanges).toEqual([true]);
+    expect(state.pending()).toBe(firstCommandId);
+    expect(state.changes).toEqual([firstCommandId]);
 
     guard.resolve();
     guard.resolve();
-    expect(guard.isInFlight()).toBe(false);
-    expect(inFlightChanges).toEqual([true, false]);
+    expect(state.pending()).toBeNull();
+    expect(state.changes).toEqual([firstCommandId, null]);
   });
 
   it("re-enables Stop when a legacy server emits no resolution activity", async () => {
     vi.useFakeTimers();
     try {
-      const inFlightChanges: boolean[] = [];
       const onTimeout = vi.fn();
-      const guard = createBackgroundWorkStopGuard(
-        (inFlight) => {
-          inFlightChanges.push(inFlight);
-        },
-        { timeoutMs: 3_000, onTimeout },
-      );
+      const state = createStopGuardState({ timeoutMs: 3_000, onTimeout });
 
-      await expect(guard.run(async () => undefined)).resolves.toBe(true);
-      expect(guard.isInFlight()).toBe(true);
+      await expect(state.run(async () => undefined)).resolves.toBe(true);
+      const commandId = state.pending();
+      expect(commandId).not.toBeNull();
 
       await vi.advanceTimersByTimeAsync(2_999);
-      expect(guard.isInFlight()).toBe(true);
+      expect(state.pending()).toBe(commandId);
 
       await vi.advanceTimersByTimeAsync(1);
-      expect(guard.isInFlight()).toBe(false);
-      expect(inFlightChanges).toEqual([true, false]);
+      expect(state.pending()).toBeNull();
+      expect(state.changes).toEqual([commandId, null]);
       expect(onTimeout).toHaveBeenCalledOnce();
       expect(onTimeout).toHaveBeenCalledWith({
         title: "Stop status unknown",
@@ -209,8 +217,9 @@ describe("backgroundWorkStopConfirmation", () => {
     vi.useFakeTimers();
     try {
       let rejectFirst: ((error: Error) => void) | undefined;
-      const guard = createBackgroundWorkStopGuard(() => undefined, { timeoutMs: 3_000 });
-      const first = guard.run(
+      const state = createStopGuardState({ timeoutMs: 3_000 });
+      const { guard } = state;
+      const first = state.run(
         () =>
           new Promise<void>((_resolve, reject) => {
             rejectFirst = reject;
@@ -218,13 +227,14 @@ describe("backgroundWorkStopConfirmation", () => {
       );
 
       await vi.advanceTimersByTimeAsync(3_000);
-      expect(guard.isInFlight()).toBe(false);
-      await expect(guard.run(async () => undefined)).resolves.toBe(true);
-      expect(guard.isInFlight()).toBe(true);
+      expect(state.pending()).toBeNull();
+      await expect(state.run(async () => undefined)).resolves.toBe(true);
+      const newerCommandId = state.pending();
+      expect(newerCommandId).not.toBeNull();
 
       rejectFirst?.(new Error("late legacy failure"));
       await expect(first).rejects.toThrow("late legacy failure");
-      expect(guard.isInFlight()).toBe(true);
+      expect(state.pending()).toBe(newerCommandId);
       guard.resolve();
     } finally {
       vi.useRealTimers();
@@ -236,11 +246,11 @@ describe("backgroundWorkStopConfirmation", () => {
     try {
       let finishFirst: (() => void) | undefined;
       const onTimeout = vi.fn();
-      const guard = createBackgroundWorkStopGuard(() => undefined, {
+      const state = createStopGuardState({
         timeoutMs: 3_000,
         onTimeout,
       });
-      const first = guard.run(
+      const first = state.run(
         async (attempt) =>
           new Promise<void>((resolve) => {
             finishFirst = () => {
@@ -251,17 +261,17 @@ describe("backgroundWorkStopConfirmation", () => {
       );
 
       await vi.advanceTimersByTimeAsync(3_000);
-      expect(guard.isInFlight()).toBe(false);
+      expect(state.pending()).toBeNull();
       onTimeout.mockClear();
 
-      await expect(guard.run(async () => undefined)).resolves.toBe(true);
+      await expect(state.run(async () => undefined)).resolves.toBe(true);
       finishFirst?.();
       await expect(first).resolves.toBe(true);
-      expect(guard.isInFlight()).toBe(true);
+      expect(state.pending()).not.toBeNull();
 
       await vi.advanceTimersByTimeAsync(3_000);
       expect(onTimeout).toHaveBeenCalledOnce();
-      expect(guard.isInFlight()).toBe(false);
+      expect(state.pending()).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -271,15 +281,16 @@ describe("backgroundWorkStopConfirmation", () => {
     vi.useFakeTimers();
     try {
       const onTimeout = vi.fn();
-      const guard = createBackgroundWorkStopGuard(() => undefined, {
+      const state = createStopGuardState({
         timeoutMs: 3_000,
         onTimeout,
       });
+      const { guard } = state;
 
-      await expect(guard.run(async () => undefined)).resolves.toBe(true);
+      await expect(state.run(async () => undefined)).resolves.toBe(true);
       await vi.advanceTimersByTimeAsync(2_999);
 
-      expect(guard.isInFlight()).toBe(true);
+      expect(state.pending()).not.toBeNull();
       expect(onTimeout).not.toHaveBeenCalled();
 
       // Nested routes blur this screen without running its unmount cleanup.
@@ -287,7 +298,7 @@ describe("backgroundWorkStopConfirmation", () => {
       await vi.advanceTimersByTimeAsync(1);
 
       expect(onTimeout).not.toHaveBeenCalled();
-      expect(guard.isInFlight()).toBe(false);
+      expect(state.pending()).toBeNull();
     } finally {
       vi.useRealTimers();
     }

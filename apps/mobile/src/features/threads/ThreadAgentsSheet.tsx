@@ -20,7 +20,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
@@ -35,7 +35,6 @@ import {
   deriveMobileAgentPanelModel,
   deriveMobileAgentRowModel,
   findMobileAgent,
-  startAgentElapsedClock,
   type MobileAgentDetailModel,
 } from "./agentPresentation";
 import {
@@ -96,22 +95,38 @@ function AgentDetailAndroidColdStartHeader() {
   );
 }
 
-function sessionIsLive(
-  thread: { readonly session: { readonly status: string } | null } | null,
-): boolean {
-  const status = thread?.session?.status;
-  return (
-    status !== undefined && status !== "stopped" && status !== "interrupted" && status !== "error"
-  );
-}
-
 function useAgentElapsedNow(enabled: boolean): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!enabled) return;
-    return startAgentElapsedClock(setNowMs);
+    const intervalId = setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => clearInterval(intervalId);
   }, [enabled]);
   return nowMs;
+}
+
+function useThreadAgents(params: { readonly environmentId: string; readonly threadId: string }) {
+  const threadState = useThreadDetail({
+    environmentId: EnvironmentId.make(params.environmentId),
+    threadId: ThreadId.make(params.threadId),
+  });
+  const thread = Option.getOrNull(threadState.data);
+  const activities = thread?.activities;
+  const sessionStatus = thread?.session?.status;
+  const sessionLive =
+    sessionStatus !== undefined &&
+    sessionStatus !== "stopped" &&
+    sessionStatus !== "interrupted" &&
+    sessionStatus !== "error";
+  const model = useMemo(
+    () =>
+      deriveMobileAgentPanelModel({
+        activities: activities ?? [],
+        sessionLive,
+      }),
+    [activities, sessionLive],
+  );
+  return { model, thread, threadState };
 }
 
 function statusDotClass(status: RuntimeSubagent["status"]): string {
@@ -233,14 +248,13 @@ const PhaseHeader = memo(function PhaseHeader(props: {
   );
 });
 
-function workflowMembers(group: AgentPanelWorkflowGroup) {
-  return [...group.phases.flatMap((phase) => phase.members), ...group.unphasedMembers];
-}
-
 const WorkflowHeader = memo(function WorkflowHeader(props: {
   readonly group: AgentPanelWorkflowGroup;
 }) {
-  const members = workflowMembers(props.group);
+  const members = [
+    ...props.group.phases.flatMap((phase) => phase.members),
+    ...props.group.unphasedMembers,
+  ];
   const settledCount = members.filter(
     (member) =>
       member.status === "completed" ||
@@ -373,23 +387,9 @@ export function ThreadAgentsSheet(props: ThreadAgentsSheetProps) {
         : [],
     [homeAction],
   );
-  const threadState = useThreadDetail({
-    environmentId: EnvironmentId.make(props.route.params.environmentId),
-    threadId: ThreadId.make(props.route.params.threadId),
-  });
-  const thread = Option.getOrNull(threadState.data);
+  const { model, thread, threadState } = useThreadAgents(props.route.params);
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const activities = thread?.activities;
-  const sessionLive = sessionIsLive(thread);
-  const model = useMemo(
-    () =>
-      deriveMobileAgentPanelModel({
-        activities: activities ?? [],
-        sessionLive,
-      }),
-    [activities, sessionLive],
-  );
   const listItems = useMemo(() => buildAgentsListItems(model), [model]);
   const nowMs = useAgentElapsedNow(isFocused && model.liveCount > 0);
   const handleOpenAgent = useCallback(
@@ -490,56 +490,6 @@ export function ThreadAgentsSheet(props: ThreadAgentsSheetProps) {
   );
 }
 
-type AgentDetailListItem =
-  | { readonly kind: "overview"; readonly key: "overview"; readonly model: MobileAgentDetailModel }
-  | { readonly kind: "fact"; readonly key: string; readonly label: string; readonly value: string }
-  | {
-      readonly kind: "narrative";
-      readonly key: string;
-      readonly label: string;
-      readonly value: string;
-    }
-  | { readonly kind: "section"; readonly key: "activity-section"; readonly title: string }
-  | {
-      readonly kind: "activity";
-      readonly key: string;
-      readonly at: string;
-      readonly summary: string;
-    }
-  | { readonly kind: "note"; readonly key: string; readonly text: string };
-
-function buildAgentDetailListItems(
-  model: MobileAgentDetailModel,
-): ReadonlyArray<AgentDetailListItem> {
-  const items: AgentDetailListItem[] = [
-    { kind: "overview", key: "overview", model },
-    { kind: "fact", key: "fact:status", label: "Status", value: model.statusLabel },
-    { kind: "fact", key: "fact:role", label: "Role", value: model.role ?? "—" },
-    { kind: "fact", key: "fact:model", label: "Model", value: model.modelLabel ?? "—" },
-    { kind: "fact", key: "fact:elapsed", label: "Elapsed", value: model.elapsed ?? "—" },
-    { kind: "fact", key: "fact:tokens", label: "Tokens", value: model.tokenLabel },
-    { kind: "fact", key: "fact:tools", label: "Tools", value: model.toolLabel ?? "—" },
-  ];
-  if (model.result) {
-    items.push({ kind: "narrative", key: "result", label: "Result", value: model.result });
-  }
-  if (model.error) {
-    items.push({ kind: "narrative", key: "error", label: "Error", value: model.error });
-  }
-  items.push({ kind: "section", key: "activity-section", title: "Activity" });
-  if (model.activities.length === 0) {
-    items.push({ kind: "note", key: "activity-empty", text: "No retained activity entries." });
-  } else {
-    for (const activity of model.activities) {
-      items.push({ kind: "activity", ...activity });
-    }
-  }
-  if (model.activityTruncationLabel) {
-    items.push({ kind: "note", key: "activity-truncated", text: model.activityTruncationLabel });
-  }
-  return items;
-}
-
 function AgentDetailOverview(props: { readonly model: MobileAgentDetailModel }) {
   return (
     <View className="mb-2 border-b border-border pb-4 pt-1">
@@ -605,23 +555,13 @@ export function ThreadAgentDetailSheet(props: ThreadAgentDetailSheetProps) {
         : [],
     [rosterAction],
   );
-  const threadState = useThreadDetail({
-    environmentId: EnvironmentId.make(props.route.params.environmentId),
-    threadId: ThreadId.make(props.route.params.threadId),
-  });
-  const thread = Option.getOrNull(threadState.data);
+  const { model, thread, threadState } = useThreadAgents(props.route.params);
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const activities = thread?.activities;
-  const sessionLive = sessionIsLive(thread);
-  const agent = useMemo(() => {
-    if (!activities) return null;
-    const panel = deriveMobileAgentPanelModel({
-      activities,
-      sessionLive,
-    });
-    return findMobileAgent(panel, props.route.params.agentId);
-  }, [activities, props.route.params.agentId, sessionLive]);
+  const agent = useMemo(
+    () => findMobileAgent(model, props.route.params.agentId),
+    [model, props.route.params.agentId],
+  );
   const nowMs = useAgentElapsedNow(
     isFocused && agent !== null && isActiveSubagentStatus(agent.status),
   );
@@ -629,7 +569,6 @@ export function ThreadAgentDetailSheet(props: ThreadAgentDetailSheetProps) {
     () => (agent ? deriveMobileAgentDetailModel(agent, nowMs) : null),
     [agent, nowMs],
   );
-  const listItems = useMemo(() => (detail ? buildAgentDetailListItems(detail) : []), [detail]);
   const hasOlderTurns = threadHasOlderTurns(threadState);
   const loadingOlder = Option.match(threadState.page, {
     onNone: () => false,
@@ -659,61 +598,6 @@ export function ThreadAgentDetailSheet(props: ThreadAgentDetailSheetProps) {
   );
   const isLoading =
     thread === null && (threadState.status === "empty" || threadState.status === "synchronizing");
-  const renderItem = useCallback(({ item }: { readonly item: AgentDetailListItem }) => {
-    switch (item.kind) {
-      case "overview":
-        return <AgentDetailOverview model={item.model} />;
-      case "fact":
-        return (
-          <View className="min-h-10 flex-row items-center gap-4 border-b border-border/50 py-2">
-            <Text className="w-20 text-xs text-foreground-muted">{item.label}</Text>
-            <Text
-              className="min-w-0 flex-1 text-right font-mono text-xs text-foreground"
-              selectable
-            >
-              {item.value}
-            </Text>
-          </View>
-        );
-      case "narrative":
-        return (
-          <View className="mt-3 rounded-lg border border-border bg-card px-3 py-3">
-            <Text className="text-2xs font-t3-bold uppercase tracking-[1px] text-foreground-muted">
-              {item.label}
-            </Text>
-            <Text
-              className={cn(
-                "mt-1.5 text-sm leading-5 text-foreground",
-                item.key === "error" && "text-rose-600 dark:text-rose-400",
-              )}
-              selectable
-            >
-              {item.value}
-            </Text>
-          </View>
-        );
-      case "section":
-        return (
-          <Text className="pb-2 pt-5 text-2xs font-t3-bold uppercase tracking-[1px] text-foreground-muted">
-            {item.title}
-          </Text>
-        );
-      case "activity":
-        return (
-          <View className="flex-row gap-3 border-b border-border/50 py-2.5">
-            <Text className="w-20 shrink-0 font-mono text-3xs tabular-nums text-foreground-muted">
-              {formatActivityTime(item.at)}
-            </Text>
-            <Text className="min-w-0 flex-1 text-sm text-foreground" selectable>
-              {item.summary}
-            </Text>
-          </View>
-        );
-      case "note":
-        return <Text className="py-3 text-xs text-foreground-muted">{item.text}</Text>;
-    }
-  }, []);
-
   if (isLoading) {
     return (
       <>
@@ -742,10 +626,23 @@ export function ThreadAgentDetailSheet(props: ThreadAgentDetailSheetProps) {
     );
   }
 
+  const facts = [
+    ["Status", detail.statusLabel],
+    ["Role", detail.role ?? "—"],
+    ["Model", detail.modelLabel ?? "—"],
+    ["Elapsed", detail.elapsed ?? "—"],
+    ["Tokens", detail.tokenLabel],
+    ["Tools", detail.toolLabel ?? "—"],
+  ] as const;
+  const narratives = [
+    detail.result ? { key: "result", label: "Result", value: detail.result } : null,
+    detail.error ? { key: "error", label: "Error", value: detail.error } : null,
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+
   return (
     <>
       {headerOptions}
-      <LegendList
+      <ScrollView
         className="flex-1 bg-screen"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{
@@ -753,15 +650,62 @@ export function ThreadAgentDetailSheet(props: ThreadAgentDetailSheetProps) {
           paddingTop: 10,
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
-        data={listItems}
-        drawDistance={400}
-        estimatedItemSize={48}
-        getItemType={(item) => item.kind}
-        keyExtractor={(item) => item.key}
-        recycleItems
-        renderItem={renderItem}
         showsVerticalScrollIndicator={false}
-      />
+      >
+        <AgentDetailOverview model={detail} />
+        {facts.map(([label, value]) => (
+          <View
+            className="min-h-10 flex-row items-center gap-4 border-b border-border/50 py-2"
+            key={label}
+          >
+            <Text className="w-20 text-xs text-foreground-muted">{label}</Text>
+            <Text
+              className="min-w-0 flex-1 text-right font-mono text-xs text-foreground"
+              selectable
+            >
+              {value}
+            </Text>
+          </View>
+        ))}
+        {narratives.map((item) => (
+          <View className="mt-3 rounded-lg border border-border bg-card px-3 py-3" key={item.key}>
+            <Text className="text-2xs font-t3-bold uppercase tracking-[1px] text-foreground-muted">
+              {item.label}
+            </Text>
+            <Text
+              className={cn(
+                "mt-1.5 text-sm leading-5 text-foreground",
+                item.key === "error" && "text-rose-600 dark:text-rose-400",
+              )}
+              selectable
+            >
+              {item.value}
+            </Text>
+          </View>
+        ))}
+        <Text className="pb-2 pt-5 text-2xs font-t3-bold uppercase tracking-[1px] text-foreground-muted">
+          Activity
+        </Text>
+        {detail.activities.length === 0 ? (
+          <Text className="py-3 text-xs text-foreground-muted">No retained activity entries.</Text>
+        ) : (
+          detail.activities.map((activity) => (
+            <View className="flex-row gap-3 border-b border-border/50 py-2.5" key={activity.id}>
+              <Text className="w-20 shrink-0 font-mono text-3xs tabular-nums text-foreground-muted">
+                {formatActivityTime(activity.at)}
+              </Text>
+              <Text className="min-w-0 flex-1 text-sm text-foreground" selectable>
+                {activity.summary}
+              </Text>
+            </View>
+          ))
+        )}
+        {detail.activityTruncationLabel ? (
+          <Text className="py-3 text-xs text-foreground-muted">
+            {detail.activityTruncationLabel}
+          </Text>
+        ) : null}
+      </ScrollView>
     </>
   );
 }

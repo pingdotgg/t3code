@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 
 import {
@@ -6,7 +6,6 @@ import {
   deriveMobileAgentPanelModel,
   deriveMobileAgentRowModel,
   findMobileAgent,
-  startAgentElapsedClock,
 } from "./agentPresentation";
 
 function activity(
@@ -117,25 +116,6 @@ describe("mobile Agents presentation", () => {
     expect(deriveMobileAgentRowModel(agent, Date.parse("2026-08-14T13:03:01.000Z")).elapsed).toBe(
       "1h 03m",
     );
-  });
-
-  it("ticks live-agent elapsed time once per second until cleanup", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-08-14T12:00:00.000Z"));
-      const onTick = vi.fn();
-      const cleanup = startAgentElapsedClock(onTick);
-
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(onTick).toHaveBeenCalledOnce();
-      expect(onTick).toHaveBeenLastCalledWith(Date.parse("2026-08-14T12:00:01.000Z"));
-
-      cleanup();
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(onTick).toHaveBeenCalledOnce();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("keeps a 150-member workflow roster, counts, and detail lookup consistent", () => {
@@ -287,8 +267,8 @@ describe("mobile Agents presentation", () => {
       "Step 7",
       "Step 8",
     ]);
-    expect(detail.activities.map((entry) => entry.key)).toEqual(
-      Array.from({ length: 6 }, (_, index) => `activity:truncated-progress-${index + 2}`),
+    expect(detail.activities.map((entry) => entry.id)).toEqual(
+      Array.from({ length: 6 }, (_, index) => `truncated-progress-${index + 2}`),
     );
     expect(detail.activityTruncationLabel).toBe(
       "Showing the latest 6 activities; earlier entries were dropped.",

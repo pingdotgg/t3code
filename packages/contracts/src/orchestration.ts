@@ -862,15 +862,19 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Optional compare-and-swap guard. Absent preserves the legacy
+// session-scoped interrupt; null explicitly expects no active turn.
+const ThreadTurnInterruptGuardFields = {
+  expectedTurnId: Schema.optional(Schema.NullOr(TurnId)),
+  expectedSessionUpdatedAt: Schema.optional(IsoDateTime),
+};
+
 const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
-  // Optional compare-and-swap guard. Absent preserves the legacy
-  // session-scoped interrupt; null explicitly expects no active turn.
-  expectedTurnId: Schema.optional(Schema.NullOr(TurnId)),
-  expectedSessionUpdatedAt: Schema.optional(IsoDateTime),
+  ...ThreadTurnInterruptGuardFields,
   createdAt: IsoDateTime,
 });
 
@@ -1264,8 +1268,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
-  expectedTurnId: Schema.optional(Schema.NullOr(TurnId)),
-  expectedSessionUpdatedAt: Schema.optional(IsoDateTime),
+  ...ThreadTurnInterruptGuardFields,
   guardDecision: Schema.optional(
     Schema.Struct({
       outcome: Schema.Literals(["matched", "work-changed"]),

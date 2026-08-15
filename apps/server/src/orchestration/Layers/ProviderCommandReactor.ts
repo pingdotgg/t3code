@@ -1217,36 +1217,11 @@ const make = Effect.gen(function* () {
     const hasGuard =
       event.payload.expectedTurnId !== undefined ||
       event.payload.expectedSessionUpdatedAt !== undefined;
-
-    // Preserve the legacy session-scoped interrupt path exactly. Web omits
-    // guards, so it keeps the same provider call and failure activity bytes.
-    if (!hasGuard) {
-      const thread = yield* resolveThread(event.payload.threadId);
-      if (!thread) {
-        return;
-      }
-      const hasSession = thread.session && thread.session.status !== "stopped";
-      if (!hasSession) {
-        return yield* appendProviderFailureActivity({
-          threadId: event.payload.threadId,
-          kind: "provider.turn.interrupt.failed",
-          summary: "Provider turn interrupt failed",
-          detail: "No active provider session is bound to this thread.",
-          turnId: event.payload.turnId ?? null,
-          createdAt: event.payload.createdAt,
-        });
-      }
-
-      // Orchestration turn ids are not provider turn ids, so interrupt by session.
-      yield* providerService.interruptTurn({ threadId: event.payload.threadId });
-      return;
-    }
-
-    const decidedGuard = event.payload.guardDecision;
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;
     }
+    const decidedGuard = event.payload.guardDecision;
     const actualTurnId =
       thread.session !== null ? thread.session.activeTurnId : (decidedGuard?.actualTurnId ?? null);
     const publishOutcome = (
@@ -1288,9 +1263,18 @@ const make = Effect.gen(function* () {
         detail: "No active provider session is bound to this thread.",
         turnId: event.payload.turnId ?? null,
         createdAt: event.payload.createdAt,
-        ...(event.commandId !== null ? { requestId: event.commandId } : {}),
+        ...(hasGuard && event.commandId !== null ? { requestId: event.commandId } : {}),
       });
-      return yield* publishOutcome("no-session");
+      if (hasGuard) {
+        return yield* publishOutcome("no-session");
+      }
+      return;
+    }
+
+    // Web omits guards and keeps the legacy session-scoped provider call.
+    if (!hasGuard) {
+      yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+      return;
     }
     if (decidedGuard?.outcome === "work-changed" || turnChanged || sessionChanged) {
       yield* appendProviderFailureActivity({

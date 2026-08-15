@@ -320,11 +320,7 @@ function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
 ): DerivedWorkLogEntry[] {
-  const ordered = Arr.sort(activities, activityOrder);
-  const agentFold = memoizedFoldSubagentActivitiesOrdered(activities, ordered, {
-    ...options,
-    rosterLimit: null,
-  });
+  const { ordered, fold: agentFold } = getSubagentActivityFold(activities, options);
   const spawnBatches = deriveAgentSpawnBatches(ordered, agentFold);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
@@ -357,47 +353,38 @@ const AGENT_TASK_ACTIVITY_KINDS: ReadonlySet<OrchestrationThreadActivity["kind"]
 
 const foldedSubagentsByActivityList = new WeakMap<
   ReadonlyArray<OrchestrationThreadActivity>,
-  Map<string, FoldedSubagentActivitiesWithBatchCounts>
+  {
+    readonly ordered: ReadonlyArray<OrchestrationThreadActivity>;
+    readonly folds: Map<boolean | undefined, FoldedSubagentActivitiesWithBatchCounts>;
+  }
 >();
 
-function subagentFoldCacheKey(options?: FoldSubagentActivitiesOptions): string {
-  const sessionLiveness =
-    options?.sessionLive === undefined ? "unknown" : options.sessionLive ? "live" : "stopped";
-  const rosterLimit =
-    options?.rosterLimit === undefined
-      ? "default"
-      : options.rosterLimit === null
-        ? "all"
-        : String(options.rosterLimit);
-  return `${sessionLiveness}:${rosterLimit}`;
-}
-
-function memoizedFoldSubagentActivitiesOrdered(
-  activityListIdentity: ReadonlyArray<OrchestrationThreadActivity>,
-  orderedActivities: ReadonlyArray<OrchestrationThreadActivity>,
+function getSubagentActivityFold(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
-): FoldedSubagentActivitiesWithBatchCounts {
-  const cacheKey = subagentFoldCacheKey(options);
-  let cachedByOptions = foldedSubagentsByActivityList.get(activityListIdentity);
-  if (cachedByOptions?.has(cacheKey)) {
-    return cachedByOptions.get(cacheKey)!;
+): {
+  readonly ordered: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly fold: FoldedSubagentActivitiesWithBatchCounts;
+} {
+  let cached = foldedSubagentsByActivityList.get(activities);
+  if (!cached) {
+    cached = { ordered: Arr.sort(activities, activityOrder), folds: new Map() };
+    foldedSubagentsByActivityList.set(activities, cached);
   }
-  const agents = foldSubagentActivitiesWithBatchCounts(orderedActivities, options);
-  cachedByOptions ??= new Map();
-  cachedByOptions.set(cacheKey, agents);
-  foldedSubagentsByActivityList.set(activityListIdentity, cachedByOptions);
-  return agents;
+  const sessionLive = options?.sessionLive;
+  let fold = cached.folds.get(sessionLive);
+  if (!fold) {
+    fold = foldSubagentActivitiesWithBatchCounts(cached.ordered, options);
+    cached.folds.set(sessionLive, fold);
+  }
+  return { ordered: cached.ordered, fold };
 }
 
 export function memoizedFoldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
 ): FoldedSubagentActivitiesWithBatchCounts {
-  return memoizedFoldSubagentActivitiesOrdered(
-    activities,
-    Arr.sort(activities, activityOrder),
-    options,
-  );
+  return getSubagentActivityFold(activities, options).fold;
 }
 
 function taskIdFromActivity(activity: OrchestrationThreadActivity): string | null {
@@ -1400,18 +1387,12 @@ function deriveThreadFeedTurnFolds(
     }
 
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
-    const persistentActivityGroupIds = new Set(
-      entries
-        .filter(
-          (entry) => entry.type === "activity-group" && entry.activities.some(isAgentSpawnActivity),
-        )
-        .map((entry) => entry.id),
-    );
     const hiddenEntryIds = new Set(
       entries
         .filter(
           (entry) =>
-            entry.id !== terminalAssistantMessageId && !persistentActivityGroupIds.has(entry.id),
+            entry.id !== terminalAssistantMessageId &&
+            !(entry.type === "activity-group" && entry.activities.some(isAgentSpawnActivity)),
         )
         .map((entry) => entry.id),
     );

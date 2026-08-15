@@ -224,12 +224,10 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
-  const [stopThreadInFlight, setStopThreadInFlight] = useState(false);
   const [pendingStopCommandId, setPendingStopCommandId] = useState<CommandId | null>(null);
   const [stopThreadGuard] = useState(() =>
-    createBackgroundWorkStopGuard(setStopThreadInFlight, {
+    createBackgroundWorkStopGuard(setPendingStopCommandId, {
       onTimeout: (outcome) => {
-        setPendingStopCommandId(null);
         Alert.alert(outcome.title, outcome.message);
       },
     }),
@@ -263,7 +261,6 @@ function ThreadRouteContent(
     );
     if (resolution !== null) {
       stopThreadGuard.resolve();
-      setPendingStopCommandId(null);
       if (resolution.alert !== null) {
         Alert.alert(resolution.alert.title, resolution.alert.message);
       }
@@ -525,9 +522,8 @@ function ThreadRouteContent(
     if (!selectedThread) {
       return;
     }
-    return stopThreadGuard.run(async (attempt) => {
-      const commandId = CommandId.make(uuidv4());
-      setPendingStopCommandId(commandId);
+    const commandId = CommandId.make(uuidv4());
+    return stopThreadGuard.run(commandId, async (attempt) => {
       const result = await interruptThreadTurn({
         environmentId: selectedThread.environmentId,
         input: buildBackgroundWorkInterruptInput(
@@ -538,7 +534,6 @@ function ThreadRouteContent(
       });
       if (result._tag === "Failure") {
         attempt.resolve();
-        setPendingStopCommandId((current) => (current === commandId ? null : current));
       }
       return result;
     });
@@ -850,7 +845,7 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
-          stopThreadInFlight={stopThreadInFlight}
+          stopThreadInFlight={pendingStopCommandId !== null}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}

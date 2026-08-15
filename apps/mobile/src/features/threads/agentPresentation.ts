@@ -2,17 +2,13 @@ import {
   deriveAgentPanelModel,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  isActiveSubagentStatus,
   type AgentPanelModel,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
 import { memoizedFoldSubagentActivities } from "../../lib/threadActivity";
-
-export function startAgentElapsedClock(onTick: (nowMs: number) => void): () => void {
-  const intervalId = setInterval(() => onTick(Date.now()), 1_000);
-  return () => clearInterval(intervalId);
-}
 
 const STATUS_LABELS: Record<RuntimeSubagent["status"], string> = {
   pending: "Working",
@@ -32,7 +28,6 @@ export function deriveMobileAgentPanelModel(input: {
   return deriveAgentPanelModel({
     agents: memoizedFoldSubagentActivities(input.activities, {
       sessionLive: input.sessionLive,
-      rosterLimit: null,
     }).agents,
   });
 }
@@ -55,9 +50,7 @@ function elapsedBetween(startedAt: string | null, completedAt: string | null, no
 }
 
 function agentActivityText(agent: RuntimeSubagent): string {
-  const live =
-    agent.status === "running" || agent.status === "pending" || agent.status === "waiting";
-  const activity = live
+  const activity = isActiveSubagentStatus(agent.status)
     ? (agent.progress ??
       (agent.lastToolName ? `▸ ${agent.lastToolName}` : null) ??
       agent.result ??
@@ -91,8 +84,6 @@ export function deriveMobileAgentRowModel(
     agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
       ? null
       : agent.role;
-  const live =
-    agent.status === "running" || agent.status === "pending" || agent.status === "waiting";
   return {
     id: agent.id,
     title: agent.title,
@@ -100,7 +91,11 @@ export function deriveMobileAgentRowModel(
     modelLabel: formatSubagentModelLabel(agent.model, agent.effort),
     status: agent.status,
     statusLabel: STATUS_LABELS[agent.status],
-    elapsed: elapsedBetween(agent.startedAt, live ? null : agent.completedAt, nowMs),
+    elapsed: elapsedBetween(
+      agent.startedAt,
+      isActiveSubagentStatus(agent.status) ? null : agent.completedAt,
+      nowMs,
+    ),
     activity: agentActivityText(agent),
     tokenLabel: agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
     toolLabel: agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
@@ -108,16 +103,10 @@ export function deriveMobileAgentRowModel(
   };
 }
 
-export interface MobileAgentDetailActivity {
-  readonly key: string;
-  readonly at: string;
-  readonly summary: string;
-}
-
 export interface MobileAgentDetailModel extends MobileAgentRowModel {
   readonly result: string | null;
   readonly error: string | null;
-  readonly activities: ReadonlyArray<MobileAgentDetailActivity>;
+  readonly activities: RuntimeSubagent["recentActivity"];
   readonly activityTruncationLabel: string | null;
 }
 
@@ -139,18 +128,13 @@ export function deriveMobileAgentDetailModel(
   nowMs = Date.now(),
 ): MobileAgentDetailModel {
   const row = deriveMobileAgentRowModel(agent, nowMs);
-  const activities = agent.recentActivity.map((entry) => ({
-    key: `activity:${entry.id}`,
-    at: entry.at,
-    summary: entry.summary,
-  }));
   return {
     ...row,
     result: agent.result,
     error: agent.error,
-    activities,
+    activities: agent.recentActivity,
     activityTruncationLabel: agent.recentActivityTruncated
-      ? `Showing the latest ${activities.length} activities; earlier entries were dropped.`
+      ? `Showing the latest ${agent.recentActivity.length} activities; earlier entries were dropped.`
       : null,
   };
 }

@@ -475,7 +475,7 @@ describe("deriveAgentPanelModel", () => {
     expect(ids.at(-1)).toBe("capped-100");
   });
 
-  it("parameterizes the roster cap while preserving the 100-row web default", () => {
+  it("keeps detailed batch counts uncapped while preserving the 100-row web default", () => {
     const turnId = TurnId.make("turn-fanout-101");
     const starts = Array.from({ length: 101 }, (_, index) => ({
       ...activity("task.started", { taskId: `fanout-${index}`, title: `Agent ${index}` }),
@@ -483,7 +483,6 @@ describe("deriveAgentPanelModel", () => {
     }));
 
     const detailed = foldSubagentActivitiesWithBatchCounts(starts);
-    const uncapped = foldSubagentActivitiesWithBatchCounts(starts, { rosterLimit: null });
     const webRoster = foldSubagentActivities(starts);
 
     expect(detailed.batchCounts.get(`direct:${turnId}`)).toMatchObject({
@@ -491,10 +490,9 @@ describe("deriveAgentPanelModel", () => {
       workingCount: 101,
     });
     expect(detailed.agentTaskIds).toHaveLength(101);
-    expect(detailed.agents).toHaveLength(100);
-    expect(uncapped.agents).toHaveLength(101);
-    expect(uncapped.agents.length).toBe(uncapped.batchCounts.get(`direct:${turnId}`)?.totalCount);
-    expect(webRoster).toEqual(detailed.agents);
+    expect(detailed.agents).toHaveLength(101);
+    expect(detailed.agents.length).toBe(detailed.batchCounts.get(`direct:${turnId}`)?.totalCount);
+    expect(webRoster).toHaveLength(100);
   });
 
   it("assigns a reactivated direct task to its later turn's spawn batch", () => {
@@ -518,7 +516,6 @@ describe("deriveAgentPanelModel", () => {
     expect(detailed.batchKeyByActivityId.get(started.id)).toBe(`direct:${firstTurnId}`);
     expect(detailed.batchKeyByActivityId.get(completed.id)).toBe(`direct:${firstTurnId}`);
     expect(detailed.batchKeyByActivityId.get(reactivated.id)).toBe(`direct:${secondTurnId}`);
-    expect(detailed.batchKeyByTaskId.get("reusable-agent")).toBe(`direct:${secondTurnId}`);
     expect(detailed.batchCounts.get(`direct:${firstTurnId}`)).toMatchObject({
       totalCount: 1,
       workingCount: 0,
@@ -550,13 +547,13 @@ describe("deriveAgentPanelModel", () => {
       ),
     ];
 
-    const defaultFold = foldSubagentActivitiesWithBatchCounts(rows);
-    const uncapped = foldSubagentActivitiesWithBatchCounts(rows, { rosterLimit: null });
-    const batchCount = uncapped.batchCounts.get(`wf:${workflowId}`);
-    const workflowMembers = uncapped.agents.filter((agent) => agent.parentAgentId === workflowId);
+    const detailed = foldSubagentActivitiesWithBatchCounts(rows);
+    const webRoster = foldSubagentActivities(rows);
+    const batchCount = detailed.batchCounts.get(`wf:${workflowId}`);
+    const workflowMembers = detailed.agents.filter((agent) => agent.parentAgentId === workflowId);
 
-    expect(defaultFold.agents).toHaveLength(100);
-    expect(uncapped.agents).toHaveLength(151);
+    expect(webRoster).toHaveLength(100);
+    expect(detailed.agents).toHaveLength(151);
     expect(batchCount).toMatchObject({ totalCount: 150, workingCount: 150 });
     expect(workflowMembers).toHaveLength(batchCount?.totalCount ?? 0);
   });

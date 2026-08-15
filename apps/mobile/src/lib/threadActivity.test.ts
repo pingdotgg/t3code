@@ -960,17 +960,19 @@ describe("subagent spawn batches", () => {
     ]);
   });
 
-  it("memoizes folds separately for different roster limits", () => {
+  it("memoizes folds separately for live and stopped sessions", () => {
     const activities = [
       taskActivity("cache-agent-1", "cache-agent-1", 1),
       taskActivity("cache-agent-2", "cache-agent-2", 2),
       taskActivity("cache-agent-3", "cache-agent-3", 3),
     ];
 
-    expect(memoizedFoldSubagentActivities(activities, { rosterLimit: 1 }).agents).toHaveLength(1);
-    expect(memoizedFoldSubagentActivities(activities, { rosterLimit: null }).agents).toHaveLength(
-      3,
-    );
+    expect(
+      memoizedFoldSubagentActivities(activities, { sessionLive: true }).agents[0]?.status,
+    ).toBe("running");
+    expect(
+      memoizedFoldSubagentActivities(activities, { sessionLive: false }).agents[0]?.status,
+    ).toBe("interrupted");
   });
 
   it("keeps the spawn row visible while sibling tools fold into Worked for…", () => {

@@ -108,7 +108,7 @@ export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
 
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
-const DEFAULT_ROSTER_LIMIT = 100;
+const ROSTER_LIMIT = 100;
 
 /**
  * True when this activity's payload does NOT belong on the Agents surface.
@@ -474,7 +474,7 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
  * session left a panel full of "Working" agents while the sidebar showed
  * nothing). Idle is preserved — a resumable Codex child stays resumable.
  */
-export interface SubagentBatchCount {
+interface SubagentBatchCount {
   readonly totalCount: number;
   readonly workingCount: number;
   readonly failedCount: number;
@@ -484,12 +484,10 @@ export interface SubagentBatchCount {
 }
 
 export interface FoldedSubagentActivitiesWithBatchCounts {
-  /** Roster selected by the requested cap (default 100). */
+  /** Full roster for virtualized timeline clients. */
   readonly agents: ReadonlyArray<RuntimeSubagent>;
-  /** Every recognized task identity, including agents omitted by the roster cap. */
+  /** Every recognized task identity. */
   readonly agentTaskIds: ReadonlySet<string>;
-  /** Spawn-batch identity for each task's latest retained activation. */
-  readonly batchKeyByTaskId: ReadonlyMap<string, string>;
   /** Spawn-batch identity for every recognized task activity. */
   readonly batchKeyByActivityId: ReadonlyMap<string, string>;
   /** Uncapped activation-aware status counts keyed by the spawn-batch ids used by clients. */
@@ -498,8 +496,6 @@ export interface FoldedSubagentActivitiesWithBatchCounts {
 
 export interface FoldSubagentActivitiesOptions {
   readonly sessionLive?: boolean;
-  /** null keeps the full roster; absent preserves the web-facing default of 100. */
-  readonly rosterLimit?: number | null;
 }
 
 function subagentBatchKey(agent: MutableAgent, turnId: string | null): string {
@@ -515,35 +511,18 @@ function subagentBatchKey(agent: MutableAgent, turnId: string | null): string {
   return turnId ? `direct:${turnId}` : `direct:task:${agent.id}`;
 }
 
-const EMPTY_BATCH_COUNT: SubagentBatchCount = {
-  totalCount: 0,
-  workingCount: 0,
-  failedCount: 0,
-  stoppedCount: 0,
-  idleCount: 0,
-  completedCount: 0,
-};
-
-interface SubagentActivityActivation {
-  readonly taskId: string;
-  readonly activationIndex: number;
-}
-
 function deriveSubagentBatchCounts(
   agents: ReadonlyMap<string, MutableAgent>,
-  activityActivations: ReadonlyMap<string, SubagentActivityActivation>,
+  activityActivations: ReadonlyMap<string, readonly [MutableAgent, number]>,
 ): {
-  readonly batchKeyByTaskId: ReadonlyMap<string, string>;
   readonly batchKeyByActivityId: ReadonlyMap<string, string>;
   readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
 } {
-  const batchKeyByTaskId = new Map<string, string>();
   const batchKeyByActivityId = new Map<string, string>();
   const statusesByBatch = new Map<string, Map<string, RuntimeSubagentStatus>>();
   for (const agent of agents.values()) {
     for (const [activationIndex, activation] of agent.activations.entries()) {
       const key = subagentBatchKey(agent, activation.turnId);
-      batchKeyByTaskId.set(agent.id, key);
       const statuses = statusesByBatch.get(key) ?? new Map<string, RuntimeSubagentStatus>();
       statusesByBatch.set(key, statuses);
       if (agent.kind !== "workflow") {
@@ -554,51 +533,64 @@ function deriveSubagentBatchCounts(
     }
   }
 
-  for (const [activityId, activationRef] of activityActivations) {
-    const agent = agents.get(activationRef.taskId);
-    const activation = agent?.activations[activationRef.activationIndex];
-    if (agent && activation) {
+  for (const [activityId, [agent, activationIndex]] of activityActivations) {
+    const activation = agent.activations[activationIndex];
+    if (activation) {
       batchKeyByActivityId.set(activityId, subagentBatchKey(agent, activation.turnId));
     }
   }
 
   const batchCounts = new Map<string, SubagentBatchCount>();
   for (const [key, statuses] of statusesByBatch) {
-    let count = EMPTY_BATCH_COUNT;
+    const count = {
+      totalCount: 0,
+      workingCount: 0,
+      failedCount: 0,
+      stoppedCount: 0,
+      idleCount: 0,
+      completedCount: 0,
+    };
     for (const status of statuses.values()) {
-      count = {
-        totalCount: count.totalCount + 1,
-        workingCount: count.workingCount + (isActiveSubagentStatus(status) ? 1 : 0),
-        failedCount: count.failedCount + (status === "failed" ? 1 : 0),
-        stoppedCount:
-          count.stoppedCount + (status === "cancelled" || status === "interrupted" ? 1 : 0),
-        idleCount: count.idleCount + (status === "idle" ? 1 : 0),
-        completedCount: count.completedCount + (status === "completed" ? 1 : 0),
-      };
+      count.totalCount += 1;
+      if (isActiveSubagentStatus(status)) count.workingCount += 1;
+      if (status === "failed") count.failedCount += 1;
+      if (status === "cancelled" || status === "interrupted") count.stoppedCount += 1;
+      if (status === "idle") count.idleCount += 1;
+      if (status === "completed") count.completedCount += 1;
     }
     batchCounts.set(key, count);
   }
-  return { batchKeyByTaskId, batchKeyByActivityId, batchCounts };
+  return { batchKeyByActivityId, batchCounts };
 }
 
 export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
 ): ReadonlyArray<RuntimeSubagent> {
-  return foldSubagentActivitiesWithBatchCounts(activities, options).agents;
+  const agents = foldSubagentActivitiesWithBatchCounts(activities, options).agents;
+  if (agents.length <= ROSTER_LIMIT) {
+    return agents;
+  }
+  // Prefer live, then waiting/idle, then newest settled.
+  const rank = (agent: RuntimeSubagent): number =>
+    isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
+  return agents
+    .slice()
+    .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, ROSTER_LIMIT);
 }
 
 /**
  * Additive detailed fold for timeline clients that need exact spawn-batch
- * counts. The default roster stays capped so existing web behavior is unchanged;
- * callers that render a virtualized full roster may explicitly pass null.
+ * counts and a virtualized full roster. The simpler fold keeps the existing
+ * web-facing cap.
  */
 export function foldSubagentActivitiesWithBatchCounts(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
 ): FoldedSubagentActivitiesWithBatchCounts {
   const agents = new Map<string, MutableAgent>();
-  const activityActivations = new Map<string, SubagentActivityActivation>();
+  const activityActivations = new Map<string, readonly [MutableAgent, number]>();
 
   for (const activity of activities) {
     if (typeof activity.payload !== "object" || activity.payload === null) {
@@ -778,7 +770,7 @@ export function foldSubagentActivitiesWithBatchCounts(
         } else {
           agent.activations[activationIndex] = { turnId: activity.turnId, status: agent.status };
         }
-        activityActivations.set(activity.id, { taskId: taskIdForBatch, activationIndex });
+        activityActivations.set(activity.id, [agent, activationIndex]);
       }
     }
   }
@@ -825,27 +817,14 @@ export function foldSubagentActivitiesWithBatchCounts(
   }
 
   const agentTaskIds = new Set(agents.keys());
-  const { batchKeyByTaskId, batchKeyByActivityId, batchCounts } = deriveSubagentBatchCounts(
+  const { batchKeyByActivityId, batchCounts } = deriveSubagentBatchCounts(
     agents,
     activityActivations,
   );
-  const rosterLimit =
-    options?.rosterLimit === undefined ? DEFAULT_ROSTER_LIMIT : options.rosterLimit;
-  let roster = Array.from(agents.values());
-  if (rosterLimit !== null && roster.length > rosterLimit) {
-    // Prefer live, then waiting/idle, then newest settled.
-    const rank = (agent: MutableAgent): number =>
-      isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
-    roster = roster
-      .slice()
-      .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, rosterLimit);
-  }
 
   return {
-    agents: roster.map(({ activations: _, ...agent }) => agent),
+    agents: Array.from(agents.values(), ({ activations: _, ...agent }) => agent),
     agentTaskIds,
-    batchKeyByTaskId,
     batchKeyByActivityId,
     batchCounts,
   };
