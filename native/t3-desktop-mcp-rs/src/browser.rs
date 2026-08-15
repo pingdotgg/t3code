@@ -265,8 +265,6 @@ fn spawn_listener(
         #[cfg(unix)]
         let path = bridge_socket_path();
         #[cfg(unix)]
-        let _cleanup = BridgeSocketCleanup(path.clone());
-        #[cfg(unix)]
         {
             unlink_stale_bridge_socket(&path);
         }
@@ -287,6 +285,8 @@ fn spawn_listener(
             // still work, so this is not worth reporting as a failure.
             return;
         };
+        #[cfg(unix)]
+        let _cleanup = BridgeSocketCleanup(path.clone());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

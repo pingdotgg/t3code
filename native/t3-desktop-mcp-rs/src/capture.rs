@@ -5,8 +5,8 @@
 //!
 //! On Linux hybrid sessions (Wayland + X11), we never mutate `WAYLAND_DISPLAY`:
 //! that is UB with concurrent threads. Window enumeration already goes through
-//! X11/`xcb` when `DISPLAY` is set. Display capture uses `xcap` first; if its
-//! Wayland path fails, we fall back to `grim` without touching the environment.
+//! X11/`xcb` when `DISPLAY` is set. Display capture uses `xcap` only; list and
+//! capture stay consistent (no grim-only displays advertised without capture).
 
 use image::{ImageEncoder, RgbaImage, codecs::png::PngEncoder, imageops::FilterType};
 use xcap::{Monitor, Window};
@@ -63,46 +63,8 @@ pub(crate) fn on_wayland() -> bool {
             || std::env::var("WAYLAND_DISPLAY").is_ok_and(|value| !value.is_empty()))
 }
 
-/// Capture through `grim`, the reference wlr-screencopy client.
-///
-/// `xcap`'s Wayland path fails to connect on wlroots compositors where the
-/// protocol demonstrably works — `grim` captures the same session fine — so this
-/// is the fallback rather than reporting a capture we cannot do. Absent on
-/// GNOME and KDE, which do not implement wlr-screencopy at all; there the error
-/// stands and the accessibility tools remain the answer.
-fn grim_capture(output: Option<&str>) -> Result<Vec<u8>> {
-    let mut command = std::process::Command::new("grim");
-    if let Some(name) = output {
-        command.arg("-o").arg(name);
-    }
-    // `-` writes the PNG to stdout, so nothing touches the filesystem.
-    let result = command
-        .arg("-")
-        .output()
-        .map_err(|error| DesktopError::new(format!("grim is not available: {error}")))?;
-    if !result.status.success() {
-        return Err(DesktopError::new(format!(
-            "grim could not capture this session: {}",
-            String::from_utf8_lossy(&result.stderr).trim()
-        )));
-    }
-    Ok(result.stdout)
-}
-
 pub fn list_displays() -> Result<String> {
-    match guarded("display enumeration", list_displays_inner) {
-        Ok(text) => Ok(text),
-        Err(error) if on_wayland() => {
-            // Confirm the fallback actually works before advertising a display
-            // the model would then fail to capture.
-            if grim_capture(None).is_ok() {
-                Ok("[0] wayland output (via wlr-screencopy)".to_string())
-            } else {
-                Err(error)
-            }
-        }
-        Err(error) => Err(error),
-    }
+    guarded("display enumeration", list_displays_inner)
 }
 
 fn list_displays_inner() -> Result<String> {
