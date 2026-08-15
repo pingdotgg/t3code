@@ -1,12 +1,29 @@
 import type {
   ApplicationStoredEvent,
+  OrchestrationProjectShell,
   OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadShell,
+  OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
+
+/** Build the regular navigation shell without duplicating the archive dataset. */
+export function buildActiveShellSnapshot(input: {
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
+  readonly threads: OrchestrationV2ThreadShellSnapshot;
+  readonly snapshotSequence: number;
+}): OrchestrationV2ShellSnapshot {
+  return {
+    schemaVersion: input.threads.schemaVersion,
+    snapshotSequence: input.snapshotSequence,
+    projects: input.projects,
+    threads: input.threads.threads,
+    archivedThreads: [],
+  };
+}
 
 /** Keep only the newest shell-relevant event per project/thread aggregate. */
 export function coalesceShellApplicationEvents(
@@ -124,10 +141,18 @@ export function shellStreamItemFromThreadShell(input: {
   readonly shell: OrchestrationV2ThreadShell | null;
 }): Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> {
   if (input.shell !== null) {
+    if (input.shell.archivedAt !== null) {
+      return {
+        kind: "thread.removed",
+        sequence: input.stored.sequence,
+        location: "active",
+        threadId: input.shell.id,
+      };
+    }
     return {
       kind: "thread.updated",
       sequence: input.stored.sequence,
-      location: input.shell.archivedAt === null ? "active" : "archive",
+      location: "active",
       thread: input.shell,
     };
   }
@@ -135,10 +160,7 @@ export function shellStreamItemFromThreadShell(input: {
   return {
     kind: "thread.removed",
     sequence: input.stored.sequence,
-    location:
-      input.stored.event.type === "thread.deleted" && input.stored.event.payload.archivedAt !== null
-        ? "archive"
-        : "active",
+    location: "active",
     threadId: input.stored.event.threadId,
   };
 }

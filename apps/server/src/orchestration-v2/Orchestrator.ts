@@ -159,10 +159,9 @@ export interface OrchestratorV2Shape {
     },
     OrchestratorV2Error
   >;
-  readonly getShellSnapshot: () => Effect.Effect<
-    OrchestrationV2ThreadShellSnapshot,
-    OrchestratorV2Error
-  >;
+  readonly getShellSnapshot: (options?: {
+    readonly location?: "active" | "archive";
+  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, OrchestratorV2Error>;
@@ -7108,8 +7107,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectionStore
         .getThreadSnapshot(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
-    getShellSnapshot: () =>
-      projectionStore.getShellSnapshot().pipe(
+    getShellSnapshot: (options) =>
+      projectionStore.getShellSnapshot(options).pipe(
         Effect.mapError(
           (cause) =>
             new OrchestratorProjectionError({
