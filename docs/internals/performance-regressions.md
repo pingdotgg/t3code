@@ -21,6 +21,8 @@ The v2 checks pin these invariants:
   replacing stale state with a current snapshot.
 - Oversized dynamic-tool results and detail strings are reduced only at the wire boundary; the
   persisted event remains complete.
+- The initial shell contains active navigation rows only. Archived rows use the dedicated archive
+  query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project
   and thread snapshot.
 - Known idle sends and interrupts do not fetch a full thread projection before dispatch.
