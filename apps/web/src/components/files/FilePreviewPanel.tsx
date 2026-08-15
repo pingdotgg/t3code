@@ -92,6 +92,7 @@ interface FilePreviewPanelProps {
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
+const SKILL_RENDER_MARKDOWN_STORAGE_KEY = "t3code.skillRenderMarkdown";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_PREVIEW_SUBHEADER_CLASS_NAME =
   "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
@@ -1110,14 +1111,18 @@ function skillRootPath(skillPath: string): string {
   return separatorIndex < 0 ? skillPath : skillPath.slice(0, separatorIndex);
 }
 
-function relativePathWithinSkill(skillPath: string, targetPath: string): string | null {
-  const root = skillRootPath(skillPath).replaceAll("\\", "/").replace(/\/+$/, "");
+function relativePathWithinRoot(rootPath: string, targetPath: string): string | null {
+  const root = rootPath.replaceAll("\\", "/").replace(/\/+$/, "");
   const target = targetPath.replaceAll("\\", "/");
   const caseInsensitive = /^[A-Za-z]:\//.test(root);
   const comparableRoot = caseInsensitive ? root.toLowerCase() : root;
   const comparableTarget = caseInsensitive ? target.toLowerCase() : target;
   if (!comparableTarget.startsWith(`${comparableRoot}/`)) return null;
   return target.slice(root.length + 1);
+}
+
+function relativePathWithinSkill(skillPath: string, targetPath: string): string | null {
+  return relativePathWithinRoot(skillRootPath(skillPath), targetPath);
 }
 
 function SkillMarkdownImage(props: {
@@ -1156,9 +1161,14 @@ function SkillTextFilePreviewPanel(
     skillName: props.skill.name,
     relativePath: props.relativePath ?? "SKILL.md",
   });
-  const [renderMarkdown, setRenderMarkdown] = useState(true);
+  const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
+    SKILL_RENDER_MARKDOWN_STORAGE_KEY,
+    true,
+    Schema.Boolean,
+  );
   const relativePath = props.relativePath ?? "SKILL.md";
   const isMarkdown = isMarkdownPreviewFile(relativePath);
+  const renderMarkdown = isMarkdown && renderMarkdownPreferred;
 
   useEffect(() => {
     file.refresh();
@@ -1166,10 +1176,25 @@ function SkillTextFilePreviewPanel(
 
   const openRelativeFile = useCallback(
     (target: string) => {
-      const resolved = relativePathWithinSkill(props.skill.path, target);
-      if (resolved) props.onOpenSkillFile?.(resolved);
+      const withinSkill = relativePathWithinSkill(props.skill.path, target);
+      if (withinSkill !== null) {
+        props.onOpenSkillFile?.(withinSkill);
+        return;
+      }
+      const withinWorkspace = relativePathWithinRoot(props.cwd, target);
+      if (withinWorkspace !== null) {
+        props.onOpenFile(withinWorkspace);
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "This file is outside the skill",
+          description: target,
+        }),
+      );
     },
-    [props.onOpenSkillFile, props.skill.path],
+    [props.cwd, props.onOpenFile, props.onOpenSkillFile, props.skill.path],
   );
   const currentDirectory = [
     skillRootPath(props.skill.path),
@@ -1192,7 +1217,7 @@ function SkillTextFilePreviewPanel(
                 <Toggle
                   className="shrink-0"
                   pressed={renderMarkdown}
-                  onPressedChange={setRenderMarkdown}
+                  onPressedChange={setRenderMarkdownPreferred}
                   aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
                   variant="ghost"
                   size="sm"
@@ -1265,6 +1290,10 @@ function SkillImageFilePreviewPanel(
     skillName: props.skill.name,
     path: relativePath,
   });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const src = asset._tag === "Success" ? `${asset.url}?refresh=${props.revealRequestId}` : null;
+  const loadFailed = asset._tag === "Failure" || (src !== null && failedUrl === src);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className={FILE_PREVIEW_SUBHEADER_CLASS_NAME} data-surface-subheader>
@@ -1275,18 +1304,19 @@ function SkillImageFilePreviewPanel(
           {relativePath}
         </div>
       </div>
-      {asset._tag === "Success" ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
-          <img
-            src={`${asset.url}?refresh=${props.revealRequestId}`}
-            alt={relativePath}
-            className="max-h-full max-w-full object-contain"
-          />
-        </div>
-      ) : asset._tag === "Failure" ? (
+      {loadFailed ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-destructive">
           <span>This skill image is no longer available.</span>
           <span className="font-mono text-[10px] text-muted-foreground">{props.skill.path}</span>
+        </div>
+      ) : src ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+          <img
+            src={src}
+            alt={relativePath}
+            className="max-h-full max-w-full object-contain"
+            onError={() => setFailedUrl(src)}
+          />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1304,7 +1334,7 @@ function SkillFilePreviewPanel(
 ) {
   const relativePath = props.relativePath ?? "SKILL.md";
   return isWorkspaceImagePreviewPath(relativePath) ? (
-    <SkillImageFilePreviewPanel {...props} />
+    <SkillImageFilePreviewPanel key={relativePath} {...props} />
   ) : (
     <SkillTextFilePreviewPanel {...props} />
   );
