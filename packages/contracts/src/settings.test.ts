@@ -12,6 +12,7 @@ import {
 import {
   SyncedClientPreferences,
   SyncedClientPreferencesPatch,
+  SyncedClientPreferencesUpdatedAt,
   PatchSyncedClientPreferencesRequest,
 } from "./syncedClientPreferences.ts";
 
@@ -24,6 +25,12 @@ const decodeSyncedClientPreferencesPatch = Schema.decodeUnknownSync(SyncedClient
 const decodePatchSyncedClientPreferencesRequest = Schema.decodeUnknownSync(
   PatchSyncedClientPreferencesRequest,
 );
+const decodeLegacySyncedClientPreferences = Schema.decodeUnknownSync(
+  Schema.Struct({
+    planModeEnabled: Schema.optionalKey(Schema.Boolean),
+    updatedAt: SyncedClientPreferencesUpdatedAt,
+  }),
+);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
 describe("SyncedClientPreferences", () => {
@@ -32,6 +39,11 @@ describe("SyncedClientPreferences", () => {
       planModeEnabled: true,
       appearanceMode: "dark",
       themeId: "midnight",
+      updatedAtByField: {
+        planModeEnabled: "2026-08-14T10:00:00.000Z",
+        appearanceMode: "2026-08-14T11:00:00.000Z",
+        themeId: "2026-08-14T12:00:00.000Z",
+      },
       updatedAt: "2026-08-14T12:00:00.000Z",
       ignored: true,
     });
@@ -47,6 +59,7 @@ describe("SyncedClientPreferences", () => {
       "planModeEnabled",
       "themeId",
       "updatedAt",
+      "updatedAtByField",
     ]);
     expect(Object.keys(patch).sort()).toEqual(["appearanceMode", "planModeEnabled", "themeId"]);
   });
@@ -60,6 +73,21 @@ describe("SyncedClientPreferences", () => {
         }),
       ).toThrow();
     }
+  });
+
+  it("decodes aggregate-only old snapshots and preserves old-client decode", () => {
+    const oldSnapshot = decodeSyncedClientPreferences({
+      planModeEnabled: true,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    });
+    const currentSnapshot = decodeSyncedClientPreferences({
+      planModeEnabled: true,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    });
+
+    expect(oldSnapshot).not.toHaveProperty("updatedAtByField");
+    expect(decodeLegacySyncedClientPreferences(currentSnapshot)).toEqual(oldSnapshot);
   });
 
   it("rejects empty and unknown-only patches at the RPC boundary", () => {

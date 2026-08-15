@@ -130,6 +130,9 @@ describe("mobile preferences state", () => {
       const state = makePreferencesState({
         load: Effect.succeed({
           planModeEnabled: false,
+          syncedClientPreferencesUpdatedAtByField: {
+            appearanceMode: "2026-08-14T13:00:00.000Z",
+          },
           syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00.000Z",
         }),
         savePatch,
@@ -144,17 +147,24 @@ describe("mobile preferences state", () => {
       });
       registry.set(state.updatePreferencesAtom, {
         planModeEnabled: true,
-        syncedClientPreferencesUpdatedAt: "2026-08-14T12:01:00.000Z",
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:01:00.000Z",
+        },
       });
       registry.set(state.updatePreferencesAtom, {
         planModeEnabled: false,
-        syncedClientPreferencesUpdatedAt: "2026-08-14T12:02:00.000Z",
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:02:00.000Z",
+          appearanceMode: "2026-08-14T13:00:00.000Z",
+        },
       });
       registry.set(state.persistReconciledPreferencesAtom, {
-        expectedUpdatedAt: "2026-08-14T12:01:00.000Z",
+        expectedUpdatedAtByField: { planModeEnabled: "2026-08-14T12:01:00.000Z" },
         patch: {
           planModeEnabled: true,
-          syncedClientPreferencesUpdatedAt: "2026-08-14T12:01:00.000Z",
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-14T12:01:00.000Z",
+          },
         },
       });
 
@@ -162,7 +172,9 @@ describe("mobile preferences state", () => {
         Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom))),
       ).toMatchObject({
         planModeEnabled: false,
-        syncedClientPreferencesUpdatedAt: "2026-08-14T12:02:00.000Z",
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:02:00.000Z",
+        },
       });
       yield* Effect.promise(() =>
         vi.waitFor(() => {

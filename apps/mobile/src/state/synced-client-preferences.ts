@@ -1,5 +1,8 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  getSyncedClientPreferenceUpdatedAt,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo } from "react";
 
@@ -78,14 +81,19 @@ export function useSyncedClientPreferences(): void {
     for (const { environmentId, shell } of liveStates) {
       const updatedAt =
         shell.snapshot._tag === "Some"
-          ? shell.snapshot.value.syncedClientPreferences?.updatedAt
+          ? getSyncedClientPreferenceUpdatedAt(
+              shell.snapshot.value.syncedClientPreferences,
+              "planModeEnabled",
+            )
           : undefined;
       reconciliationController.observe(environmentId, updatedAt);
     }
     if (!AsyncResult.isSuccess(preferencesResult) || liveStates.length === 0) return;
     const reconciliation = reconcilePlanModePreferences({
       localPlanModeEnabled: preferencesResult.value.planModeEnabled,
-      localUpdatedAt: preferencesResult.value.syncedClientPreferencesUpdatedAt,
+      localUpdatedAt:
+        preferencesResult.value.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
+        preferencesResult.value.syncedClientPreferencesUpdatedAt,
       environments: liveStates.map(({ environmentId, shell, canPatch }) => ({
         environmentId,
         canPatch,
@@ -101,7 +109,7 @@ export function useSyncedClientPreferences(): void {
         patch: patchPreferences,
         persist: (patch) =>
           persistReconciledPreferences({
-            expectedUpdatedAt: target.input.updatedAt,
+            expectedUpdatedAtByField: { planModeEnabled: target.input.updatedAt },
             patch,
           }),
       });
@@ -132,11 +140,10 @@ export function useUpdatePlanModePreference() {
       const write = writeController.create({
         value,
         connectedEnvironmentIds,
-        currentUpdatedAts: [current.syncedClientPreferencesUpdatedAt],
-        authoritativeUpdatedAts: states.map(({ shell }) =>
-          shell.snapshot._tag === "Some"
-            ? shell.snapshot.value.syncedClientPreferences?.updatedAt
-            : undefined,
+        currentUpdatedAtByField: current.syncedClientPreferencesUpdatedAtByField,
+        legacyCurrentUpdatedAt: current.syncedClientPreferencesUpdatedAt,
+        authoritativePreferences: states.map(({ shell }) =>
+          shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
         ),
         now: new Date().toISOString(),
       });

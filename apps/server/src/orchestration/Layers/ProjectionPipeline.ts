@@ -1615,24 +1615,92 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         event.payload.patch.planModeEnabled === undefined
           ? null
           : Number(event.payload.patch.planModeEnabled);
+      const planModeEnabledUpdatedAt =
+        event.payload.patch.planModeEnabled === undefined ? null : event.payload.updatedAt;
       const appearanceMode = event.payload.patch.appearanceMode ?? null;
+      const appearanceModeUpdatedAt =
+        event.payload.patch.appearanceMode === undefined ? null : event.payload.updatedAt;
       const themeId = event.payload.patch.themeId ?? null;
+      const themeIdUpdatedAt =
+        event.payload.patch.themeId === undefined ? null : event.payload.updatedAt;
       return sql`
         INSERT INTO projection_synced_client_preferences (
           singleton_id,
           plan_mode_enabled,
+          plan_mode_enabled_updated_at,
           appearance_mode,
+          appearance_mode_updated_at,
           theme_id,
+          theme_id_updated_at,
           updated_at
         )
-        VALUES (1, ${planModeEnabled}, ${appearanceMode}, ${themeId}, ${event.payload.updatedAt})
+        VALUES (
+          1,
+          ${planModeEnabled},
+          ${planModeEnabledUpdatedAt},
+          ${appearanceMode},
+          ${appearanceModeUpdatedAt},
+          ${themeId},
+          ${themeIdUpdatedAt},
+          ${event.payload.updatedAt}
+        )
         ON CONFLICT (singleton_id)
         DO UPDATE SET
-          plan_mode_enabled = COALESCE(excluded.plan_mode_enabled, plan_mode_enabled),
-          appearance_mode = COALESCE(excluded.appearance_mode, appearance_mode),
-          theme_id = COALESCE(excluded.theme_id, theme_id),
-          updated_at = excluded.updated_at
-        WHERE excluded.updated_at >= updated_at
+          plan_mode_enabled = CASE
+            WHEN excluded.plan_mode_enabled_updated_at IS NOT NULL
+              AND (
+                plan_mode_enabled_updated_at IS NULL
+                OR excluded.plan_mode_enabled_updated_at >= plan_mode_enabled_updated_at
+              )
+            THEN excluded.plan_mode_enabled
+            ELSE plan_mode_enabled
+          END,
+          plan_mode_enabled_updated_at = CASE
+            WHEN excluded.plan_mode_enabled_updated_at IS NOT NULL
+              AND (
+                plan_mode_enabled_updated_at IS NULL
+                OR excluded.plan_mode_enabled_updated_at >= plan_mode_enabled_updated_at
+              )
+            THEN excluded.plan_mode_enabled_updated_at
+            ELSE plan_mode_enabled_updated_at
+          END,
+          appearance_mode = CASE
+            WHEN excluded.appearance_mode_updated_at IS NOT NULL
+              AND (
+                appearance_mode_updated_at IS NULL
+                OR excluded.appearance_mode_updated_at >= appearance_mode_updated_at
+              )
+            THEN excluded.appearance_mode
+            ELSE appearance_mode
+          END,
+          appearance_mode_updated_at = CASE
+            WHEN excluded.appearance_mode_updated_at IS NOT NULL
+              AND (
+                appearance_mode_updated_at IS NULL
+                OR excluded.appearance_mode_updated_at >= appearance_mode_updated_at
+              )
+            THEN excluded.appearance_mode_updated_at
+            ELSE appearance_mode_updated_at
+          END,
+          theme_id = CASE
+            WHEN excluded.theme_id_updated_at IS NOT NULL
+              AND (
+                theme_id_updated_at IS NULL
+                OR excluded.theme_id_updated_at >= theme_id_updated_at
+              )
+            THEN excluded.theme_id
+            ELSE theme_id
+          END,
+          theme_id_updated_at = CASE
+            WHEN excluded.theme_id_updated_at IS NOT NULL
+              AND (
+                theme_id_updated_at IS NULL
+                OR excluded.theme_id_updated_at >= theme_id_updated_at
+              )
+            THEN excluded.theme_id_updated_at
+            ELSE theme_id_updated_at
+          END,
+          updated_at = MAX(updated_at, excluded.updated_at)
       `.pipe(
         Effect.asVoid,
         Effect.mapError(toPersistenceSqlError("ProjectionPipeline.syncedClientPreferences:upsert")),

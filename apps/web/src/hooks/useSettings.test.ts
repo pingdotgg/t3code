@@ -97,7 +97,7 @@ describe("synced plan mode", () => {
     ).toEqual({
       type: "seed",
       value: true,
-      updatedAt: "2026-08-14T12:00:00.001Z",
+      updatedAt: "2026-08-14T11:00:00.000Z",
     });
     expect(
       resolveSyncedPlanModeHydrationAction({
@@ -126,6 +126,26 @@ describe("synced plan mode", () => {
         patch: { planModeEnabled: false },
         updatedAt: "2026-08-14T12:01:00.000Z",
       },
+    });
+  });
+
+  it("advances writes from the plan clock instead of a newer appearance clock", () => {
+    expect(
+      createSyncedPlanModeWrite({
+        value: false,
+        serverPreferences: {
+          planModeEnabled: true,
+          appearanceMode: "dark",
+          updatedAtByField: {
+            planModeEnabled: "2026-08-14T12:00:00.000Z",
+            appearanceMode: "2026-08-14T13:00:00.000Z",
+          },
+          updatedAt: "2026-08-14T13:00:00.000Z",
+        },
+        now: "2026-08-14T12:30:00.000Z",
+      }),
+    ).toMatchObject({
+      request: { updatedAt: "2026-08-14T12:30:00.000Z" },
     });
   });
 

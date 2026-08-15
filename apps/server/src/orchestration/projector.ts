@@ -1,6 +1,7 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
   ClientPreferencesPatchedPayload,
+  getSyncedClientPreferenceUpdatedAt,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -215,15 +216,38 @@ export function projectEvent(
       ).pipe(
         Effect.map((payload) => {
           const current = nextBase.syncedClientPreferences;
-          if (current !== undefined && current.updatedAt > payload.updatedAt) {
-            return { ...nextBase, updatedAt: model.updatedAt };
-          }
+          const appliesPlanMode =
+            payload.patch.planModeEnabled !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "planModeEnabled") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          const appliesAppearanceMode =
+            payload.patch.appearanceMode !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "appearanceMode") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          const appliesThemeId =
+            payload.patch.themeId !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "themeId") ?? payload.updatedAt) <=
+              payload.updatedAt;
           return {
             ...nextBase,
+            updatedAt: model.updatedAt > event.occurredAt ? model.updatedAt : event.occurredAt,
             syncedClientPreferences: {
               ...current,
-              ...payload.patch,
-              updatedAt: payload.updatedAt,
+              ...(appliesPlanMode ? { planModeEnabled: payload.patch.planModeEnabled } : undefined),
+              ...(appliesAppearanceMode
+                ? { appearanceMode: payload.patch.appearanceMode }
+                : undefined),
+              ...(appliesThemeId ? { themeId: payload.patch.themeId } : undefined),
+              updatedAtByField: {
+                ...current?.updatedAtByField,
+                ...(appliesPlanMode ? { planModeEnabled: payload.updatedAt } : undefined),
+                ...(appliesAppearanceMode ? { appearanceMode: payload.updatedAt } : undefined),
+                ...(appliesThemeId ? { themeId: payload.updatedAt } : undefined),
+              },
+              updatedAt:
+                current !== undefined && current.updatedAt > payload.updatedAt
+                  ? current.updatedAt
+                  : payload.updatedAt,
             },
           };
         }),

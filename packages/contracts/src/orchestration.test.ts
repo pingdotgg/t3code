@@ -973,6 +973,7 @@ it.effect("keeps new shell snapshots decodable by legacy clients", () =>
       threads: [],
       syncedClientPreferences: {
         planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
         updatedAt: "2026-08-14T12:00:00.000Z",
       },
       updatedAt: "2026-08-14T12:00:00.000Z",

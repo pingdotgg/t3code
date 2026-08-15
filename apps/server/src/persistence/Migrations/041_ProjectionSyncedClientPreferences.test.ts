@@ -44,8 +44,11 @@ layer("041_ProjectionSyncedClientPreferences", (it) => {
         CREATE TABLE projection_synced_client_preferences (
           singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
           plan_mode_enabled INTEGER,
+          plan_mode_enabled_updated_at TEXT,
           appearance_mode TEXT,
+          appearance_mode_updated_at TEXT,
           theme_id TEXT,
+          theme_id_updated_at TEXT,
           updated_at TEXT NOT NULL
         )
       `;
@@ -71,7 +74,16 @@ layer("041_ProjectionSyncedClientPreferences", (it) => {
 
       assert.deepEqual(
         columns.map((column) => column.name),
-        ["singleton_id", "plan_mode_enabled", "appearance_mode", "theme_id", "updated_at"],
+        [
+          "singleton_id",
+          "plan_mode_enabled",
+          "plan_mode_enabled_updated_at",
+          "appearance_mode",
+          "appearance_mode_updated_at",
+          "theme_id",
+          "theme_id_updated_at",
+          "updated_at",
+        ],
       );
       assert.deepEqual(rows, []);
       assert.deepEqual(projectorState, [

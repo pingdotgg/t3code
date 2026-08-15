@@ -14,6 +14,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
+  getSyncedClientPreferenceUpdatedAt,
   nextSyncedClientPreferencesUpdatedAt,
   type EnvironmentId,
   type PatchSyncedClientPreferencesRequest,
@@ -273,7 +274,10 @@ export function createSyncedPlanModeWrite(input: {
   readonly pendingUpdatedAt?: string;
   readonly now: string;
 }) {
-  const serverUpdatedAt = input.serverPreferences?.updatedAt;
+  const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(
+    input.serverPreferences,
+    "planModeEnabled",
+  );
   const currentUpdatedAt =
     input.pendingUpdatedAt !== undefined &&
     (serverUpdatedAt === undefined || input.pendingUpdatedAt > serverUpdatedAt)
@@ -325,31 +329,32 @@ export function resolveSyncedPlanModeHydrationAction(input: {
   readonly now: string;
 }): SyncedPlanModeHydrationAction {
   if (!input.clientHydrated) return { type: "none" };
+  const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(
+    input.serverPreferences,
+    "planModeEnabled",
+  );
   if (
     input.writePending !== undefined &&
-    (input.serverPreferences === undefined ||
-      input.serverPreferences.updatedAt < input.writePending.updatedAt)
+    (serverUpdatedAt === undefined || serverUpdatedAt < input.writePending.updatedAt)
   ) {
     return { type: "none" };
   }
   if (input.serverPreferences?.planModeEnabled !== undefined) {
     return input.adoptedUpdatedAt !== undefined &&
-      input.serverPreferences.updatedAt <= input.adoptedUpdatedAt
+      serverUpdatedAt !== undefined &&
+      serverUpdatedAt <= input.adoptedUpdatedAt
       ? { type: "none" }
       : {
           type: "adopt",
           value: input.serverPreferences.planModeEnabled,
-          updatedAt: input.serverPreferences.updatedAt,
+          updatedAt: serverUpdatedAt ?? input.serverPreferences.updatedAt,
         };
   }
   if (input.seedPending) return { type: "none" };
   return {
     type: "seed",
     value: input.clientValue,
-    updatedAt: nextSyncedClientPreferencesUpdatedAt(
-      [input.serverPreferences?.updatedAt],
-      input.now,
-    ),
+    updatedAt: nextSyncedClientPreferencesUpdatedAt([serverUpdatedAt], input.now),
   };
 }
 
@@ -444,7 +449,11 @@ export function createSyncedPlanModeHydrationController(
 
     cancelRetry(state);
     if (matchingWrite) delete state.writePending;
-    markAdopted(state, input.result.value.updatedAt);
+    const resultUpdatedAt = getSyncedClientPreferenceUpdatedAt(
+      input.result.value,
+      "planModeEnabled",
+    );
+    if (resultUpdatedAt !== undefined) markAdopted(state, resultUpdatedAt);
     if (getSynchronizeAgain(state) === undefined) return;
     if (input.result.value.planModeEnabled !== undefined) {
       input.persist(input.result.value.planModeEnabled);
@@ -481,10 +490,14 @@ export function createSyncedPlanModeHydrationController(
       delete state.seedPendingUpdatedAt;
     }
     const pendingWrite = state.writePending;
+    const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(
+      input.serverPreferences,
+      "planModeEnabled",
+    );
     if (
       pendingWrite !== undefined &&
-      input.serverPreferences !== undefined &&
-      input.serverPreferences.updatedAt >= pendingWrite.updatedAt
+      serverUpdatedAt !== undefined &&
+      serverUpdatedAt >= pendingWrite.updatedAt
     ) {
       delete state.writePending;
       delete state.writeInFlightUpdatedAt;
@@ -494,8 +507,7 @@ export function createSyncedPlanModeHydrationController(
     if (
       input.canPatch &&
       activePendingWrite !== undefined &&
-      (input.serverPreferences === undefined ||
-        input.serverPreferences.updatedAt < activePendingWrite.updatedAt) &&
+      (serverUpdatedAt === undefined || serverUpdatedAt < activePendingWrite.updatedAt) &&
       state.writeInFlightUpdatedAt !== activePendingWrite.updatedAt
     ) {
       dispatchPatch<E>({

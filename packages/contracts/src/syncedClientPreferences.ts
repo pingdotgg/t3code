@@ -36,12 +36,38 @@ const SyncedClientPreferenceFields = {
   themeId: Schema.optionalKey(Schema.String),
 } as const;
 
+export const SYNCED_CLIENT_PREFERENCE_FIELDS = [
+  "planModeEnabled",
+  "appearanceMode",
+  "themeId",
+] as const;
+export type SyncedClientPreferenceField = (typeof SYNCED_CLIENT_PREFERENCE_FIELDS)[number];
+
+export const SyncedClientPreferencesUpdatedAtByField = Schema.Struct({
+  planModeEnabled: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  appearanceMode: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  themeId: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+});
+export type SyncedClientPreferencesUpdatedAtByField =
+  typeof SyncedClientPreferencesUpdatedAtByField.Type;
+
 /** Client preferences replicated through one environment's event log. */
 export const SyncedClientPreferences = Schema.Struct({
   ...SyncedClientPreferenceFields,
+  // Optional while mixed-version clients may still receive aggregate-only snapshots.
+  updatedAtByField: Schema.optionalKey(SyncedClientPreferencesUpdatedAtByField),
+  // Retained as the maximum field stamp so older clients can decode current snapshots.
   updatedAt: SyncedClientPreferencesUpdatedAt,
 });
 export type SyncedClientPreferences = typeof SyncedClientPreferences.Type;
+
+export function getSyncedClientPreferenceUpdatedAt(
+  preferences: SyncedClientPreferences | undefined,
+  field: SyncedClientPreferenceField,
+): SyncedClientPreferencesUpdatedAt | undefined {
+  if (preferences?.[field] === undefined) return undefined;
+  return preferences.updatedAtByField?.[field] ?? preferences.updatedAt;
+}
 
 /** Exactly the preference keys that clients may patch in this rollout. */
 export const SyncedClientPreferencesPatch = Schema.Struct(SyncedClientPreferenceFields).check(

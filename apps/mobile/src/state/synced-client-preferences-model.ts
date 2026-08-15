@@ -1,8 +1,13 @@
 import {
+  getSyncedClientPreferenceUpdatedAt,
   nextSyncedClientPreferencesUpdatedAt,
+  SYNCED_CLIENT_PREFERENCE_FIELDS,
   type EnvironmentId,
   type PatchSyncedClientPreferencesRequest,
+  type SyncedClientPreferenceField,
   type SyncedClientPreferences,
+  type SyncedClientPreferencesPatch,
+  type SyncedClientPreferencesUpdatedAtByField,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
@@ -27,6 +32,48 @@ export interface EnvironmentPreferenceState {
 export interface PlanModePreferencePatchTarget {
   readonly environmentId: EnvironmentId;
   readonly input: PatchSyncedClientPreferencesRequest;
+}
+
+export interface LocalSyncedClientPreferencesState {
+  readonly values: Partial<SyncedClientPreferencesPatch>;
+  readonly updatedAtByField?: SyncedClientPreferencesUpdatedAtByField;
+  readonly legacyUpdatedAt?: string;
+}
+
+export interface LocalSyncedClientPreferencesPatch {
+  readonly values: SyncedClientPreferencesPatch;
+  readonly updatedAtByField: SyncedClientPreferencesUpdatedAtByField;
+}
+
+type MutableSyncedClientPreferencesPatch = {
+  -readonly [Field in SyncedClientPreferenceField]?: SyncedClientPreferencesPatch[Field];
+};
+type MutableSyncedClientPreferencesUpdatedAtByField = {
+  -readonly [Field in SyncedClientPreferenceField]?: string;
+};
+
+function setPreferenceValue<Field extends SyncedClientPreferenceField>(
+  patch: MutableSyncedClientPreferencesPatch,
+  field: Field,
+  value: SyncedClientPreferencesPatch[Field],
+): void {
+  patch[field] = value;
+}
+
+function setPreferenceUpdatedAt<Field extends SyncedClientPreferenceField>(
+  updatedAtByField: MutableSyncedClientPreferencesUpdatedAtByField,
+  field: Field,
+  updatedAt: string,
+): void {
+  updatedAtByField[field] = updatedAt;
+}
+
+function localPreferenceUpdatedAt(
+  local: LocalSyncedClientPreferencesState,
+  field: SyncedClientPreferenceField,
+): string | undefined {
+  if (local.values[field] === undefined) return undefined;
+  return local.updatedAtByField?.[field] ?? local.legacyUpdatedAt;
 }
 
 export function createPlanModePreferenceReconciliationController(
@@ -150,11 +197,14 @@ export function createPlanModePreferenceReconciliationController(
 export function canonicalPlanModePreferencePatch(
   preferences: SyncedClientPreferences,
 ): Partial<Preferences> | null {
-  return preferences.planModeEnabled === undefined
+  const updatedAt = getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled");
+  return preferences.planModeEnabled === undefined || updatedAt === undefined
     ? null
     : {
         planModeEnabled: preferences.planModeEnabled,
-        syncedClientPreferencesUpdatedAt: preferences.updatedAt,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: updatedAt,
+        },
       };
 }
 
@@ -175,34 +225,69 @@ export function nextMobileSyncedPreferencesUpdatedAt(
   );
 }
 
-export function createPlanModePreferenceWrite(input: {
-  readonly value: boolean;
+export function createSyncedClientPreferencesWrite(input: {
+  readonly patch: SyncedClientPreferencesPatch;
   readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
-  readonly currentUpdatedAts: ReadonlyArray<string | undefined>;
-  readonly authoritativeUpdatedAts?: ReadonlyArray<string | undefined>;
+  readonly currentUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByField;
+  readonly legacyCurrentUpdatedAt?: string;
+  readonly authoritativePreferences?: ReadonlyArray<SyncedClientPreferences | undefined>;
   readonly now: string;
 }): {
-  readonly localPatch: Pick<Preferences, "planModeEnabled" | "syncedClientPreferencesUpdatedAt">;
+  readonly localPatch: LocalSyncedClientPreferencesPatch;
   readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
 } {
-  const updatedAt = nextMobileSyncedPreferencesUpdatedAt(
-    input.currentUpdatedAts,
-    input.now,
-    input.authoritativeUpdatedAts,
+  const fields = SYNCED_CLIENT_PREFERENCE_FIELDS.filter(
+    (field) => input.patch[field] !== undefined,
   );
-  const request = {
-    patch: { planModeEnabled: input.value },
-    updatedAt,
-  } as const;
+  const updatedAt = nextMobileSyncedPreferencesUpdatedAt(
+    fields.map((field) => input.currentUpdatedAtByField?.[field] ?? input.legacyCurrentUpdatedAt),
+    input.now,
+    input.authoritativePreferences?.flatMap((preferences) =>
+      fields.map((field) => getSyncedClientPreferenceUpdatedAt(preferences, field)),
+    ),
+  );
+  const updatedAtByField: MutableSyncedClientPreferencesUpdatedAtByField = {
+    ...input.currentUpdatedAtByField,
+  };
+  for (const field of fields) setPreferenceUpdatedAt(updatedAtByField, field, updatedAt);
+  const request = { patch: input.patch, updatedAt };
   return {
-    localPatch: {
-      planModeEnabled: input.value,
-      syncedClientPreferencesUpdatedAt: updatedAt,
-    },
+    localPatch: { values: input.patch, updatedAtByField },
     environmentPatches: input.connectedEnvironmentIds.map((environmentId) => ({
       environmentId,
       input: request,
     })),
+  };
+}
+
+export function createPlanModePreferenceWrite(input: {
+  readonly value: boolean;
+  readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  readonly currentUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByField;
+  readonly legacyCurrentUpdatedAt?: string;
+  readonly authoritativePreferences?: ReadonlyArray<SyncedClientPreferences | undefined>;
+  readonly now: string;
+}): {
+  readonly localPatch: {
+    readonly planModeEnabled: boolean;
+    readonly syncedClientPreferencesUpdatedAtByField: SyncedClientPreferencesUpdatedAtByField;
+  };
+  readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
+} {
+  const write = createSyncedClientPreferencesWrite({
+    patch: { planModeEnabled: input.value },
+    connectedEnvironmentIds: input.connectedEnvironmentIds,
+    currentUpdatedAtByField: input.currentUpdatedAtByField,
+    legacyCurrentUpdatedAt: input.legacyCurrentUpdatedAt,
+    authoritativePreferences: input.authoritativePreferences,
+    now: input.now,
+  });
+  return {
+    localPatch: {
+      planModeEnabled: input.value,
+      syncedClientPreferencesUpdatedAtByField: write.localPatch.updatedAtByField,
+    },
+    environmentPatches: write.environmentPatches,
   };
 }
 
@@ -214,12 +299,15 @@ export function createPlanModePreferenceWriteController() {
     create(input: Parameters<typeof createPlanModePreferenceWrite>[0]) {
       const write = createPlanModePreferenceWrite({
         ...input,
-        authoritativeUpdatedAts: [
-          latestRequestedUpdatedAt,
-          ...(input.authoritativeUpdatedAts ?? []),
-        ],
+        currentUpdatedAtByField: {
+          ...input.currentUpdatedAtByField,
+          ...(latestRequestedUpdatedAt === undefined
+            ? {}
+            : { planModeEnabled: latestRequestedUpdatedAt }),
+        },
       });
-      latestRequestedUpdatedAt = write.localPatch.syncedClientPreferencesUpdatedAt;
+      latestRequestedUpdatedAt =
+        write.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled;
       settledRequestedUpdatedAt = undefined;
       return write;
     },
@@ -240,6 +328,95 @@ export function createPlanModePreferenceWriteController() {
   };
 }
 
+export function reconcileSyncedClientPreferences(input: {
+  readonly local: LocalSyncedClientPreferencesState;
+  readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
+  readonly now: string;
+  readonly fields?: ReadonlyArray<SyncedClientPreferenceField>;
+}): {
+  readonly localPatch: LocalSyncedClientPreferencesPatch | null;
+  readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
+} {
+  if (input.environments.length === 0) {
+    return { localPatch: null, environmentPatches: [] };
+  }
+
+  const localValues: MutableSyncedClientPreferencesPatch = {};
+  const localUpdatedAtByField: MutableSyncedClientPreferencesUpdatedAtByField = {
+    ...input.local.updatedAtByField,
+  };
+  const environmentPatches: PlanModePreferencePatchTarget[] = [];
+  let localChanged = false;
+  const hasPatchableEnvironment = input.environments.some(
+    (environment) => environment.canPatch !== false,
+  );
+
+  for (const field of input.fields ?? SYNCED_CLIENT_PREFERENCE_FIELDS) {
+    const environmentCandidates = input.environments.flatMap((environment) => {
+      const value = environment.preferences?.[field];
+      const updatedAt = getSyncedClientPreferenceUpdatedAt(environment.preferences, field);
+      return value === undefined || updatedAt === undefined
+        ? []
+        : [{ source: environment.environmentId, value, updatedAt }];
+    });
+    environmentCandidates.sort(
+      (left, right) =>
+        left.updatedAt.localeCompare(right.updatedAt) || left.source.localeCompare(right.source),
+    );
+    const latestEnvironment = environmentCandidates.at(-1);
+    const latestObservedEnvironmentUpdatedAt = latestEnvironment?.updatedAt;
+    const localValue = input.local.values[field];
+    const localUpdatedAt = localPreferenceUpdatedAt(input.local, field);
+    const boundedLocalUpdatedAt =
+      hasPatchableEnvironment &&
+      localUpdatedAt !== undefined &&
+      latestObservedEnvironmentUpdatedAt !== undefined &&
+      localUpdatedAt > latestObservedEnvironmentUpdatedAt
+        ? nextMobileSyncedPreferencesUpdatedAt([], latestObservedEnvironmentUpdatedAt, [
+            latestObservedEnvironmentUpdatedAt,
+          ])
+        : localUpdatedAt;
+    // Exact remote ties use environment id for deterministic convergence.
+    const localWins =
+      localValue !== undefined &&
+      boundedLocalUpdatedAt !== undefined &&
+      (latestEnvironment === undefined || boundedLocalUpdatedAt > latestEnvironment.updatedAt);
+    const value = localWins ? localValue : (latestEnvironment?.value ?? localValue);
+    if (value === undefined) continue;
+    const updatedAt =
+      (localWins ? boundedLocalUpdatedAt : latestEnvironment?.updatedAt) ?? input.now;
+
+    if (localValue !== value || localUpdatedAt !== updatedAt) {
+      setPreferenceValue(localValues, field, value);
+      setPreferenceUpdatedAt(localUpdatedAtByField, field, updatedAt);
+      localChanged = true;
+    }
+
+    for (const environment of input.environments) {
+      if (environment.canPatch === false) continue;
+      if (
+        environment.preferences?.[field] === value &&
+        getSyncedClientPreferenceUpdatedAt(environment.preferences, field) === updatedAt
+      ) {
+        continue;
+      }
+      const patch: MutableSyncedClientPreferencesPatch = {};
+      setPreferenceValue(patch, field, value);
+      environmentPatches.push({
+        environmentId: environment.environmentId,
+        input: { patch, updatedAt },
+      });
+    }
+  }
+
+  return {
+    localPatch: localChanged
+      ? { values: localValues, updatedAtByField: localUpdatedAtByField }
+      : null,
+    environmentPatches,
+  };
+}
+
 export function reconcilePlanModePreferences(input: {
   readonly localPlanModeEnabled: boolean | undefined;
   readonly localUpdatedAt: string | undefined;
@@ -249,94 +426,29 @@ export function reconcilePlanModePreferences(input: {
   readonly localPatch: Partial<Preferences> | null;
   readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
 } {
-  if (input.environments.length === 0) {
-    return { localPatch: null, environmentPatches: [] };
-  }
-
-  const environmentCandidates = input.environments.flatMap((environment) =>
-    environment.preferences?.planModeEnabled === undefined
-      ? []
-      : [
-          {
-            source: environment.environmentId,
-            value: environment.preferences.planModeEnabled,
-            updatedAt: environment.preferences.updatedAt,
-          },
-        ],
-  );
-  environmentCandidates.sort(
-    (left, right) =>
-      left.updatedAt.localeCompare(right.updatedAt) || left.source.localeCompare(right.source),
-  );
-  const latestEnvironment = environmentCandidates.at(-1);
-  const latestObservedEnvironmentUpdatedAt = input.environments.reduce<string | undefined>(
-    (latest, environment) => {
-      const candidate = environment.preferences?.updatedAt;
-      return candidate !== undefined && (latest === undefined || candidate > latest)
-        ? candidate
-        : latest;
+  const reconciliation = reconcileSyncedClientPreferences({
+    local: {
+      values:
+        input.localPlanModeEnabled === undefined
+          ? {}
+          : { planModeEnabled: input.localPlanModeEnabled },
+      ...(input.localUpdatedAt === undefined
+        ? {}
+        : { updatedAtByField: { planModeEnabled: input.localUpdatedAt } }),
     },
-    undefined,
-  );
-  const hasPatchableEnvironment = input.environments.some(
-    (environment) => environment.canPatch !== false,
-  );
-  const boundedLocalUpdatedAt =
-    hasPatchableEnvironment &&
-    input.localUpdatedAt !== undefined &&
-    latestObservedEnvironmentUpdatedAt !== undefined &&
-    input.localUpdatedAt > latestObservedEnvironmentUpdatedAt
-      ? nextMobileSyncedPreferencesUpdatedAt([], latestObservedEnvironmentUpdatedAt, [
-          latestObservedEnvironmentUpdatedAt,
-        ])
-      : input.localUpdatedAt;
-  // Across environments, the newest plan-bearing stamp wins. Exact stamp ties
-  // use environment id for deterministic convergence; an unstamped legacy
-  // device value seeds only when no environment already owns the preference.
-  const localWins =
-    input.localPlanModeEnabled !== undefined &&
-    boundedLocalUpdatedAt !== undefined &&
-    (latestEnvironment === undefined || boundedLocalUpdatedAt > latestEnvironment.updatedAt);
-  const value = localWins
-    ? input.localPlanModeEnabled
-    : (latestEnvironment?.value ?? input.localPlanModeEnabled ?? false);
-  const winningUpdatedAt = localWins ? boundedLocalUpdatedAt : latestEnvironment?.updatedAt;
-
-  const environmentsNeedingReconciliation = input.environments.filter(
-    (environment) =>
-      environment.preferences?.planModeEnabled !== value ||
-      environment.preferences?.updatedAt !== winningUpdatedAt,
-  );
-  const observedUpdatedAts = [
-    boundedLocalUpdatedAt,
-    ...input.environments.map((environment) => environment.preferences?.updatedAt),
-  ];
-  const needsNewStamp =
-    environmentsNeedingReconciliation.length > 0 &&
-    observedUpdatedAts.some(
-      (updatedAt) =>
-        updatedAt !== undefined && (winningUpdatedAt === undefined || updatedAt > winningUpdatedAt),
-    );
-  const updatedAt = needsNewStamp
-    ? nextMobileSyncedPreferencesUpdatedAt(
-        [boundedLocalUpdatedAt],
-        input.now,
-        input.environments.map((environment) => environment.preferences?.updatedAt),
-      )
-    : (winningUpdatedAt ?? input.now);
-  const localPatch =
-    input.localPlanModeEnabled === value && input.localUpdatedAt === updatedAt
-      ? null
-      : {
-          planModeEnabled: value,
-          syncedClientPreferencesUpdatedAt: updatedAt,
-        };
-  const request = { patch: { planModeEnabled: value }, updatedAt } as const;
-
+    environments: input.environments,
+    now: input.now,
+    fields: ["planModeEnabled"],
+  });
+  const planModeEnabled = reconciliation.localPatch?.values.planModeEnabled;
   return {
-    localPatch,
-    environmentPatches: (needsNewStamp ? input.environments : environmentsNeedingReconciliation)
-      .filter((environment) => environment.canPatch !== false)
-      .map(({ environmentId }) => ({ environmentId, input: request })),
+    localPatch:
+      planModeEnabled === undefined || reconciliation.localPatch === null
+        ? null
+        : {
+            planModeEnabled,
+            syncedClientPreferencesUpdatedAtByField: reconciliation.localPatch.updatedAtByField,
+          },
+    environmentPatches: reconciliation.environmentPatches,
   };
 }

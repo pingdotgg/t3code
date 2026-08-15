@@ -192,6 +192,50 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ planModeEnabled: true });
   });
 
+  it("loads per-field synced preference stamps and legacy aggregate stamps", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:00:00.000Z",
+        },
+        syncedClientPreferencesUpdatedAt: "2026-08-14T11:00:00.000Z",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toMatchObject({
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-14T12:00:00.000Z",
+      },
+      syncedClientPreferencesUpdatedAt: "2026-08-14T11:00:00.000Z",
+    });
+  });
+
+  it("preserves unrelated field stamps when saving a partial stamp map", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        syncedClientPreferencesUpdatedAtByField: {
+          appearanceMode: "2026-08-14T13:00:00.000Z",
+        },
+      }),
+      10,
+    );
+
+    await expect(
+      savePreferencesPatch({
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:00:00.000Z",
+        },
+      }),
+    ).resolves.toMatchObject({
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-14T12:00:00.000Z",
+        appearanceMode: "2026-08-14T13:00:00.000Z",
+      },
+    });
+  });
+
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
     await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({ baseFontSize: 19 });

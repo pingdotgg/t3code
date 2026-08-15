@@ -8,8 +8,11 @@ export default Effect.gen(function* () {
     CREATE TABLE IF NOT EXISTS projection_synced_client_preferences (
       singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
       plan_mode_enabled INTEGER,
+      plan_mode_enabled_updated_at TEXT,
       appearance_mode TEXT,
+      appearance_mode_updated_at TEXT,
       theme_id TEXT,
+      theme_id_updated_at TEXT,
       updated_at TEXT NOT NULL
     )
   `;

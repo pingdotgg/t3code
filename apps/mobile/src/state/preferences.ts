@@ -1,5 +1,9 @@
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import {
+  SYNCED_CLIENT_PREFERENCE_FIELDS,
+  type SyncedClientPreferencesUpdatedAtByField,
+} from "@t3tools/contracts";
 
 import { MobilePreferencesStore, type Preferences } from "../persistence/mobile-preferences";
 import * as Runtime from "../lib/runtime";
@@ -16,7 +20,7 @@ interface OptimisticPreferences {
 }
 
 export interface ReconciledPreferencesPatch {
-  readonly expectedUpdatedAt: string;
+  readonly expectedUpdatedAtByField: SyncedClientPreferencesUpdatedAtByField;
   readonly patch: Partial<Preferences>;
 }
 
@@ -63,25 +67,38 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
   const updatePreferencesAtom = runtime
     .fn(
       (patch: Partial<Preferences>, get) => {
+        const preferences = get(preferencesAtom);
+        const normalizedPatch: Partial<Preferences> =
+          patch.syncedClientPreferencesUpdatedAtByField === undefined
+            ? patch
+            : {
+                ...patch,
+                syncedClientPreferencesUpdatedAtByField: {
+                  ...(AsyncResult.isSuccess(preferences)
+                    ? preferences.value.syncedClientPreferencesUpdatedAtByField
+                    : undefined),
+                  ...patch.syncedClientPreferencesUpdatedAtByField,
+                },
+              };
         const version = ++nextPatchVersion;
         const current = get(optimisticPatchAtom);
         const versions = { ...current.versions };
-        for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+        for (const key of Object.keys(normalizedPatch) as Array<keyof Preferences>) {
           versions[key] = version;
         }
         get.set(optimisticPatchAtom, {
-          values: { ...current.values, ...patch },
+          values: { ...current.values, ...normalizedPatch },
           versions,
         });
         return MobilePreferencesStore.pipe(
-          Effect.flatMap((store) => store.savePatch(patch)),
+          Effect.flatMap((store) => store.savePatch(normalizedPatch)),
           Effect.tap((saved) =>
             Effect.sync(() => {
               get.set(confirmedPreferencesAtom, saved);
               const optimistic = get(optimisticPatchAtom);
               const values = { ...optimistic.values } as Record<string, unknown>;
               const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+              for (const key of Object.keys(normalizedPatch) as Array<keyof Preferences>) {
                 if (optimistic.versions[key] === version) {
                   delete values[key];
                   delete currentVersions[key];
@@ -98,7 +115,7 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
               const optimistic = get(optimisticPatchAtom);
               const values = { ...optimistic.values } as Record<string, unknown>;
               const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+              for (const key of Object.keys(normalizedPatch) as Array<keyof Preferences>) {
                 if (optimistic.versions[key] === version) {
                   delete values[key];
                   delete currentVersions[key];
@@ -124,7 +141,14 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
       const current = get(preferencesAtom);
       if (
         !AsyncResult.isSuccess(current) ||
-        current.value.syncedClientPreferencesUpdatedAt !== input.expectedUpdatedAt
+        SYNCED_CLIENT_PREFERENCE_FIELDS.some((field) => {
+          const expectedUpdatedAt = input.expectedUpdatedAtByField[field];
+          return (
+            expectedUpdatedAt !== undefined &&
+            (current.value.syncedClientPreferencesUpdatedAtByField?.[field] ??
+              current.value.syncedClientPreferencesUpdatedAt) !== expectedUpdatedAt
+          );
+        })
       ) {
         return Effect.void;
       }

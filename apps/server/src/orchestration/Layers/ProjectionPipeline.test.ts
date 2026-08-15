@@ -1201,17 +1201,17 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         });
         yield* eventStore.append({
           type: "client-preferences.patched",
-          eventId: EventId.make("preferences-stale"),
+          eventId: EventId.make("preferences-appearance-fresh"),
           aggregateKind: "client-preferences",
           aggregateId: "client-preferences",
-          occurredAt: "2026-08-14T11:00:00.000Z",
-          commandId: CommandId.make("preferences-stale"),
+          occurredAt: "2026-08-14T13:00:00.000Z",
+          commandId: CommandId.make("preferences-appearance-fresh"),
           causationEventId: null,
-          correlationId: CommandId.make("preferences-stale"),
+          correlationId: CommandId.make("preferences-appearance-fresh"),
           metadata: {},
           payload: {
-            patch: { planModeEnabled: false },
-            updatedAt: "2026-08-14T11:00:00.000Z",
+            patch: { appearanceMode: "light" },
+            updatedAt: "2026-08-14T13:00:00.000Z",
           },
         });
         const equalStampEvent = yield* eventStore.append({
@@ -1229,6 +1229,21 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
         });
+        yield* eventStore.append({
+          type: "client-preferences.patched",
+          eventId: EventId.make("preferences-appearance-stale"),
+          aggregateKind: "client-preferences",
+          aggregateId: "client-preferences",
+          occurredAt: "2026-08-14T12:30:00.000Z",
+          commandId: CommandId.make("preferences-appearance-stale"),
+          causationEventId: null,
+          correlationId: CommandId.make("preferences-appearance-stale"),
+          metadata: {},
+          payload: {
+            patch: { appearanceMode: "dark" },
+            updatedAt: "2026-08-14T12:30:00.000Z",
+          },
+        });
 
         yield* projectionPipeline.bootstrap;
         yield* projectionPipeline.projectEvent(equalStampEvent);
@@ -1237,20 +1252,26 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         const readPreferences = () =>
           sql<{
             readonly planModeEnabled: number;
+            readonly planModeEnabledUpdatedAt: string;
             readonly appearanceMode: string | null;
+            readonly appearanceModeUpdatedAt: string;
             readonly updatedAt: string;
           }>`
           SELECT
             plan_mode_enabled AS "planModeEnabled",
+            plan_mode_enabled_updated_at AS "planModeEnabledUpdatedAt",
             appearance_mode AS "appearanceMode",
+            appearance_mode_updated_at AS "appearanceModeUpdatedAt",
             updated_at AS "updatedAt"
           FROM projection_synced_client_preferences
         `;
         const expected = [
           {
             planModeEnabled: 0,
-            appearanceMode: "dark",
-            updatedAt: "2026-08-14T12:00:00.000Z",
+            planModeEnabledUpdatedAt: "2026-08-14T12:00:00.000Z",
+            appearanceMode: "light",
+            appearanceModeUpdatedAt: "2026-08-14T13:00:00.000Z",
+            updatedAt: "2026-08-14T13:00:00.000Z",
           },
         ];
         assert.deepEqual(yield* readPreferences(), expected);

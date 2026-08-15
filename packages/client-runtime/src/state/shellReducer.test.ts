@@ -188,12 +188,14 @@ describe("applyShellStreamEvent", () => {
       sequence: 7,
       preferences: {
         planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
         updatedAt: "2026-08-14T12:00:00.000Z",
       },
     });
 
     expect(next.syncedClientPreferences).toEqual({
       planModeEnabled: true,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     });
     expect(next.snapshotSequence).toBe(7);

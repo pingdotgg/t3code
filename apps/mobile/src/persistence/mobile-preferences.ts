@@ -8,6 +8,8 @@ import * as Semaphore from "effect/Semaphore";
 import {
   type SidebarProjectGroupingMode,
   SyncedClientPreferencesUpdatedAt,
+  SyncedClientPreferencesUpdatedAtByField,
+  type SyncedClientPreferencesUpdatedAtByField as SyncedClientPreferencesUpdatedAtByFieldValue,
 } from "@t3tools/contracts";
 
 import * as MobileDatabase from "./mobile-database";
@@ -17,6 +19,9 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 const isSyncedClientPreferencesUpdatedAt = Schema.is(SyncedClientPreferencesUpdatedAt);
+const isSyncedClientPreferencesUpdatedAtByField = Schema.is(
+  SyncedClientPreferencesUpdatedAtByField,
+);
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -35,6 +40,8 @@ export interface Preferences {
    * Offline cache of the most recently reconciled environment preference.
    */
   readonly planModeEnabled?: boolean;
+  readonly syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
+  /** @deprecated Aggregate-clock cache retained for older persisted blobs. */
   readonly syncedClientPreferencesUpdatedAt?: string;
   /**
    * Device-local mirror of the web `legacySidebarEnabled` setting. Mobile has
@@ -97,6 +104,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     autoSettleOnMerge?: boolean;
     planModeEnabled?: boolean;
+    syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
     syncedClientPreferencesUpdatedAt?: string;
     legacyThreadListEnabled?: boolean;
   } = {};
@@ -140,6 +148,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (
+    parsed.syncedClientPreferencesUpdatedAtByField !== undefined &&
+    isSyncedClientPreferencesUpdatedAtByField(parsed.syncedClientPreferencesUpdatedAtByField)
+  ) {
+    preferences.syncedClientPreferencesUpdatedAtByField =
+      parsed.syncedClientPreferencesUpdatedAtByField;
   }
   if (
     typeof parsed.syncedClientPreferencesUpdatedAt === "string" &&
@@ -333,7 +348,18 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
             try: () => transform(current),
             catch: (cause) => new MobilePreferencesSaveError({ cause }),
           });
-          const next: Preferences = { ...current, ...patch };
+          const next: Preferences = {
+            ...current,
+            ...patch,
+            ...(patch.syncedClientPreferencesUpdatedAtByField === undefined
+              ? {}
+              : {
+                  syncedClientPreferencesUpdatedAtByField: {
+                    ...current.syncedClientPreferencesUpdatedAtByField,
+                    ...patch.syncedClientPreferencesUpdatedAtByField,
+                  },
+                }),
+          };
           const payload = yield* encode(PREFERENCES_KEY, next);
           yield* saveJson(payload);
           return next;

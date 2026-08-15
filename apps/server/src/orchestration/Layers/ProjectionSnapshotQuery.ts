@@ -118,8 +118,11 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
 const ProjectionStateDbRowSchema = ProjectionState;
 const ProjectionSyncedClientPreferencesRowSchema = Schema.Struct({
   planModeEnabled: Schema.NullOr(Schema.Number),
+  planModeEnabledUpdatedAt: Schema.NullOr(IsoDateTime),
   appearanceMode: Schema.NullOr(Schema.Literals(["system", "light", "dark"])),
+  appearanceModeUpdatedAt: Schema.NullOr(IsoDateTime),
   themeId: Schema.NullOr(Schema.String),
+  themeIdUpdatedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
 });
 const ProjectionCountsRowSchema = Schema.Struct({
@@ -226,6 +229,15 @@ function mapSyncedClientPreferences(
       ...(value.planModeEnabled === null ? {} : { planModeEnabled: value.planModeEnabled !== 0 }),
       ...(value.appearanceMode === null ? {} : { appearanceMode: value.appearanceMode }),
       ...(value.themeId === null ? {} : { themeId: value.themeId }),
+      updatedAtByField: {
+        ...(value.planModeEnabledUpdatedAt === null
+          ? {}
+          : { planModeEnabled: value.planModeEnabledUpdatedAt }),
+        ...(value.appearanceModeUpdatedAt === null
+          ? {}
+          : { appearanceMode: value.appearanceModeUpdatedAt }),
+        ...(value.themeIdUpdatedAt === null ? {} : { themeId: value.themeIdUpdatedAt }),
+      },
       updatedAt: value.updatedAt,
     }),
   });
@@ -792,8 +804,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           plan_mode_enabled AS "planModeEnabled",
+          plan_mode_enabled_updated_at AS "planModeEnabledUpdatedAt",
           appearance_mode AS "appearanceMode",
+          appearance_mode_updated_at AS "appearanceModeUpdatedAt",
           theme_id AS "themeId",
+          theme_id_updated_at AS "themeIdUpdatedAt",
           updated_at AS "updatedAt"
         FROM projection_synced_client_preferences
         WHERE singleton_id = 1
