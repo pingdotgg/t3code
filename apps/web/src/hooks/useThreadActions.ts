@@ -469,9 +469,7 @@ export function useThreadActions() {
   );
 
   const settleThread = useCallback(
-    async (target: ScopedThreadRef) => {
-      // Version skew: never send the command to a server that predates it —
-      // the raw protocol rejection would read as a random failure.
+    async (target: ScopedThreadRef, opts?: { force?: boolean | undefined }) => {
       if (!readEnvironmentSupportsSettlement(target.environmentId)) {
         return AsyncResult.failure(
           Cause.fail(
@@ -483,10 +481,11 @@ export function useThreadActions() {
         );
       }
       const resolved = resolveThreadTarget(target);
-      // Settle may only target what effectiveSettled could classify as
-      // settled: not starting/running sessions, not threads waiting on
-      // approvals or user input. Anything else would hide live work.
-      if (resolved && !canSettle(resolved.thread, { now: new Date().toISOString() })) {
+      if (
+        !opts?.force &&
+        resolved &&
+        !canSettle(resolved.thread, { now: new Date().toISOString() })
+      ) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadSettleBlockedError({
@@ -612,8 +611,11 @@ export function useThreadActions() {
   );
 
   const snoozeThread = useCallback(
-    async (target: ScopedThreadRef, snoozedUntil: string) => {
-      // Version skew: never send the command to a server that predates it.
+    async (
+      target: ScopedThreadRef,
+      snoozedUntil: string,
+      opts?: { force?: boolean | undefined },
+    ) => {
       if (!readEnvironmentSupportsSnooze(target.environmentId)) {
         return AsyncResult.failure(
           Cause.fail(
@@ -625,10 +627,11 @@ export function useThreadActions() {
         );
       }
       const resolved = resolveThreadTarget(target);
-      // Blocked-on-you work and queued turns can't be snoozed away —
-      // client-side twin of the server invariants so the UI rejects before
-      // a round trip.
-      if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
+      if (
+        !opts?.force &&
+        resolved &&
+        !canSnooze(resolved.thread, { now: new Date().toISOString() })
+      ) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadSnoozeBlockedError({
