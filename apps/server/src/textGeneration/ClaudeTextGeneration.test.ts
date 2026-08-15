@@ -2,6 +2,7 @@ import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as nodePath from "node:path";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -30,40 +31,47 @@ function makeFakeClaudeBinary(dir: string) {
     yield* fs.writeFileString(
       claudePath,
       [
-        "#!/bin/sh",
-        'args="$*"',
-        'stdin_content="$(cat)"',
-        'if [ -n "$T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN" ]; then',
-        '  printf "%s" "$args" | grep -F -- "$T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN" >/dev/null || {',
-        '    printf "%s\\n" "args missing expected content" >&2',
-        "    exit 2",
+        "#!/usr/bin/env node",
+        "const fs = require('fs');",
+        "const args = process.argv.slice(2).join(' ');",
+        "const stdin_content = fs.readFileSync(0, 'utf-8');",
+        "if (process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN) {",
+        "  if (!args.includes(process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN)) {",
+        "    console.error('args missing expected content');",
+        "    process.exit(2);",
         "  }",
-        "fi",
-        'if [ -n "$T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN" ]; then',
-        '  if printf "%s" "$args" | grep -F -- "$T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN" >/dev/null; then',
-        '    printf "%s\\n" "args contained forbidden content" >&2',
-        "    exit 3",
-        "  fi",
-        "fi",
-        'if [ -n "$T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN" ]; then',
-        '  printf "%s" "$stdin_content" | grep -F -- "$T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN" >/dev/null || {',
-        '    printf "%s\\n" "stdin missing expected content" >&2',
-        "    exit 4",
+        "}",
+        "if (process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN) {",
+        "  if (args.includes(process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN)) {",
+        "    console.error('args contained forbidden content');",
+        "    process.exit(3);",
         "  }",
-        "fi",
-        'if [ -n "$T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE" ] && [ "$CLAUDE_CONFIG_DIR" != "$T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE" ]; then',
-        '  printf "%s\\n" "CLAUDE_CONFIG_DIR was $CLAUDE_CONFIG_DIR" >&2',
-        "  exit 5",
-        "fi",
-        'if [ -n "$T3_FAKE_CLAUDE_STDERR" ]; then',
-        '  printf "%s\\n" "$T3_FAKE_CLAUDE_STDERR" >&2',
-        "fi",
-        'printf "%s" "$T3_FAKE_CLAUDE_OUTPUT"',
-        'exit "${T3_FAKE_CLAUDE_EXIT_CODE:-0}"',
+        "}",
+        "if (process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN) {",
+        "  if (!stdin_content.includes(process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN)) {",
+        "    console.error('stdin missing expected content');",
+        "    process.exit(4);",
+        "  }",
+        "}",
+        "if (process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE && process.env.CLAUDE_CONFIG_DIR !== process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE) {",
+        "  console.error('CLAUDE_CONFIG_DIR was ' + process.env.CLAUDE_CONFIG_DIR);",
+        "  process.exit(5);",
+        "}",
+        "if (process.env.T3_FAKE_CLAUDE_STDERR) {",
+        "  console.error(process.env.T3_FAKE_CLAUDE_STDERR);",
+        "}",
+        "process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT || '');",
+        "process.exit(parseInt(process.env.T3_FAKE_CLAUDE_EXIT_CODE || '0', 10));",
         "",
       ].join("\n"),
     );
     yield* fs.chmod(claudePath, 0o755);
+
+    if (process.platform === "win32") {
+      const claudeCmdPath = path.join(binDir, "claude.cmd");
+      yield* fs.writeFileString(claudeCmdPath, `@echo off\r\nnode "%~dp0\\claude" %*\r\n`);
+    }
+
     return binDir;
   });
 }
@@ -96,7 +104,7 @@ function withFakeClaudeEnv<A, E, R>(
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
-        process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+        process.env.PATH = `${binDir}${nodePath.delimiter}${previousPath ?? ""}`;
         process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
 
         if (input.exitCode !== undefined) {
