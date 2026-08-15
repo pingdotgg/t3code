@@ -248,21 +248,8 @@ private final class DaemonState {
         context.windowTitle = title
       }
     }
-    // Only pair a window title as the private-mode signal with the URL taken
-    // from that same window — never borrow another window's title.
-    if context.url == nil, let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement] {
-      for window in windows.prefix(4) {
-        let url = chAxString(window, "AXDocument").flatMap { $0.isEmpty ? nil : $0 }
-          ?? chAxString(window, "AXURL").flatMap { $0.isEmpty ? nil : $0 }
-        guard let url else { continue }
-        context.url = url
-        if let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty {
-          context.privateSignal = title
-          context.windowTitle = title
-        }
-        break
-      }
-    }
+    // Prefer focused-window URL/title only. Never borrow another AX window —
+    // a background allowed tab must not admit a focused excluded/private one.
     return context
   }
 
@@ -295,17 +282,23 @@ private final class DaemonState {
   private static func hostMatches(url: String, needle: String) -> Bool {
     let needle = needle.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
     guard !needle.isEmpty else { return false }
-    if needle.contains("/") || !needle.contains(".") {
-      if url.contains(needle) {
-        return true
-      }
+    // Strip query/fragment so nested URLs in ?next= cannot spoof includeOnly matches.
+    let page = Self.stripQueryAndFragment(url).lowercased()
+    if needle.contains("/") {
+      return page.contains(needle)
     }
-    for host in urlHosts(url) {
-      if host == needle || host.hasSuffix(".\(needle)") {
-        return true
-      }
+    // Hostname / bare-label needles compare against the page host only.
+    guard let host = urlHosts(page).first else {
+      return page == needle || page.hasSuffix(".\(needle)")
     }
-    return url == needle || url.hasSuffix(".\(needle)")
+    return host == needle || host.hasSuffix(".\(needle)")
+  }
+
+  private static func stripQueryAndFragment(_ raw: String) -> String {
+    var end = raw.endIndex
+    if let q = raw.firstIndex(of: "?") { end = min(end, q) }
+    if let h = raw.firstIndex(of: "#") { end = min(end, h) }
+    return String(raw[..<end])
   }
 
   private static func urlHosts(_ raw: String) -> [String] {

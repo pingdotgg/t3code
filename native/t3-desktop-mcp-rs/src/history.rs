@@ -536,22 +536,25 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
-    // Path or bare-label needles (no hostname dots) also match URL/path fragments.
-    if needle.contains('/') || !needle.contains('.') {
-        if haystack.contains(&needle) {
-            return true;
-        }
+    // Strip query/fragment so nested URLs in ?next= cannot spoof includeOnly matches.
+    let page = strip_query_and_fragment(haystack).to_lowercase();
+    if needle.contains('/') {
+        return page.contains(&needle);
     }
-    for host in extract_hosts(haystack) {
-        if host == needle || host.ends_with(&format!(".{needle}")) {
-            return true;
-        }
+    // Hostname / bare-label needles compare against the page host only.
+    if let Some(host) = extract_hosts(&page).into_iter().next() {
+        return host == needle || host.ends_with(&format!(".{needle}"));
     }
-    // Fallback for non-URL haystacks that still carry a hostname fragment.
-    haystack == needle
-        || haystack.ends_with(&format!(".{needle}"))
-        || haystack.ends_with(&format!("//{needle}"))
-        || haystack.ends_with(&format!("//{needle}/"))
+    page == needle
+        || page.ends_with(&format!(".{needle}"))
+        || page.ends_with(&format!("//{needle}"))
+        || page.ends_with(&format!("//{needle}/"))
+}
+
+fn strip_query_and_fragment(raw: &str) -> &str {
+    let q = raw.find('?').unwrap_or(raw.len());
+    let h = raw.find('#').unwrap_or(raw.len());
+    &raw[..q.min(h)]
 }
 
 fn extract_hosts(raw: &str) -> Vec<String> {
