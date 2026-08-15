@@ -795,8 +795,8 @@ func resolveTargetPid(_ args: [String: Any], element: AXUIElement? = nil) -> pid
 
 func toolClick(_ args: [String: Any]) -> String {
     let clickCount = (args["click_count"] as? Int) ?? 1
-    guard clickCount > 0 else {
-        return "error: click_count must be a positive integer"
+    guard clickCount > 0, clickCount <= 3 else {
+        return "error: click_count must be an integer between 1 and 3"
     }
 
     if let id = args["element_id"] as? String {
@@ -843,11 +843,10 @@ func toolClick(_ args: [String: Any]) -> String {
     if let x = args["x"] as? Double, let y = args["y"] as? Double {
         let point = CGPoint(x: x, y: y)
         AgentCursor.shared.press(at: point)
-        // Prefer the app the caller named, then whatever window actually sits
-        // under the point. Without the second lookup a caller who omits `app`
-        // falls through to the shared cursor, which is exactly what desktop
-        // control should avoid.
-        let target = resolveTargetPid(args).flatMap(windowTarget(forPid:)) ?? windowTarget(under: point)
+        // Prefer the window under the point so backgroundClick uses the correct
+        // window ID/origin even when `app` resolves to that app's first AX window.
+        // Fall back to the named app only when nothing sits under the point.
+        let target = windowTarget(under: point) ?? resolveTargetPid(args).flatMap(windowTarget(forPid:))
         if let target, backgroundClick(target, at: point, clickCount: clickCount) {
             return "clicked at (\(Int(x)), \(Int(y))) in background"
         }

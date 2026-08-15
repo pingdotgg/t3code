@@ -793,9 +793,20 @@ fn apply_alpha_bounding_shape(overlay: &mut Overlay, a_scale: f64) {
     {
         return;
     }
+    // XYBitmap paints set bits with GC foreground and clear bits with
+    // background. X11 defaults those to 0/1, which inverts Shape polarity
+    // (1 = inside the window). Force foreground=1, background=0 so opaque
+    // cursor pixels stay in the BOUNDING region.
     if overlay
         .conn
-        .create_gc(mask_gc, pixmap, &CreateGCAux::new().graphics_exposures(0))
+        .create_gc(
+            mask_gc,
+            pixmap,
+            &CreateGCAux::new()
+                .graphics_exposures(0)
+                .foreground(1)
+                .background(0),
+        )
         .is_err()
     {
         let _ = overlay.conn.free_pixmap(pixmap);
