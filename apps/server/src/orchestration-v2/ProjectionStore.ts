@@ -103,10 +103,9 @@ export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
   ) => Effect.Effect<void, ProjectionStoreV2Error>;
-  readonly getShellSnapshot: () => Effect.Effect<
-    OrchestrationV2ThreadShellSnapshot,
-    ProjectionStoreV2Error
-  >;
+  readonly getShellSnapshot: (options?: {
+    readonly location?: "active" | "archive";
+  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
@@ -446,7 +445,6 @@ type ShellThreadRow = {
   readonly activity_run_status: string | null;
   readonly last_error: string | null;
   readonly pending_request_payload_json: string | null;
-  readonly latest_message_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
@@ -831,11 +829,6 @@ export function threadShellFromProjection(
         (left, right) =>
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null;
-  const latestVisibleMessage =
-    projection.messages.toSorted(
-      (left, right) =>
-        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-    )[0] ?? null;
   const latestUserMessage =
     projection.messages
       .filter((message) => message.role === "user")
@@ -891,15 +884,9 @@ export function threadShellFromProjection(
             kind: pendingRuntimeRequest.kind,
             createdAt: pendingRuntimeRequest.createdAt,
           },
-    latestVisibleMessage:
-      latestVisibleMessage === null
-        ? null
-        : {
-            id: latestVisibleMessage.id,
-            role: latestVisibleMessage.role,
-            text: latestVisibleMessage.text,
-            updatedAt: latestVisibleMessage.updatedAt,
-          },
+    // Thread detail owns message bodies. Keeping them out of shell rows makes
+    // initial hydration and streaming updates independent of transcript size.
+    latestVisibleMessage: null,
     latestUserMessageAt: latestUserMessage?.updatedAt ?? null,
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
@@ -947,7 +934,6 @@ type ShellThreadState = {
   readonly activityRunStatus: ShellActivityRunStatus | null;
   readonly lastError: string | null;
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
-  readonly latestVisibleMessage: OrchestrationV2ConversationMessage | null;
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
@@ -1078,15 +1064,7 @@ function shellFromState(input: {
             kind: input.state.pendingRuntimeRequest.kind,
             createdAt: input.state.pendingRuntimeRequest.createdAt,
           },
-    latestVisibleMessage:
-      input.state.latestVisibleMessage === null
-        ? null
-        : {
-            id: input.state.latestVisibleMessage.id,
-            role: input.state.latestVisibleMessage.role,
-            text: input.state.latestVisibleMessage.text,
-            updatedAt: input.state.latestVisibleMessage.updatedAt,
-          },
+    latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
@@ -2223,7 +2201,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
-    const selectShellThreadRows = (threadId?: ThreadId) =>
+    const selectShellThreadRows = (threadId?: ThreadId, location?: "active" | "archive") =>
       sql<ShellThreadRow>`
             SELECT
               t.thread_id,
@@ -2303,13 +2281,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_request_payload_json,
               (
-                SELECT message.payload_json
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
-              ) AS latest_message_payload_json,
-              (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id
@@ -2339,7 +2310,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND i.run_id IS NULL
               ) AS runless_item_count
             FROM orchestration_v2_projection_threads t
-            WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
+            WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
+              location === "active"
+                ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
+                : location === "archive"
+                  ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL`
+                  : sql``
+            }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
 
@@ -2491,10 +2468,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.pending_request_payload_json === null
             ? null
             : yield* decodeRuntimeRequestPayload(row.pending_request_payload_json);
-        const latestVisibleMessage =
-          row.latest_message_payload_json === null
-            ? null
-            : yield* decodeMessagePayload(row.latest_message_payload_json);
         const latestRunId = row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
         const latestRunStatus = shellStatusFromStoredRunStatus(row.latest_run_status);
         const pendingBackgroundTasks = [
@@ -2539,7 +2512,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : null,
           lastError: row.last_error,
           pendingRuntimeRequest,
-          latestVisibleMessage,
           latestUserMessageAt:
             row.latest_user_message_at === null
               ? null
@@ -2554,30 +2526,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         } satisfies ShellThreadState;
       });
 
-    const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = () =>
+    const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const [
-              threadRows,
-              runRows,
-              itemCountRows,
-              sequenceRows,
-              providerThreadRows,
-              pendingTurnItemRows,
-            ] = yield* Effect.all([
-              selectShellThreadRows(),
-              selectShellRunRows(),
-              selectShellRunItemCounts(),
-              sql<{ readonly snapshot_sequence: number | null }>`
+            const targetThreadRows = yield* selectShellThreadRows(undefined, options?.location);
+            const targetThreadIds = new Set(
+              targetThreadRows.map((row) => ThreadId.make(row.thread_id)),
+            );
+            const rowsByThreadId = new Map(
+              targetThreadRows.map((row) => [ThreadId.make(row.thread_id), row] as const),
+            );
+            const pendingSourceIds = targetThreadRows.flatMap((row) =>
+              row.forked_from_run_source_thread_id === null
+                ? []
+                : [ThreadId.make(row.forked_from_run_source_thread_id)],
+            );
+            while (pendingSourceIds.length > 0) {
+              const sourceId = pendingSourceIds.pop();
+              if (sourceId === undefined || rowsByThreadId.has(sourceId)) continue;
+              const source = (yield* selectShellThreadRows(sourceId))[0];
+              if (source === undefined) continue;
+              rowsByThreadId.set(sourceId, source);
+              if (source.forked_from_run_source_thread_id !== null) {
+                pendingSourceIds.push(ThreadId.make(source.forked_from_run_source_thread_id));
+              }
+            }
+            const threadRows = [...rowsByThreadId.values()];
+            const threadIds = [...rowsByThreadId.keys()];
+            const readForThreadIds = <A>(
+              read: (ids: ReadonlyArray<ThreadId>) => Effect.Effect<ReadonlyArray<A>, unknown>,
+            ) =>
+              threadIds.length === 0 ? Effect.succeed([] as ReadonlyArray<A>) : read(threadIds);
+            const [runRows, itemCountRows, sequenceRows, providerThreadRows, pendingTurnItemRows] =
+              yield* Effect.all([
+                readForThreadIds(selectShellRunRows),
+                readForThreadIds(selectShellRunItemCounts),
+                sql<{ readonly snapshot_sequence: number | null }>`
             SELECT MAX(sequence) AS snapshot_sequence
             FROM orchestration_events
             WHERE application_event_version = 2
               AND aggregate_kind = 'thread'
           `,
-              selectShellProviderThreadRows(),
-              selectShellPendingTurnItemRows(),
-            ]);
+                readForThreadIds(selectShellProviderThreadRows),
+                readForThreadIds(selectShellPendingTurnItemRows),
+              ]);
 
             const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
               runRows,
@@ -2596,15 +2589,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             );
             const statesByThreadId = new Map(states.map((state) => [state.thread.id, state]));
 
-            const shells = states.map((state) =>
-              shellFromState({
-                state,
-                visibleItemCount: visibleItemCountForShell({
-                  threadId: state.thread.id,
-                  statesByThreadId,
+            const shells = states
+              .filter((state) => targetThreadIds.has(state.thread.id))
+              .map((state) =>
+                shellFromState({
+                  state,
+                  visibleItemCount: visibleItemCountForShell({
+                    threadId: state.thread.id,
+                    statesByThreadId,
+                  }),
                 }),
-              }),
-            );
+              );
 
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
@@ -2727,13 +2722,18 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           yield* Ref.update(sequence, (current) => current + 1);
         }),
-      getShellSnapshot: () =>
+      getShellSnapshot: (options) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(replayState)).projections;
+          const selectedThreadIds = [...existing.entries()]
+            .filter(([, projection]) => {
+              if (options?.location === "active") return projection.thread.archivedAt === null;
+              if (options?.location === "archive") return projection.thread.archivedAt !== null;
+              return true;
+            })
+            .map(([threadId]) => threadId);
           const shells = yield* Effect.forEach(
-            [...existing.keys()].toSorted((left, right) =>
-              String(left).localeCompare(String(right)),
-            ),
+            selectedThreadIds.toSorted((left, right) => String(left).localeCompare(String(right))),
             (threadId) =>
               service.getThreadProjection(threadId).pipe(Effect.map(threadShellFromProjection)),
           );
