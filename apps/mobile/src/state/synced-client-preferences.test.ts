@@ -18,6 +18,12 @@ import {
 } from "./synced-client-preferences-model";
 
 const environmentId = (value: string) => EnvironmentId.make(value);
+const livePlanModeEnvironment = (id: string, value: boolean, updatedAt: string) => ({
+  environmentId: environmentId(id),
+  connectionState: "connected" as const,
+  shellStatus: "live" as const,
+  preferences: { planModeEnabled: value, updatedAt },
+});
 
 describe("synced client preferences", () => {
   const flushReconciliation = async () => {
@@ -81,12 +87,16 @@ describe("synced client preferences", () => {
   });
 
   it("opens gating after the current environment reconciliation applies", () => {
+    const currentKey = createPlanModePreferenceReconciliationKey([
+      livePlanModeEnvironment("environment-1", true, "2026-08-14T12:00:00.000Z"),
+    ]);
+
     expect(
       isPlanModePreferenceReconciliationReady({
         connectionsLoaded: true,
         environmentCount: 1,
-        currentKey: "current",
-        appliedKey: "current",
+        currentKey,
+        appliedKey: currentKey,
       }),
     ).toBe(true);
   });
@@ -259,15 +269,10 @@ describe("synced client preferences", () => {
 
   it("keeps gating open for a newly live preference older than the applied watermark", () => {
     const currentKey = createPlanModePreferenceReconciliationKey([
-      {
-        environmentId: environmentId("older"),
-        connectionState: "connected",
-        shellStatus: "live",
-        preferences: {
-          planModeEnabled: false,
-          updatedAt: "2026-08-14T12:00:00.000Z",
-        },
-      },
+      livePlanModeEnvironment("older", false, "2026-08-14T12:00:00.000Z"),
+    ]);
+    const appliedKey = createPlanModePreferenceReconciliationKey([
+      livePlanModeEnvironment("newer", true, "2026-08-14T12:01:00.000Z"),
     ]);
 
     expect(
@@ -275,7 +280,53 @@ describe("synced client preferences", () => {
         connectionsLoaded: true,
         environmentCount: 1,
         currentKey,
-        appliedKey: "2026-08-14T12:01:00.000Z",
+        appliedKey,
+      }),
+    ).toBe(true);
+  });
+
+  it("reconciles a newly live equal-stamp winner with a different value", () => {
+    const updatedAt = "2026-08-14T12:00:00.000Z";
+    const initialEnvironment = livePlanModeEnvironment("environment-1", false, updatedAt);
+    const appliedKey = createPlanModePreferenceReconciliationKey([initialEnvironment]);
+    const currentKey = createPlanModePreferenceReconciliationKey([
+      initialEnvironment,
+      livePlanModeEnvironment("environment-2", true, updatedAt),
+    ]);
+
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 2,
+        currentKey,
+        appliedKey,
+      }),
+    ).toBe(false);
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 2,
+        currentKey,
+        appliedKey: advancePlanModePreferenceReconciliationKey(appliedKey, currentKey),
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps gating open for a newly live equal-stamp winner with the same value", () => {
+    const updatedAt = "2026-08-14T12:00:00.000Z";
+    const initialEnvironment = livePlanModeEnvironment("environment-1", false, updatedAt);
+    const appliedKey = createPlanModePreferenceReconciliationKey([initialEnvironment]);
+    const currentKey = createPlanModePreferenceReconciliationKey([
+      initialEnvironment,
+      livePlanModeEnvironment("environment-2", false, updatedAt),
+    ]);
+
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 2,
+        currentKey,
+        appliedKey,
       }),
     ).toBe(true);
   });

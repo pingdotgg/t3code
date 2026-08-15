@@ -47,6 +47,44 @@ export interface LocalSyncedClientPreferencesPatch {
   readonly updatedAtByField: SyncedClientPreferencesUpdatedAtByField;
 }
 
+interface EnvironmentPreferenceCandidate {
+  readonly source: EnvironmentId;
+  readonly updatedAt: string;
+}
+
+function compareEnvironmentPreferenceCandidates(
+  left: EnvironmentPreferenceCandidate,
+  right: EnvironmentPreferenceCandidate,
+): number {
+  return left.updatedAt.localeCompare(right.updatedAt) || left.source.localeCompare(right.source);
+}
+
+type PlanModePreferenceReconciliationIdentity = readonly [
+  updatedAt: string,
+  source: EnvironmentId,
+  value: boolean,
+];
+
+function parsePlanModePreferenceReconciliationKey(
+  key: string,
+): PlanModePreferenceReconciliationIdentity | undefined {
+  return key === ""
+    ? undefined
+    : (JSON.parse(key) as unknown as PlanModePreferenceReconciliationIdentity);
+}
+
+function comparePlanModePreferenceReconciliationIdentities(
+  left: PlanModePreferenceReconciliationIdentity | undefined,
+  right: PlanModePreferenceReconciliationIdentity | undefined,
+): number {
+  if (left === undefined) return right === undefined ? 0 : -1;
+  if (right === undefined) return 1;
+  return compareEnvironmentPreferenceCandidates(
+    { updatedAt: left[0], source: left[1] },
+    { updatedAt: right[0], source: right[1] },
+  );
+}
+
 export function createPlanModePreferenceReconciliationKey(
   states: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -55,20 +93,36 @@ export function createPlanModePreferenceReconciliationKey(
     readonly preferences: SyncedClientPreferences | undefined;
   }>,
 ): string {
-  // Readiness is a monotonic watermark: after the first pass, only a newer live
-  // preference stamp can close it; connection churn, removals, and fallback states cannot.
-  return states.reduce((newestUpdatedAt, { connectionState, shellStatus, preferences }) => {
-    if (connectionState !== "connected" || shellStatus !== "live") return newestUpdatedAt;
-    const updatedAt = getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled");
-    return updatedAt !== undefined && updatedAt > newestUpdatedAt ? updatedAt : newestUpdatedAt;
-  }, "");
+  // Readiness is a monotonic watermark over the deterministic live winner. A newer
+  // stamp always closes gating; at the same stamp, a higher environment id closes it
+  // only when its value differs. Removals, fallback states, and same-value churn cannot.
+  const winner = states.reduce<PlanModePreferenceReconciliationIdentity | undefined>(
+    (currentWinner, { environmentId, connectionState, shellStatus, preferences }) => {
+      if (connectionState !== "connected" || shellStatus !== "live") return currentWinner;
+      const value = preferences?.planModeEnabled;
+      const updatedAt = getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled");
+      if (value === undefined || updatedAt === undefined) return currentWinner;
+      const candidate = [updatedAt, environmentId, value] as const;
+      return comparePlanModePreferenceReconciliationIdentities(candidate, currentWinner) > 0
+        ? candidate
+        : currentWinner;
+    },
+    undefined,
+  );
+  return winner === undefined ? "" : JSON.stringify(winner);
 }
 
 export function advancePlanModePreferenceReconciliationKey(
   appliedKey: string | null,
   currentKey: string,
 ): string {
-  return appliedKey === null || currentKey > appliedKey ? currentKey : appliedKey;
+  if (appliedKey === null) return currentKey;
+  return comparePlanModePreferenceReconciliationIdentities(
+    parsePlanModePreferenceReconciliationKey(currentKey),
+    parsePlanModePreferenceReconciliationKey(appliedKey),
+  ) >= 0
+    ? currentKey
+    : appliedKey;
 }
 
 export function isPlanModePreferenceReconciliationReady(input: {
@@ -77,11 +131,14 @@ export function isPlanModePreferenceReconciliationReady(input: {
   readonly currentKey: string;
   readonly appliedKey: string | null;
 }): boolean {
-  return (
-    input.connectionsLoaded &&
-    (input.environmentCount === 0 ||
-      (input.appliedKey !== null && input.currentKey <= input.appliedKey))
-  );
+  if (!input.connectionsLoaded) return false;
+  if (input.environmentCount === 0) return true;
+  if (input.appliedKey === null) return false;
+  const current = parsePlanModePreferenceReconciliationKey(input.currentKey);
+  const applied = parsePlanModePreferenceReconciliationKey(input.appliedKey);
+  if (comparePlanModePreferenceReconciliationIdentities(current, applied) < 0) return true;
+  if (current === undefined || applied === undefined) return current === applied;
+  return current[0] === applied[0] && current[2] === applied[2];
 }
 
 export function hasPlanModePreferenceReconciliationAttempted(
@@ -441,10 +498,7 @@ export function reconcileSyncedClientPreferences(input: {
         ? []
         : [{ source: environment.environmentId, value, updatedAt }];
     });
-    environmentCandidates.sort(
-      (left, right) =>
-        left.updatedAt.localeCompare(right.updatedAt) || left.source.localeCompare(right.source),
-    );
+    environmentCandidates.sort(compareEnvironmentPreferenceCandidates);
     const latestEnvironment = environmentCandidates.at(-1);
     const latestObservedEnvironmentUpdatedAt = latestEnvironment?.updatedAt;
     const boundedLocalUpdatedAt =
