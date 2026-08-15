@@ -795,8 +795,8 @@ func resolveTargetPid(_ args: [String: Any], element: AXUIElement? = nil) -> pid
 
 func toolClick(_ args: [String: Any]) -> String {
     let clickCount = (args["click_count"] as? Int) ?? 1
-    guard clickCount > 0 else {
-        return "error: click_count must be a positive integer"
+    guard (1...3).contains(clickCount) else {
+        return "error: click_count must be an integer between 1 and 3"
     }
 
     if let id = args["element_id"] as? String {
@@ -847,7 +847,7 @@ func toolClick(_ args: [String: Any]) -> String {
         // under the point. Without the second lookup a caller who omits `app`
         // falls through to the shared cursor, which is exactly what desktop
         // control should avoid.
-        let target = resolveTargetPid(args).flatMap(windowTarget(forPid:)) ?? windowTarget(under: point)
+        let target = windowTarget(under: point) ?? resolveTargetPid(args).flatMap(windowTarget(forPid:))
         if let target, backgroundClick(target, at: point, clickCount: clickCount) {
             return "clicked at (\(Int(x)), \(Int(y))) in background"
         }
