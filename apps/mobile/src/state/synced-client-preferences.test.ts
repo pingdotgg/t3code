@@ -304,8 +304,7 @@ describe("synced client preferences", () => {
 
   it("reconciles when ES2023 change-by-copy array methods are unavailable", () => {
     const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
-    // oxlint-disable-next-line no-extend-native -- Simulate Hermes, which omits this method.
-    Object.defineProperty(Array.prototype, "toSorted", {
+    Reflect.defineProperty(Array.prototype, "toSorted", {
       configurable: true,
       value: undefined,
     });
@@ -338,8 +337,7 @@ describe("synced client preferences", () => {
       if (descriptor === undefined) {
         Reflect.deleteProperty(Array.prototype, "toSorted");
       } else {
-        // oxlint-disable-next-line no-extend-native -- Restore the pre-test implementation.
-        Object.defineProperty(Array.prototype, "toSorted", descriptor);
+        Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
       }
     }
   });

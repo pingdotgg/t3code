@@ -51,7 +51,6 @@ export const SyncedClientPreferencesUpdatedAtByField = Schema.Struct({
 export type SyncedClientPreferencesUpdatedAtByField =
   typeof SyncedClientPreferencesUpdatedAtByField.Type;
 
-/** Client preferences replicated through one environment's event log. */
 export const SyncedClientPreferences = Schema.Struct({
   ...SyncedClientPreferenceFields,
   // Optional while mixed-version clients may still receive aggregate-only snapshots.
@@ -69,7 +68,6 @@ export function getSyncedClientPreferenceUpdatedAt(
   return preferences.updatedAtByField?.[field] ?? preferences.updatedAt;
 }
 
-/** Exactly the preference keys that clients may patch in this rollout. */
 export const SyncedClientPreferencesPatch = Schema.Struct(SyncedClientPreferenceFields).check(
   Schema.makeFilter(
     (patch) =>

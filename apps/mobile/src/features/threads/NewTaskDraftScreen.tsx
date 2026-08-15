@@ -268,7 +268,6 @@ export function NewTaskDraftScreen(props: {
     composerSelectionRef.current = selection;
     setComposerSelection(selection);
   }, []);
-  const handleComposerSelectionChange = updateComposerSelection;
   useEffect(() => {
     const previousDraftKey = composerSelectionDraftKeyRef.current;
     composerSelectionDraftKeyRef.current = flow.draftKey;
@@ -958,7 +957,7 @@ export function NewTaskDraftScreen(props: {
       skills={flow.selectedProviderSkills}
       selection={composerSelection}
       onChangeText={flow.setPrompt}
-      onSelectionChange={handleComposerSelectionChange}
+      onSelectionChange={updateComposerSelection}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}

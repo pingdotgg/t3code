@@ -602,8 +602,6 @@ const makeWsRpcLayer = (
           Effect.orElseSucceed(() => Option.none()),
         );
 
-      const getSyncedClientPreferences = () => projectionSnapshotQuery.getSyncedClientPreferences();
-
       const clientPreferencesUpdated = (
         sequence: number,
       ): Effect.Effect<Option.Option<OrchestrationShellStreamItem>, never, never> =>
@@ -1571,7 +1569,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.syncedClientPreferencesGet]: (_input) =>
           observeRpcEffect(
             WS_METHODS.syncedClientPreferencesGet,
-            getSyncedClientPreferences().pipe(
+            projectionSnapshotQuery.getSyncedClientPreferences().pipe(
               Effect.map((preferences) => preferences ?? null),
               Effect.mapError(
                 (cause) =>
@@ -1594,7 +1592,7 @@ const makeWsRpcLayer = (
                 updatedAt,
               });
               yield* dispatchNormalizedCommand(normalizedCommand);
-              const preferences = yield* getSyncedClientPreferences().pipe(
+              const preferences = yield* projectionSnapshotQuery.getSyncedClientPreferences().pipe(
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationGetSnapshotError({

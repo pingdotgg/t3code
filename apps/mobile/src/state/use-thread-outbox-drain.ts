@@ -306,8 +306,7 @@ export function useThreadOutboxDrain(): void {
   );
 
   useEffect(() => {
-    // Wait for the stored mode before draining. Load errors resolve to defaults,
-    // so only an atom construction failure can leave this pending forever.
+    // Resolve queued interaction modes only after persisted preferences load.
     if (!planModePreferenceLoaded || dispatchingQueuedMessageId !== null) {
       return;
     }

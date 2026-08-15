@@ -365,7 +365,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     composerSelectionRef.current = selection;
     setComposerSelection(selection);
   }, []);
-  const handleSelectionChange = updateComposerSelection;
   useEffect(() => {
     const end = props.draftMessage.length;
     const selection = composerSelectionRef.current;
@@ -792,7 +791,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               skills={selectedProviderStatus?.skills ?? []}
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
-              onSelectionChange={handleSelectionChange}
+              onSelectionChange={updateComposerSelection}
               onPasteImages={(uris) => void props.onNativePasteImages(uris)}
               placeholder={props.placeholder}
               onFocus={handleFocus}

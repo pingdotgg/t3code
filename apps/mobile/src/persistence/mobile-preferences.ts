@@ -36,9 +36,6 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly autoSettleOnMerge?: boolean;
-  /**
-   * Offline cache of the most recently reconciled environment preference.
-   */
   readonly planModeEnabled?: boolean;
   readonly syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
   /** @deprecated Aggregate-clock cache retained for older persisted blobs. */

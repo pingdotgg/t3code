@@ -9,58 +9,16 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { act, createElement, Fragment } from "react";
-import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createSyncedClientPreferencesSliceAtom,
   createSyncedPlanModeHydrationController,
   createSyncedPlanModeWrite,
-  mergeEnvironmentSettings,
-  resolveEnvironmentIdentificationMode,
   resolveSyncedPlanModeHydrationAction,
   type SyncedPlanModeHydrationInput,
-  useSyncedPlanModeHydrationEffect,
-} from "./useSettings";
-
-function createHookTestRoot() {
-  const noop = () => {};
-  class TestHTMLElement {
-    readonly nodeType = 1;
-  }
-  class TestHtmlIFrameElement extends TestHTMLElement {}
-  const document = {
-    nodeType: 9,
-    addEventListener: noop,
-    removeEventListener: noop,
-    defaultView: globalThis,
-    activeElement: null,
-    body: null as unknown,
-    documentElement: null as unknown,
-  };
-  const container = {
-    nodeType: 1,
-    nodeName: "DIV",
-    tagName: "DIV",
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    ownerDocument: document,
-    addEventListener: noop,
-    removeEventListener: noop,
-    firstChild: null,
-    lastChild: null,
-    parentNode: null,
-    textContent: "",
-  };
-  document.body = container;
-  document.documentElement = container;
-  vi.stubGlobal("window", globalThis);
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("HTMLElement", TestHTMLElement);
-  vi.stubGlobal("HTMLIFrameElement", TestHtmlIFrameElement);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  return createRoot(container as unknown as Element);
-}
+} from "./synced-plan-mode";
+import { mergeEnvironmentSettings, resolveEnvironmentIdentificationMode } from "./useSettings";
 
 describe("synced plan mode", () => {
   it("adopts an environment value over the local cache", () => {
@@ -168,7 +126,7 @@ describe("synced plan mode", () => {
     ).toEqual({ type: "none" });
   });
 
-  it("keeps divergent values stable with both environment hydration hooks mounted", async () => {
+  it("keeps divergent values stable across primary and secondary synchronization", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const secondaryEnvironmentId = EnvironmentId.make("secondary");
     const controller = createSyncedPlanModeHydrationController();
@@ -185,65 +143,53 @@ describe("synced plan mode", () => {
         updatedAt: "2026-08-14T12:00:00.000Z",
       }),
     );
-    const HydrationHook = ({ input }: { input: SyncedPlanModeHydrationInput<never> }) => {
-      useSyncedPlanModeHydrationEffect(controller, input);
-      return null;
-    };
-    const root = createHookTestRoot();
-
-    try {
-      for (let render = 0; render < 10; render += 1) {
-        await act(async () => {
-          root.render(
-            createElement(
-              Fragment,
-              null,
-              createElement(HydrationHook, {
-                input: {
-                  environmentId: primaryEnvironmentId,
-                  primaryEnvironmentId,
-                  clientHydrated: true,
-                  clientValue: localValue,
-                  live: true,
-                  serverPreferences: {
-                    planModeEnabled: true,
-                    updatedAt: "2026-08-14T12:00:00.000Z",
-                  },
-                  canPatch: true,
-                  now: "2026-08-14T12:01:00.000Z",
-                  patch,
-                  persist,
-                },
-              }),
-              createElement(HydrationHook, {
-                input: {
-                  environmentId: secondaryEnvironmentId,
-                  primaryEnvironmentId,
-                  clientHydrated: true,
-                  clientValue: localValue,
-                  live: true,
-                  serverPreferences: {
-                    planModeEnabled: false,
-                    updatedAt: "2026-08-14T12:02:00.000Z",
-                  },
-                  canPatch: true,
-                  now: "2026-08-14T12:01:00.000Z",
-                  patch,
-                  persist,
-                },
-              }),
-            ),
-          );
-        });
-      }
-
-      expect(localValue).toBe(true);
-      expect(persisted).toEqual([true]);
-      expect(patch).not.toHaveBeenCalled();
-    } finally {
-      await act(async () => root.unmount());
-      vi.unstubAllGlobals();
+    const primaryOwner = Symbol();
+    const secondaryOwner = Symbol();
+    let deactivatePrimary: (() => void) | undefined;
+    for (let render = 0; render < 10; render += 1) {
+      deactivatePrimary?.();
+      deactivatePrimary = controller.synchronize(
+        {
+          environmentId: primaryEnvironmentId,
+          primaryEnvironmentId,
+          clientHydrated: true,
+          clientValue: localValue,
+          live: true,
+          serverPreferences: {
+            planModeEnabled: true,
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+          canPatch: true,
+          now: "2026-08-14T12:01:00.000Z",
+          patch,
+          persist,
+        },
+        primaryOwner,
+      );
+      controller.synchronize(
+        {
+          environmentId: secondaryEnvironmentId,
+          primaryEnvironmentId,
+          clientHydrated: true,
+          clientValue: localValue,
+          live: true,
+          serverPreferences: {
+            planModeEnabled: false,
+            updatedAt: "2026-08-14T12:02:00.000Z",
+          },
+          canPatch: true,
+          now: "2026-08-14T12:01:00.000Z",
+          patch,
+          persist,
+        },
+        secondaryOwner,
+      );
     }
+    deactivatePrimary?.();
+
+    expect(localValue).toBe(true);
+    expect(persisted).toEqual([true]);
+    expect(patch).not.toHaveBeenCalled();
   });
 
   it("settles a pending write from an older canonical ack without re-patching", async () => {
@@ -505,55 +451,41 @@ describe("synced plan mode", () => {
         }),
       );
     const persist = vi.fn();
-    const HydrationHook = ({ input }: { input: SyncedPlanModeHydrationInput<string> }) => {
-      useSyncedPlanModeHydrationEffect(controller, input);
-      return null;
-    };
-    const root = createHookTestRoot();
+    const input = {
+      environmentId: previousPrimaryEnvironmentId,
+      primaryEnvironmentId: previousPrimaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: true,
+      serverPreferences: undefined,
+      canPatch: true,
+      now: "2026-08-14T12:00:00.000Z",
+      patch,
+      persist,
+    } satisfies SyncedPlanModeHydrationInput<string>;
+    const owner = Symbol();
+    const deactivate = controller.synchronize(input, owner);
+    await Promise.resolve();
+    expect(scheduledRetries).toHaveLength(1);
 
-    try {
-      const input = {
-        environmentId: previousPrimaryEnvironmentId,
-        primaryEnvironmentId: previousPrimaryEnvironmentId,
-        clientHydrated: true,
-        clientValue: false,
-        live: true,
-        serverPreferences: undefined,
-        canPatch: true,
-        now: "2026-08-14T12:00:00.000Z",
-        patch,
-        persist,
-      } satisfies SyncedPlanModeHydrationInput<string>;
+    deactivate?.();
+    controller.synchronize(
+      {
+        ...input,
+        environmentId: nextPrimaryEnvironmentId,
+        primaryEnvironmentId: nextPrimaryEnvironmentId,
+        serverPreferences: {
+          planModeEnabled: false,
+          updatedAt: "2026-08-14T12:01:00.000Z",
+        },
+      },
+      owner,
+    );
+    scheduledRetries[0]?.();
+    await Promise.resolve();
 
-      await act(async () => {
-        root.render(createElement(HydrationHook, { input }));
-      });
-      expect(scheduledRetries).toHaveLength(1);
-
-      await act(async () => {
-        root.render(
-          createElement(HydrationHook, {
-            input: {
-              ...input,
-              environmentId: nextPrimaryEnvironmentId,
-              primaryEnvironmentId: nextPrimaryEnvironmentId,
-              serverPreferences: {
-                planModeEnabled: false,
-                updatedAt: "2026-08-14T12:01:00.000Z",
-              },
-            },
-          }),
-        );
-      });
-      scheduledRetries[0]?.();
-      await Promise.resolve();
-
-      expect(patch).toHaveBeenCalledOnce();
-      expect(persist).not.toHaveBeenCalled();
-    } finally {
-      await act(async () => root.unmount());
-      vi.unstubAllGlobals();
-    }
+    expect(patch).toHaveBeenCalledOnce();
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -576,65 +508,49 @@ describe("synced plan mode", () => {
       );
       const persisted: boolean[] = [];
       const persist = (value: boolean) => persisted.push(value);
-      const HydrationHook = ({ input }: { input: SyncedPlanModeHydrationInput<never> }) => {
-        useSyncedPlanModeHydrationEffect(controller, input);
-        return null;
-      };
-      const root = createHookTestRoot();
+      const input = {
+        environmentId: previousPrimaryEnvironmentId,
+        primaryEnvironmentId: previousPrimaryEnvironmentId,
+        clientHydrated: true,
+        clientValue: true,
+        live: true,
+        serverPreferences: undefined,
+        canPatch: true,
+        now: "2026-08-14T12:00:00.000Z",
+        patch,
+        persist,
+      } satisfies SyncedPlanModeHydrationInput<never>;
+      const owner = Symbol();
+      const deactivate = controller.synchronize(input, owner);
+      expect(patch).toHaveBeenCalledOnce();
 
-      try {
-        const input = {
-          environmentId: previousPrimaryEnvironmentId,
-          primaryEnvironmentId: previousPrimaryEnvironmentId,
-          clientHydrated: true,
-          clientValue: true,
-          live: true,
-          serverPreferences: undefined,
-          canPatch: true,
-          now: "2026-08-14T12:00:00.000Z",
-          patch,
-          persist,
-        } satisfies SyncedPlanModeHydrationInput<never>;
-
-        await act(async () => {
-          root.render(createElement(HydrationHook, { input }));
-        });
-        expect(patch).toHaveBeenCalledOnce();
-
-        if (switchPrimary) {
-          await act(async () => {
-            root.render(
-              createElement(HydrationHook, {
-                input: {
-                  ...input,
-                  environmentId: nextPrimaryEnvironmentId,
-                  primaryEnvironmentId: nextPrimaryEnvironmentId,
-                  clientValue: false,
-                  serverPreferences: {
-                    planModeEnabled: false,
-                    updatedAt: "2026-08-14T12:01:00.000Z",
-                  },
-                },
-              }),
-            );
-          });
-        }
-
-        await act(async () => {
-          resolvePatch(
-            AsyncResult.success({
-              planModeEnabled: true,
-              updatedAt: "2026-08-14T12:00:00.000Z",
-            }),
-          );
-          await Promise.resolve();
-        });
-
-        expect(persisted).toEqual(expectedPersisted);
-      } finally {
-        await act(async () => root.unmount());
-        vi.unstubAllGlobals();
+      if (switchPrimary) {
+        deactivate?.();
+        controller.synchronize(
+          {
+            ...input,
+            environmentId: nextPrimaryEnvironmentId,
+            primaryEnvironmentId: nextPrimaryEnvironmentId,
+            clientValue: false,
+            serverPreferences: {
+              planModeEnabled: false,
+              updatedAt: "2026-08-14T12:01:00.000Z",
+            },
+          },
+          owner,
+        );
       }
+
+      resolvePatch(
+        AsyncResult.success({
+          planModeEnabled: true,
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        }),
+      );
+      await Promise.resolve();
+
+      expect(persisted).toEqual(expectedPersisted);
+      if (!switchPrimary) deactivate?.();
     },
   );
 

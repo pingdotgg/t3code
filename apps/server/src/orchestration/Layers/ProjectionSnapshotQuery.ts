@@ -815,6 +815,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const readSyncedClientPreferences = (operation: string) =>
+    getSyncedClientPreferencesRow(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          `ProjectionSnapshotQuery.${operation}:query`,
+          `ProjectionSnapshotQuery.${operation}:decodeRow`,
+        ),
+      ),
+      Effect.map(mapSyncedClientPreferences),
+    );
+
   const readProjectionCounts = SqlSchema.findOne({
     Request: Schema.Void,
     Result: ProjectionCountsRowSchema,
@@ -1569,14 +1580,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          getSyncedClientPreferencesRow(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:getSyncedClientPreferences:query",
-                "ProjectionSnapshotQuery.getSnapshot:getSyncedClientPreferences:decodeRow",
-              ),
-            ),
-          ),
+          readSyncedClientPreferences("getSnapshot:getSyncedClientPreferences"),
         ]),
       )
       .pipe(
@@ -1591,7 +1595,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             checkpointRows,
             latestTurnRows,
             stateRows,
-            syncedClientPreferencesRow,
+            syncedClientPreferences,
           ]) =>
             Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
@@ -1602,9 +1606,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
 
               let updatedAt: string | null = null;
-              const syncedClientPreferences = mapSyncedClientPreferences(
-                syncedClientPreferencesRow,
-              );
               if (syncedClientPreferences !== undefined) {
                 updatedAt = maxIso(updatedAt, syncedClientPreferences.updatedAt);
               }
@@ -1855,14 +1856,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          getSyncedClientPreferencesRow(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:getSyncedClientPreferences:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:getSyncedClientPreferences:decodeRow",
-              ),
-            ),
-          ),
+          readSyncedClientPreferences("getCommandReadModel:getSyncedClientPreferences"),
         ]),
       )
       .pipe(
@@ -1874,13 +1868,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             sessionRows,
             latestTurnRows,
             stateRows,
-            syncedClientPreferencesRow,
+            syncedClientPreferences,
           ]) =>
             Effect.sync(() => {
               let updatedAt: string | null = null;
-              const syncedClientPreferences = mapSyncedClientPreferences(
-                syncedClientPreferencesRow,
-              );
               if (syncedClientPreferences !== undefined) {
                 updatedAt = maxIso(updatedAt, syncedClientPreferences.updatedAt);
               }
@@ -2072,14 +2063,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          getSyncedClientPreferencesRow(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getShellSnapshot:getSyncedClientPreferences:query",
-                "ProjectionSnapshotQuery.getShellSnapshot:getSyncedClientPreferences:decodeRow",
-              ),
-            ),
-          ),
+          readSyncedClientPreferences("getShellSnapshot:getSyncedClientPreferences"),
         ]),
       )
       .pipe(
@@ -2090,13 +2074,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             sessionRows,
             latestTurnRows,
             stateRows,
-            syncedClientPreferencesRow,
+            syncedClientPreferences,
           ]) =>
             Effect.gen(function* () {
               let updatedAt: string | null = null;
-              const syncedClientPreferences = mapSyncedClientPreferences(
-                syncedClientPreferencesRow,
-              );
               if (syncedClientPreferences !== undefined) {
                 updatedAt = maxIso(updatedAt, syncedClientPreferences.updatedAt);
               }
@@ -2239,14 +2220,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          getSyncedClientPreferencesRow(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getArchivedShellSnapshot:getSyncedClientPreferences:query",
-                "ProjectionSnapshotQuery.getArchivedShellSnapshot:getSyncedClientPreferences:decodeRow",
-              ),
-            ),
-          ),
+          readSyncedClientPreferences("getArchivedShellSnapshot:getSyncedClientPreferences"),
         ]),
       )
       .pipe(
@@ -2257,13 +2231,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             sessionRows,
             latestTurnRows,
             stateRows,
-            syncedClientPreferencesRow,
+            syncedClientPreferences,
           ]) =>
             Effect.gen(function* () {
               let updatedAt: string | null = null;
-              const syncedClientPreferences = mapSyncedClientPreferences(
-                syncedClientPreferencesRow,
-              );
               if (syncedClientPreferences !== undefined) {
                 updatedAt = maxIso(updatedAt, syncedClientPreferences.updatedAt);
               }
@@ -2378,16 +2349,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     );
 
   const getSyncedClientPreferences: ProjectionSnapshotQueryShape["getSyncedClientPreferences"] =
-    () =>
-      getSyncedClientPreferencesRow(undefined).pipe(
-        Effect.mapError(
-          toPersistenceSqlOrDecodeError(
-            "ProjectionSnapshotQuery.getSyncedClientPreferences:query",
-            "ProjectionSnapshotQuery.getSyncedClientPreferences:decodeRow",
-          ),
-        ),
-        Effect.map(mapSyncedClientPreferences),
-      );
+    () => readSyncedClientPreferences("getSyncedClientPreferences");
 
   const getCounts: ProjectionSnapshotQueryShape["getCounts"] = () =>
     readProjectionCounts(undefined).pipe(
