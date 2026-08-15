@@ -127,48 +127,71 @@ impl WindowsDesktop {
     /// Resolve the deepest visible child HWND under a screen point.
     fn hwnd_at_screen(x: i32, y: i32) -> Option<HWND> {
         let point = POINT { x, y };
-        let top = unsafe { WindowFromPoint(point) };
-        if top.0.is_null() {
+        let mut hwnd = unsafe { WindowFromPoint(point) };
+        if hwnd.0.is_null() {
             return None;
         }
-        let mut client = point;
-        if !unsafe { ScreenToClient(top, &mut client) }.as_bool() {
-            return Some(top);
+        // Walk into nested children — a single ChildWindowFromPointEx only
+        // returns the immediate child, which misses grandchildren (Bot: nested
+        // Win32 controls).
+        loop {
+            let mut client = point;
+            if !unsafe { ScreenToClient(hwnd, &mut client) }.as_bool() {
+                break;
+            }
+            let child = unsafe {
+                ChildWindowFromPointEx(hwnd, client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED)
+            };
+            if child.0.is_null() || child.0 == hwnd.0 {
+                break;
+            }
+            hwnd = child;
         }
-        let child = unsafe {
-            ChildWindowFromPointEx(top, client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED)
-        };
-        if child.0.is_null() {
-            Some(top)
-        } else {
-            Some(child)
-        }
+        Some(hwnd)
     }
 
-    /// Chromium / Electron ignore posted `WM_*BUTTON*` messages, so
-    /// `PostMessageW` can "succeed" without delivering a real click.
-    fn ignores_posted_mouse(hwnd: HWND) -> bool {
+    /// Only post mouse messages to control classes known to honor them.
+    /// Everything else (Chromium, Qt, DirectInput, unknown) falls through to
+    /// the real cursor path so we never report a false click success.
+    fn accepts_posted_mouse(hwnd: HWND) -> bool {
         let mut buf = [0u16; 256];
         let len = unsafe { GetClassNameW(hwnd, &mut buf) };
         if len == 0 {
             return false;
         }
         let class = String::from_utf16_lossy(&buf[..len as usize]);
-        class.starts_with("Chrome_") || class.starts_with("Chrome_WidgetWin")
+        if class.starts_with("Chrome_") || class.starts_with("Chrome_WidgetWin") {
+            return false;
+        }
+        matches!(
+            class.as_str(),
+            "Button"
+                | "Edit"
+                | "Static"
+                | "ComboBox"
+                | "ComboLBox"
+                | "ListBox"
+                | "SysListView32"
+                | "SysTreeView32"
+                | "SysTabControl32"
+                | "ToolbarWindow32"
+                | "msctls_trackbar32"
+                | "msctls_updown32"
+                | "ScrollBar"
+                | "#32770"
+        ) || class.starts_with("WindowsForms")
     }
 
     /// Deliver a left/right click via posted mouse messages so the system
-    /// cursor does not move. Many Win32 apps honor this; Chromium and
-    /// DirectInput often do not — callers fall back to the cursor path.
+    /// cursor does not move. Only used for known-good Win32 classes; callers
+    /// fall back to the cursor path when this returns false.
     fn background_click(x: f64, y: f64, right: bool) -> bool {
         let sx = x.round() as i32;
         let sy = y.round() as i32;
         let Some(hwnd) = Self::hwnd_at_screen(sx, sy) else {
             return false;
         };
-        // Refuse a false success on targets that ignore posted mouse messages
-        // so callers take the synthetic-cursor path instead.
-        if Self::ignores_posted_mouse(hwnd) {
+        if !Self::accepts_posted_mouse(hwnd) {
             return false;
         }
         let mut client = POINT { x: sx, y: sy };
@@ -290,6 +313,11 @@ impl WindowsDesktop {
         }
         if let Some(row) = self.describe(element, depth, next_id) {
             lines.push(row);
+        }
+        // At max_depth we still describe this node, but skip child enumeration —
+        // walking siblings would only waste UIA work with no lines added.
+        if depth == max_depth {
+            return;
         }
 
         let walker = match self.automation.create_tree_walker() {
@@ -443,12 +471,14 @@ impl Desktop for WindowsDesktop {
             && click_count == 1
             && let Ok(element) = self.element(id)
             && let Ok(invoke) = element.get_pattern::<UIInvokePattern>()
-            && invoke.invoke().is_ok()
         {
+            // Wait for the agent pointer to land before invoking, matching Mac.
             if let Ok((x, y)) = Self::center(element) {
                 AgentCursor::shared().press(x, y);
             }
-            return Ok(format!("pressed e{id}"));
+            if invoke.invoke().is_ok() {
+                return Ok(format!("pressed e{id}"));
+            }
         }
 
         let (x, y) = self.point_coordinates(target)?;
@@ -497,6 +527,7 @@ impl Desktop for WindowsDesktop {
         mouse
             .move_to(&UIPoint::new(from_x as i32, from_y as i32))
             .map_err(|error| DesktopError::new(format!("could not reach the drag origin: {error}")))?;
+        // Fly overlay to the end before the real drag starts (button still up).
         AgentCursor::shared().press(to_x, to_y);
         mouse
             .drag_to(MouseButton::LEFT, &UIPoint::new(to_x as i32, to_y as i32))
