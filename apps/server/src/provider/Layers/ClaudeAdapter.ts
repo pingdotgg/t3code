@@ -3567,6 +3567,34 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // Background agents run inside the claude child process; the stream
+    // ending means that process is gone, and every still-tracked task with
+    // it. Report the loss before teardown — the previous behavior was a
+    // silent kill the user only discovered on their next message. The
+    // structured log captures the exit shape so the upstream trigger (what
+    // ends the stream minutes after a turn settles) stays measurable.
+    const lostTasks = Array.from(context.liveTaskIds, (taskId) => ({
+      taskId,
+      description: context.taskAgents.get(taskId)?.description,
+    }));
+    if (lostTasks.length > 0) {
+      yield* Effect.logWarning("claude.session.stream-ended-with-live-tasks", {
+        threadId: context.session.threadId,
+        exitKind: Exit.isFailure(exit) ? "failure" : "clean-end",
+        liveTaskCount: lostTasks.length,
+        taskDescriptions: lostTasks.map((task) => task.description ?? task.taskId),
+        sessionStartedAt: context.startedAt,
+        hadActiveTurn: context.turnState !== undefined,
+      });
+      const taskNames = lostTasks.map((task) => task.description ?? task.taskId).join(", ");
+      yield* emitRuntimeError(
+        context,
+        lostTasks.length === 1
+          ? `Claude runtime exited while a background agent was still running: ${taskNames}. The agent was stopped; sending a new message resumes the session.`
+          : `Claude runtime exited while ${lostTasks.length} background agents were still running: ${taskNames}. The agents were stopped; sending a new message resumes the session.`,
+      );
+    }
+
     if (Exit.isFailure(exit)) {
       if (isClaudeInterruptedCause(exit.cause)) {
         if (context.turnState) {
@@ -3620,6 +3648,39 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     context.pendingApprovals.clear();
 
+    // Background agents live inside the claude child process, so no task
+    // survives its session. Emit the terminal event stopTask would have
+    // produced (see interruptTurn) so durable UI state settles at teardown
+    // instead of showing phantom running agents until the next resume.
+    const drainLiveTasks = Effect.gen(function* () {
+      for (const taskId of Array.from(context.liveTaskIds)) {
+        // A task_notification handler suspended mid-yield can resume between
+        // the snapshot above and this iteration and emit the task's real
+        // terminal event. `delete` returning false means exactly that — the
+        // task already settled, and emitting a second, contradictory
+        // `stopped` row here would overwrite its true final status.
+        if (!context.liveTaskIds.delete(taskId)) {
+          continue;
+        }
+        const taskStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "task.completed",
+          eventId: taskStamp.eventId,
+          provider: PROVIDER,
+          createdAt: taskStamp.createdAt,
+          threadId: context.session.threadId,
+          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          payload: {
+            taskId: RuntimeTaskId.make(taskId),
+            status: "stopped",
+            ...taskLinkageFor(context.taskAgents, taskId),
+          },
+          providerRefs: nativeProviderRefs(context),
+        });
+      }
+    });
+    yield* drainLiveTasks;
+
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
     }
@@ -3631,6 +3692,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (streamFiber && streamFiber.pollUnsafe() === undefined) {
       yield* Fiber.interrupt(streamFiber);
     }
+
+    // A task_started handler suspended mid-yield on the stream fiber can
+    // resume between the first drain and the interrupt above, re-adding a
+    // task after it was drained. The fiber is dead now, so one more drain
+    // makes "zero live tasks after teardown" an invariant, not a race.
+    yield* drainLiveTasks;
 
     yield* Effect.try({
       try: () => context.query.close(),
