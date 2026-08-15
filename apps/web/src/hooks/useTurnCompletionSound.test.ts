@@ -139,8 +139,8 @@ describe("detectNewTurnCompletions", () => {
     expect(result.hasNewCompletion).toBe(false);
   });
 
-  it("ignores archived threads", () => {
-    const thread = createMockThread("thread-1", {
+  it("clears tracked state when thread is archived and does not chime on unarchiving an already-settled thread", () => {
+    const archivedThread = createMockThread("thread-1", {
       archivedAt: "2026-08-15T07:04:00.000Z",
       session: { status: "idle", activeTurnId: null, updatedAt: "2026-08-15T07:06:00.000Z" },
       latestTurn: {
@@ -152,10 +152,19 @@ describe("detectNewTurnCompletions", () => {
         assistantMessageId: null,
       },
     });
-    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const key = scopedThreadKey(scopeThreadRef(archivedThread.environmentId, archivedThread.id));
     const previous = { [key]: "running" };
 
-    const result = detectNewTurnCompletions([thread], previous);
-    expect(result.hasNewCompletion).toBe(false);
+    const archivedResult = detectNewTurnCompletions([archivedThread], previous);
+    expect(archivedResult.hasNewCompletion).toBe(false);
+    expect(archivedResult.nextCompletions[key]).toBeUndefined();
+
+    const unarchivedThread = { ...archivedThread, archivedAt: null };
+    const unarchivedResult = detectNewTurnCompletions(
+      [unarchivedThread],
+      archivedResult.nextCompletions,
+    );
+    expect(unarchivedResult.hasNewCompletion).toBe(false);
+    expect(unarchivedResult.nextCompletions[key]).toBe("2026-08-15T07:06:00.000Z");
   });
 });

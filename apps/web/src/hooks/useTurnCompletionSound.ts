@@ -18,8 +18,11 @@ export function detectNewTurnCompletions(
   let hasNewCompletion = false;
 
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    if (thread.archivedAt !== null) {
+      delete nextCompletions[threadKey];
+      continue;
+    }
     const previousState = previousCompletions[threadKey];
 
     const isSettled =
