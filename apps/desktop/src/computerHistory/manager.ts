@@ -73,7 +73,8 @@ async function writeUnavailableStatus(root: string, lastError: string): Promise<
   );
 }
 
-// Errors stay in the Effect error channel (never Effect.orDie) so callers can catch/ignore.
+// Errors stay in the Effect error channel so callers can catch/ignore.
+// Never convert these to defects — bootstrap and quit recover with Effect.catch.
 export class ComputerHistoryManager extends Context.Service<
   ComputerHistoryManager,
   {
@@ -106,6 +107,15 @@ export class ComputerHistoryManager extends Context.Service<
     readonly currentRoot: () => Effect.Effect<string | null>;
   }
 >()("ComputerHistoryManager") {}
+
+const runDaemonOp = (
+  operation: "ensureDaemon" | "stopDaemon",
+  run: () => Promise<void>,
+): Effect.Effect<void, ComputerHistoryOperationError> =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) => new ComputerHistoryOperationError({ operation, cause }),
+  });
 
 export const make = Effect.gen(function* () {
   // Plain mutable state — avoids Effect.runPromise on every Ref touch inside
@@ -256,25 +266,8 @@ export const make = Effect.gen(function* () {
 
   return ComputerHistoryManager.of({
     ensureDaemon: (stateDir, settings) =>
-      Effect.tryPromise({
-        try: () => enqueueEnsure(() => ensureDaemonImpl(stateDir, settings)),
-        catch: (cause) =>
-          new ComputerHistoryOperationError({
-            operation: "ensureDaemon",
-            cause,
-          }),
-      }),
-    // Typed failure channel — callers recover with Effect.catch / Effect.ignore.
-    // Do not pipe Effect.orDie here; bootstrap and quit must stay non-defecting.
-    stopDaemon: () =>
-      Effect.tryPromise({
-        try: () => enqueueEnsure(() => stopDaemonImpl()),
-        catch: (cause) =>
-          new ComputerHistoryOperationError({
-            operation: "stopDaemon",
-            cause,
-          }),
-      }),
+      runDaemonOp("ensureDaemon", () => enqueueEnsure(() => ensureDaemonImpl(stateDir, settings))),
+    stopDaemon: () => runDaemonOp("stopDaemon", () => enqueueEnsure(() => stopDaemonImpl())),
     getStatus: (stateDir, settings) =>
       Effect.tryPromise({
         try: async () => {
