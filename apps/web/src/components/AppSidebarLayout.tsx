@@ -92,11 +92,15 @@ function SidebarControl() {
       toggleSidebar();
     };
 
+    // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [keybindings, toggleSidebar]);
 
   return (
+    // The right-side layout controls carry mr-px (border compensation inside
+    // the panel), so the trigger mirrors it: both clusters sit one extra pixel
+    // off their edge and the titlebar reads symmetric.
     <div
       className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
       data-sidebar-control=""
@@ -115,12 +119,17 @@ function SidebarControl() {
                   stageBackdropVariant &&
                   resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
               )}
-              aria-label="Toggle main sidebar"
+              aria-label={
+                unreadCount > 0
+                  ? `Toggle main sidebar (${unreadCount} unread)`
+                  : "Toggle main sidebar"
+              }
             />
           }
         />
         <TooltipPopup side="bottom">
           Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          {unreadCount > 0 ? ` · ${unreadCount} unread` : ""}
         </TooltipPopup>
       </Tooltip>
     </div>
