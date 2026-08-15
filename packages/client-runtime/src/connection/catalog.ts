@@ -79,6 +79,7 @@ export class SshConnectionRegistration extends Schema.TaggedClass<SshConnectionR
   {
     target: SshConnectionTarget,
     profile: SshConnectionProfile,
+    credential: Schema.optionalKey(BearerConnectionCredential),
   },
 ) {}
 
