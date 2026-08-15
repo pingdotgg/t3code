@@ -61,32 +61,38 @@ function StatusEmptyState({
 
 function RateLimitRow({
   label,
-  usedPercent,
+  valuePercent,
   resetTimestamp,
+  kind = "remaining",
 }: {
   readonly label: string;
-  readonly usedPercent: number;
+  readonly valuePercent: number;
   readonly resetTimestamp: string | null;
+  readonly kind?: "remaining" | "used";
 }) {
-  const remaining = codexRemainingPercent(usedPercent);
+  const percent = Math.max(0, Math.min(100, valuePercent));
+  const suffix = kind === "remaining" ? "% left" : "% used";
 
   return (
     <div className="rounded-lg border border-border/60 bg-background/35 px-3 py-3">
       <div className="flex items-center justify-between gap-3 text-xs">
         <span className="text-muted-foreground">{label}</span>
-        <span className="tabular-nums text-foreground">{remaining}% left</span>
+        <span className="tabular-nums text-foreground">
+          {percent}
+          {suffix}
+        </span>
       </div>
       <div
-        aria-label={`${label}: ${remaining}% left`}
+        aria-label={`${label}: ${percent}${suffix}`}
         className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
         role="progressbar"
         aria-valuemax={100}
         aria-valuemin={0}
-        aria-valuenow={remaining}
+        aria-valuenow={percent}
       >
         <div
           className="h-full rounded-full bg-primary transition-[width]"
-          style={{ width: `${remaining}%` }}
+          style={{ width: `${percent}%` }}
         />
       </div>
       {resetTimestamp ? (
@@ -132,8 +138,9 @@ function CodexRateLimitsCard({
                   ? "Primary limit"
                   : codexRateLimitWindowLabel(rateLimits.primary.windowDurationMins)
               }
-              usedPercent={rateLimits.primary.usedPercent}
+              valuePercent={codexRemainingPercent(rateLimits.primary.usedPercent)}
               resetTimestamp={formatResetTimestamp(rateLimits.primary.resetsAt)}
+              kind="remaining"
             />
           ) : null}
           {rateLimits.secondary ? (
@@ -143,8 +150,9 @@ function CodexRateLimitsCard({
                   ? "Secondary limit"
                   : codexRateLimitWindowLabel(rateLimits.secondary.windowDurationMins)
               }
-              usedPercent={rateLimits.secondary.usedPercent}
+              valuePercent={codexRemainingPercent(rateLimits.secondary.usedPercent)}
               resetTimestamp={formatResetTimestamp(rateLimits.secondary.resetsAt)}
+              kind="remaining"
             />
           ) : null}
         </div>
@@ -186,23 +194,25 @@ function ClaudeRateLimitsCard({
           {rateLimits.currentSession ? (
             <RateLimitRow
               label="Current session"
-              usedPercent={rateLimits.currentSession.usedPercent}
+              valuePercent={rateLimits.currentSession.usedPercent}
               resetTimestamp={
                 rateLimits.currentSession.resetsAt
                   ? formatStatusTimestampWithTimeZone(rateLimits.currentSession.resetsAt)
                   : null
               }
+              kind="used"
             />
           ) : null}
           {rateLimits.currentWeek ? (
             <RateLimitRow
               label="Weekly limit"
-              usedPercent={rateLimits.currentWeek.usedPercent}
+              valuePercent={rateLimits.currentWeek.usedPercent}
               resetTimestamp={
                 rateLimits.currentWeek.resetsAt
                   ? formatStatusTimestampWithTimeZone(rateLimits.currentWeek.resetsAt)
                   : null
               }
+              kind="used"
             />
           ) : null}
           {rateLimits.currentWeekPromo ? (
