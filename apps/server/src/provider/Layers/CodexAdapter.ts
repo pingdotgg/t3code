@@ -63,6 +63,10 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import {
+  type CodexProgressCoalescer,
+  makeCodexProgressCoalescer,
+} from "./CodexProgressCoalescer.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
@@ -91,6 +95,7 @@ interface CodexAdapterSessionContext {
   readonly threadId: ThreadId;
   readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
+  readonly progress: CodexProgressCoalescer<string, ProviderRuntimeEvent>;
   readonly eventFiber: Fiber.Fiber<void, never>;
   stopped: boolean;
 }
@@ -756,6 +761,56 @@ function mapCollabAgentEvent(
       ];
     default:
       return [];
+  }
+}
+
+function collabAgentThreadId(event: ProviderEvent): string | undefined {
+  if (event.kind !== "notification" || !event.method.startsWith("collabAgent/")) {
+    return undefined;
+  }
+  const payload =
+    typeof event.payload === "object" && event.payload !== null
+      ? (event.payload as Record<string, unknown>)
+      : undefined;
+  return typeof payload?.agentThreadId === "string" ? payload.agentThreadId : undefined;
+}
+
+function collabProgressLane(event: ProviderEvent): "item" | "tokenUsage" | undefined {
+  switch (event.method) {
+    case "collabAgent/item":
+      return "item";
+    case "collabAgent/tokenUsage":
+      return "tokenUsage";
+    default:
+      return undefined;
+  }
+}
+
+function shouldFlushCollabProgress(event: ProviderEvent): boolean {
+  switch (event.method) {
+    case "collabAgent/turnCompleted":
+    case "collabAgent/closed":
+      return true;
+    case "collabAgent/activity": {
+      const payload =
+        typeof event.payload === "object" && event.payload !== null
+          ? (event.payload as Record<string, unknown>)
+          : undefined;
+      return payload?.activityKind === "interrupted";
+    }
+    case "collabAgent/statusChanged": {
+      const payload =
+        typeof event.payload === "object" && event.payload !== null
+          ? (event.payload as Record<string, unknown>)
+          : undefined;
+      const status =
+        typeof payload?.status === "object" && payload.status !== null
+          ? (payload.status as Record<string, unknown>)
+          : undefined;
+      return status?.type === "idle" || status?.type === "systemError";
+    }
+    default:
+      return false;
   }
 }
 
@@ -1714,11 +1769,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }),
           ),
         );
+        const progress = yield* makeCodexProgressCoalescer<string, ProviderRuntimeEvent>({
+          emit: (events) => Queue.offerAll(runtimeEventQueue, events).pipe(Effect.asVoid),
+        }).pipe(Effect.provideService(Scope.Scope, sessionScope));
 
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
             const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const childThreadId = collabAgentThreadId(event);
+            if (childThreadId && shouldFlushCollabProgress(event)) {
+              yield* progress.flush(childThreadId);
+            }
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -1726,6 +1788,25 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 turnId: event.turnId,
                 itemId: event.itemId,
               });
+              return;
+            }
+
+            const progressLane = collabProgressLane(event);
+            const latestProgress = runtimeEvents.findLast(
+              (runtimeEvent) => runtimeEvent.type === "task.progress",
+            );
+            if (childThreadId && progressLane && latestProgress) {
+              if (progressLane === "item") {
+                yield* progress.offerItem(childThreadId, latestProgress);
+              } else {
+                yield* progress.offerTokenUsage(childThreadId, latestProgress);
+              }
+              const passthrough = runtimeEvents.filter(
+                (runtimeEvent) => runtimeEvent !== latestProgress,
+              );
+              if (passthrough.length > 0) {
+                yield* Queue.offerAll(runtimeEventQueue, passthrough);
+              }
               return;
             }
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
@@ -1743,7 +1824,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }),
           ),
           Effect.onError(() =>
-            runtime.close.pipe(
+            progress.close.pipe(
+              Effect.andThen(runtime.close),
               Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
               Effect.andThen(Fiber.interrupt(eventFiber)),
               Effect.ignore,
@@ -1755,6 +1837,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           threadId: input.threadId,
           scope: sessionScope,
           runtime,
+          progress,
           eventFiber,
           stopped: false,
         });
@@ -1929,6 +2012,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     }
     session.stopped = true;
     sessions.delete(session.threadId);
+    yield* session.progress.close;
     yield* session.runtime.close.pipe(Effect.ignore);
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
