@@ -1173,8 +1173,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    compatibility overrides so both navigation implementations receive the
    same palette. Success, info, provider, and channel identity colors remain
    independent; error, warning, and update roles are themeable below. */
-html[data-theme-id],
-html.dark[data-theme-id] {
+
+/* The non-empty marker adds enough specificity to outrank the generated root
+   dark variant without reintroducing raw `.dark` selectors. */
+html[data-theme-id]:not([data-theme-id=""]) {
   --background: var(--app-theme-canvas);
   --app-chrome-background: var(--app-theme-chrome);
   --toolbar-background: var(--app-theme-toolbar);
