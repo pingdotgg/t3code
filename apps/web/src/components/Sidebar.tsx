@@ -3130,13 +3130,19 @@ export default function Sidebar() {
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
+        const changeRequestSnapshot = changeRequestSnapshotByKey.get(threadKey);
+        const changeRequestState =
+          changeRequestSnapshot != null &&
+          (thread.worktreePath === null || changeRequestSnapshot.branch === thread.branch)
+            ? changeRequestSnapshot.pr.state
+            : null;
         const isEffectivelySettled =
           supportsSettlement &&
           effectiveSettled(thread, {
             now: `${nowMinute}:00.000Z`,
             autoSettleAfterDays,
             autoSettleOnMerge,
-            changeRequestState: changeRequestStateByKey.get(threadKey) ?? null,
+            changeRequestState,
           });
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
@@ -3368,7 +3374,7 @@ export default function Sidebar() {
       confirmThreadArchive,
       autoSettleAfterDays,
       autoSettleOnMerge,
-      changeRequestStateByKey,
+      changeRequestSnapshotByKey,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
