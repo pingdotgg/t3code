@@ -1026,6 +1026,194 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolData).toEqual(item);
   });
 
+  it("extracts the tool name and input from Claude payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "claude-read",
+        kind: "tool.completed",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          detail: 'Read: {"file_path":"/tmp/app.ts"}',
+          data: {
+            toolName: "Read",
+            input: { file_path: "/tmp/app.ts" },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolName).toBe("Read");
+    expect(entry?.toolServer).toBeUndefined();
+    expect(entry?.toolInput).toEqual({ file_path: "/tmp/app.ts" });
+  });
+
+  it("splits the MCP server out of prefixed Claude tool names", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "claude-mcp",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          // Adapters classify by keyword, so this MCP call lands on file_change.
+          itemType: "file_change",
+          title: "File change",
+          data: {
+            toolName: "mcp__github__create_pr",
+            input: { title: "Fix login bug" },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolServer).toBe("github");
+    expect(entry?.toolName).toBe("create_pr");
+    expect(entry?.toolInput).toEqual({ title: "Fix login bug" });
+  });
+
+  it("extracts the tool identity from Codex item payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-mcp",
+        kind: "tool.completed",
+        summary: "t3-code · preview_status",
+        payload: {
+          itemType: "mcp_tool_call",
+          title: "t3-code · preview_status",
+          data: {
+            item: {
+              type: "mcpToolCall",
+              server: "t3-code",
+              tool: "preview_status",
+              arguments: { interactiveOnly: true },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolServer).toBe("t3-code");
+    expect(entry?.toolName).toBe("preview_status");
+    expect(entry?.toolInput).toEqual({ interactiveOnly: true });
+  });
+
+  it("extracts the tool identity from OpenCode state payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "opencode-bash",
+        kind: "tool.completed",
+        summary: "bash",
+        payload: {
+          itemType: "command_execution",
+          title: "bash",
+          data: {
+            tool: "bash",
+            state: {
+              status: "completed",
+              input: { command: "git status", description: "Check the working tree" },
+              output: "nothing to commit",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolName).toBe("bash");
+    expect(entry?.toolServer).toBeUndefined();
+    expect(entry?.toolInput).toEqual({
+      command: "git status",
+      description: "Check the working tree",
+    });
+  });
+
+  it("extracts ACP raw input even though the tool name is not exposed", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "acp-command",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "acp-1",
+            kind: "execute",
+            command: "ls -la",
+            rawInput: { command: "ls -la" },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolName).toBeUndefined();
+    expect(entry?.toolInput).toEqual({ command: "ls -la" });
+  });
+
+  it("keeps the tool identity while collapsing lifecycle updates", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-identity-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          toolCallId: "call-identity",
+          data: {
+            toolCallId: "call-identity",
+            toolName: "Grep",
+            input: { pattern: "useEffect" },
+          },
+        },
+      }),
+      makeActivity({
+        id: "tool-identity-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Tool call completed",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          toolCallId: "call-identity",
+          data: { toolCallId: "call-identity" },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "tool-identity-complete",
+      toolName: "Grep",
+      toolInput: { pattern: "useEffect" },
+    });
+  });
+
+  it("does not attach a tool identity to subagent task rows", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "task-progress",
+        kind: "task.progress",
+        summary: "Explore the auth module",
+        payload: {
+          taskId: "task-1",
+          data: { tool: "Task", input: { description: "Explore the auth module" } },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolName).toBeUndefined();
+    expect(entry?.toolInput).toBeUndefined();
+  });
+
   it("unwraps PowerShell command wrappers for displayed command text", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

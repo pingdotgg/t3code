@@ -1,6 +1,8 @@
 import * as Equal from "effect/Equal";
 import {
   formatDuration,
+  normalizeCommandValue,
+  splitMcpToolName,
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
   type TimelineEntry,
@@ -8,6 +10,7 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
+import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -236,6 +239,738 @@ export function computeMessageDurationStart(
 
 export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+}
+
+// ---------------------------------------------------------------------------
+// Tool-call phrasing — turns provider payloads into a human row
+// ---------------------------------------------------------------------------
+
+export interface ToolCallDisplay {
+  heading: string;
+  preview: string | null;
+}
+
+const TOOL_PREVIEW_MAX_LENGTH = 120;
+/** `Read: {"file_path":"/x.ts"}` / `Bash: git status` — how legacy activities persisted the call. */
+const LEGACY_TOOL_PREFIX_PATTERN = /^([A-Za-z][\w-]*):\s*([\s\S]+)$/;
+
+type ToolIdentityKind =
+  | "read"
+  | "write"
+  | "edit"
+  | "command"
+  | "grep"
+  | "glob"
+  | "web-search"
+  | "web-fetch"
+  | "subagent"
+  | "skill"
+  | "todo";
+
+interface ToolIdentity {
+  heading: string;
+  kind: ToolIdentityKind;
+}
+
+function toolIdentities(
+  kind: ToolIdentityKind,
+  heading: string,
+  names: ReadonlyArray<string>,
+): ReadonlyArray<readonly [string, ToolIdentity]> {
+  return names.map((name) => [name, { heading, kind }] as const);
+}
+
+/** Provider tool names (lowercased) mapped to the sentence the row should read as. */
+const TOOL_IDENTITIES: ReadonlyMap<string, ToolIdentity> = new Map([
+  ...toolIdentities("read", "Read file", ["read", "read_file", "readfile", "view"]),
+  ...toolIdentities("write", "Wrote file", ["write", "write_file", "writefile"]),
+  ...toolIdentities("edit", "Edited file", [
+    "edit",
+    "multiedit",
+    "multi_edit",
+    "notebookedit",
+    "notebook_edit",
+    "str_replace_editor",
+  ]),
+  ...toolIdentities("command", "Ran command", [
+    "bash",
+    "sh",
+    "shell",
+    "zsh",
+    "terminal",
+    "command",
+    "exec",
+    "execute_command",
+    "local_shell",
+    "run_command",
+    "run_terminal_cmd",
+  ]),
+  ...toolIdentities("grep", "Searched code", ["grep", "ripgrep"]),
+  ...toolIdentities("glob", "Listed files", ["glob", "list"]),
+  ...toolIdentities("web-search", "Searched the web", ["websearch", "web_search"]),
+  ...toolIdentities("web-fetch", "Fetched page", ["webfetch", "web_fetch", "fetch"]),
+  ...toolIdentities("subagent", "Ran subagent", ["task", "agent"]),
+  ...toolIdentities("skill", "Ran skill", ["skill"]),
+  ...toolIdentities("todo", "Updated to-do list", ["todowrite", "todo_write"]),
+]);
+
+const PRIMARY_TOOL_ARG_KEYS = [
+  "command",
+  "cmd",
+  "file_path",
+  "filePath",
+  "path",
+  "notebook_path",
+  "notebookPath",
+  "url",
+  "query",
+  "pattern",
+  "prompt",
+  "description",
+  "name",
+  "title",
+  "skill",
+] as const;
+
+/**
+ * Argument names that address a file. OpenCode (and the ACP `rawInput`
+ * passthrough) spell these camelCase, Claude and Codex snake_case, so both have
+ * to be listed or the row falls back to dumping the whole tool output.
+ */
+const FILE_PATH_TOOL_ARG_KEYS = [
+  "file_path",
+  "filePath",
+  "notebook_path",
+  "notebookPath",
+  "path",
+] as const;
+
+const PATH_TOOL_ARG_KEYS = new Set<string>(FILE_PATH_TOOL_ARG_KEYS);
+
+function toolIdentityFor(toolName: string): ToolIdentity | undefined {
+  return TOOL_IDENTITIES.get(toolName.toLowerCase());
+}
+
+function collapseInlineWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncateToolPreview(value: string, maxLength = TOOL_PREVIEW_MAX_LENGTH): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function hasUriScheme(value: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value);
+}
+
+/** `/a/b.ts`, `~/a`, `./a`, `../a`, `C:\a`, `\\host\share` — rooted somewhere real. */
+function isAnchoredFilePath(value: string): boolean {
+  return (
+    value.startsWith("/") ||
+    value.startsWith("~/") ||
+    value.startsWith("\\\\") ||
+    /^\.{1,2}[/\\]/.test(value) ||
+    /^[A-Za-z]:[/\\]/.test(value)
+  );
+}
+
+/**
+ * Only consulted for arguments that are *not* named after a path, so it has to
+ * stay conservative: `refs/heads/main`, `owner/repo` and `@scope/pkg` all carry
+ * a slash and none of them may be rewritten as a workspace file.
+ */
+function looksLikeFilePath(value: string): boolean {
+  if (hasUriScheme(value) || /\s/.test(value) || !/[/\\]/.test(value)) {
+    return false;
+  }
+  return isAnchoredFilePath(value) || /\.[A-Za-z0-9]{1,10}$/.test(value);
+}
+
+function capitalizePhrase(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+/** `preview_status` / `previewStatus` → `Preview status`. */
+function humanizeToolName(toolName: string): string {
+  const words = toolName
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_\-.]+/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 0)
+    .map((word) => word.toLowerCase());
+  const [first, ...rest] = words;
+  if (!first) {
+    return toolName;
+  }
+  return [capitalizePhrase(first), ...rest].join(" ");
+}
+
+function toolArgText(input: Record<string, unknown> | undefined, key: string): string | null {
+  if (!input) {
+    return null;
+  }
+  const value = input[key];
+  if (typeof value === "string") {
+    const collapsed = collapseInlineWhitespace(value);
+    return collapsed.length > 0 ? collapsed : null;
+  }
+  if (Array.isArray(value)) {
+    const joined = collapseInlineWhitespace(
+      value.filter((part): part is string => typeof part === "string").join(" "),
+    );
+    return joined.length > 0 ? joined : null;
+  }
+  return null;
+}
+
+function toolArgPath(
+  input: Record<string, unknown> | undefined,
+  keys: ReadonlyArray<string>,
+  workspaceRoot: string | undefined,
+): string | null {
+  for (const key of keys) {
+    const value = toolArgText(input, key);
+    if (value) {
+      return formatToolArgPreview(key, value, workspaceRoot);
+    }
+  }
+  return null;
+}
+
+/**
+ * Command arguments arrive as strings *and* as argv arrays
+ * (`["bash","-lc","git status"]`), so they get the same normalization that
+ * produced `entry.command` instead of a raw space-join.
+ */
+function toolArgCommand(input: Record<string, unknown> | undefined): string | null {
+  if (!input) {
+    return null;
+  }
+  for (const key of ["command", "cmd"] as const) {
+    const normalized = normalizeCommandValue(input[key]);
+    if (normalized === null) {
+      continue;
+    }
+    const collapsed = collapseInlineWhitespace(normalized);
+    if (collapsed.length > 0) {
+      return truncateToolPreview(collapsed);
+    }
+  }
+  return null;
+}
+
+function toolArgPlain(
+  input: Record<string, unknown> | undefined,
+  keys: ReadonlyArray<string>,
+): string | null {
+  for (const key of keys) {
+    const value = toolArgText(input, key);
+    if (value) {
+      return truncateToolPreview(value);
+    }
+  }
+  return null;
+}
+
+function isWorkspacePathArg(key: string, value: string): boolean {
+  // A URL is never a workspace file, whatever the argument happens to be named.
+  if (hasUriScheme(value)) {
+    return false;
+  }
+  if (PATH_TOOL_ARG_KEYS.has(key)) {
+    return true;
+  }
+  if ((PRIMARY_TOOL_ARG_KEYS as ReadonlyArray<string>).includes(key)) {
+    return false;
+  }
+  return looksLikeFilePath(value);
+}
+
+/**
+ * `workspaceRoot === undefined` means "do not rewrite": callers pass it for
+ * arguments that address a remote system (MCP servers), where a workspace
+ * prefix would invent a local file that does not exist.
+ */
+function formatToolArgPreview(
+  key: string,
+  value: string,
+  workspaceRoot: string | undefined,
+): string {
+  return truncateToolPreview(
+    workspaceRoot !== undefined && isWorkspacePathArg(key, value)
+      ? formatWorkspaceRelativePath(value, workspaceRoot)
+      : value,
+  );
+}
+
+/** Best single argument to show beside the heading for tools with no bespoke phrasing. */
+function primaryToolArg(
+  input: Record<string, unknown> | undefined,
+  workspaceRoot: string | undefined,
+): string | null {
+  if (!input) {
+    return null;
+  }
+  for (const key of PRIMARY_TOOL_ARG_KEYS) {
+    const value = toolArgText(input, key);
+    if (value) {
+      return formatToolArgPreview(key, value, workspaceRoot);
+    }
+  }
+  for (const [key, rawValue] of Object.entries(input)) {
+    if (typeof rawValue !== "string") {
+      continue;
+    }
+    const value = collapseInlineWhitespace(rawValue);
+    if (value.length > 0) {
+      return formatToolArgPreview(key, value, workspaceRoot);
+    }
+  }
+  return null;
+}
+
+function changedFilesPreview(
+  entry: Pick<WorkLogEntry, "changedFiles">,
+  workspaceRoot: string | undefined,
+): string | null {
+  const changedFiles = entry.changedFiles ?? [];
+  const [firstPath] = changedFiles;
+  if (!firstPath) {
+    return null;
+  }
+  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
+  return changedFiles.length === 1
+    ? displayPath
+    : `${displayPath} +${changedFiles.length - 1} more`;
+}
+
+/** The pre-existing row preview: command, then detail, then the changed-file summary. */
+function fallbackWorkEntryPreview(
+  entry: Pick<WorkLogEntry, "detail" | "command" | "changedFiles">,
+  workspaceRoot: string | undefined,
+): string | null {
+  if (entry.command) return entry.command;
+  if (entry.detail) return entry.detail;
+  return changedFilesPreview(entry, workspaceRoot);
+}
+
+export function fallbackWorkEntryDisplay(
+  entry: WorkLogEntry,
+  workspaceRoot: string | undefined,
+): ToolCallDisplay {
+  return {
+    heading: capitalizePhrase(normalizeCompactToolLabel(entry.toolTitle ?? entry.label)),
+    preview: fallbackWorkEntryPreview(entry, workspaceRoot),
+  };
+}
+
+interface ToolCallSubject {
+  toolName: string;
+  toolServer?: string;
+  input?: Record<string, unknown>;
+  /** True when the identity came from `detail`, which must then not be echoed as the preview. */
+  fromDetail: boolean;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  if (!value.startsWith("{") || !value.endsWith("}")) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+interface LegacyToolCallParse {
+  subject: Omit<ToolCallSubject, "fromDetail">;
+  /** True when `<rest>` was a JSON object rather than a bare command string. */
+  structured: boolean;
+}
+
+function parseLegacyToolCallText(
+  entry: WorkLogEntry,
+  value: string | undefined,
+): LegacyToolCallParse | null {
+  if (!value) {
+    return null;
+  }
+  const match = LEGACY_TOOL_PREFIX_PATTERN.exec(value.trim());
+  const rawName = match?.[1];
+  const rest = match?.[2]?.trim();
+  if (!rawName || !rest) {
+    return null;
+  }
+  const { server, name } = splitMcpToolName(rawName);
+  const input = parseJsonObject(rest);
+  if (input) {
+    // `Result: {"ok":true}` is prose that happens to quote JSON. Letting an
+    // unknown word take over the heading also drops the text (the detail is
+    // suppressed as an echo of the call), so the row would carry nothing.
+    if (!server && !toolIdentityFor(name)) {
+      return null;
+    }
+    return {
+      subject: { toolName: name, ...(server ? { toolServer: server } : {}), input },
+      structured: true,
+    };
+  }
+  // Only a shell prefix is safe to read as free text ("Bash: git status").
+  // Anything else with a colon is ordinary prose ("Error: ENOENT ...").
+  if (toolIdentityFor(name)?.kind !== "command") {
+    return null;
+  }
+  // Plenty of prose opens with a shell word and a colon — command output
+  // ("bash: foo: command not found"), runtime errors ("sh: permission
+  // denied"), pending approvals ("Bash: rm -rf /tmp/build"). Claiming a
+  // command *ran* is only safe when the row carries a derived command that
+  // corroborates this very text.
+  const command = entry.command?.trim();
+  if (!command || (command !== value.trim() && command !== rest)) {
+    return null;
+  }
+  return { subject: { toolName: name, input: { command: rest } }, structured: false };
+}
+
+/** OpenCode titled its rows with the bare tool name (`bash`, `edit`, `webfetch`). */
+function toolNameFromTitle(title: string | undefined): string | null {
+  if (!title) {
+    return null;
+  }
+  const normalized = normalizeCompactToolLabel(title);
+  if (normalized.length === 0 || /\s/.test(normalized)) {
+    return null;
+  }
+  return toolIdentityFor(normalized) ? normalized : null;
+}
+
+function resolveToolCallSubject(entry: WorkLogEntry): ToolCallSubject | null {
+  if (entry.toolName) {
+    return {
+      toolName: entry.toolName,
+      ...(entry.toolServer !== undefined ? { toolServer: entry.toolServer } : {}),
+      ...(entry.toolInput !== undefined ? { input: entry.toolInput } : {}),
+      fromDetail: false,
+    };
+  }
+  const fromDetail = parseLegacyToolCallText(entry, entry.detail);
+  if (fromDetail) {
+    return { ...fromDetail.subject, fromDetail: true };
+  }
+  const fromLabel = parseLegacyToolCallText(entry, entry.label);
+  if (fromLabel) {
+    return { ...fromLabel.subject, fromDetail: false };
+  }
+  const fromTitle = toolNameFromTitle(entry.toolTitle);
+  return fromTitle ? { toolName: fromTitle, fromDetail: false } : null;
+}
+
+/** Claude repeats the call as `<Tool>: <json>` in `detail`; never show that back to the user. */
+function detailEchoesToolCall(entry: WorkLogEntry, subject: ToolCallSubject): boolean {
+  if (subject.fromDetail) {
+    return true;
+  }
+  const match = LEGACY_TOOL_PREFIX_PATTERN.exec(entry.detail?.trim() ?? "");
+  const rawName = match?.[1];
+  if (!rawName) {
+    return false;
+  }
+  return splitMcpToolName(rawName).name.toLowerCase() === subject.toolName.toLowerCase();
+}
+
+/**
+ * Approval rows describe a request that has *not* run yet, and the provider
+ * writes the request itself into `detail` ("Bash: rm -rf /tmp/build"). Phrasing
+ * one as a finished call is the single worst thing this module could do, so
+ * they keep the plain request wording.
+ */
+function isPendingRequestEntry(entry: WorkLogEntry): boolean {
+  return entry.requestKind !== undefined;
+}
+
+export function describeToolCallWorkEntry(
+  entry: WorkLogEntry,
+  workspaceRoot: string | undefined,
+): ToolCallDisplay {
+  const subject = isPendingRequestEntry(entry) ? null : resolveToolCallSubject(entry);
+  if (!subject) {
+    return fallbackWorkEntryDisplay(entry, workspaceRoot);
+  }
+
+  const { input } = subject;
+  const skipDetail = detailEchoesToolCall(entry, subject);
+  const fallbackPreview = (): string | null => {
+    if (entry.command) return entry.command;
+    if (!skipDetail && entry.detail) return entry.detail;
+    return changedFilesPreview(entry, workspaceRoot);
+  };
+
+  if (subject.toolServer) {
+    return {
+      heading: `${subject.toolServer} · ${subject.toolName}`,
+      // MCP arguments address the server, not this checkout: a `path` here is a
+      // remote resource, so it is shown exactly as the model sent it.
+      preview: primaryToolArg(input, undefined) ?? fallbackPreview(),
+    };
+  }
+
+  const identity = toolIdentityFor(subject.toolName);
+  if (!identity) {
+    return {
+      heading: humanizeToolName(subject.toolName),
+      preview: primaryToolArg(input, workspaceRoot) ?? fallbackPreview(),
+    };
+  }
+
+  const { heading } = identity;
+  switch (identity.kind) {
+    case "read":
+      return {
+        heading,
+        preview: toolArgPath(input, FILE_PATH_TOOL_ARG_KEYS, workspaceRoot) ?? fallbackPreview(),
+      };
+    case "write":
+    case "edit":
+      return {
+        heading,
+        preview:
+          changedFilesPreview(entry, workspaceRoot) ??
+          toolArgPath(input, FILE_PATH_TOOL_ARG_KEYS, workspaceRoot) ??
+          fallbackPreview(),
+      };
+    case "command":
+      return {
+        heading,
+        preview: toolArgCommand(input) ?? fallbackPreview(),
+      };
+    case "grep":
+      return {
+        heading,
+        preview: toolArgPlain(input, ["pattern", "query"]) ?? fallbackPreview(),
+      };
+    case "glob":
+      return {
+        heading,
+        preview:
+          toolArgPlain(input, ["pattern"]) ??
+          toolArgPath(input, ["path"], workspaceRoot) ??
+          fallbackPreview(),
+      };
+    case "web-search":
+      return {
+        heading,
+        preview: toolArgPlain(input, ["query"]) ?? fallbackPreview(),
+      };
+    case "web-fetch":
+      return {
+        heading,
+        preview: toolArgPlain(input, ["url"]) ?? fallbackPreview(),
+      };
+    case "subagent":
+      return {
+        heading,
+        preview: toolArgPlain(input, ["description", "prompt"]) ?? fallbackPreview(),
+      };
+    case "skill":
+      return {
+        heading,
+        preview: toolArgPlain(input, ["skill", "name", "command"]) ?? fallbackPreview(),
+      };
+    case "todo":
+      return { heading, preview: null };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Work-entry row chrome — icon choice and expanded body
+// ---------------------------------------------------------------------------
+
+export type WorkEntryIconName =
+  | "bot"
+  | "check"
+  | "circle-alert"
+  | "eye"
+  | "globe"
+  | "hammer"
+  | "message-circle"
+  | "square-pen"
+  | "terminal"
+  | "wrench"
+  | "x"
+  | "zap";
+
+export function workToneIconName(tone: WorkLogEntry["tone"]): WorkEntryIconName {
+  if (tone === "error") return "circle-alert";
+  if (tone === "thinking") return "bot";
+  if (tone === "info") return "check";
+  return "zap";
+}
+
+export function workEntryIconName(workEntry: WorkLogEntry): WorkEntryIconName {
+  if (
+    workEntry.sourceActivityKind === "user-input.requested" ||
+    workEntry.sourceActivityKind === "user-input.resolved"
+  ) {
+    return "message-circle";
+  }
+  if (workEntry.requestKind === "command") return "terminal";
+  if (workEntry.requestKind === "file-read") return "eye";
+  if (workEntry.requestKind === "file-change") return "square-pen";
+
+  // Adapters classify itemType by keyword, so `mcp__github__create_pr` lands on
+  // `file_change`. The resolved server name is the reliable MCP signal.
+  if (workEntry.toolServer) return "wrench";
+
+  if (workEntry.itemType === "command_execution" || workEntry.command) {
+    return "terminal";
+  }
+  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
+    return "square-pen";
+  }
+  if (workEntry.itemType === "web_search") return "globe";
+  if (workEntry.itemType === "image_view") return "eye";
+
+  switch (workEntry.itemType) {
+    case "mcp_tool_call":
+      return "wrench";
+    case "dynamic_tool_call":
+      return "hammer";
+    case "collab_agent_tool_call":
+      return "bot";
+  }
+
+  // Subagent lifecycle rows (grouped by taskId) get agent identity chrome.
+  if (workEntry.taskId) {
+    return "bot";
+  }
+
+  return workToneIconName(workEntry.tone);
+}
+
+/**
+ * Tool input is passed through by the adapters verbatim — a Write call carries
+ * the entire file — so it is bounded before it reaches the expanded body.
+ */
+const TOOL_INPUT_STRING_MAX_LENGTH = 400;
+const TOOL_INPUT_ARRAY_MAX_ITEMS = 20;
+const TOOL_INPUT_OBJECT_MAX_ENTRIES = 20;
+const TOOL_INPUT_MAX_DEPTH = 4;
+
+function boundToolInputValue(value: unknown, depth: number): unknown {
+  if (typeof value === "string") {
+    const overflow = value.length - TOOL_INPUT_STRING_MAX_LENGTH;
+    return overflow > 0
+      ? `${value.slice(0, TOOL_INPUT_STRING_MAX_LENGTH)}… (+${overflow} more characters)`
+      : value;
+  }
+  if (Array.isArray(value)) {
+    if (depth >= TOOL_INPUT_MAX_DEPTH) {
+      return `… (${value.length} items)`;
+    }
+    const kept = value
+      .slice(0, TOOL_INPUT_ARRAY_MAX_ITEMS)
+      .map((item) => boundToolInputValue(item, depth + 1));
+    const overflow = value.length - TOOL_INPUT_ARRAY_MAX_ITEMS;
+    return overflow > 0 ? [...kept, `… (+${overflow} more items)`] : kept;
+  }
+  if (value !== null && typeof value === "object") {
+    if (depth >= TOOL_INPUT_MAX_DEPTH) {
+      return "…";
+    }
+    const entries = Object.entries(value as Record<string, unknown>);
+    const kept: Array<[string, unknown]> = entries
+      .slice(0, TOOL_INPUT_OBJECT_MAX_ENTRIES)
+      .map(([key, item]) => [key, boundToolInputValue(item, depth + 1)]);
+    const overflow = entries.length - TOOL_INPUT_OBJECT_MAX_ENTRIES;
+    if (overflow > 0) {
+      kept.push(["…", `(+${overflow} more entries)`]);
+    }
+    return Object.fromEntries(kept);
+  }
+  return value;
+}
+
+export function formatToolInputBlock(input: Record<string, unknown>): string {
+  return `Input\n${JSON.stringify(boundToolInputValue(input, 1), null, 2)}`;
+}
+
+export function workEntryRawCommand(
+  workEntry: Pick<WorkLogEntry, "command" | "rawCommand">,
+): string | null {
+  const rawCommand = workEntry.rawCommand?.trim();
+  if (!rawCommand || !workEntry.command) {
+    return null;
+  }
+  return rawCommand === workEntry.command.trim() ? null : rawCommand;
+}
+
+function hasToolInputBlock(workEntry: WorkLogEntry): boolean {
+  return workEntry.toolInput !== undefined && Object.keys(workEntry.toolInput).length > 0;
+}
+
+function hasMcpBlock(workEntry: WorkLogEntry): boolean {
+  return workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined;
+}
+
+/**
+ * Cheap mirror of `buildToolCallExpandedBody() !== null`, so a collapsed row
+ * never pays for serialising the body it is not showing (tool rows re-render on
+ * every streaming update). Kept in lockstep with the builder below by test.
+ */
+export function hasToolCallExpandedBody(workEntry: WorkLogEntry): boolean {
+  return (
+    hasMcpBlock(workEntry) ||
+    Boolean(workEntryRawCommand(workEntry)?.trim()) ||
+    Boolean(workEntry.command?.trim()) ||
+    Boolean(workEntry.detail?.trim()) ||
+    (workEntry.changedFiles?.length ?? 0) > 0 ||
+    hasToolInputBlock(workEntry)
+  );
+}
+
+export function buildToolCallExpandedBody(
+  workEntry: WorkLogEntry,
+  workspaceRoot: string | undefined,
+): string | null {
+  const blocks: string[] = [];
+  const mcpBlock = hasMcpBlock(workEntry);
+  if (mcpBlock) {
+    blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
+  }
+  const raw = workEntryRawCommand(workEntry);
+  if (raw?.trim()) {
+    blocks.push(raw.trim());
+  } else if (workEntry.command?.trim()) {
+    blocks.push(workEntry.command.trim());
+  }
+  if (workEntry.detail?.trim()) {
+    blocks.push(workEntry.detail.trim());
+  }
+  const changedFiles = workEntry.changedFiles ?? [];
+  if (changedFiles.length > 0) {
+    blocks.push(
+      changedFiles
+        .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
+        .join("\n"),
+    );
+  }
+  // The row heading only shows one argument; the MCP block already carries the
+  // full call, so the raw input is appended for every other tool.
+  if (!mcpBlock && workEntry.toolInput && hasToolInputBlock(workEntry)) {
+    blocks.push(formatToolInputBlock(workEntry.toolInput));
+  }
+  return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
 export function resolveAssistantMessageCopyState({
