@@ -8,6 +8,7 @@
 
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
+const MARKDOWN_IMAGE_SOURCE_ATTRIBUTE = "data-markdown-src";
 const SANITIZED_HTML_SELECTOR = [
   "button",
   "input",
@@ -27,6 +28,32 @@ function isSkippedElement(element: Element): boolean {
   if (SKIPPED_TAGS.has(element.tagName) || element.localName === "svg") return true;
   if (element.getAttribute("aria-hidden") === "true") return true;
   return SKIPPED_CLASS_NAMES.some((className) => element.classList.contains(className));
+}
+
+type ClipboardImageElement = Pick<Element, "getAttribute" | "removeAttribute" | "setAttribute">;
+
+function copiedMarkdownImageSource(element: Pick<Element, "getAttribute">): string {
+  return element.getAttribute(MARKDOWN_IMAGE_SOURCE_ATTRIBUTE) ?? element.getAttribute("src") ?? "";
+}
+
+export function serializeMarkdownImageElement(element: Pick<Element, "getAttribute">): string {
+  const alt = element.getAttribute("alt") ?? "";
+  const src = copiedMarkdownImageSource(element);
+  return alt && src ? `![${alt}](${src})` : "";
+}
+
+export function restoreMarkdownImageSourcesForClipboard(
+  images: Iterable<ClipboardImageElement>,
+): void {
+  for (const image of images) {
+    const markdownSrc = image.getAttribute(MARKDOWN_IMAGE_SOURCE_ATTRIBUTE);
+    if (markdownSrc) {
+      image.setAttribute("src", markdownSrc);
+    } else {
+      image.removeAttribute("src");
+    }
+    image.removeAttribute(MARKDOWN_IMAGE_SOURCE_ATTRIBUTE);
+  }
 }
 
 /** Hoists surrounding whitespace outside the markers: "` bold `" → " **bold** ". */
@@ -214,11 +241,8 @@ function serializeNode(node: Node): string {
       return wrapInlineMarker(serializeChildren(element), "~~");
     case "A":
       return serializeAnchor(element);
-    case "IMG": {
-      const alt = element.getAttribute("alt") ?? "";
-      const src = element.getAttribute("src") ?? "";
-      return alt && src ? `![${alt}](${src})` : "";
-    }
+    case "IMG":
+      return serializeMarkdownImageElement(element);
     case "UL":
       return serializeList(element, false);
     case "OL":
@@ -288,6 +312,9 @@ function sanitizedHtmlFrom(container: Element): string {
     }
     node.remove();
   }
+  restoreMarkdownImageSourcesForClipboard(
+    container.querySelectorAll(`img[${MARKDOWN_IMAGE_SOURCE_ATTRIBUTE}]`),
+  );
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 

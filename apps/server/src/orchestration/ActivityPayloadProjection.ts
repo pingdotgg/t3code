@@ -80,7 +80,7 @@ function collectChangedFiles(
   }
 }
 
-function projectCommandData(data: Record<string, unknown>): Record<string, unknown> | undefined {
+function projectItemData(data: Record<string, unknown>): Record<string, unknown> | undefined {
   const item = asRecord(data.item);
   if (!item) {
     return undefined;
@@ -89,6 +89,9 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
   const projectedItem: Record<string, unknown> = {};
   if ("command" in item) {
     projectedItem.command = item.command;
+  }
+  if ("savedPath" in item) {
+    projectedItem.savedPath = item.savedPath;
   }
 
   const input = asRecord(item.input);
@@ -283,7 +286,7 @@ export function projectActivityPayload(
   }
 
   const projectedData: Record<string, unknown> = {};
-  const item = projectCommandData(data);
+  const item = projectItemData(data);
   if (item) {
     projectedData.item = item;
   }

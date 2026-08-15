@@ -2223,6 +2223,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
+  const timeline = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -2361,6 +2362,19 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </div>
         </div>
       </div>
+      {workEntry.imagePath && timeline.threadRef ? (
+        <div
+          className="mt-1.5 ms-7 cursor-default"
+          onClick={stopRowToggle}
+          onPointerDown={stopRowToggle}
+        >
+          <ChatMarkdown
+            text={`![Generated image](${encodeURIComponent(workEntry.imagePath)})`}
+            cwd={workspaceRoot}
+            threadRef={timeline.threadRef}
+          />
+        </div>
+      ) : null}
       {expanded && canExpand && expandedBody ? (
         <div
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
