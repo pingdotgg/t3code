@@ -72,12 +72,7 @@ export const patchComputerHistorySettings = DesktopIpc.makeIpcMethod({
     // renderer). This IPC only reconciles the recorder daemon — never rewrite
     // the full settings document (that races the server's atomic writer).
     const current = yield* readHistorySettings();
-    const settings = {
-      ...current,
-      ...patch,
-      ...(patch.apps === undefined ? {} : { apps: [...patch.apps] }),
-      ...(patch.websites === undefined ? {} : { websites: [...patch.websites] }),
-    };
+    const settings = yield* manager.mergePatchSettings(environment.stateDir, current, patch);
     yield* manager.ensureDaemon(environment.stateDir, settings);
     return yield* manager.getStatus(environment.stateDir, settings);
   }),
