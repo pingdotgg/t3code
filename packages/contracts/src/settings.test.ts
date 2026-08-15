@@ -113,6 +113,16 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ClientSettings desktop agent activity snapshot", () => {
+  it("is opt-in", () => {
+    expect(decodeClientSettings({}).agentActivitySnapshotEnabled).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ agentActivitySnapshotEnabled: true })
+        .agentActivitySnapshotEnabled,
+    ).toBe(true);
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({

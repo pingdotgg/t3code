@@ -1943,6 +1943,22 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        {isElectron ? (
+          <SettingsRow
+            title="Share remote agent activity"
+            description="Write a credential-free, versioned snapshot of remote agent activity for local integrations such as Sidepulse."
+            control={
+              <Switch
+                checked={settings.agentActivitySnapshotEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ agentActivitySnapshotEnabled: Boolean(checked) })
+                }
+                aria-label="Share remote agent activity"
+              />
+            }
+          />
+        ) : null}
+
         <SettingsRow
           {...searchableSetting("hide-whitespace-changes")}
           description="Set whether the diff panel ignores whitespace-only edits by default."

@@ -138,6 +138,47 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   ),
 });
 
+export const DesktopAgentActivityPhase = Schema.Literals([
+  "starting",
+  "running",
+  "waiting_for_approval",
+  "waiting_for_input",
+  "completed",
+  "failed",
+  "stale",
+]);
+export type DesktopAgentActivityPhase = typeof DesktopAgentActivityPhase.Type;
+
+export const DesktopAgentActivity = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  phase: DesktopAgentActivityPhase,
+  updatedAt: Schema.String,
+});
+export type DesktopAgentActivity = typeof DesktopAgentActivity.Type;
+
+export const DesktopAgentActivitySource = Schema.Struct({
+  sourceId: Schema.String,
+  label: Schema.String,
+  phase: DesktopAgentActivityPhase,
+  updatedAt: Schema.String,
+});
+export type DesktopAgentActivitySource = typeof DesktopAgentActivitySource.Type;
+
+export const DesktopAgentActivitySnapshot = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  generatedAt: Schema.String,
+  activities: Schema.Array(DesktopAgentActivity),
+});
+export type DesktopAgentActivitySnapshot = typeof DesktopAgentActivitySnapshot.Type;
+
+export const DesktopAgentActivitySnapshotInput = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  generatedAt: Schema.String,
+  activities: Schema.Array(DesktopAgentActivitySource),
+});
+export type DesktopAgentActivitySnapshotInput = typeof DesktopAgentActivitySnapshotInput.Type;
+
 export type DesktopUpdateStatus =
   | "disabled"
   | "idle"
@@ -1031,6 +1072,8 @@ export interface DesktopBridge {
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;
+  publishAgentActivitySnapshot?: (snapshot: DesktopAgentActivitySnapshotInput) => Promise<void>;
+  clearAgentActivitySnapshot?: () => Promise<void>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
   ensureSshEnvironment: (
     target: DesktopSshEnvironmentTarget,
