@@ -517,7 +517,7 @@ describe("synced client preferences", () => {
     });
   });
 
-  it("settles cleanly after exhausting reconciliation retries", async () => {
+  it("stops retrying automatically after exhausting reconciliation retries", async () => {
     const environment = environmentId("environment-1");
     const target = {
       environmentId: environment,
@@ -540,10 +540,50 @@ describe("synced client preferences", () => {
 
     expect(patch).toHaveBeenCalledTimes(3);
     expect(scheduled.map(({ delayMs }) => delayMs)).toEqual([1_000, 2_000]);
+  });
 
-    controller.reconcile({ target, patch, persist: vi.fn() });
+  it("retries an exhausted reconciliation on a later trigger", async () => {
+    const environment = environmentId("environment-1");
+    const target = {
+      environmentId: environment,
+      input: {
+        patch: { planModeEnabled: true },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
+    } as const;
+    const { schedule, scheduled } = makeRetryScheduler();
+    const controller = createPlanModePreferenceReconciliationController(schedule);
+    const patch = vi
+      .fn()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
+      .mockResolvedValueOnce(
+        AsyncResult.success({
+          planModeEnabled: true,
+          updatedAt: target.input.updatedAt,
+        }),
+      );
+    const persist = vi.fn();
+
+    controller.setActiveEnvironmentIds([environment]);
+    controller.reconcile({ target, patch, persist });
     await flushReconciliation();
+    scheduled[0]?.run();
+    await flushReconciliation();
+    scheduled[1]?.run();
+    await flushReconciliation();
+
     expect(patch).toHaveBeenCalledTimes(3);
+
+    controller.reconcile({ target, patch, persist });
+    await flushReconciliation();
+
+    expect(patch).toHaveBeenCalledTimes(4);
+    expect(persist).toHaveBeenCalledWith({
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAt: target.input.updatedAt,
+    });
   });
 
   it.each(["disconnect", "unmount"] as const)(

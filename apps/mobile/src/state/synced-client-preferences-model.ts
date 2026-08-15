@@ -51,7 +51,6 @@ export function createPlanModePreferenceReconciliationController(
     if (reconciliationByEnvironment.get(environmentId) !== reconciliation) return;
     if (reconciliation.attempt >= PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS) {
       reconciliationByEnvironment.delete(environmentId);
-      settledUpdatedAtByEnvironment.set(environmentId, reconciliation.target.input.updatedAt);
       return;
     }
     const delayMs = 1_000 * 2 ** (reconciliation.attempt - 1);
