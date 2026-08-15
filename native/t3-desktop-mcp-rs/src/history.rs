@@ -536,25 +536,54 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
-    // Strip query/fragment so nested URLs in ?next= cannot spoof includeOnly matches.
-    let page = strip_query_and_fragment(haystack).to_lowercase();
-    if needle.contains('/') {
-        return page.contains(&needle);
+    // Match against URL tokens only. Never strip ?/# from the whole title+outline
+    // haystack — titles like "Issue #123" or "What is life?" would cut off the
+    // real page URL before host extraction.
+    let candidates = url_candidates(haystack);
+    if candidates.is_empty() {
+        return false;
     }
-    // Hostname / bare-label needles compare against the page host only.
-    if let Some(host) = extract_hosts(&page).into_iter().next() {
-        return host == needle || host.ends_with(&format!(".{needle}"));
+    for raw_url in candidates {
+        let page = strip_query_and_fragment(&raw_url).to_lowercase();
+        if needle.contains('/') {
+            if page.contains(&needle) {
+                return true;
+            }
+            continue;
+        }
+        if let Some(host) = extract_hosts(&page).into_iter().next() {
+            if host == needle || host.ends_with(&format!(".{needle}")) {
+                return true;
+            }
+        }
     }
-    page == needle
-        || page.ends_with(&format!(".{needle}"))
-        || page.ends_with(&format!("//{needle}"))
-        || page.ends_with(&format!("//{needle}/"))
+    false
 }
 
 fn strip_query_and_fragment(raw: &str) -> &str {
     let q = raw.find('?').unwrap_or(raw.len());
     let h = raw.find('#').unwrap_or(raw.len());
     &raw[..q.min(h)]
+}
+
+/// Pull discrete URL tokens out of a title/outline haystack.
+fn url_candidates(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = raw;
+    while let Some(idx) = rest.find("://") {
+        let prefix = &rest[..idx];
+        let scheme_start = prefix
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.'))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let after = &rest[idx + 3..];
+        let end = after
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | '"' | '\''))
+            .unwrap_or(after.len());
+        out.push(rest[scheme_start..idx + 3 + end].to_string());
+        rest = &after[end..];
+    }
+    out
 }
 
 fn extract_hosts(raw: &str) -> Vec<String> {
@@ -778,7 +807,7 @@ fn uuid_like() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_app_line, window_title_from_outline};
+    use super::{host_matches, parse_app_line, window_title_from_outline};
 
     #[test]
     fn parses_frontmost_app_line() {
@@ -827,5 +856,15 @@ mod tests {
         let outline = "Firefox\n[e40] document  about:privatebrowsing";
         let title = window_title_from_outline(outline, "Firefox").expect("title");
         assert_eq!(title, "about:privatebrowsing");
+    }
+
+    #[test]
+    fn title_question_mark_does_not_hide_url() {
+        let hay = "What is life? https://trusted.example/path";
+        assert!(host_matches(hay, "trusted.example"));
+        assert!(!host_matches(
+            "Issue #123 https://untrusted.example/?next=https://trusted.example",
+            "trusted.example"
+        ));
     }
 }
