@@ -66,6 +66,105 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("discovers project skills from the workspace .agents directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "review",
+        ["---", "name: review", "description: Review the changes.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(skills, [
+        {
+          name: "review",
+          path: path.join(workspace, ".agents", "skills", "review", "SKILL.md"),
+          enabled: true,
+          scope: "project",
+          description: "Review the changes.",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("prefers workspace .claude skills on three-way name collisions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspace, ".claude", "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: Claude deploy.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(skills, [
+        {
+          name: "deploy",
+          path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
+          enabled: true,
+          scope: "project",
+          description: "Claude deploy.",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("prefers workspace .agents skills over user skills on name collisions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(skills, [
+        {
+          name: "deploy",
+          path: path.join(workspace, ".agents", "skills", "deploy", "SKILL.md"),
+          enabled: true,
+          scope: "project",
+          description: "Agents deploy.",
+        },
+      ]);
+    }),
+  );
+
   it.effect("prefers project skills over user skills on name collisions", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
