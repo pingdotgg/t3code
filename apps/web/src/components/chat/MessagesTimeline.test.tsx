@@ -464,6 +464,32 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
+  it("does not collapse a short prompt whose attachment destinations are long", () => {
+    const attachmentPath = `/tmp/t3/attachments/${"nested/".repeat(100)}notes.txt`;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry(`Review [notes.txt](${attachmentPath}) please`)]}
+      />,
+    );
+
+    expect(markup).not.toContain("Show full message");
+    expect(markup).toContain('data-user-message-collapsible="false"');
+  });
+
+  it("still collapses long literal Markdown file syntax inside code", () => {
+    const literalPath = `/tmp/${"nested/".repeat(100)}notes.txt`;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry(`Review \`[notes.txt](${literalPath})\` please`)]}
+      />,
+    );
+
+    expect(markup).toContain("Show full message");
+    expect(markup).toContain('data-user-message-collapsed="true"');
+  });
+
   it("renders inline terminal labels with the composer chip UI", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

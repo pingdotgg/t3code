@@ -1827,6 +1827,12 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsWriteTextAttachment]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsWriteTextAttachment,
+            workspaceFileSystem.writeTextAttachment(input),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",

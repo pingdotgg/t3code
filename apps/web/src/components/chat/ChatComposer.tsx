@@ -14,6 +14,7 @@ import type {
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  PROJECT_TEXT_ATTACHMENT_MAX_BYTES,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
@@ -224,8 +225,12 @@ import {
 } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+
+const TEXT_ATTACHMENT_MAX_COUNT = 8;
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -672,6 +677,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const writeTextAttachment = useAtomCommand(projectEnvironment.writeTextAttachment, {
+    reportFailure: false,
+  });
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
@@ -987,6 +995,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
+  const pendingTextAttachmentWritesRef = useRef<Map<ThreadId, number>>(new Map());
+  const textAttachmentQueuesRef = useRef<Map<ThreadId, Promise<void>>>(new Map());
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1824,6 +1834,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
+      if (activeThreadId && (pendingTextAttachmentWritesRef.current.get(activeThreadId) ?? 0) > 0) {
+        event?.preventDefault();
+        toastManager.add({
+          type: "info",
+          title: "Still attaching a text file.",
+          description: "Send again once its file link appears.",
+        });
+        return;
+      }
       onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
@@ -2256,7 +2275,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         isComposerApprovalState ||
         pendingUserInputs.length > 0 ||
         projectSelectionRequired ||
-        activePendingProgress !== null
+        activePendingProgress !== null ||
+        (activeThreadId !== null &&
+          ((pendingImageCompressionsRef.current.get(activeThreadId) ?? 0) > 0 ||
+            (pendingTextAttachmentWritesRef.current.get(activeThreadId) ?? 0) > 0))
       ) {
         return;
       }
@@ -2266,6 +2288,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    activeThreadId,
     isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,
@@ -2276,14 +2299,51 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   // ------------------------------------------------------------------
-  // Callbacks: images
+  // Callbacks: attachments
   // ------------------------------------------------------------------
-  const addComposerImages = async (files: File[]) => {
+  const addComposerTextAttachment = async (
+    file: File,
+    target: ScopedThreadRef | DraftId,
+    threadId: ThreadId,
+  ): Promise<string | null> => {
+    if (file.size > PROJECT_TEXT_ATTACHMENT_MAX_BYTES) {
+      return `'${file.name}' exceeds the 1 MB text attachment limit.`;
+    }
+
+    let contents: string;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.byteLength === 0 || bytes.includes(0)) {
+        return `'${file.name}' is not a supported text file.`;
+      }
+      contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      return `'${file.name}' is not a supported UTF-8 text file.`;
+    }
+
+    const result = await writeTextAttachment({
+      environmentId,
+      input: { threadId, name: file.name || "context.txt", contents },
+    });
+    if (result._tag === "Failure") {
+      return `Could not attach '${file.name}'.`;
+    }
+
+    const currentPrompt = getComposerDraft(target)?.prompt ?? "";
+    const separator = currentPrompt.length > 0 && !/\s$/.test(currentPrompt) ? " " : "";
+    setComposerDraftPrompt(
+      target,
+      `${currentPrompt}${separator}${serializeComposerFileLink(result.value.absolutePath)} `,
+    );
+    return null;
+  };
+
+  const addComposerAttachments = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
     if (pendingUserInputs.length > 0) {
       toastManager.add({
         type: "error",
-        title: "Attach images after answering plan questions.",
+        title: "Attach files after answering plan questions.",
       });
       return;
     }
@@ -2291,77 +2351,120 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // large image is being compressed, and the attachments and errors belong
     // to the thread the paste happened in.
     const threadId = activeThreadId;
+    const target = composerDraftTarget;
 
     // Validation happens synchronously so concurrent pastes see each other:
     // accepted files reserve their attachment slots (via the pending counter)
     // before the first await, keeping the total under the limit.
     const pendingCount = pendingImageCompressionsRef.current.get(threadId) ?? 0;
     let reservedCount = composerImagesRef.current.length + pendingCount;
-    const acceptedFiles: File[] = [];
-    let error: string | null = null;
+    const acceptedImages: File[] = [];
+    const acceptedTextFiles: File[] = [];
+    const validationErrors: string[] = [];
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
-        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+        if (acceptedTextFiles.length >= TEXT_ATTACHMENT_MAX_COUNT) {
+          validationErrors.push(
+            `You can attach up to ${TEXT_ATTACHMENT_MAX_COUNT} text files at once.`,
+          );
+          continue;
+        }
+        if (file.size > PROJECT_TEXT_ATTACHMENT_MAX_BYTES) {
+          validationErrors.push(`'${file.name}' exceeds the 1 MB text attachment limit.`);
+          continue;
+        }
+        acceptedTextFiles.push(file);
         continue;
       }
       if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
-        break;
+        validationErrors.push(
+          `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`,
+        );
+        continue;
       }
-      acceptedFiles.push(file);
+      acceptedImages.push(file);
       reservedCount += 1;
     }
-    setThreadError(threadId, error);
-    if (acceptedFiles.length === 0) return;
+    if (acceptedImages.length === 0 && acceptedTextFiles.length === 0) {
+      if (validationErrors.length > 0) {
+        setThreadError(threadId, validationErrors.join(" "));
+      }
+      return;
+    }
 
-    pendingImageCompressionsRef.current.set(threadId, pendingCount + acceptedFiles.length);
-    try {
-      const nextImages: ComposerImageAttachment[] = [];
-      let compressionError: string | null = null;
-      for (const file of acceptedFiles) {
-        // Images over the wire cap are downscaled to fit rather than
-        // refused; files already within it pass through byte-for-byte.
-        const compressed = await compressImageToByteLimit(file, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
-        if (!compressed.ok) {
-          compressionError =
-            compressed.reason === "unreadable"
-              ? `'${file.name}' could not be read as an image.`
-              : `'${file.name}' is too large to attach, even after compression.`;
-          continue;
+    pendingImageCompressionsRef.current.set(threadId, pendingCount + acceptedImages.length);
+    pendingTextAttachmentWritesRef.current.set(
+      threadId,
+      (pendingTextAttachmentWritesRef.current.get(threadId) ?? 0) + acceptedTextFiles.length,
+    );
+
+    const previous = textAttachmentQueuesRef.current.get(threadId) ?? Promise.resolve();
+    const operation = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const errors = [...validationErrors];
+        for (const file of acceptedTextFiles) {
+          const attachmentError = await addComposerTextAttachment(file, target, threadId);
+          if (attachmentError) errors.push(attachmentError);
         }
-        const attachmentFile = compressed.file;
-        const previewUrl = URL.createObjectURL(attachmentFile);
-        nextImages.push({
-          type: "image",
-          id: randomUUID(),
-          name: attachmentFile.name || "image",
-          mimeType: attachmentFile.type,
-          sizeBytes: attachmentFile.size,
-          previewUrl,
-          file: attachmentFile,
-        });
-      }
-      if (nextImages.length === 1 && nextImages[0]) {
-        addComposerImage(nextImages[0]);
-      } else if (nextImages.length > 1) {
-        addComposerImagesToDraft(nextImages);
-      }
-      // Only failures are reported here. Success must not pass `null`: by
-      // now other work (a failed send, an overlapping paste) may have set a
-      // thread error this call knows nothing about, and clearing it would
-      // swallow that message.
-      if (compressionError !== null) {
-        setThreadError(threadId, compressionError);
-      }
-    } finally {
+
+        const nextImages: ComposerImageAttachment[] = [];
+        for (const file of acceptedImages) {
+          // Images over the wire cap are downscaled to fit rather than
+          // refused; files already within it pass through byte-for-byte.
+          const compressed = await compressImageToByteLimit(
+            file,
+            PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+          );
+          if (!compressed.ok) {
+            errors.push(
+              compressed.reason === "unreadable"
+                ? `'${file.name}' could not be read as an image.`
+                : `'${file.name}' is too large to attach, even after compression.`,
+            );
+            continue;
+          }
+          const attachmentFile = compressed.file;
+          const previewUrl = URL.createObjectURL(attachmentFile);
+          nextImages.push({
+            type: "image",
+            id: randomUUID(),
+            name: attachmentFile.name || "image",
+            mimeType: attachmentFile.type,
+            sizeBytes: attachmentFile.size,
+            previewUrl,
+            file: attachmentFile,
+          });
+        }
+        if (nextImages.length === 1 && nextImages[0]) {
+          addComposerImage(nextImages[0]);
+        } else if (nextImages.length > 1) {
+          addComposerImagesToDraft(nextImages);
+        }
+        if (errors.length > 0) {
+          setThreadError(threadId, errors.join(" "));
+        }
+      });
+    textAttachmentQueuesRef.current.set(threadId, operation);
+    void operation.finally(() => {
       const remaining =
-        (pendingImageCompressionsRef.current.get(threadId) ?? 0) - acceptedFiles.length;
+        (pendingImageCompressionsRef.current.get(threadId) ?? 0) - acceptedImages.length;
       if (remaining > 0) {
         pendingImageCompressionsRef.current.set(threadId, remaining);
       } else {
         pendingImageCompressionsRef.current.delete(threadId);
       }
-    }
+      const remainingTextWrites =
+        (pendingTextAttachmentWritesRef.current.get(threadId) ?? 0) - acceptedTextFiles.length;
+      if (remainingTextWrites > 0) {
+        pendingTextAttachmentWritesRef.current.set(threadId, remainingTextWrites);
+      } else {
+        pendingTextAttachmentWritesRef.current.delete(threadId);
+      }
+      if (textAttachmentQueuesRef.current.get(threadId) === operation) {
+        textAttachmentQueuesRef.current.delete(threadId);
+      }
+    });
   };
 
   const removeComposerImage = (imageId: string) => {
@@ -2374,10 +2477,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
     event.preventDefault();
-    void addComposerImages(imageFiles);
+    addComposerAttachments(files);
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2411,7 +2512,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    void addComposerImages(files);
+    addComposerAttachments(files);
     focusComposer();
   };
 

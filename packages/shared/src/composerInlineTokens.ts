@@ -41,8 +41,115 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 
+interface MarkdownCodeRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+function isEscaped(text: string, index: number): boolean {
+  let slashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
+}
+
+function collectMarkdownCodeRanges(text: string): ReadonlyArray<MarkdownCodeRange> {
+  const fencedRanges: MarkdownCodeRange[] = [];
+  let activeFence: {
+    readonly char: "`" | "~";
+    readonly length: number;
+    readonly start: number;
+  } | null = null;
+  let lineStart = 0;
+
+  while (lineStart < text.length) {
+    const newlineIndex = text.indexOf("\n", lineStart);
+    const lineEnd = newlineIndex === -1 ? text.length : newlineIndex + 1;
+    const line = text.slice(lineStart, newlineIndex === -1 ? text.length : newlineIndex);
+    const fenceMatch = /^(?: {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fenceMatch?.[1]) {
+      const marker = fenceMatch[1];
+      const char = marker[0] as "`" | "~";
+      const remainder = fenceMatch[2] ?? "";
+      if (activeFence === null) {
+        if (char !== "`" || !remainder.includes("`")) {
+          activeFence = { char, length: marker.length, start: lineStart };
+        }
+      } else if (
+        activeFence.char === char &&
+        marker.length >= activeFence.length &&
+        remainder.trim().length === 0
+      ) {
+        fencedRanges.push({ start: activeFence.start, end: lineEnd });
+        activeFence = null;
+      }
+      lineStart = lineEnd;
+      continue;
+    }
+    lineStart = lineEnd;
+  }
+
+  if (activeFence !== null) {
+    fencedRanges.push({ start: activeFence.start, end: text.length });
+  }
+
+  const inlineRanges: MarkdownCodeRange[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const containingFence = fencedRanges.find(
+      (range) => range.start <= cursor && cursor < range.end,
+    );
+    if (containingFence) {
+      cursor = containingFence.end;
+      continue;
+    }
+    if (text[cursor] !== "`" || isEscaped(text, cursor)) {
+      cursor += 1;
+      continue;
+    }
+
+    let runEnd = cursor + 1;
+    while (runEnd < text.length && text[runEnd] === "`") runEnd += 1;
+    const runLength = runEnd - cursor;
+    let closingStart = runEnd;
+    let foundClosingRun = false;
+    while (closingStart < text.length) {
+      closingStart = text.indexOf("`", closingStart);
+      if (closingStart === -1) break;
+      const closingFence = fencedRanges.find(
+        (range) => range.start <= closingStart && closingStart < range.end,
+      );
+      if (closingFence) {
+        closingStart = closingFence.end;
+        continue;
+      }
+      let closingEnd = closingStart + 1;
+      while (closingEnd < text.length && text[closingEnd] === "`") closingEnd += 1;
+      if (closingEnd - closingStart === runLength) {
+        inlineRanges.push({ start: cursor, end: closingEnd });
+        cursor = closingEnd;
+        foundClosingRun = true;
+        break;
+      }
+      closingStart = closingEnd;
+    }
+    if (!foundClosingRun) {
+      cursor = runEnd;
+    }
+  }
+
+  return [...fencedRanges, ...inlineRanges].sort((left, right) => left.start - right.start);
+}
+
+function isInsideMarkdownCode(ranges: ReadonlyArray<MarkdownCodeRange>, index: number): boolean {
+  return ranges.some((range) => range.start <= index && index < range.end);
+}
+
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
+  const markdownCodeRanges =
+    text.includes("`") || text.includes("~~~") ? collectMarkdownCodeRanges(text) : [];
 
   for (const match of text.matchAll(FILE_LINK_TOKEN_REGEX)) {
     const fullMatch = match[0];
@@ -58,10 +165,16 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
     const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
     const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
-    if (!path || hasExternalScheme || label !== basename) {
+    const start = (match.index ?? 0) + prefix.length;
+    if (
+      !path ||
+      hasExternalScheme ||
+      label !== basename ||
+      isEscaped(text, start) ||
+      isInsideMarkdownCode(markdownCodeRanges, start)
+    ) {
       continue;
     }
-    const start = (match.index ?? 0) + prefix.length;
     const end = start + fullMatch.length - prefix.length;
     matches.push({
       type: "mention",
@@ -92,6 +205,19 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   }
 
   return matches;
+}
+
+export function measureComposerMarkdownVisibleLength(text: string): number {
+  let hiddenLength = 0;
+  for (const token of collectComposerInlineTokens(`${text} `)) {
+    if (token.type !== "mention" || !token.source.startsWith("[")) {
+      continue;
+    }
+    const separatorIndex = Math.max(token.value.lastIndexOf("/"), token.value.lastIndexOf("\\"));
+    const basename = separatorIndex >= 0 ? token.value.slice(separatorIndex + 1) : token.value;
+    hiddenLength += Math.max(0, token.source.length - basename.length);
+  }
+  return text.length - hiddenLength;
 }
 
 export function collectComposerInlineTokens(

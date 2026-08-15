@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,9 +13,14 @@ import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
+const TestServerConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3-workspace-files-test-",
+});
+
 const ProjectLayer = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(TestServerConfigLayer),
 );
 
 const TestLayer = Layer.empty.pipe(
@@ -22,11 +28,7 @@ const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
-  Layer.provide(
-    ServerConfig.ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-workspace-files-test-",
-    }),
-  ),
+  Layer.provide(TestServerConfigLayer),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -262,6 +264,69 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+  });
+
+  describe("writeTextAttachment", () => {
+    it.effect("stores text attachments outside the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+
+        const result = yield* workspaceFileSystem.writeTextAttachment({
+          threadId: ThreadId.make("thread-text-attachment"),
+          name: "Dockerfile",
+          contents: "FROM node:24\n",
+        });
+
+        expect(result.absolutePath.startsWith(attachmentsDir)).toBe(true);
+        expect(result.absolutePath.endsWith("/Dockerfile")).toBe(true);
+        expect(path.basename(path.dirname(result.absolutePath))).toMatch(
+          /^thread-text-att-[0-9a-f]{64}-[0-9a-f-]{36}$/,
+        );
+        expect(yield* fileSystem.readFileString(result.absolutePath)).toBe("FROM node:24\n");
+      }),
+    );
+
+    it.effect("rejects binary text attachments", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const error = yield* workspaceFileSystem
+          .writeTextAttachment({
+            threadId: ThreadId.make("thread-binary-attachment"),
+            name: "payload.bin",
+            contents: "before\0after",
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          name: "payload.bin",
+          failure: "contents_binary",
+          byteLength: 12,
+        });
+        expect(error.message).toBe("Text attachment 'payload.bin' contains binary data.");
+      }),
+    );
+
+    it.effect("reports empty text attachments as a distinct failure", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const error = yield* workspaceFileSystem
+          .writeTextAttachment({
+            threadId: ThreadId.make("thread-empty-attachment"),
+            name: "empty.txt",
+            contents: "",
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          name: "empty.txt",
+          failure: "contents_empty",
+          byteLength: 0,
+        });
       }),
     );
   });

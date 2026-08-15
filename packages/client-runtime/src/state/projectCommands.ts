@@ -102,5 +102,14 @@ export function createProjectEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
     }),
+    writeTextAttachment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:write-text-attachment",
+      tag: WS_METHODS.projectsWriteTextAttachment,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+      },
+    }),
   };
 }

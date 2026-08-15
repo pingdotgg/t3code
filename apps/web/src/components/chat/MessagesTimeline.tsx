@@ -15,6 +15,7 @@ import {
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { measureComposerMarkdownVisibleLength } from "@t3tools/shared/composerInlineTokens";
 import {
   createContext,
   Fragment,
@@ -1590,7 +1591,7 @@ function shouldCollapseUserMessage(text: string): boolean {
   }
 
   return (
-    text.length > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
+    measureComposerMarkdownVisibleLength(text) > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
     text.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
   );
 }
