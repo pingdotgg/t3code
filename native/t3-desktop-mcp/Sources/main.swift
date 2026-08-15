@@ -395,7 +395,9 @@ struct WindowTarget {
 func makeWindowTarget(pid: pid_t, window: AXUIElement) -> WindowTarget? {
     guard let wid = SkyLight.windowID(window) else { return nil }
     guard let origin = axPoint(window, kAXPositionAttribute as String) else { return nil }
-    let size = axSize(window, kAXSizeAttribute as String) ?? .zero
+    guard let size = axSize(window, kAXSizeAttribute as String),
+          size.width > 0, size.height > 0
+    else { return nil }
     return WindowTarget(pid: pid, wid: wid, frame: CGRect(origin: origin, size: size))
 }
 
@@ -1400,7 +1402,8 @@ enum Chrome {
             cachedChromeLaunch = launchInterval(for: app)
             return id
         }
-        return id
+        clearAgentWindowState()
+        return nil
     }
 
     /// The stored id, or nil if that window (or this Chrome instance) is gone.
@@ -1515,8 +1518,10 @@ enum Chrome {
                         cachedChromeLaunch = nil
                     }
                 } else {
-                    cachedChromePid = nil
-                    cachedChromeLaunch = nil
+                    clearAgentWindowState()
+                    return .failure(
+                        "created agent window \(id) but could not pair it with accessibility — retry ensureAgentWindow"
+                    )
                 }
                 persistState()
                 return .success(id)
