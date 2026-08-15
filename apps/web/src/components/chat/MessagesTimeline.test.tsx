@@ -524,6 +524,25 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("&lt;root&gt;&lt;child enabled=&quot;true&quot; /&gt;&lt;/root&gt;");
   });
 
+  it("does not render markdown title attributes in user messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            '[link](https://example.com "link tip") ![image](https://example.com/image.png "image tip")',
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('href="https://example.com"');
+    expect(markup).toContain('src="https://example.com/image.png"');
+    expect(markup).not.toContain('title="link tip"');
+    expect(markup).not.toContain('title="image tip"');
+  });
+
   it("renders unsafe user HTML as inert source text", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

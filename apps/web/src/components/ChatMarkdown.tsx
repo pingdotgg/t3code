@@ -1625,7 +1625,7 @@ function ChatMarkdown({
           />
         );
       },
-      a({ node, href, children, ...props }) {
+      a({ node, href, children, title: _title, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
@@ -1709,6 +1709,9 @@ function ChatMarkdown({
           `[${fileLinkMeta.basename}](${normalizedHref})`,
           props.className,
         );
+      },
+      img({ node: _node, title: _title, ...props }) {
+        return <img {...props} />;
       },
       code({ node, children, className, ...props }) {
         if (node?.properties?.dataInlineCode != null) {
