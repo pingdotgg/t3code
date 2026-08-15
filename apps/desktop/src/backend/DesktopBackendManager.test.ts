@@ -1085,13 +1085,19 @@ describe("DesktopBackendManager", () => {
         assert.equal(yield* Queue.take(starts), 1);
         assert.equal(yield* Queue.take(failures), "pid=123 code=1");
 
+        // yieldNow gives the forked restart fiber time to park on TestClock
+        // before we advance it, preventing a race between forkIn and adjust.
+        yield* Effect.yieldNow;
         yield* TestClock.adjust(Duration.millis(499));
         assert.equal(yield* Queue.size(starts), 0);
+        yield* Effect.yieldNow;
         yield* TestClock.adjust(Duration.millis(1));
         assert.equal(yield* Queue.take(starts), 2);
 
+        yield* Effect.yieldNow;
         yield* TestClock.adjust(Duration.millis(999));
         assert.equal(yield* Queue.size(starts), 0);
+        yield* Effect.yieldNow;
         yield* TestClock.adjust(Duration.millis(1));
         assert.equal(yield* Queue.take(starts), 3);
       }).pipe(Effect.provide(TestClock.layer())),
@@ -1447,10 +1453,10 @@ describe("DesktopBackendManager", () => {
         });
 
         yield* instance.start;
-        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.millis(500));
-        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.seconds(1));
-        yield* TestClock.adjust(Duration.seconds(2));
-        yield* TestClock.adjust(Duration.seconds(4));
+        yield* waitForNextSpawn; yield* Effect.yieldNow; yield* TestClock.adjust(Duration.millis(500));
+        yield* waitForNextSpawn; yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(1));
+        yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(2));
+        yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(4));
         yield* Deferred.await(preflightFailed);
 
         assert.equal(preflightFailedCount, 1);
@@ -1528,10 +1534,10 @@ describe("DesktopBackendManager", () => {
         });
 
         yield* instance.start;
-        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.millis(500));
-        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.seconds(1));
-        yield* TestClock.adjust(Duration.seconds(2));
-        yield* TestClock.adjust(Duration.seconds(4));
+        yield* waitForNextSpawn; yield* Effect.yieldNow; yield* TestClock.adjust(Duration.millis(500));
+        yield* waitForNextSpawn; yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(1));
+        yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(2));
+        yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(4));
         // Wait for the 5th spawn to become ready
         yield* Deferred.await(readyDeferred);
         
@@ -1542,10 +1548,10 @@ describe("DesktopBackendManager", () => {
         yield* Deferred.succeed(closeReadyProcess, void 0);
 
         // Now advance time for the next 4 failures before readiness
-        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.millis(500));
-        yield* waitForNextSpawn; yield* TestClock.adjust(Duration.seconds(1));
-        yield* TestClock.adjust(Duration.seconds(2));
-        yield* TestClock.adjust(Duration.seconds(4));
+        yield* waitForNextSpawn; yield* Effect.yieldNow; yield* TestClock.adjust(Duration.millis(500));
+        yield* waitForNextSpawn; yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(1));
+        yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(2));
+        yield* Effect.yieldNow; yield* TestClock.adjust(Duration.seconds(4));
 
         // Wait for the preflight failure which should happen on the 10th spawn
         yield* Deferred.await(preflightFailed);
