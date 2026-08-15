@@ -11,6 +11,7 @@ export function SettingsSwitchRow(props: {
   readonly disabled?: boolean;
   readonly icon: SymbolName;
   readonly label: string;
+  readonly subtitle?: string;
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
 }) {
@@ -27,7 +28,12 @@ export function SettingsSwitchRow(props: {
       }
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
-      <Text className="flex-1 text-lg text-foreground">{props.label}</Text>
+      <View className="min-w-0 flex-1">
+        <Text className="text-lg text-foreground">{props.label}</Text>
+        {props.subtitle ? (
+          <Text className="text-sm text-foreground-muted">{props.subtitle}</Text>
+        ) : null}
+      </View>
       <Switch
         disabled={props.disabled}
         ios_backgroundColor={track}

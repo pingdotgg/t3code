@@ -301,6 +301,17 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    const ancestor = range.commonAncestorContainer;
+    const ancestorElement =
+      ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    if (ancestorElement?.closest("pre")) {
+      const text = range.toString();
+      if (text) {
+        texts.push(text);
+        htmls.push(sanitizedHtmlFrom(container));
+      }
+      continue;
+    }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);

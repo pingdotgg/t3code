@@ -9,7 +9,7 @@ import {
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
-import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
+import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -339,14 +339,19 @@ export function UsageProviderChart({
 
             {/* Fills first, then every stroke, so no series covers another's line. */}
             {paths.map(({ provider, area }) => (
-              <path key={provider} d={area} fill={PROVIDER_COLOR[provider]} fillOpacity={0.12} />
+              <path
+                key={provider}
+                d={area}
+                fill={PROVIDER_PRESENTATION[provider].color}
+                fillOpacity={0.12}
+              />
             ))}
             {paths.map(({ provider, line }) => (
               <path
                 key={provider}
                 d={line}
                 fill="none"
-                stroke={PROVIDER_COLOR[provider]}
+                stroke={PROVIDER_PRESENTATION[provider].color}
                 strokeWidth={2}
                 vectorEffect="non-scaling-stroke"
               />
@@ -376,12 +381,12 @@ export function UsageProviderChart({
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
               {PROVIDER_ORDER.map((provider) => {
-                const Mark = PROVIDER_MARK[provider];
+                const { label, mark: Mark } = PROVIDER_PRESENTATION[provider];
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">
                     <span className="flex items-center gap-1.5 text-muted-foreground">
                       <Mark className="size-3 shrink-0" aria-hidden />
-                      {PROVIDER_LABEL[provider]}
+                      {label}
                     </span>
                     <span className="text-foreground tabular-nums">
                       {format(
@@ -423,13 +428,13 @@ export function UsageChartLegend() {
   return (
     <div className="flex items-center gap-4">
       {PROVIDER_ORDER.map((provider) => {
-        // The marks carry the same fills as the bands, so they key the chart
-        // just as a colour swatch would.
-        const Mark = PROVIDER_MARK[provider];
+        // Brand marks keep monochrome providers identifiable even when their
+        // chart series use distinct colors.
+        const { label, mark: Mark } = PROVIDER_PRESENTATION[provider];
         return (
           <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Mark className="size-3.5 shrink-0" aria-hidden />
-            {PROVIDER_LABEL[provider]}
+            {label}
           </span>
         );
       })}
