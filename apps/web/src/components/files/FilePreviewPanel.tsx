@@ -60,6 +60,11 @@ import { fileBreadcrumbs } from "./filePath";
 import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
+  relativePathWithinRoot,
+  relativePathWithinSkill,
+  skillRootPath,
+} from "./skillPreviewPaths";
+import {
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -1104,25 +1109,6 @@ function resolveSkillRelativePath(currentPath: string, target: string): string {
     }
   }
   return resolved.join("/");
-}
-
-function skillRootPath(skillPath: string): string {
-  const separatorIndex = Math.max(skillPath.lastIndexOf("/"), skillPath.lastIndexOf("\\"));
-  return separatorIndex < 0 ? skillPath : skillPath.slice(0, separatorIndex);
-}
-
-function relativePathWithinRoot(rootPath: string, targetPath: string): string | null {
-  const root = rootPath.replaceAll("\\", "/").replace(/\/+$/, "");
-  const target = targetPath.replaceAll("\\", "/");
-  const caseInsensitive = /^[A-Za-z]:\//.test(root);
-  const comparableRoot = caseInsensitive ? root.toLowerCase() : root;
-  const comparableTarget = caseInsensitive ? target.toLowerCase() : target;
-  if (!comparableTarget.startsWith(`${comparableRoot}/`)) return null;
-  return target.slice(root.length + 1);
-}
-
-function relativePathWithinSkill(skillPath: string, targetPath: string): string | null {
-  return relativePathWithinRoot(skillRootPath(skillPath), targetPath);
 }
 
 function SkillMarkdownImage(props: {

@@ -275,14 +275,31 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
+function unwrapElement(node: Element): void {
+  const parent = node.parentNode;
+  if (!parent) {
+    node.remove();
+    return;
+  }
+  while (node.firstChild) {
+    parent.insertBefore(node.firstChild, node);
+  }
+  node.remove();
+}
+
 function sanitizedHtmlFrom(container: Element): string {
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
-    if (
+    const keepRichCopy =
       node.classList.contains("chat-markdown-file-link") ||
-      node.closest(".chat-markdown-file-link")
-    ) {
+      node.closest(".chat-markdown-file-link") ||
+      node.closest("[data-markdown-copy]");
+    if (keepRichCopy) {
       if (node.getAttribute("aria-hidden") === "true" || node.localName === "svg") {
         node.remove();
+        continue;
+      }
+      if (node.localName === "button") {
+        unwrapElement(node);
       }
       continue;
     }

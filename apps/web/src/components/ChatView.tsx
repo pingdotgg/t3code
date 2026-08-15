@@ -6150,15 +6150,17 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
-    ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
-      activeProject &&
-      activeWorkspaceRoot ? (
+    ) : activeThreadRef &&
+      ((activeRightPanelSurface?.kind === "file" && activeRightPanelSurface.skill) ||
+        ((activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
+          activeProject &&
+          activeWorkspaceRoot)) ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
-          key={`${activeProject.environmentId}:${activeWorkspaceRoot}`}
-          environmentId={activeProject.environmentId}
-          cwd={activeWorkspaceRoot}
-          projectName={activeProject.title}
+          key={`${activeProject?.environmentId ?? activeThreadRef.environmentId}:${activeWorkspaceRoot ?? "skill"}`}
+          environmentId={activeProject?.environmentId ?? activeThreadRef.environmentId}
+          cwd={activeWorkspaceRoot ?? ""}
+          projectName={activeProject?.title ?? ""}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
