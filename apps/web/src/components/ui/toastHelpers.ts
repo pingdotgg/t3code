@@ -18,6 +18,14 @@ export type StackedThreadToastOptions = {
 };
 
 /**
+ * Defined `actionProps` that hide a previous toast CTA on `toastManager.update`.
+ * Passing `actionProps: undefined` is a no-op because updates omit undefined keys.
+ */
+export const hiddenToastActionProps = {
+  children: null,
+} as const satisfies Pick<ComponentPropsWithoutRef<"button">, "children">;
+
+/**
  * Thread toast using the stacked body + bottom action row (copy for errors, CTA on its own row).
  */
 export function stackedThreadToast(

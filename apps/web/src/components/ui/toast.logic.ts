@@ -1,5 +1,21 @@
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
+/**
+ * Base UI toast updates omit `undefined` fields, so callers that need to remove
+ * an action must pass a defined `actionProps` whose `children` are empty.
+ * Treat that payload (and missing children) as "no visible action".
+ */
+export function hasVisibleToastAction(actionProps: unknown): boolean {
+  if (actionProps == null || typeof actionProps !== "object") {
+    return false;
+  }
+  if (!("children" in actionProps)) {
+    return false;
+  }
+  const children = actionProps.children;
+  return children != null && children !== false && children !== "";
+}
+
 export function shouldHideCollapsedToastContent(
   visibleToastIndex: number,
   visibleToastCount: number,
