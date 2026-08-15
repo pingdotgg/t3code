@@ -297,4 +297,98 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* OpenCode                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** One row of OpenCode's `message` table, the unit the parser reads. */
+export interface OpenCodeMessageRow {
+  /** Globally unique message id; records therefore need no cross-file dedup. */
+  readonly id: string;
+  readonly sessionId: string;
+  /** Row-level creation time in epoch millis, the fallback timestamp. */
+  readonly timeCreatedMs: number;
+  /** The `data` column: one JSON message. */
+  readonly data: string;
+}
+
+/**
+ * Parses one OpenCode message row from its SQLite session store.
+ *
+ * Assistant messages carry the `tokens` breakdown and a reported `cost` (the
+ * go/zen subscription price OpenCode actually billed), plus the
+ * `providerID`/`modelID` pair the request was routed through. Newer stores keep
+ * those at the top level; older ones nest them under `model`, so both shapes
+ * are read.
+ *
+ * OpenCode counts reasoning inside `output` (like Anthropic), so it is surfaced
+ * as a subset rather than added on top.
+ */
+export function parseOpenCodeMessage(row: OpenCodeMessageRow): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.data);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  if (record["role"] !== "assistant") return null;
+
+  const nestedModel = (() => {
+    const model = record["model"];
+    return typeof model === "object" && model !== null ? (model as Record<string, unknown>) : null;
+  })();
+  const providerID =
+    typeof record["providerID"] === "string"
+      ? record["providerID"]
+      : typeof nestedModel?.["providerID"] === "string"
+        ? nestedModel["providerID"]
+        : null;
+  const modelID =
+    typeof record["modelID"] === "string"
+      ? record["modelID"]
+      : typeof nestedModel?.["modelID"] === "string"
+        ? nestedModel["modelID"]
+        : null;
+  if (typeof modelID !== "string" || modelID.length === 0) return null;
+
+  const tokens = record["tokens"];
+  if (typeof tokens !== "object" || tokens === null) return null;
+  const tokenRecord = tokens as Record<string, unknown>;
+  const cache = tokenRecord["cache"];
+  const cacheRecord =
+    typeof cache === "object" && cache !== null ? (cache as Record<string, unknown>) : null;
+
+  const totals: UsageTokenTotals = {
+    // OpenCode reports input and cache as disjoint figures, unlike Codex.
+    uncachedInputTokens: int(tokenRecord["input"]),
+    cachedInputTokens: cacheRecord === null ? 0 : int(cacheRecord["read"]),
+    cacheCreationTokens: cacheRecord === null ? 0 : int(cacheRecord["write"]),
+    outputTokens: int(tokenRecord["output"]),
+    reasoningTokens: Math.min(int(tokenRecord["output"]), int(tokenRecord["reasoning"])),
+  };
+  if (totalTokens(totals) === 0) return null;
+
+  const time = record["time"];
+  const created =
+    typeof time === "object" && time !== null ? (time as Record<string, unknown>)["created"] : null;
+  const cost = record["cost"];
+
+  return {
+    provider: "opencode",
+    timestampMs:
+      typeof created === "number" && Number.isFinite(created) ? created : row.timeCreatedMs,
+    // Fully-qualified name: two subscriptions (go/zen) may price one model id
+    // differently, and the rate table keys each tier's models separately.
+    model: providerID === null ? modelID : `${providerID}/${modelID}`,
+    sessionId: row.sessionId,
+    totals,
+    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+    // Message rows are unique per store, so records need no global dedup.
+    dedupeKey: null,
+  };
+}
+
 export { EMPTY_TOTALS };

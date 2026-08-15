@@ -201,4 +201,28 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets).toHaveLength(3);
   });
+
+  it("keeps opencode go and zen rows distinct and uses the reported cost", () => {
+    const result = aggregate([
+      record({
+        provider: "opencode",
+        model: "opencode-go/deepseek-v4-flash",
+        reportedCostUsd: 0.25,
+      }),
+      record({
+        provider: "opencode",
+        model: "opencode/deepseek-v4-flash",
+        reportedCostUsd: 0.5,
+      }),
+    ]);
+
+    expect(result.buckets).toHaveLength(2);
+    for (const bucket of result.buckets) {
+      expect(bucket.provider).toBe("opencode");
+      expect(bucket.costSource).toBe("providerReported");
+    }
+    const byModel = new Map(result.buckets.map((bucket) => [bucket.model, bucket.costUsd]));
+    expect(byModel.get("opencode-go/deepseek-v4-flash")).toBe(0.25);
+    expect(byModel.get("opencode/deepseek-v4-flash")).toBe(0.5);
+  });
 });

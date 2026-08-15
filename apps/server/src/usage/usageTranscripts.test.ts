@@ -4,6 +4,7 @@ import {
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseOpenCodeMessage,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -247,5 +248,113 @@ describe("totalTokens", () => {
         reasoningTokens: 25,
       }),
     ).toBe(100);
+  });
+});
+
+describe("parseOpenCodeMessage", () => {
+  /** Shaped after a real OpenCode assistant message in the `message` table. */
+  function row(overrides: Record<string, unknown> = {}): {
+    readonly id: string;
+    readonly sessionId: string;
+    readonly timeCreatedMs: number;
+    readonly data: string;
+  } {
+    return {
+      id: "msg_1",
+      sessionId: "ses_1",
+      timeCreatedMs: 1_785_000_000_000,
+      data: JSON.stringify({
+        parentID: "msg_0",
+        role: "assistant",
+        mode: "build",
+        cost: 0.00368793,
+        tokens: {
+          total: 8193,
+          input: 7908,
+          output: 209,
+          reasoning: 76,
+          cache: { write: 0, read: 0 },
+        },
+        modelID: "deepseek-v4-pro",
+        providerID: "opencode-go",
+        time: { created: 1_785_000_000_000, completed: 1_785_000_001_000 },
+        finish: "tool-calls",
+        ...overrides,
+      }),
+    };
+  }
+
+  it("extracts totals, the qualified model and the reported cost", () => {
+    const record = parseOpenCodeMessage(row());
+
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("opencode");
+    expect(record?.model).toBe("opencode-go/deepseek-v4-pro");
+    expect(record?.sessionId).toBe("ses_1");
+    expect(record?.timestampMs).toBe(1_785_000_000_000);
+    expect(record?.reportedCostUsd).toBeCloseTo(0.00368793, 9);
+    expect(record?.dedupeKey).toBeNull();
+    // reasoning is a subset of output, never added on top.
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 7908,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 209,
+      reasoningTokens: 76,
+    });
+  });
+
+  it("maps cache reads and writes to their own totals", () => {
+    const record = parseOpenCodeMessage(
+      row({
+        cost: 0.000390311,
+        tokens: {
+          total: 8703,
+          input: 193,
+          output: 277,
+          reasoning: 41,
+          cache: { write: 0, read: 8192 },
+        },
+      }),
+    );
+
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 193,
+      cachedInputTokens: 8192,
+      cacheCreationTokens: 0,
+      outputTokens: 277,
+      reasoningTokens: 41,
+    });
+  });
+
+  it("reads the legacy nested model shape", () => {
+    const record = parseOpenCodeMessage(
+      row({
+        model: { providerID: "opencode", modelID: "deepseek-v4-flash" },
+        modelID: undefined,
+        providerID: undefined,
+      }),
+    );
+
+    expect(record?.model).toBe("opencode/deepseek-v4-flash");
+  });
+
+  it("falls back to the row timestamp when the message has none", () => {
+    const record = parseOpenCodeMessage(row({ time: {} }));
+
+    expect(record?.timestampMs).toBe(1_785_000_000_000);
+  });
+
+  it("ignores non-assistant messages, missing models and zero-token rows", () => {
+    expect(parseOpenCodeMessage(row({ role: "user" }))).toBeNull();
+    expect(parseOpenCodeMessage(row({ modelID: undefined }))).toBeNull();
+    expect(
+      parseOpenCodeMessage(
+        row({
+          tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache: { write: 0, read: 0 } },
+        }),
+      ),
+    ).toBeNull();
+    expect(parseOpenCodeMessage({ ...row(), data: "not json" })).toBeNull();
   });
 });

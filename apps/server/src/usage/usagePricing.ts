@@ -99,7 +99,13 @@ const UNPRICEABLE_MODELS = new Set([
 ]);
 
 export function lookupRate(table: RateTable, model: string): ModelRate | null {
-  const normalized = normalizeModelName(model);
+  const trimmed = model.trim();
+  if (trimmed.length === 0) return null;
+  // A fully-qualified name (OpenCode's `providerID/modelID`) keys its own row,
+  // so two subscriptions pricing the same model differently stay distinct.
+  const direct = table.get(trimmed);
+  if (direct !== undefined) return direct;
+  const normalized = normalizeModelName(trimmed);
   if (normalized.length === 0 || UNPRICEABLE_MODELS.has(normalized)) return null;
   return table.get(normalized) ?? null;
 }
@@ -145,4 +151,69 @@ export function cacheSavingsUsd(table: RateTable, model: string, totals: UsageTo
   const rate = lookupRate(table, model);
   if (rate === null) return 0;
   return totals.cachedInputTokens * (rate.inputCostPerToken - rate.cacheReadCostPerToken);
+}
+
+/* -------------------------------------------------------------------------- */
+/* models.dev (OpenCode go/zen)                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The models.dev providers that carry OpenCode's own subscription models.
+ *
+ * OpenCode's go tier is `opencode-go`; its zen tier is keyed as `opencode`.
+ * The names are stored as `providerID/modelID`, so the two tiers can price the
+ * same model id differently (go's "2x usage" models cost half per token).
+ */
+const MODELS_DEV_OPENCODE_PROVIDERS = ["opencode-go", "opencode"] as const;
+
+/**
+ * Projects the models.dev document into a rate table for OpenCode's go/zen
+ * models.
+ *
+ * models.dev lists prices in US dollars per million tokens. Entries without
+ * both an input and an output rate are dropped; a half-priced model would
+ * silently under-report cost, the same rule as the LiteLLM table.
+ *
+ * Rows are keyed by the fully-qualified `providerID/modelID` name so go and zen
+ * prices for one model id never collapse into each other.
+ */
+export function parseOpenCodeRates(document: unknown): RateTable {
+  const table = new Map<string, ModelRate>();
+  if (typeof document !== "object" || document === null) return table;
+  const root = document as Record<string, unknown>;
+
+  for (const providerId of MODELS_DEV_OPENCODE_PROVIDERS) {
+    const provider = root[providerId];
+    if (typeof provider !== "object" || provider === null) continue;
+    const models = (provider as Record<string, unknown>)["models"];
+    if (typeof models !== "object" || models === null) continue;
+
+    for (const [name, raw] of Object.entries(models as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const cost = (raw as Record<string, unknown>)["cost"];
+      if (typeof cost !== "object" || cost === null) continue;
+      const costRecord = cost as Record<string, unknown>;
+
+      const input = finiteNumber(costRecord["input"]);
+      const output = finiteNumber(costRecord["output"]);
+      if (input === null || output === null) continue;
+
+      const inputPerToken = input / 1_000_000;
+      table.set(`${providerId}/${name}`, {
+        inputCostPerToken: inputPerToken,
+        outputCostPerToken: output / 1_000_000,
+        // When a model omits them, cached input is priced as plain input.
+        cacheReadCostPerToken: (finiteNumber(costRecord["cache_read"]) ?? input) / 1_000_000,
+        cacheCreationCostPerToken: (finiteNumber(costRecord["cache_write"]) ?? input) / 1_000_000,
+      });
+    }
+  }
+  return table;
+}
+
+/** Overlays one rate table on another; later entries win on conflict. */
+export function mergeRateTables(base: RateTable, overlay: RateTable): RateTable {
+  const merged = new Map(base);
+  for (const [name, rate] of overlay) merged.set(name, rate);
+  return merged;
 }

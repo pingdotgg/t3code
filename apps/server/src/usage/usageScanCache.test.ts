@@ -59,6 +59,54 @@ describe("scan cache round trip", () => {
     expect(encoded.sessions).toEqual(["session-a"]);
   });
 
+  it("round-trips an opencode store entry with its WAL identity", () => {
+    const cache: ScanCache = new Map();
+    cache.set("/opencode.db", {
+      size: 1024,
+      mtimeMs: 200,
+      provider: "opencode",
+      wal: { size: 64, mtimeMs: 210 },
+      records: [
+        record({
+          provider: "opencode",
+          model: "opencode-go/deepseek-v4-flash",
+          reportedCostUsd: 0.25,
+          dedupeKey: null,
+        }),
+      ],
+    });
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(cache))));
+
+    expect(restored.get("/opencode.db")).toEqual(cache.get("/opencode.db"));
+  });
+
+  it("rejects an opencode entry whose WAL identity is malformed", () => {
+    const encoded = encodeScanCache(
+      (() => {
+        const cache: ScanCache = new Map();
+        cache.set("/opencode.db", {
+          size: 1024,
+          mtimeMs: 200,
+          provider: "opencode",
+          records: [
+            record({ provider: "opencode", model: "opencode-go/gpt-5.6-luna", dedupeKey: null }),
+          ],
+        });
+        return cache;
+      })(),
+    );
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/opencode.db": { ...encoded.files["/opencode.db"]!, w: ["nope", 1] },
+      },
+    };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
+    expect(restored.has("/opencode.db")).toBe(false);
+  });
+
   it("treats a corrupt or foreign document as an empty cache", () => {
     // A bad cache should cost one cold scan, never a broken page.
     expect(decodeScanCache(null).size).toBe(0);
