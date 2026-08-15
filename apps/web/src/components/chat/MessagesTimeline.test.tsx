@@ -3,6 +3,7 @@ import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import { resolveTimelineLiveFollowEnabled } from "./timelineScrollAnchoring";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -38,10 +39,27 @@ vi.mock("@legendapp/list/react", async () => {
           size?: boolean;
           shouldRestorePosition?: (item: { id: string }) => boolean;
         };
+    onItemSizeChanged?: (info: {
+      index: number;
+      itemData: { id: string };
+      itemKey: string;
+      previous: number;
+      size: number;
+    }) => void;
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
+    }
+    const lastItem = props.data.at(-1);
+    if (lastItem) {
+      props.onItemSizeChanged?.({
+        index: props.data.length - 1,
+        itemData: lastItem,
+        itemKey: props.keyExtractor(lastItem),
+        previous: 90,
+        size: 1_800,
+      });
     }
     return (
       <div
@@ -195,6 +213,7 @@ function buildProps() {
     workspaceRoot: undefined,
     anchorMessageId: null,
     onAnchorReady: () => {},
+    onItemSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
@@ -221,6 +240,23 @@ function buildUserTimelineEntry(text: string) {
       createdAt: MESSAGE_CREATED_AT,
       updatedAt: MESSAGE_CREATED_AT,
       streaming: false,
+    },
+  };
+}
+
+function buildStreamingAssistantTimelineEntry() {
+  return {
+    id: "entry-streaming-assistant",
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: MessageId.make("message-streaming-assistant"),
+      role: "assistant" as const,
+      text: "Streaming response content.",
+      turnId: TurnId.make("turn-streaming"),
+      createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+      streaming: true,
     },
   };
 }
@@ -430,6 +466,65 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+  });
+
+  it("keeps streamed content following after switching from a thread scrolled into history", () => {
+    const previousThreadState = {
+      threadKey: "environment-local:thread-a",
+      enabled: false,
+    };
+    const nextThreadKey = "environment-local:thread-b";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        routeThreadKey={nextThreadKey}
+        liveFollowEnabled={resolveTimelineLiveFollowEnabled(previousThreadState, nextThreadKey)}
+        timelineEntries={[buildStreamingAssistantTimelineEntry()]}
+      />,
+    );
+
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
+  });
+
+  it("reports late row measurements so a buffered completion can settle at the live edge", () => {
+    const onItemSizeChanged = vi.fn();
+    const userEntry = buildUserTimelineEntry("Generate a response longer than the viewport.");
+
+    renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={userEntry.message.id}
+        onItemSizeChanged={onItemSizeChanged}
+        timelineEntries={[userEntry, buildStreamingAssistantTimelineEntry()]}
+      />,
+    );
+
+    expect(onItemSizeChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ previous: 90, size: 1_800 }),
+    );
+  });
+
+  it("disables streamed-content follow while reading history and restores it at the live edge", () => {
+    const timelineEntries = [buildStreamingAssistantTimelineEntry()];
+    const readingMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        liveFollowEnabled={false}
+        timelineEntries={timelineEntries}
+      />,
+    );
+    const followingMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} liveFollowEnabled timelineEntries={timelineEntries} />,
+    );
+
+    expect(readingMarkup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(followingMarkup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(followingMarkup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(followingMarkup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(followingMarkup).toContain('data-maintain-scroll-at-end-layout="true"');
   });
 
   it("renders collapse controls for long user messages", () => {

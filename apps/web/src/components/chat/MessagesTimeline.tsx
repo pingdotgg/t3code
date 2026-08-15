@@ -237,6 +237,8 @@ interface MessagesTimelineProps {
    */
   liveFollowEnabled: boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  /** Reports authoritative row height changes so anchored follow can settle after late layout. */
+  onItemSizeChanged: () => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
@@ -277,6 +279,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   contentInsetEndAdjustment,
   liveFollowEnabled,
   onIsAtEndChange,
+  onItemSizeChanged,
   onManualNavigation,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
@@ -589,6 +592,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
             maintainVisibleContentPosition={maintainVisibleContentPosition}
+            onItemSizeChanged={onItemSizeChanged}
             onScroll={handleScroll}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
