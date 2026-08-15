@@ -185,6 +185,8 @@ pub fn run(root: PathBuf) -> Result<(), String> {
                     );
                 if !allowed {
                     suppressed += 1;
+                    // Clear so returning to the same allowed sample records again.
+                    last_sample_key.clear();
                 } else if sample.key != last_sample_key {
                     last_sample_key = sample.key.clone();
                     let mut app = json!({ "name": sample.app_name });
@@ -492,9 +494,9 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
             return true;
         }
     }
-    if haystack.contains("://") {
-        if let Some(host) = extract_host(haystack) {
-            return host == needle || host.ends_with(&format!(".{needle}"));
+    for host in extract_hosts(haystack) {
+        if host == needle || host.ends_with(&format!(".{needle}")) {
+            return true;
         }
     }
     // Fallback for non-URL haystacks that still carry a hostname fragment.
@@ -504,13 +506,22 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
         || haystack.ends_with(&format!("//{needle}/"))
 }
 
-fn extract_host(raw: &str) -> Option<String> {
-    let start = raw.find("://")? + 3;
-    let rest = &raw[start..];
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..end];
-    let host = authority.rsplit('@').next()?.split(':').next()?;
-    Some(host.trim().to_lowercase())
+fn extract_hosts(raw: &str) -> Vec<String> {
+    let mut hosts = Vec::new();
+    let mut rest = raw;
+    while let Some(idx) = rest.find("://") {
+        let after = &rest[idx + 3..];
+        let end = after.find(['/', '?', '#', ' ', '\n', '\t']).unwrap_or(after.len());
+        let authority = &after[..end];
+        if let Some(host) = authority.rsplit('@').next().and_then(|a| a.split(':').next()) {
+            let host = host.trim().to_lowercase();
+            if !host.is_empty() {
+                hosts.push(host);
+            }
+        }
+        rest = &after[end..];
+    }
+    hosts
 }
 
 fn try_read_control(root: &Path) -> Result<Control, ()> {

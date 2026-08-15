@@ -8,6 +8,15 @@ import type {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -231,6 +240,10 @@ export function ComputerHistorySettings() {
   const [items, setItems] = useState<ComputerHistoryTimelineItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [pendingClearScope, setPendingClearScope] = useState<ComputerHistoryClearScope | null>(
+    null,
+  );
+  const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -381,7 +394,7 @@ export function ComputerHistorySettings() {
         ) : null}
       </SettingsSection>
 
-      <SettingsSection {...searchableSetting("computer-history-privacy")} title="Privacy">
+      <SettingsSection id={searchableSetting("computer-history-privacy").id} title="Privacy">
         <p className="text-muted-foreground mb-3 px-3 text-sm sm:px-4">
           Exclude sensitive apps and websites from Computer History. Private browsing is never
           recorded.
@@ -389,6 +402,21 @@ export function ComputerHistorySettings() {
         <SettingsRow
           title={<SettingRowTitle>Excluded apps &amp; websites</SettingRowTitle>}
           description={exclusionSummary}
+          resetAction={
+            hasPrivacyOverrides ? (
+              <SettingResetButton
+                label="exclusions"
+                onClick={() =>
+                  patch({
+                    apps: [...defaults.apps],
+                    websites: [...defaults.websites],
+                    appFilterMode: defaults.appFilterMode,
+                    websiteFilterMode: defaults.websiteFilterMode,
+                  })
+                }
+              />
+            ) : null
+          }
           control={
             <Button
               variant="outline"
@@ -400,24 +428,9 @@ export function ComputerHistorySettings() {
             </Button>
           }
         />
-        {hasPrivacyOverrides ? (
-          <div className="flex justify-end px-3 pb-2 sm:px-4">
-            <SettingResetButton
-              label="exclusions"
-              onClick={() =>
-                patch({
-                  apps: [...defaults.apps],
-                  websites: [...defaults.websites],
-                  appFilterMode: defaults.appFilterMode,
-                  websiteFilterMode: defaults.websiteFilterMode,
-                })
-              }
-            />
-          </div>
-        ) : null}
       </SettingsSection>
 
-      <SettingsSection {...searchableSetting("computer-history-timeline")} title="History">
+      <SettingsSection id={searchableSetting("computer-history-timeline").id} title="History">
         <p className="text-muted-foreground mb-3 px-3 text-sm sm:px-4">
           Summaries from the local event stream. Clearing deletes events and derived memories.
         </p>
@@ -432,21 +445,10 @@ export function ComputerHistorySettings() {
           ).map(([scope, label]) => (
             <Button
               key={scope}
-              variant="outline"
+              variant="destructive-outline"
               size="sm"
               disabled={!onDesktop || busy}
-              onClick={() => {
-                void (async () => {
-                  setBusy(true);
-                  try {
-                    const timeline = await window.desktopBridge?.clearComputerHistory?.(scope);
-                    if (timeline) setItems([...timeline.items]);
-                    await refresh();
-                  } finally {
-                    setBusy(false);
-                  }
-                })();
-              }}
+              onClick={() => setPendingClearScope(scope)}
             >
               {label}
             </Button>
@@ -485,15 +487,9 @@ export function ComputerHistorySettings() {
                       Reveal
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="destructive-outline"
                       size="sm"
-                      onClick={() => {
-                        void (async () => {
-                          const timeline =
-                            await window.desktopBridge?.deleteComputerHistoryMemory?.(item.path);
-                          if (timeline) setItems([...timeline.items]);
-                        })();
-                      }}
+                      onClick={() => setPendingDeletePath(item.path)}
                     >
                       Delete
                     </Button>
@@ -516,6 +512,85 @@ export function ComputerHistorySettings() {
           patch({ apps, websites })
         }
       />
+
+      <AlertDialog
+        open={pendingClearScope !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingClearScope(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear Computer History?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes recorded events and derived memories for the selected range.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button type="button" variant="outline" />}>
+              Cancel
+            </AlertDialogClose>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => {
+                const scope = pendingClearScope;
+                setPendingClearScope(null);
+                if (!scope) return;
+                void (async () => {
+                  setBusy(true);
+                  try {
+                    const timeline = await window.desktopBridge?.clearComputerHistory?.(scope);
+                    if (timeline) setItems([...timeline.items]);
+                    await refresh();
+                  } finally {
+                    setBusy(false);
+                  }
+                })();
+              }}
+            >
+              Clear
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingDeletePath !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeletePath(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this memory?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the selected Computer History memory from disk.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button type="button" variant="outline" />}>
+              Cancel
+            </AlertDialogClose>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                const path = pendingDeletePath;
+                setPendingDeletePath(null);
+                if (!path) return;
+                void (async () => {
+                  const timeline = await window.desktopBridge?.deleteComputerHistoryMemory?.(path);
+                  if (timeline) setItems([...timeline.items]);
+                })();
+              }}
+            >
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </SettingsPageContainer>
   );
 }

@@ -295,17 +295,38 @@ private final class DaemonState {
         return true
       }
     }
-    if let host = urlHost(url) {
-      return host == needle || host.hasSuffix(".\(needle)")
+    for host in urlHosts(url) {
+      if host == needle || host.hasSuffix(".\(needle)") {
+        return true
+      }
     }
     return url == needle || url.hasSuffix(".\(needle)")
   }
 
-  private static func urlHost(_ raw: String) -> String? {
-    guard let parsed = URL(string: raw), let host = parsed.host?.lowercased(), !host.isEmpty else {
-      return nil
+  private static func urlHosts(_ raw: String) -> [String] {
+    var hosts: [String] = []
+    var rest = raw
+    while let range = rest.range(of: "://") {
+      let after = rest[range.upperBound...]
+      let end = after.firstIndex(where: { "/?# \n\t".contains($0) }) ?? after.endIndex
+      let authority = String(after[..<end])
+      let hostPart = authority.split(separator: "@").last.map(String.init) ?? authority
+      let host = (hostPart.split(separator: ":").first.map(String.init) ?? hostPart)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+      if !host.isEmpty {
+        hosts.append(host)
+      }
+      rest = String(after[end...])
     }
-    return host
+    if hosts.isEmpty, let parsed = URL(string: raw), let host = parsed.host?.lowercased(), !host.isEmpty {
+      hosts.append(host)
+    }
+    return hosts
+  }
+
+  private static func urlHost(_ raw: String) -> String? {
+    urlHosts(raw).first
   }
 
   @discardableResult
@@ -421,7 +442,7 @@ private final class DaemonState {
       windowTitle = chAxString(first, kAXTitleAttribute as String)
     }
 
-    let focusKey = "\(app.processIdentifier)|\(windowTitle ?? "")|\(role ?? "")|\(desc ?? "")|\((value ?? "").prefix(40))"
+    let focusKey = "\(app.processIdentifier)|\(windowTitle ?? "")|\(role ?? "")|\(desc ?? "")|\(value?.count ?? 0)|\((value ?? "").prefix(200))"
     guard focusKey != lastFocusKey else { return }
 
     var appPayload: [String: Any] = ["processIdentifier": app.processIdentifier]
