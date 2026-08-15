@@ -10,7 +10,7 @@ import {
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useColorScheme } from "react-native";
+import { Appearance, useColorScheme } from "react-native";
 
 import { Uniwind } from "uniwind";
 
@@ -106,6 +106,12 @@ function applyTextScaleVariables(baseFontSize: number) {
   Uniwind.updateCSSVariables(currentTheme, variables);
 }
 
+export function applyAppearanceModeToRuntimes(appearanceMode: MobileAppearanceMode) {
+  const colorSchemeOverride = resolveColorSchemeOverride(appearanceMode);
+  Uniwind.setTheme(colorSchemeOverride ?? "system");
+  Appearance.setColorScheme(colorSchemeOverride ?? "unspecified");
+}
+
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -155,7 +161,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   }, [importedThemes, themePreferences.themeId]);
 
   useEffect(() => {
-    Uniwind.setTheme(resolveColorSchemeOverride(themePreferences.appearanceMode) ?? "system");
+    applyAppearanceModeToRuntimes(themePreferences.appearanceMode);
   }, [themePreferences.appearanceMode]);
 
   useEffect(() => {

@@ -145,6 +145,27 @@ describe("synced client preferences", () => {
     });
   });
 
+  it("preserves an opaque server theme across an unrelated plan write", () => {
+    expect(
+      createSyncedPlanModeWrite({
+        value: true,
+        serverPreferences: {
+          planModeEnabled: false,
+          themeId: "custom-from-mobile",
+          updatedAtByField: {
+            planModeEnabled: "2026-08-14T12:00:00.000Z",
+            themeId: "2026-08-14T13:00:00.000Z",
+          },
+          updatedAt: "2026-08-14T13:00:00.000Z",
+        },
+        now: "2026-08-14T12:30:00.000Z",
+      }).request,
+    ).toEqual({
+      patch: { planModeEnabled: true },
+      updatedAt: "2026-08-14T12:30:00.000Z",
+    });
+  });
+
   it("advances theme writes from the theme clock instead of a newer appearance clock", () => {
     expect(
       createSyncedClientPreferenceWrite({
