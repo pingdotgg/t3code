@@ -273,3 +273,28 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md")).toBeNull();
   });
 });
+
+describe("directory paths with a trailing separator", () => {
+  it("keeps the final segment for a POSIX directory path", () => {
+    expect(resolveMarkdownFileLinkMeta("/tmp/favicons/", "/repo/project")).toMatchObject({
+      basename: "favicons",
+    });
+  });
+
+  it("keeps the final segment for a Windows directory path", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("C:\\Users\\kelchm\\.claude\\", "/repo/project"),
+    ).toMatchObject({ basename: ".claude" });
+  });
+
+  it("matches the label of the same path without a trailing separator", () => {
+    const withSlash = resolveMarkdownFileLinkMeta("/tmp/favicons/", "/repo/project");
+    const withoutSlash = resolveMarkdownFileLinkMeta("/tmp/favicons", "/repo/project");
+    expect(withSlash?.basename).toBe(withoutSlash?.basename);
+  });
+
+  it("does not produce an empty label for the filesystem root", () => {
+    const meta = resolveMarkdownFileLinkMeta("/tmp/", "/repo/project");
+    expect(meta?.basename).not.toBe("");
+  });
+});
