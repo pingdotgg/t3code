@@ -24,6 +24,7 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
+const MEMORY = "memory-consolidation-thread";
 
 /**
  * The captured sequence, extended with the shapes the live capture didn't
@@ -174,15 +175,44 @@ describe("CodexSessionRuntime collab integration", () => {
       const turnStartedB = byIndex.find((entry) => isTurnStarted(entry, CHILD_B));
       const registrationA = byIndex.find((entry) => isRegistration(entry, CHILD_A));
       const registrationB = byIndex.find((entry) => isRegistration(entry, CHILD_B));
+      const rootThreadStarted = byIndex.find((entry) => entry.method === "thread/started");
       assert.isDefined(turnStartedA);
       assert.isDefined(turnStartedB);
       assert.isDefined(registrationA);
       assert.isDefined(registrationB);
+      assert.isDefined(rootThreadStarted);
+      const memoryThreadStarted = {
+        ...rootThreadStarted,
+        params: {
+          thread: {
+            ...rootThreadStarted.params.thread,
+            id: MEMORY,
+            sessionId: MEMORY,
+            source: "unknown",
+            threadSource: "memory_consolidation",
+          },
+        },
+      };
+      const memoryTurnStarted = {
+        ...turnStartedA,
+        params: {
+          ...turnStartedA.params,
+          threadId: MEMORY,
+          turn: { ...turnStartedA.params.turn, id: "memory-consolidation-turn" },
+        },
+      };
       const script = {
         rootThreadId: ROOT,
         holdTurnOpen: true,
         hangInterruptFor: CHILD_A,
-        notifications: [turnStartedA, registrationA, registrationB, turnStartedB],
+        notifications: [
+          turnStartedA,
+          registrationA,
+          memoryThreadStarted,
+          memoryTurnStarted,
+          registrationB,
+          turnStartedB,
+        ],
       };
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
@@ -240,6 +270,10 @@ describe("CodexSessionRuntime collab integration", () => {
         "pre-registration child A must still receive the interrupt RPC",
       );
       assert.isTrue(interruptedThreads.has(CHILD_B), "registered child B must be interrupted");
+      assert.isTrue(
+        interruptedThreads.has(MEMORY),
+        "memory consolidation must be interrupted without appearing in chat",
+      );
       assert.isTrue(interruptedThreads.has(ROOT), "parent turn must be interrupted last");
 
       yield* runtime.close;

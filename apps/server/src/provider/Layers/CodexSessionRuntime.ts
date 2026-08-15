@@ -541,6 +541,49 @@ function readNotificationThreadId(notification: CodexServerNotification): string
   }
 }
 
+export function makeMemoryConsolidationNotificationFilter(): (
+  notification: CodexServerNotification,
+) => boolean {
+  const threadIds = new Set<string>();
+
+  return (notification) => {
+    if (notification.method === "thread/started") {
+      const thread = notification.params.thread;
+      const source = thread.source;
+      if (
+        thread.threadSource === "memory_consolidation" ||
+        (typeof source === "object" &&
+          source !== null &&
+          "subAgent" in source &&
+          source.subAgent === "memory_consolidation")
+      ) {
+        threadIds.add(thread.id);
+        return true;
+      }
+    }
+
+    const params = notification.params;
+    const threadId =
+      notification.method === "thread/started"
+        ? notification.params.thread.id
+        : "threadId" in params && typeof params.threadId === "string"
+          ? params.threadId
+          : undefined;
+    if (!threadId || !threadIds.has(threadId)) {
+      return false;
+    }
+
+    if (notification.method === "serverRequest/resolved") {
+      return false;
+    }
+
+    if (notification.method === "thread/closed") {
+      threadIds.delete(threadId);
+    }
+    return true;
+  };
+}
+
 function readRouteFields(notification: CodexServerNotification): {
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
@@ -857,6 +900,7 @@ export const makeCodexSessionRuntime = (
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
+    const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
     const closedRef = yield* Ref.make(false);
 
     // `~` is not shell-expanded when env vars are set via
@@ -1249,6 +1293,9 @@ export const makeCodexSessionRuntime = (
 
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
+        const isMemoryConsolidationNotification =
+          suppressMemoryConsolidationNotification(notification);
+
         const payload = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
@@ -1323,6 +1370,10 @@ export const makeCodexSessionRuntime = (
             }
           }
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+          return;
+        }
+
+        if (isMemoryConsolidationNotification) {
           return;
         }
 
