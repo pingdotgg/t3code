@@ -21,6 +21,7 @@ import type {
   ThreadEnvMode,
 } from "@t3tools/contracts";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
+import { getGitHubRepositoryUrlFromRemoteUrl } from "@t3tools/shared/git";
 import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
@@ -72,6 +73,7 @@ import { primaryServerProvidersAtom, serverEnvironment } from "../../state/serve
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { GitHubIcon } from "../Icons";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
@@ -466,6 +468,23 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const selectedCheckout =
     group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
     representative;
+  const githubRepositoryUrl = getGitHubRepositoryUrlFromRemoteUrl(
+    selectedCheckout.repositoryIdentity?.locator.remoteUrl ?? null,
+  );
+  const openGitHubRepository = useCallback(() => {
+    const api = readLocalApi();
+    if (!api || !githubRepositoryUrl) return;
+
+    void api.shell.openExternal(githubRepositoryUrl).catch((error: unknown) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to open GitHub repository",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    });
+  }, [githubRepositoryUrl]);
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -953,6 +972,20 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 </code>
                 <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
               </button>
+              {githubRepositoryUrl ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  type="button"
+                  className="shrink-0"
+                  aria-label={`Open ${selectedCheckout.title} on GitHub`}
+                  title={`Open ${selectedCheckout.title} on GitHub`}
+                  onClick={openGitHubRepository}
+                >
+                  <GitHubIcon className="size-3.5" />
+                  Open on GitHub
+                </Button>
+              ) : null}
               <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
                 {selectedCheckoutThreadCount === 1
                   ? "1 thread"

@@ -160,6 +160,42 @@ export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | nu
   return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
 }
 
+/**
+ * Convert a GitHub clone URL into the HTTPS repository page users can open.
+ * Rebuild the URL from its host and path so clone credentials never reach the browser.
+ */
+export function getGitHubRepositoryUrlFromRemoteUrl(remoteUrl: string | null): string | null {
+  const trimmed = remoteUrl?.trim() ?? "";
+  const provider = trimmed ? detectSourceControlProviderFromRemoteUrl(trimmed) : null;
+  if (provider?.kind !== "github") return null;
+
+  let repositoryPath = "";
+  let baseUrl = provider.baseUrl;
+  if (/^(?:ssh|https?|git):\/\//iu.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      repositoryPath = parsed.pathname;
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        baseUrl = `https://${parsed.hostname}`;
+      }
+    } catch {
+      return null;
+    }
+  } else {
+    repositoryPath = /^git@[^:/\s]+:(.+)$/iu.exec(trimmed)?.[1] ?? "";
+  }
+
+  const segments = repositoryPath
+    .replace(/^\/+|\/+$/gu, "")
+    .replace(/\.git$/iu, "")
+    .split("/");
+  if (segments.length !== 2 || segments.some((segment) => !/^[a-z\d_.-]+$/iu.test(segment))) {
+    return null;
+  }
+
+  return `${baseUrl}/${segments.join("/")}`;
+}
+
 function deriveLocalBranchNameCandidatesFromRemoteRef(
   branchName: string,
   remoteName?: string,

@@ -1,11 +1,12 @@
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
+import type { ColorValue } from "react-native";
 
 export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
   readonly size?: number;
-  readonly color?: string;
+  readonly color?: ColorValue;
 }) {
   const size = props.size ?? 18;
 
