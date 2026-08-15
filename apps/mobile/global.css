@@ -4,6 +4,10 @@
 /* ─── Theme tokens ──────────────────────────────────────────────────── */
 @layer theme {
   :root {
+    @variant android {
+      --font-mono: "monospace";
+    }
+
     @variant light {
       /* Page backgrounds */
       --color-screen: #f2f2f7;
