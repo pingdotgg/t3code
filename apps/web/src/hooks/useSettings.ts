@@ -369,6 +369,7 @@ const scheduleSyncedPlanModeRetry: SyncedPlanModeRetryScheduler = (retry) => {
 export function createSyncedPlanModeHydrationController(
   scheduleRetry: SyncedPlanModeRetryScheduler = scheduleSyncedPlanModeRetry,
 ) {
+  const imperativeSynchronizationOwner = Symbol();
   const adoptedUpdatedAtByEnvironment = new Map<EnvironmentId, string>();
   const seedPendingByEnvironment = new Map<EnvironmentId, string>();
   const writePendingByEnvironment = new Map<
@@ -376,19 +377,36 @@ export function createSyncedPlanModeHydrationController(
     { readonly value: boolean; readonly updatedAt: string }
   >();
   const writeInFlightByEnvironment = new Map<EnvironmentId, string>();
-  const synchronizeAgainByEnvironment = new Map<EnvironmentId, () => void>();
+  const synchronizeAgainByEnvironment = new Map<EnvironmentId, Map<symbol, () => void>>();
   const cancelRetryByEnvironment = new Map<EnvironmentId, () => void>();
   const cancelRetry = (environmentId: EnvironmentId) => {
     cancelRetryByEnvironment.get(environmentId)?.();
     cancelRetryByEnvironment.delete(environmentId);
   };
+  const deactivate = (environmentId: EnvironmentId, owner: symbol) => {
+    const synchronizeAgainByOwner = synchronizeAgainByEnvironment.get(environmentId);
+    synchronizeAgainByOwner?.delete(owner);
+    if (synchronizeAgainByOwner !== undefined && synchronizeAgainByOwner.size > 0) return;
+    synchronizeAgainByEnvironment.delete(environmentId);
+    cancelRetry(environmentId);
+  };
+  const getSynchronizeAgain = (environmentId: EnvironmentId) => {
+    let latest: (() => void) | undefined;
+    for (const synchronizeAgain of synchronizeAgainByEnvironment.get(environmentId)?.values() ??
+      []) {
+      latest = synchronizeAgain;
+    }
+    return latest;
+  };
   const requestRetry = (environmentId: EnvironmentId) => {
-    if (cancelRetryByEnvironment.has(environmentId)) return;
+    if (cancelRetryByEnvironment.has(environmentId) || getSynchronizeAgain(environmentId) == null) {
+      return;
+    }
     cancelRetryByEnvironment.set(
       environmentId,
       scheduleRetry(() => {
         cancelRetryByEnvironment.delete(environmentId);
-        synchronizeAgainByEnvironment.get(environmentId)?.();
+        getSynchronizeAgain(environmentId)?.();
       }),
     );
   };
@@ -447,15 +465,21 @@ export function createSyncedPlanModeHydrationController(
     });
   };
 
-  const synchronize = <E>(input: SyncedPlanModeHydrationInput<E>) => {
+  const synchronize = <E>(
+    input: SyncedPlanModeHydrationInput<E>,
+    owner = imperativeSynchronizationOwner,
+  ) => {
     const environmentId = input.environmentId;
     if (environmentId === null) return;
     if (environmentId !== input.primaryEnvironmentId || !input.live) {
-      synchronizeAgainByEnvironment.delete(environmentId);
-      cancelRetry(environmentId);
+      deactivate(environmentId, owner);
       return;
     }
-    synchronizeAgainByEnvironment.set(environmentId, () => synchronize(input));
+    const synchronizeAgainByOwner =
+      synchronizeAgainByEnvironment.get(environmentId) ?? new Map<symbol, () => void>();
+    synchronizeAgainByOwner.set(owner, () => synchronize(input, owner));
+    synchronizeAgainByEnvironment.set(environmentId, synchronizeAgainByOwner);
+    const deactivateSynchronization = () => deactivate(environmentId, owner);
     if (input.serverPreferences?.planModeEnabled !== undefined) {
       seedPendingByEnvironment.delete(environmentId);
     }
@@ -503,9 +527,9 @@ export function createSyncedPlanModeHydrationController(
     if (action.type === "adopt") {
       markAdopted(environmentId, action.updatedAt);
       if (input.clientValue !== action.value) input.persist(action.value);
-      return;
+      return deactivateSynchronization;
     }
-    if (action.type !== "seed" || !input.canPatch) return;
+    if (action.type !== "seed" || !input.canPatch) return deactivateSynchronization;
 
     seedPendingByEnvironment.set(environmentId, action.updatedAt);
     dispatchPatch<E>({
@@ -519,6 +543,8 @@ export function createSyncedPlanModeHydrationController(
       patch: input.patch,
       persist: input.persist,
     });
+
+    return deactivateSynchronization;
   };
 
   const write = <E>(input: {
@@ -583,20 +609,23 @@ export function useSyncedPlanModeHydrationEffect<E>(
   controller: ReturnType<typeof createSyncedPlanModeHydrationController>,
   input: SyncedPlanModeHydrationInput<E>,
 ): void {
-  useEffect(() => {
-    controller.synchronize(input);
-  }, [
-    controller,
-    input.canPatch,
-    input.clientHydrated,
-    input.clientValue,
-    input.environmentId,
-    input.live,
-    input.patch,
-    input.persist,
-    input.primaryEnvironmentId,
-    input.serverPreferences,
-  ]);
+  const synchronizationOwner = useMemo(() => Symbol(), [controller]);
+  useEffect(
+    () => controller.synchronize(input, synchronizationOwner),
+    [
+      controller,
+      input.canPatch,
+      input.clientHydrated,
+      input.clientValue,
+      input.environmentId,
+      input.live,
+      input.patch,
+      input.persist,
+      input.primaryEnvironmentId,
+      input.serverPreferences,
+      synchronizationOwner,
+    ],
+  );
 }
 
 function useEnvironmentSyncedClientPreferences(environmentId: EnvironmentId | null) {
