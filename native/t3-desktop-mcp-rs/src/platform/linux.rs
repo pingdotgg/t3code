@@ -433,10 +433,12 @@ impl LinuxDesktop {
         }
         let tapped = self.key(keycode, true).and_then(|()| self.key(keycode, false));
         // Always release Shift if we pressed it, even when the key tap fails.
-        if let Some(code) = shift_code {
-            let _ = self.key(code, false);
+        let released = shift_code.map(|code| self.key(code, false));
+        match (tapped, released) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Some(Err(error))) => Err(error),
+            (Ok(()), _) => Ok(()),
         }
-        tapped
     }
 
     fn key(&self, keycode: Keycode, press: bool) -> Result<()> {
@@ -871,13 +873,6 @@ impl Desktop for LinuxDesktop {
                 })
                 .collect();
             if !lines.is_empty() {
-                // If nothing matched the compositor focus, mark the first app so
-                // Computer History still has a frontmost sample target.
-                if !lines.iter().any(|line| line.contains("FRONTMOST")) {
-                    if let Some(first) = lines.first_mut() {
-                        first.push_str("  FRONTMOST");
-                    }
-                }
                 lines.sort_by_key(|line| (!line.contains("FRONTMOST"), line.to_lowercase()));
                 return Ok(lines.join("\n"));
             }
