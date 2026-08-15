@@ -867,6 +867,46 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "reads a removed permissions endpoint as granted rather than failing the merge on it",
+    () =>
+      Effect.gen(function* () {
+        // Bitbucket retired /user/permissions/repositories under CHANGE-2770: every account now
+        // gets HTTP 410 here, whatever it may do.
+        mockedRequest.mockReturnValue(
+          Effect.fail(
+            new BitbucketApi.BitbucketResponseError({
+              operation: "request",
+              status: 410,
+              responseBodyLength: 0,
+            }),
+          ),
+        );
+        const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+        assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
+      }),
+  );
+
+  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.fail(
+          new BitbucketApi.BitbucketResponseError({
+            operation: "request",
+            status: 401,
+            responseBodyLength: 0,
+          }),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
+
+      assert.strictEqual(error._tag, "BitbucketResponseError");
+    }),
+  );
+
   it.effect("reads the workspace's people and marks whoever is already a reviewer", () =>
     Effect.gen(function* () {
       mockedRequest
