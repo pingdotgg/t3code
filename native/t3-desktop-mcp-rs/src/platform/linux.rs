@@ -268,8 +268,7 @@ impl LinuxDesktop {
         Ok(())
     }
 
-    /// Run an element's first accessible action, which toolkits map to "press"
-    /// for buttons, links and menu items.
+    /// Run a click/press accessible action when one is advertised.
     fn invoke(&self, element: &ElementRef) -> Result<()> {
         let action = block_on(
             atspi::proxy::action::ActionProxy::builder(self.bus()?.connection())
@@ -280,7 +279,26 @@ impl LinuxDesktop {
         )
         .map_err(|error| DesktopError::new(format!("element exposes no actions: {error}")))?;
 
-        match block_on(action.do_action(0)) {
+        let actions = block_on(action.get_actions()).map_err(|error| {
+            DesktopError::new(format!("could not list element actions: {error}"))
+        })?;
+        let index = actions
+            .iter()
+            .position(|entry| {
+                let name = entry.name.to_lowercase();
+                name == "press"
+                    || name == "click"
+                    || name == "activate"
+                    || name.contains("press")
+                    || name.contains("click")
+            })
+            .ok_or_else(|| {
+                DesktopError::new(
+                    "element exposes no press/click action — use coordinates or set_value",
+                )
+            })?;
+
+        match block_on(action.do_action(index as i32)) {
             Ok(true) => Ok(()),
             Ok(false) => Err(DesktopError::new("the element refused its press action")),
             Err(error) => Err(DesktopError::new(format!("press failed: {error}"))),
