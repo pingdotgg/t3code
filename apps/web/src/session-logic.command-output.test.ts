@@ -44,7 +44,7 @@ describe("deriveWorkLogEntries command output", () => {
     });
   });
 
-  it("uses Claude ACP stdout instead of repeating the command", () => {
+  it("uses a projected Claude output summary instead of repeating the command", () => {
     const [entry] = deriveWorkLogEntries([
       makeCommandActivity("claude-command", {
         itemType: "command_execution",
@@ -54,7 +54,7 @@ describe("deriveWorkLogEntries command output", () => {
           kind: "execute",
           command: "printf hello",
           rawOutput: {
-            stdout: "hello from claude\n",
+            content: "hello from claude",
           },
         },
       }),
