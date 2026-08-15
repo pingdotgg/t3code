@@ -230,6 +230,44 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
   });
 
+  it("retains terminal tombstones across session exit", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-terminal-session-exit";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "completed",
+      kind: "completed",
+    });
+
+    liveness.clearThreadLiveness(threadId);
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: undefined,
+      status: undefined,
+      kind: "progress",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
+
   it("does not resurrect a completed task from trailing running progress", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-terminal-trailing-progress";

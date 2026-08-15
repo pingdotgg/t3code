@@ -229,7 +229,20 @@ export function make(
   };
 
   const clearThreadLiveness = (threadId: string) => {
+    const state = stateByThreadId.get(threadId);
+    if (state) {
+      const now = currentTimeMillis();
+      for (const taskId of state.agents.keys()) {
+        rememberTerminal(threadId, taskId, now);
+      }
+      for (const taskId of state.monitors.keys()) {
+        rememberTerminal(threadId, taskId, now);
+      }
+    }
     stateByThreadId.delete(threadId);
+  };
+
+  const clearThreadTombstones = (threadId: string) => {
     for (const [key, tombstone] of terminalTombstones) {
       if (tombstone.threadId === threadId) {
         terminalTombstones.delete(key);
@@ -243,7 +256,8 @@ export function make(
     clearThreadLiveness,
 
     rebuildThreadLiveness: (threadId, activities) => {
-      clearThreadLiveness(threadId);
+      stateByThreadId.delete(threadId);
+      clearThreadTombstones(threadId);
       for (const activity of activities) {
         const kind =
           activity.kind === "task.started"
