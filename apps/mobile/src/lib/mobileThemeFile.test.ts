@@ -80,6 +80,15 @@ describe("parseMobileThemeFile", () => {
   });
 
   it.each([
+    { input: "rgb(none 20 30)", expected: "#00141e" },
+    { input: "rgb(255 0 0 / 200%)", expected: "#ff0000" },
+  ])("normalizes CSS RGB edge case $input", ({ input, expected }) => {
+    const parsed = parseMobileThemeFile({ ...themeFile(), colors: { canvas: input } });
+
+    expect(parsed.colors.canvas).toBe(expected);
+  });
+
+  it.each([
     { format: "hwb typical", input: "hwb(45 10% 20%)", expected: "#cc9f1a" },
     { format: "hwb with alpha", input: "hwb(200 10% 20% / 40%)", expected: "#1991cc66" },
     { format: "hwb normalized edge", input: "hwb(30 80% 70%)", expected: "#888888" },

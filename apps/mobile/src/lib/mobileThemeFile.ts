@@ -316,17 +316,6 @@ function parseCssNumber(value: string): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function parseAlpha(value: string | undefined): number | null {
-  if (value === undefined || value.trim() === "") return 1;
-  const token = value.trim().toLowerCase();
-  if (token === "none") return 0;
-  const percent = token.endsWith("%");
-  const number = parseCssNumber(percent ? token.slice(0, -1) : token);
-  if (number === null) return null;
-  const alpha = percent ? number / 100 : number;
-  return alpha >= 0 && alpha <= 1 ? alpha : null;
-}
-
 function parseClampedAlpha(value: string | undefined): number | null {
   if (value === undefined) return 1;
   const token = value.trim().toLowerCase();
@@ -348,7 +337,8 @@ function parseScaledComponent(value: string, percentageScale: number): number | 
 }
 
 function parseRgbChannel(value: string): number | null {
-  const token = value.trim();
+  const token = value.trim().toLowerCase();
+  if (token === "none") return 0;
   const percent = token.endsWith("%");
   const number = parseCssNumber(percent ? token.slice(0, -1) : token);
   if (number === null) return null;
@@ -398,7 +388,7 @@ function parseRgbColor(body: string): string | null {
   const parsed = splitFunctionalColor(body);
   if (!parsed || parsed.channels.length !== 3) return null;
   const channels = parsed.channels.map(parseRgbChannel);
-  const alpha = parseAlpha(parsed.alpha);
+  const alpha = parseClampedAlpha(parsed.alpha);
   return channels.every((channel): channel is number => channel !== null) && alpha !== null
     ? rgbaToHex(channels[0], channels[1], channels[2], alpha)
     : null;
@@ -438,7 +428,7 @@ function parseHslColor(body: string): string | null {
   const hue = parseAngle(parsed.channels[0]);
   const saturation = parsePercentage(parsed.channels[1]);
   const lightness = parsePercentage(parsed.channels[2]);
-  const alpha = parseAlpha(parsed.alpha);
+  const alpha = parseClampedAlpha(parsed.alpha);
   if (hue === null || saturation === null || lightness === null || alpha === null) return null;
   const [red, green, blue] = hslToRgb(hue, saturation, lightness);
   return rgbaToHex(red, green, blue, alpha);
