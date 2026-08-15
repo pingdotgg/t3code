@@ -4,6 +4,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
+  STATIC_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
@@ -255,7 +256,9 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
 ): ReadonlyArray<KeybindingCommandOption> {
-  const commands = new Set<KeybindingCommand>();
+  // Static commands are listed directly so commands that ship without a
+  // default binding (like chat.interrupt) stay bindable from the UI.
+  const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
     commands.add(binding.command);
   }

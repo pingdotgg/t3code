@@ -150,7 +150,9 @@ describe("KeybindingsSettings.logic", () => {
       },
     ] satisfies ResolvedKeybindingsConfig);
 
-    expect(options).toEqual(expect.arrayContaining(["chat.new", "script.setup-db.run"]));
+    expect(options).toEqual(
+      expect.arrayContaining(["chat.new", "chat.interrupt", "script.setup-db.run"]),
+    );
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {

@@ -4404,6 +4404,20 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  const onInterrupt = useCallback(async () => {
+    if (!activeThread) return;
+    const result = await interruptThreadTurn({
+      environmentId,
+      input: buildThreadTurnInterruptInput(activeThread),
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+      );
+    }
+  }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
   const backgroundLivenessBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (activeBackgroundLiveness === null || !activeThread) {
       return null;
@@ -4687,7 +4701,18 @@ function ChatViewContent(props: ChatViewProps) {
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: shortcutContext,
+      });
+
+      // chat.interrupt outranks type-to-focus while a turn is running: a
+      // printable-key binding would otherwise be typed into the composer
+      // instead of stopping the turn. When idle, the key keeps its usual
+      // meaning, so bindings like plain Escape stay safe.
+      const interruptClaimsKey = command === "chat.interrupt" && phase === "running";
+
       if (
+        !interruptClaimsKey &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -4699,9 +4724,6 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: shortcutContext,
-      });
       if (!command) return;
 
       if (command === "terminal.toggle") {
@@ -4786,6 +4808,14 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "chat.interrupt") {
+        if (!interruptClaimsKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void onInterrupt();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -4811,7 +4841,9 @@ function ChatViewContent(props: ChatViewProps) {
     splitTerminal,
     splitPanelTerminal,
     keybindings,
+    onInterrupt,
     onToggleDiff,
+    phase,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -5327,21 +5359,6 @@ function ChatViewContent(props: ChatViewProps) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       resetLocalDispatch();
-    }
-  };
-
-  const onInterrupt = async () => {
-    if (!activeThread) return;
-    const result = await interruptThreadTurn({
-      environmentId,
-      input: buildThreadTurnInterruptInput(activeThread),
-    });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      setThreadError(
-        activeThread.id,
-        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
-      );
     }
   };
 
