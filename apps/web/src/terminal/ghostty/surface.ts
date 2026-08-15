@@ -333,7 +333,7 @@ export function isTerminalCopyShortcut(
   platform = navigator.platform,
 ) {
   if (event.key.toLowerCase() !== "c") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
 export function isTerminalPasteShortcut(
@@ -463,7 +463,6 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onData: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
-  readonly onCopy: (text: string) => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
 }
@@ -531,6 +530,8 @@ export class GhosttyTerminalSurface {
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
+  private copyShortcutToken = 0;
+  private clearSelectionAfterCopy = false;
   private wheelRemainder = 0;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
@@ -577,8 +578,7 @@ export class GhosttyTerminalSurface {
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
     const canvas = document.createElement("canvas");
-    canvas.className = "t3-ghostty-canvas";
-    canvas.style.cssText = "display:block;width:100%;height:100%;";
+    canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
 
     const input = document.createElement("textarea");
@@ -591,14 +591,16 @@ export class GhosttyTerminalSurface {
       "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
 
     const scrollbar = document.createElement("div");
-    scrollbar.className = "t3-ghostty-scrollbar";
+    scrollbar.className =
+      "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
     scrollbar.setAttribute("role", "scrollbar");
     scrollbar.setAttribute("aria-label", "Terminal scrollback");
     scrollbar.setAttribute("aria-orientation", "vertical");
     scrollbar.tabIndex = 0;
     scrollbar.hidden = true;
     const scrollbarThumb = document.createElement("div");
-    scrollbarThumb.className = "t3-ghostty-scrollbar-thumb";
+    scrollbarThumb.className =
+      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 
@@ -901,9 +903,58 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
-      event.preventDefault();
+      // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
+      // onCopyEvent; not preventing the default keeps that path alive. WebKit
+      // omits the keyboard copy event without a DOM selection, so race the
+      // clipboard write against it the same way paste races its read. The
+      // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
+      // inspect), so synthesize one with execCommand("copy").
+      if (event.shiftKey) {
+        event.preventDefault();
+        document.execCommand("copy");
+      } else {
+        // A plain Ctrl+C is also SIGINT on non-mac: clear the selection once
+        // it copies so the next Ctrl+C reaches the shell. The Shift chord and
+        // Cmd+C are copy-only, so they keep the selection; resetting the flag
+        // up front also drops any clear owed by an earlier gesture that never
+        // completed.
+        this.clearSelectionAfterCopy = !event.shiftKey && !isMacPlatform(navigator.platform);
+        const clipboard = navigator.clipboard;
+        if (typeof clipboard?.writeText === "function") {
+          // Defer the write past the default action: the native copy event
+          // (dispatched synchronously with the default action) claims the
+          // token first when it fires, and the write covers browsers whose
+          // shortcut produces no copy event. Skipping a write the native
+          // event already handled stops a stale resolution from clobbering a
+          // clipboard the user filled after this copy.
+          const token = ++this.copyShortcutToken;
+          const selection = this.getSelection();
+          void Promise.resolve().then(() => {
+            if (this.disposed || this.copyShortcutToken !== token) return;
+            void clipboard.writeText(selection).then(
+              () => {
+                // The write may have been superseded while in flight; only
+                // touch the selection if this gesture still owns the token.
+                if (this.disposed || this.copyShortcutToken !== token) return;
+                if (this.clearSelectionAfterCopy) {
+                  this.clearSelectionAfterCopy = false;
+                  this.clearSelection();
+                }
+              },
+              () => {
+                // The write failed and the native event has already had its
+                // chance, so nothing copied and no clear is owed by this
+                // gesture; a newer one may have just set the flag, so only
+                // drop it if this gesture still owns the token.
+                if (this.copyShortcutToken === token) {
+                  this.clearSelectionAfterCopy = false;
+                }
+              },
+            );
+          });
+        }
+      }
       this.suppressedKeyCodes.add(event.code);
-      this.options.onCopy(this.getSelection());
       return;
     }
     if (isTerminalPasteShortcut(event)) {
@@ -988,6 +1039,18 @@ export class GhosttyTerminalSurface {
     this.dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
   }
+
+  private readonly onCopyEvent = (event: ClipboardEvent) => {
+    if (!this.hasSelection()) return;
+    event.preventDefault();
+    event.clipboardData?.setData("text/plain", this.getSelection());
+    // The native event beat any deferred write; drop the in-flight fallback.
+    this.copyShortcutToken += 1;
+    if (this.clearSelectionAfterCopy) {
+      this.clearSelectionAfterCopy = false;
+      this.clearSelection();
+    }
+  };
 
   private readonly onPaste = (event: ClipboardEvent) => {
     // Always suppress the browser's default insertion: content the textarea
@@ -1384,6 +1447,7 @@ export class GhosttyTerminalSurface {
     this.input.addEventListener("blur", this.onBlur);
     this.input.addEventListener("input", this.onInput);
     this.input.addEventListener("paste", this.onPaste);
+    this.input.addEventListener("copy", this.onCopyEvent);
     this.input.addEventListener("compositionstart", this.onCompositionStart);
     this.input.addEventListener("compositionend", this.onCompositionEnd);
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -1408,6 +1472,7 @@ export class GhosttyTerminalSurface {
     this.input.removeEventListener("blur", this.onBlur);
     this.input.removeEventListener("input", this.onInput);
     this.input.removeEventListener("paste", this.onPaste);
+    this.input.removeEventListener("copy", this.onCopyEvent);
     this.input.removeEventListener("compositionstart", this.onCompositionStart);
     this.input.removeEventListener("compositionend", this.onCompositionEnd);
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);

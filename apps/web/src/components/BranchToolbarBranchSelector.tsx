@@ -51,6 +51,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
+import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import {
   Combobox,
   ComboboxEmpty,
@@ -814,9 +815,11 @@ export function BranchToolbarBranchSelector({
                   maybeFetchNextBranchPage();
                 }}
                 className={cn(
-                  "scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1 [--fade-size:1.5rem]",
-                  showTopBranchScrollFade && "mask-t-from-[calc(100%-var(--fade-size))]",
-                  showBottomBranchScrollFade && "mask-b-from-[calc(100%-var(--fade-size))]",
+                  "scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1",
+                  getVirtualizedScrollFadeClassName({
+                    top: showTopBranchScrollFade,
+                    bottom: showBottomBranchScrollFade,
+                  }),
                 )}
                 style={{ maxHeight: "14rem" }}
               />

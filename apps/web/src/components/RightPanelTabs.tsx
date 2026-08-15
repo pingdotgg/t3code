@@ -22,9 +22,11 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
+import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
@@ -34,6 +36,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
+import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 
 interface RightPanelTabsProps {
@@ -48,6 +51,7 @@ interface RightPanelTabsProps {
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -435,30 +439,35 @@ function surfaceTitle(
   }
 }
 
-function PreviewFavicon({ url }: { url: string | null }) {
-  const faviconUrl = faviconUrlForOrigin(url, 32);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 className="size-3 shrink-0" />;
+function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {
+  const publicProviderUrl = faviconUrlForOrigin(url, 32);
   return (
-    <img
-      src={faviconUrl}
-      alt=""
-      aria-hidden
-      draggable={false}
-      className="size-3 shrink-0 rounded-sm"
-      onError={() => setFailedUrl(faviconUrl)}
+    <FaviconImage
+      sources={[capturedUrl, publicProviderUrl]}
+      fallback={<Globe2 className="size-3 shrink-0" />}
+      className="size-3 shrink-0 rounded-sm object-contain"
     />
   );
+}
+
+function sameOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
 }
 
 function SurfaceIcon({
   surface,
   sessions,
+  desktopByTabId,
   theme,
   pullRequestStatuses,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   theme: "light" | "dark";
   pullRequestStatuses: Readonly<Record<string, PullRequestTabStatus>> | undefined;
 }) {
@@ -466,7 +475,10 @@ function SurfaceIcon({
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-      return <PreviewFavicon url={url} />;
+      const favicon = snapshot ? (desktopByTabId[snapshot.tabId]?.favicon ?? null) : null;
+      const capturedUrl =
+        favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
+      return <PreviewFavicon capturedUrl={capturedUrl} url={url} />;
     }
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
@@ -592,8 +604,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "workspace-topbar gap-1 pl-2",
-          props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
+          // The sheet overlays from the viewport top, so its tab bar keeps
+          // the titlebar's height: a compact row re-centers the layout
+          // controls a few pixels higher and the cluster jumps on open.
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
@@ -636,6 +650,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       <SurfaceIcon
                         surface={surface}
                         sessions={props.previewSessions}
+                        desktopByTabId={props.desktopByTabId}
                         theme={resolvedTheme}
                         pullRequestStatuses={props.pullRequestStatuses}
                       />
@@ -668,8 +683,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.length > 0 ? (
               <Menu>
                 <MenuTrigger
-                  className="cursor-pointer relative inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                  aria-label="Add panel surface"
+                  render={
+                    <Button
+                      aria-label="Add panel surface"
+                      className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+                      size="icon-xs"
+                      variant="ghost"
+                    />
+                  }
                 >
                   <Plus className="size-3.5" />
                 </MenuTrigger>

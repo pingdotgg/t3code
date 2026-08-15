@@ -60,6 +60,7 @@ import {
   PullRequestFiltersMenu,
   PullRequestSearchInput,
   pullRequestHostLabel,
+  pullRequestProjectKey,
   type PullRequestExpectedHost,
   type PullRequestFilterOption,
 } from "../components/pullRequest/PullRequestListFilters";
@@ -174,6 +175,7 @@ const PULL_REQUESTS_PANEL_ENVIRONMENT_ID = "pull-requests-panel" as EnvironmentI
 /** Stable so a read that is not wanted right now does not re-key on every render. */
 const NO_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> = [];
 const EMPTY_PREVIEW_SESSIONS = {};
+const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 
@@ -1250,7 +1252,16 @@ function PullRequestsRouteView() {
 
   /** Reported per project rather than as a count, so the reader can see which one it was. */
   const unavailableProjects = useMemo(
-    () => new Map(listErrors.map((error) => [error.projectId, error.message] as const)),
+    () =>
+      new Map(
+        listErrors.map(
+          (error) =>
+            [
+              pullRequestProjectKey({ id: error.projectId, environmentId: error.environmentId }),
+              error.message,
+            ] as const,
+        ),
+      ),
     [listErrors],
   );
 
@@ -1292,7 +1303,14 @@ function PullRequestsRouteView() {
     />
   );
   const openPanelControls = (
-    <div className="workspace-titlebar-controls right-2 z-50 gap-1 [-webkit-app-region:no-drag] wco:right-[var(--workspace-controls-right)]">
+    <div
+      // The bare workspace-titlebar-controls inset plus mr-px: the same
+      // anchor the thread view's controls and the sidebar trigger use, so
+      // every titlebar cluster in the app sits one shared inset from its
+      // edge.
+      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      data-workspace-titlebar-controls
+    >
       {panelToggleControls}
     </div>
   );
@@ -1473,7 +1491,13 @@ function PullRequestsRouteView() {
     searchInput,
     filtersMenu,
     rightPanelControl:
-      !pullRequestsSupported || rightPanelState.isOpen ? null : panelToggleControls,
+      // Footprint reserve while the panel is closed: the toggle itself stays
+      // mounted at the fixed titlebar inset in both states so it cannot move
+      // on toggle, and this spacer keeps refresh from sliding underneath it
+      // (sized per header padding so refresh ends a normal gap short of it).
+      !pullRequestsSupported || rightPanelState.isOpen ? null : (
+        <span aria-hidden className="w-7 shrink-0 sm:w-5" />
+      ),
     rightPanelOpen: rightPanelState.isOpen,
     listBody,
   };
@@ -1515,7 +1539,7 @@ function PullRequestsRouteView() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="relative flex min-h-0 flex-1">
-        {pullRequestsSupported && rightPanelState.isOpen ? openPanelControls : null}
+        {pullRequestsSupported ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} />
 
         {rightPanelState.isOpen && activePullRequestSurface && panelEnvironmentId !== null ? (
@@ -1530,6 +1554,7 @@ function PullRequestsRouteView() {
             activeSurfaceId={activePullRequestSurface.id}
             pendingSurfaceIds={EMPTY_PENDING_SURFACES}
             previewSessions={EMPTY_PREVIEW_SESSIONS}
+            desktopByTabId={EMPTY_PREVIEW_DESKTOP_STATE}
             terminalLabelsById={EMPTY_TERMINAL_LABELS}
             onActivate={(surface) => {
               if (surface.kind === "pull-request") activateSurface(surface);
@@ -1804,7 +1829,7 @@ function PullRequestsColumn({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <header
         className={cn(
-          "workspace-topbar drag-region gap-1.5 px-3 sm:px-5",
+          "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1.5 px-3 sm:px-5",
           // A closed right panel leaves this column full-width, so its header runs
           // underneath the native window controls on Windows; reserve the inset the
           // way Settings and the chat view do. While the panel is open the column
@@ -1879,7 +1904,7 @@ function PullRequestsColumn({
 
       <div
         ref={scrollRef}
-        className="pull-requests-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
+        className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
       >
         {/* The top padding is the fade band's own height (1.5rem here), the same pairing the
             settings page makes: at rest the controls sit fully below the mask, and only

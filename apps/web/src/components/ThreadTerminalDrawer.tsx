@@ -31,6 +31,7 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
@@ -440,7 +441,6 @@ export function TerminalViewport({
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
-        onCopy: (text) => handleCopy(text),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
       };
@@ -668,17 +668,6 @@ export function TerminalViewport({
         })();
       }
 
-      function handleCopy(text: string): void {
-        void writeTextToClipboard(text, "terminal selection").catch((error: unknown) => {
-          const activeTerminal = terminalRef.current;
-          if (!activeTerminal) return;
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : "Unable to copy terminal selection",
-          );
-        });
-      }
-
       function handleData(data: string): void {
         void (async () => {
           const result = await writeTerminal(data);
@@ -696,6 +685,12 @@ export function TerminalViewport({
           return;
         }
         clearSelectionAction();
+        // A copy shortcut that clears the selection (Ctrl+C) must also close
+        // the context menu that appears with the selection, but a clear that
+        // never opened a menu must not dismiss an unrelated one.
+        if (selectionActionMenuOpenRef.current) {
+          void localApi?.contextMenu.close();
+        }
       }
 
       const handleMouseUp = (event: MouseEvent) => {
@@ -1279,13 +1274,9 @@ export default function ThreadTerminalDrawer({
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
           <p>No terminal sessions for this thread yet.</p>
-          <button
-            type="button"
-            className="rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-            onClick={onNewTerminalAction}
-          >
+          <Button size="xs" variant="outline" onClick={onNewTerminalAction}>
             {newTerminalActionLabel}
-          </button>
+          </Button>
         </div>
       </aside>
     );
