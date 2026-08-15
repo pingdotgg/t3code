@@ -42,7 +42,10 @@ import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  CODEX_TRANSCRIPT_DIRECTORIES,
+  resolveCodexHomeLayout,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -263,7 +266,13 @@ export const make = Effect.gen(function* () {
 
     return [
       { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      ...CODEX_TRANSCRIPT_DIRECTORIES.map((directory) => ({
+        provider: "codex" as const,
+        dir: path.join(codexLayout.sharedHomePath, directory),
+        // Spread from a `map` rather than written inline, so the key has to be
+        // present for `fileName` to stay destructurable across the union.
+        fileName: undefined,
+      })),
       {
         provider: "grok" as const,
         dir: path.join(grokHome, "sessions"),
@@ -384,6 +393,15 @@ export const make = Effect.gen(function* () {
     // instance we already hold so the scan stays context-free.
     const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
     const scanned: ScannedDir[] = [];
+    // Codex archives a rollout by moving it, so one that moves between the walk
+    // of `sessions` and the walk of `archived_sessions` would otherwise be read
+    // from both and counted twice. A rollout's file name embeds a UUID, so the
+    // name identifies it wherever it sits. That is a Codex fact and not a
+    // general one: Claude nests transcripts per project and the same basename
+    // in two project directories is two different files, so Claude is not
+    // deduped here. Records carry `dedupeKey: null` for Codex, so the
+    // aggregator's cross-file pass cannot catch this on its own.
+    const scannedCodexRollouts = new Set<string>();
     for (const { provider, dir, fileName } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
@@ -398,7 +416,20 @@ export const make = Effect.gen(function* () {
       );
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
       for (const file of files) {
+        const rolloutName = provider === "codex" ? path.basename(file.path) : null;
+        if (rolloutName !== null && scannedCodexRollouts.has(rolloutName)) {
+          // Recorded with no records so the caller's counters treat it as
+          // skipped, and so the path still counts as live for cache pruning.
+          parsedFiles.push({ path: file.path, records: [] });
+          continue;
+        }
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        // Claimed only once the read produced records. A file that reads empty
+        // - a rollout moved out of this root between the listing and the read,
+        // say - must not block its copy in the other root.
+        if (rolloutName !== null && records.length > 0) {
+          scannedCodexRollouts.add(rolloutName);
+        }
         parsedFiles.push({ path: file.path, records });
       }
       scanned.push({ provider, dir, volumeId, files: parsedFiles });

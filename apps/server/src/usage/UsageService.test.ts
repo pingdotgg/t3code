@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import { UsageDay, type UsageSummaryInput, type UsageTokenTotals } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,6 +20,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+import * as usageTranscripts from "./usageTranscripts.ts";
 
 function claudeLine(id: number, outputTokens: number): string {
   return `${JSON.stringify({
@@ -34,6 +35,49 @@ function claudeLine(id: number, outputTokens: number): string {
     },
   })}\n`;
 }
+
+/** Shaped after a real Codex rollout: session_meta, turn_context, then a token delta. */
+function codexLines(input: {
+  sessionId: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}): string {
+  const sessionMeta = JSON.stringify({
+    type: "session_meta",
+    timestamp: "2026-08-01T10:00:00Z",
+    payload: { type: "session_meta", id: input.sessionId },
+  });
+  const turnContext = JSON.stringify({
+    type: "turn_context",
+    timestamp: "2026-08-01T10:00:01Z",
+    payload: { type: "turn_context", model: input.model },
+  });
+  const tokenCount = JSON.stringify({
+    type: "event_msg",
+    timestamp: "2026-08-01T10:00:02Z",
+    payload: {
+      type: "token_count",
+      info: {
+        last_token_usage: {
+          input_tokens: input.inputTokens,
+          cached_input_tokens: 0,
+          cache_write_input_tokens: 0,
+          output_tokens: input.outputTokens,
+          reasoning_output_tokens: 0,
+        },
+      },
+    },
+  });
+  return `${sessionMeta}\n${turnContext}\n${tokenCount}\n`;
+}
+
+const CODEX_MODEL = "gpt-5.6-sol";
+
+/** Rates for `CODEX_MODEL`, so archived tokens can be asserted as priced. */
+const CODEX_RATES = {
+  [CODEX_MODEL]: { input_cost_per_token: 1e-6, output_cost_per_token: 1e-5 },
+};
 
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
@@ -93,6 +137,13 @@ const serviceLayers = (input: {
 
 function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens: number } }[] }) {
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
+}
+
+function totalTokens(summary: { buckets: readonly { totals: UsageTokenTotals }[] }) {
+  return summary.buckets.reduce(
+    (sum, bucket) => sum + usageTranscripts.totalTokens(bucket.totals),
+    0,
+  );
 }
 
 describe("UsageService", () => {
@@ -186,6 +237,158 @@ describe("UsageService", () => {
       assert.strictEqual(refreshed.status, "fresh");
       assert.strictEqual(refreshed.knownModels, 1);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("counts usage rotated into Codex's archived_sessions directory", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const codexHome = NodePath.join(home, "codex");
+      const liveDir = NodePath.join(codexHome, "sessions", "2026", "08", "01");
+      // Codex nests live rollouts under `YYYY/MM/DD` but writes the archive flat.
+      const archivedDir = NodePath.join(codexHome, "archived_sessions");
+      yield* Effect.promise(() => NodeFSP.mkdir(liveDir, { recursive: true }));
+      yield* Effect.promise(() => NodeFSP.mkdir(archivedDir, { recursive: true }));
+
+      const rollout = (n: number) => `rollout-00000000-0000-0000-0000-00000000000${n}.jsonl`;
+      const write = (dir: string, name: string, contents: string) =>
+        Effect.promise(() => NodeFSP.writeFile(NodePath.join(dir, name), contents));
+
+      // A rollout Codex has not archived yet.
+      yield* write(
+        liveDir,
+        rollout(1),
+        codexLines({
+          sessionId: "live-session-1",
+          model: CODEX_MODEL,
+          inputTokens: 1000,
+          outputTokens: 100,
+        }),
+      );
+      // A rollout that has aged into the archive. Invisible before this fix.
+      yield* write(
+        archivedDir,
+        rollout(2),
+        codexLines({
+          sessionId: "archived-session-1",
+          model: CODEX_MODEL,
+          inputTokens: 2000,
+          outputTokens: 200,
+        }),
+      );
+      // The same rollout under both roots: counted once, not twice.
+      const shared = codexLines({
+        sessionId: "shared-session-1",
+        model: CODEX_MODEL,
+        inputTokens: 4000,
+        outputTokens: 400,
+      });
+      yield* write(liveDir, rollout(3), shared);
+      yield* write(archivedDir, rollout(3), shared);
+      // A rollout that reads empty under `sessions` - how one moved out
+      // mid-scan looks - whose records are in the archive. The empty read must
+      // not claim the basename and drop the copy that has the usage.
+      yield* write(liveDir, rollout(4), "");
+      yield* write(
+        archivedDir,
+        rollout(4),
+        codexLines({
+          sessionId: "moved-session-1",
+          model: CODEX_MODEL,
+          inputTokens: 8000,
+          outputTokens: 800,
+        }),
+      );
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-archived-test",
+            home,
+            settings,
+            ratesDocument: CODEX_RATES,
+          }),
+        ),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+
+      // 100 + 200 + 400 (shared, once) + 800 (moved) = 1500. Double counting
+      // the shared rollout gives 1900; dropping the moved one gives 700.
+      assert.strictEqual(totalOutputTokens(summary), 1500);
+      assert.strictEqual(totalTokens(summary), 16500);
+
+      // Archived tokens are priced, not carried as unpriced volume.
+      const codexBuckets = summary.buckets.filter((bucket) => bucket.provider === "codex");
+      assert.isAbove(codexBuckets.length, 0);
+      for (const bucket of codexBuckets) {
+        assert.strictEqual(bucket.costSource, "modelPriced");
+        assert.strictEqual(bucket.unpricedRecords, 0);
+      }
+      assert.isAbove(
+        codexBuckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+        0,
+      );
+
+      const codexSources = summary.sources.filter(
+        (source) => source.fingerprint.provider === "codex",
+      );
+      assert.deepStrictEqual(
+        codexSources.map((source) => source.fingerprint.resolvedHomePath).sort(),
+        [archivedDir, NodePath.join(codexHome, "sessions")].sort(),
+      );
+
+      const archivedSource = codexSources.find(
+        (source) => source.fingerprint.resolvedHomePath === archivedDir,
+      );
+      assert.isDefined(archivedSource);
+      assert.strictEqual(archivedSource?.status, "ok");
+      // The archived-only rollout and the moved one; the shared duplicate is not a session here.
+      assert.strictEqual(archivedSource?.distinctSessions, 2);
+
+      // Six files on disk, four counted: the duplicate basename in the archive
+      // and the empty live copy of the moved rollout are skipped.
+      assert.strictEqual(
+        codexSources.reduce((sum, source) => sum + source.scannedFiles, 0),
+        4,
+      );
+      assert.strictEqual(
+        codexSources.reduce((sum, source) => sum + source.skippedFiles, 0),
+        2,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps Claude transcripts that share a basename across projects", () =>
+    Effect.gen(function* () {
+      // The Codex rollout dedupe keys on basename alone, which is a Codex fact:
+      // rollout names embed a UUID. Claude nests transcripts per project, so the
+      // same basename under two projects is two different files and both have to
+      // be read. Widening the dedupe past Codex silently drops the second one.
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const otherProject = NodePath.join(home, "claude", "projects", "proj-b");
+      yield* Effect.promise(() => NodeFSP.mkdir(otherProject, { recursive: true }));
+      yield* Effect.promise(() =>
+        // Same basename as `transcript`, different project directory.
+        NodeFSP.writeFile(NodePath.join(otherProject, "session.jsonl"), claudeLine(2, 7)),
+      );
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-claude-basename-test", home, settings }),
+        ),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+      // Both files counted. Deduping Claude by basename would report only 5.
+      assert.strictEqual(totalOutputTokens(summary), 12);
+
+      const claudeSource = summary.sources.find(
+        (source) => source.fingerprint.provider === "claude",
+      );
+      assert.strictEqual(claudeSource?.scannedFiles, 2);
+      assert.strictEqual(claudeSource?.skippedFiles, 0);
+    }).pipe(Effect.scoped),
   );
 
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
