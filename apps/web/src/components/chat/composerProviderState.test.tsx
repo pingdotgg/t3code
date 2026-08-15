@@ -205,6 +205,23 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("falls back to a surviving agent when plan was the descriptor default and plan mode is disabled", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("agent", [
+          { id: "plan", label: "Plan", isDefault: true },
+          { id: "research", label: "Research" },
+        ]),
+      ]),
+      modelOptions: undefined,
+      planModeEnabled: false,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "research"]));
+  });
+
   it("returns undefined dispatch options when the model declares no descriptors", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
