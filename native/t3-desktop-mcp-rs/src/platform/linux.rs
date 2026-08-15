@@ -221,12 +221,14 @@ impl LinuxDesktop {
 
         // Best-effort restore/raise before the EWMH request — harmless if the
         // window is already mapped and on top.
-        let _ = connection.map_window(window_id);
+        let _ = connection.map_window(window_id).and_then(|cookie| cookie.check());
         connection
             .configure_window(
                 window_id,
                 &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
             )
+            .map_err(|error| DesktopError::new(format!("could not raise window: {error}")))?
+            .check()
             .map_err(|error| DesktopError::new(format!("could not raise window: {error}")))?;
 
         let atom = connection
@@ -248,11 +250,17 @@ impl LinuxDesktop {
             )
             .map_err(|error| {
                 DesktopError::new(format!("could not send _NET_ACTIVE_WINDOW: {error}"))
+            })?
+            .check()
+            .map_err(|error| {
+                DesktopError::new(format!("could not send _NET_ACTIVE_WINDOW: {error}"))
             })?;
 
         // Nudge for WMs (Openbox under Xvfb) that ignore the client message.
         connection
             .set_input_focus(InputFocus::PARENT, window_id, 0u32)
+            .map_err(|error| DesktopError::new(format!("could not set input focus: {error}")))?
+            .check()
             .map_err(|error| DesktopError::new(format!("could not set input focus: {error}")))?;
         connection
             .flush()
@@ -344,6 +352,8 @@ impl LinuxDesktop {
         let root = connection.setup().roots[*screen].root;
         connection
             .xtest_fake_input(6 /* MotionNotify */, 0, 0, root, xi, yi, 0)
+            .map_err(|error| DesktopError::new(format!("could not move pointer: {error}")))?
+            .check()
             .map_err(|error| DesktopError::new(format!("could not move pointer: {error}")))?;
         connection
             .flush()
@@ -837,6 +847,7 @@ impl Desktop for LinuxDesktop {
             .map(|app| app.name.to_lowercase())
             .unwrap_or_default();
         let focused_pid = focused.map(|app| app.pid);
+
         if let Ok(applications) = self.applications()
             && !applications.is_empty()
         {
@@ -850,6 +861,7 @@ impl Desktop for LinuxDesktop {
                         .filter(|front| *front != 0 && *front == pid)
                         .is_some()
                         || (!focused_name.is_empty() && name.to_lowercase() == focused_name);
+
                     let marker = if is_frontmost { "  FRONTMOST" } else { "" };
                     if pid == 0 {
                         format!("{name}  [a11y]{marker}")
@@ -859,6 +871,13 @@ impl Desktop for LinuxDesktop {
                 })
                 .collect();
             if !lines.is_empty() {
+                // If nothing matched the compositor focus, mark the first app so
+                // Computer History still has a frontmost sample target.
+                if !lines.iter().any(|line| line.contains("FRONTMOST")) {
+                    if let Some(first) = lines.first_mut() {
+                        first.push_str("  FRONTMOST");
+                    }
+                }
                 lines.sort_by_key(|line| (!line.contains("FRONTMOST"), line.to_lowercase()));
                 return Ok(lines.join("\n"));
             }
@@ -1102,6 +1121,18 @@ impl Desktop for LinuxDesktop {
                     )));
                 }
             }
+            // Focus alone is not enough on native Wayland — XTEST keys never arrive.
+            if crate::capture::on_wayland() && !self.element_is_x11_backed(&reference) {
+                return Err(DesktopError::new(format!(
+                    "type_text cannot deliver keys to native Wayland e{id} — use set_value, \
+                     or focus an X11/XWayland client"
+                )));
+            }
+        } else if crate::capture::on_wayland() && !self.focused_app_is_x11_backed() {
+            return Err(DesktopError::new(
+                "type_text is not supported for native Wayland apps without an element — \
+                 pass an element id, use set_value, or focus an X11/XWayland client",
+            ));
         }
         // Force a round trip so the server has drained anything queued, then let
         // the target settle. Some toolkits still swallow the opening character

@@ -349,6 +349,9 @@ final class AgentCursor {
             unlink(path)
             return false
         }
+        // Owner-only: any local process can otherwise connect and permanently
+        // become `connection`, blocking the real overlay.
+        _ = chmod(path, 0o600)
 
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
         source.setEventHandler { [weak self] in
@@ -370,6 +373,13 @@ final class AgentCursor {
         let client = accept(listenerFD, nil, nil)
         guard client >= 0 else { return }
         enableNoSigPipe(client)
+
+        var peerUid: uid_t = 0
+        var peerGid: gid_t = 0
+        if getpeereid(client, &peerUid, &peerGid) != 0 || peerUid != getuid() {
+            close(client)
+            return
+        }
 
         listenerSource?.cancel()
         listenerSource = nil

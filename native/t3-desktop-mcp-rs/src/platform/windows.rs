@@ -618,7 +618,9 @@ impl Desktop for WindowsDesktop {
         let document = pattern
             .get_document_range()
             .map_err(|error| DesktopError::new(format!("could not read e{element}: {error}")))?;
-        let text = document.get_text(-1).unwrap_or_default();
+        let text = document.get_text(-1).map_err(|error| {
+            DesktopError::new(format!("could not read e{element}: {error}"))
+        })?;
         let total = text.chars().count();
         let start = start.min(total);
         let end = length.map_or(total, |count| (start + count).min(total));

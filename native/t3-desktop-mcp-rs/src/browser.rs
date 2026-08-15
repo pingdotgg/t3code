@@ -87,6 +87,20 @@ impl BrowserBridge {
         }
     }
 
+    /// No listener — used when browser control is disabled so this process does
+    /// not claim the single per-user bridge socket/pipe.
+    pub fn inert() -> Self {
+        let outgoing: Arc<Mutex<Option<SendHalf>>> = Arc::new(Mutex::new(None));
+        let connection_gen = Arc::new(AtomicU64::new(0));
+        let (_sender, replies) = channel();
+        Self {
+            outgoing,
+            replies,
+            next_id: AtomicU64::new(1),
+            connection_gen,
+        }
+    }
+
     fn connected(&self) -> bool {
         self.outgoing.lock().is_ok_and(|guard| guard.is_some())
     }
@@ -265,10 +279,6 @@ fn spawn_listener(
         #[cfg(unix)]
         let path = bridge_socket_path();
         #[cfg(unix)]
-        {
-            unlink_stale_bridge_socket(&path);
-        }
-        #[cfg(unix)]
         let name = match path.as_os_str().to_fs_name::<GenericFilePath>() {
             Ok(name) => name,
             Err(_) => return,
@@ -280,10 +290,29 @@ fn spawn_listener(
             Ok(name) => name,
             Err(_) => return,
         };
-        let Ok(listener) = ListenerOptions::new().name(name).create_sync() else {
-            // Another server already owns the browser; the accessibility tools
-            // still work, so this is not worth reporting as a failure.
-            return;
+        // Create-first: never unlink based on a probe that can race another
+        // server binding between `bridge_socket_is_live` and `remove_file`.
+        let listener = match ListenerOptions::new().name(name).create_sync() {
+            Ok(listener) => listener,
+            Err(_) => {
+                #[cfg(unix)]
+                {
+                    unlink_stale_bridge_socket(&path);
+                    let Ok(name) = path.as_os_str().to_fs_name::<GenericFilePath>() else {
+                        return;
+                    };
+                    let Ok(listener) = ListenerOptions::new().name(name).create_sync() else {
+                        return;
+                    };
+                    listener
+                }
+                #[cfg(not(unix))]
+                {
+                    // Another server already owns the browser; accessibility
+                    // tools still work, so this is not worth reporting.
+                    return;
+                }
+            }
         };
         #[cfg(unix)]
         let _cleanup = BridgeSocketCleanup(path.clone());
@@ -293,8 +322,24 @@ fn spawn_listener(
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
 
+        let mut accept_failures: u32 = 0;
         loop {
-            let Ok(stream) = listener.accept() else { continue };
+            let stream = match listener.accept() {
+                Ok(stream) => {
+                    accept_failures = 0;
+                    stream
+                }
+                Err(_) => {
+                    accept_failures = accept_failures.saturating_add(1);
+                    if accept_failures >= 8 {
+                        // Persistent accept errors (listener torn down) — exit
+                        // instead of spinning a CPU core.
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50 * u64::from(accept_failures)));
+                    continue;
+                }
+            };
             let (recv, send) = stream.split();
             // New generation: prior disconnect sentinels become stale and are
             // ignored by dispatch (they carry the old connectionGen).
