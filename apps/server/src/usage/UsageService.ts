@@ -36,7 +36,10 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  CODEX_TRANSCRIPT_DIRECTORIES,
+  resolveCodexHomeLayout,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -221,7 +224,10 @@ export const make = Effect.gen(function* () {
 
     return [
       { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      ...CODEX_TRANSCRIPT_DIRECTORIES.map((directory) => ({
+        provider: "codex" as const,
+        dir: path.join(codexLayout.sharedHomePath, directory),
+      })),
     ];
   });
 
@@ -351,6 +357,14 @@ export const make = Effect.gen(function* () {
 
     const sources: UsageSource[] = [];
     const livePaths = new Set<string>();
+    // Codex archives a rollout by moving it, so one that moves between the scan
+    // of `sessions` and the scan of `archived_sessions` would otherwise be read
+    // from both and counted twice. A rollout's file name embeds a UUID, so the
+    // name identifies it wherever it sits. That is a Codex fact and not a
+    // general one: Claude nests transcripts per project and the same basename
+    // in two project directories is two different files, so Claude is not
+    // deduped here.
+    const scannedCodexRollouts = new Set<string>();
     const walkedRoots: string[] = [];
 
     for (const { provider, dir } of dirs) {
@@ -382,10 +396,21 @@ export const make = Effect.gen(function* () {
 
       for (const file of files) {
         livePaths.add(file.path);
+        const rolloutName = provider === "codex" ? path.basename(file.path) : null;
+        if (rolloutName !== null && scannedCodexRollouts.has(rolloutName)) {
+          skippedFiles += 1;
+          continue;
+        }
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
+        }
+        // Claimed only once the read produced records. A file that reads empty
+        // - a rollout moved out of this root between the listing and the read,
+        // say - must not block its copy in the other root.
+        if (rolloutName !== null) {
+          scannedCodexRollouts.add(rolloutName);
         }
         scannedFiles += 1;
         for (const record of records) {

@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
+  CODEX_TRANSCRIPT_DIRECTORIES,
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
   materializeCodexShadowHome,
@@ -299,5 +300,11 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         );
       }),
     );
+  });
+});
+
+describe("CODEX_TRANSCRIPT_DIRECTORIES", () => {
+  it("covers archived rollouts as well as live ones", () => {
+    expect([...CODEX_TRANSCRIPT_DIRECTORIES]).toEqual(["sessions", "archived_sessions"]);
   });
 });
