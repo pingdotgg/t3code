@@ -6,6 +6,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   formatShortcutLabel,
   isChatNewShortcut,
@@ -602,6 +603,32 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
     );
+  });
+});
+
+describe("focus shortcuts", () => {
+  it("defaults Ctrl+` to terminal.focus outside the terminal", () => {
+    for (const platform of ["MacIntel", "Win32"]) {
+      assert.strictEqual(
+        resolveShortcutCommand(event({ key: "`", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false },
+        }),
+        "terminal.focus",
+      );
+    }
+  });
+
+  it("defaults Ctrl+` to chat.focusComposer while the terminal is focused", () => {
+    for (const platform of ["MacIntel", "Win32"]) {
+      assert.strictEqual(
+        resolveShortcutCommand(event({ key: "`", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+        "chat.focusComposer",
+      );
+    }
   });
 });
 

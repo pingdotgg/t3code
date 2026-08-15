@@ -47,6 +47,11 @@ Use **Inspect** to pick an element in the app and reveal its color token. Inspec
 successful pick; its hover glow and badge preview the element and token that click will select.
 **Cancel** or `Escape` exits Inspect and clears its selection and spotlight.
 
+`terminal.focus` moves focus into the terminal, opening the drawer first if it is closed.
+`chat.focusComposer` moves focus back to the message composer and leaves the terminal open. Both
+default to `` ctrl+` ``, so the same key hops focus in either direction without hiding the
+terminal — unlike `terminal.toggle`, which moves focus by showing or hiding the drawer.
+
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
 keeping the thread's project, branch, and machine context visible. Message search begins after two

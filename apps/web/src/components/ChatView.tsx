@@ -310,6 +310,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveTerminalFocusTarget,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -1363,6 +1364,7 @@ function ChatViewContent(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [panelTerminalFocusRequestId, setPanelTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -3333,7 +3335,7 @@ function ChatViewContent(props: ChatViewProps) {
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
-    setTerminalFocusRequestId((value) => value + 1);
+    setPanelTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
       environmentId: activeThreadRef.environmentId,
       input: {
@@ -3372,7 +3374,7 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
         input: {
@@ -3407,7 +3409,7 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore
         .getState()
         .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
     },
     [activeRightPanelSurface, activeThreadRef],
   );
@@ -3422,7 +3424,7 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore
         .getState()
         .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
     },
     [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
   );
@@ -3434,7 +3436,7 @@ function ChatViewContent(props: ChatViewProps) {
         setActivePreviewTab(activeThreadRef, surface.resourceId);
       }
       if (surface.kind === "terminal") {
-        setTerminalFocusRequestId((value) => value + 1);
+        setPanelTerminalFocusRequestId((value) => value + 1);
       }
       if (surface.kind === "diff" && !diffOpen) {
         onDiffPanelOpen?.();
@@ -4711,6 +4713,45 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "terminal.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        const target = resolveTerminalFocusTarget({
+          terminalOpen: Boolean(terminalUiState.terminalOpen),
+          panelTerminalActive: activeRightPanelSurface?.kind === "terminal",
+          rightPanelMaximized,
+        });
+        if (target === "panel") {
+          setPanelTerminalFocusRequestId((value) => value + 1);
+          return;
+        }
+        // The drawer lives in the chat column, which a maximized right panel
+        // collapses to zero width.
+        if (rightPanelMaximized) {
+          toggleRightPanelMaximized();
+        }
+        if (target === "open-drawer") {
+          // The closed->open transition already requests terminal focus.
+          toggleTerminalVisibility();
+          return;
+        }
+        setTerminalFocusRequestId((value) => value + 1);
+        return;
+      }
+
+      if (command === "chat.focusComposer") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (rightPanelMaximized) {
+          toggleRightPanelMaximized();
+          // Focus once the chat column regains its width.
+          scheduleComposerFocus();
+          return;
+        }
+        focusComposer();
+        return;
+      }
+
       if (command === "rightPanel.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -4806,6 +4847,9 @@ function ChatViewContent(props: ChatViewProps) {
     closeTerminal,
     closePanelTerminal,
     createNewTerminal,
+    focusComposer,
+    rightPanelMaximized,
+    scheduleComposerFocus,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -4813,6 +4857,7 @@ function ChatViewContent(props: ChatViewProps) {
     keybindings,
     onToggleDiff,
     toggleRightPanel,
+    toggleRightPanelMaximized,
     toggleTerminalVisibility,
     composerRef,
   ]);
@@ -6055,7 +6100,7 @@ function ChatViewContent(props: ChatViewProps) {
         threadRef={activeThreadRef}
         surface={activeRightPanelSurface}
         launchContext={activeTerminalLaunchContext ?? null}
-        focusRequestId={terminalFocusRequestId}
+        focusRequestId={panelTerminalFocusRequestId}
         keybindings={keybindings}
         onAddTerminalContext={addTerminalContextToDraft}
         onSplitTerminal={splitPanelTerminal}
