@@ -20,6 +20,39 @@ export function getTimestampFormatOptions(
   };
 }
 
+/**
+ * Pick the locale to format wall-clock times in, given the locale the host
+ * reports. Hosts that report nothing fall back to `undefined`, which is the
+ * runtime default and the right answer in a browser.
+ *
+ * A host reports a locale only when it knows better than the runtime does —
+ * see `getSystemLocale` on the desktop bridge for why desktop does.
+ */
+export function resolveTimestampLocale(
+  systemLocale: string | null | undefined,
+): string | undefined {
+  const tag = systemLocale?.trim();
+  if (!tag) return undefined;
+
+  try {
+    // Every timestamp in the UI runs through this formatter, so a tag the host
+    // could not normalize falls back rather than throwing. Throws on a
+    // structurally invalid tag; a well-formed tag ICU has no data for resolves
+    // here and is left to ICU's own fallback.
+    Intl.DateTimeFormat.supportedLocalesOf([tag]);
+    return tag;
+  } catch {
+    return undefined;
+  }
+}
+
+function readHostSystemLocale(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.desktopBridge?.getSystemLocale?.() ?? null;
+}
+
+const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
+
 const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getTimestampFormatter(
@@ -33,7 +66,7 @@ function getTimestampFormatter(
   }
 
   const formatter = new Intl.DateTimeFormat(
-    undefined,
+    timestampLocale,
     getTimestampFormatOptions(timestampFormat, includeSeconds),
   );
   timestampFormatterCache.set(cacheKey, formatter);
@@ -51,6 +84,9 @@ export function formatTimestamp(isoDate: string, timestampFormat: TimestampForma
   return getTimestampFormatter(timestampFormat, true).format(date);
 }
 
+// Deliberately not the host locale: the tooltip's ordinal suffix and
+// day-before-month order below are English, so a localized month alone would
+// read "4th Juni 2026". Localizing the whole label is a separate change.
 const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
 
 function ordinalSuffix(day: number): string {
@@ -89,6 +125,44 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
   return getTimestampFormatter(timestampFormat, false).format(date);
+}
+
+const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, {
+  month: "numeric",
+  day: "numeric",
+});
+const numericDateWithYearFormatter = new Intl.DateTimeFormat(timestampLocale, {
+  month: "numeric",
+  day: "numeric",
+  year: "numeric",
+});
+
+/**
+ * Chat timestamp that adds the date once the message is no longer from today:
+ * today `12:34 PM`, yesterday `yesterday at 12:34 PM`, older `8/13 12:34 PM`
+ * (locale digit order), with the year included once the calendar year differs.
+ * Boundaries are local calendar days, not 24-hour windows.
+ */
+export function formatDayAwareTimestamp(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+  nowMs: number = Date.now(),
+): string {
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  const time = getTimestampFormatter(timestampFormat, false).format(date);
+
+  const now = new Date(nowMs);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfMessageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  // Round so DST-shifted 23/25 hour days still count as whole days.
+  const dayDiff = Math.round((startOfToday - startOfMessageDay) / 86_400_000);
+
+  if (dayDiff <= 0) return time;
+  if (dayDiff === 1) return `yesterday at ${time}`;
+  const dateFormatter =
+    date.getFullYear() === now.getFullYear() ? numericDateFormatter : numericDateWithYearFormatter;
+  return `${dateFormatter.format(date)} ${time}`;
 }
 
 /**

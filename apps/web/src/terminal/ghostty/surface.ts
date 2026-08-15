@@ -340,7 +340,11 @@ export function isTerminalPasteShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  if (event.key.toLowerCase() !== "v") return false;
+  const key = event.key.toLowerCase();
+  if (key === "insert" && !isMacPlatform(platform)) {
+    return event.shiftKey && !event.ctrlKey && !event.metaKey;
+  }
+  if (key !== "v") return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
@@ -465,6 +469,12 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
+  /**
+   * A right-click the running application did not claim through mouse
+   * reporting. The host owns the menu, so it also owns preventing the browser
+   * default — whose Paste entry can never reach a canvas terminal.
+   */
+  readonly onContextMenu?: (event: MouseEvent) => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -578,8 +588,7 @@ export class GhosttyTerminalSurface {
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
     const canvas = document.createElement("canvas");
-    canvas.className = "t3-ghostty-canvas";
-    canvas.style.cssText = "display:block;width:100%;height:100%;";
+    canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
 
     const input = document.createElement("textarea");
@@ -592,14 +601,16 @@ export class GhosttyTerminalSurface {
       "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
 
     const scrollbar = document.createElement("div");
-    scrollbar.className = "t3-ghostty-scrollbar";
+    scrollbar.className =
+      "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
     scrollbar.setAttribute("role", "scrollbar");
     scrollbar.setAttribute("aria-label", "Terminal scrollback");
     scrollbar.setAttribute("aria-orientation", "vertical");
     scrollbar.tabIndex = 0;
     scrollbar.hidden = true;
     const scrollbarThumb = document.createElement("div");
-    scrollbarThumb.className = "t3-ghostty-scrollbar-thumb";
+    scrollbarThumb.className =
+      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 
@@ -798,6 +809,28 @@ export class GhosttyTerminalSurface {
 
   focus(): void {
     this.input.focus({ preventScroll: true });
+  }
+
+  /**
+   * Pastes clipboard text read by the host (context menu) with the same
+   * bracketed-paste encoding as a native paste event. The read joins the same
+   * race the paste shortcut uses — the token is claimed before it starts — so
+   * a shortcut or native paste arriving during the read supersedes this one
+   * instead of both reaching the shell.
+   */
+  async pasteFromClipboard(
+    readText: () => Promise<string>,
+    isCurrent: () => boolean = () => true,
+  ): Promise<void> {
+    const token = ++this.pasteShortcutToken;
+    const text = await readText();
+    if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
+    // As in every paste path, delivering bumps the token so a clipboard read
+    // still in flight cannot land after this text reaches the shell.
+    this.pasteShortcutToken += 1;
+    if (text.length === 0) return;
+    const encoded = this.core.encodePaste(text);
+    if (encoded.length > 0) this.options.onData(encoded);
   }
 
   hasSelection(): boolean {
@@ -1372,7 +1405,9 @@ export class GhosttyTerminalSurface {
   private readonly onContextMenu = (event: MouseEvent) => {
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
       event.preventDefault();
+      return;
     }
+    this.options.onContextMenu?.(event);
   };
 
   private readonly onScrollbarPointerDown = (event: PointerEvent) => {

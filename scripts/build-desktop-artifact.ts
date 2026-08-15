@@ -318,6 +318,18 @@ export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<Deskt
   }
 }
 
+export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedErrorClass<DesktopDmgBackgroundSourceMissingError>()(
+  "DesktopDmgBackgroundSourceMissingError",
+  {
+    channel: Schema.Literals(["latest", "nightly"]),
+    sourcePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Desktop ${this.channel} DMG background source is missing at ${this.sourcePath}`;
+  }
+}
+
 export class BundledClientAssetsMissingError extends Schema.TaggedErrorClass<BundledClientAssetsMissingError>()(
   "BundledClientAssetsMissingError",
   {
@@ -1770,6 +1782,39 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
   });
 }
 
+export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(function* (
+  stageResourcesDir: string,
+  channel: "latest" | "nightly",
+  verbose: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const sourcePath = path.join(stageResourcesDir, "dmg", `dmg-background-${channel}.svg`);
+  if (!(yield* fs.exists(sourcePath))) {
+    return yield* new DesktopDmgBackgroundSourceMissingError({ channel, sourcePath });
+  }
+
+  for (const output of [
+    { suffix: "", width: 540, height: 380 },
+    { suffix: "@2x", width: 1080, height: 760 },
+  ] as const) {
+    const targetPath = path.join(
+      stageResourcesDir,
+      "dmg",
+      `dmg-background-${channel}${output.suffix}.png`,
+    );
+    yield* runCommand(
+      ChildProcess.make(
+        {},
+      )`sips -s format png -z ${output.height} ${output.width} ${sourcePath} --out ${targetPath}`,
+      {
+        label: `sips ${channel} DMG background${output.suffix || "@1x"}`,
+        verbose,
+      },
+    );
+  }
+});
+
 function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -2036,6 +2081,29 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             provisioningProfile: macPasskeySigning.provisioningProfilePath,
           }
         : {}),
+    };
+  }
+
+  if (platform === "mac" && target === "dmg") {
+    buildConfig.dmg = {
+      // Give the themed installer its own Finder volume name. Finder caches
+      // DMG window backgrounds by volume name, so reusing a generic name can
+      // make a newly built background look unchanged during testing.
+      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      background: `dmg/dmg-background-${updateChannel}.png`,
+      window: {
+        width: 540,
+        // Finder counts its 32px title bar in the window bounds. The themed
+        // background itself is 380px tall, so add the chrome height here to
+        // keep the full canvas visible.
+        height: 412,
+      },
+      contents: [
+        { x: 130, y: 220, type: "file" },
+        { x: 410, y: 220, type: "link", path: "/Applications" },
+      ],
+      iconSize: 80,
+      iconTextSize: 12,
     };
   }
 
@@ -2738,6 +2806,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
+  if (options.platform === "mac" && options.target === "dmg") {
+    yield* stageDesktopDmgBackground(
+      stageResourcesDir,
+      resolveDesktopUpdateChannel(appVersion),
+      options.verbose,
+    );
+  }
   // On Windows the server tree ships in the server.asar sidecar instead of
   // app.asar (see stageWindowsServerSidecar), so the app stage omits it.
   if (options.platform !== "win") {
