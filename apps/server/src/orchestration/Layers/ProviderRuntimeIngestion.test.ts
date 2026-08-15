@@ -2811,16 +2811,11 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-9"),
-      itemId: asItemId("tool-call-9"),
       payload: {
         itemType: "command_execution",
-        status: "inProgress",
-        title: "Command run",
-        detail: "Bash: vp test run",
-        data: {
-          toolName: "Bash",
-          input: { command: "vp test run" },
-        },
+        status: "in_progress",
+        title: "Read file",
+        detail: "/tmp/file.ts",
       },
     });
 
@@ -2835,20 +2830,11 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     expect(thread.session?.status).toBe("ready");
-    const activity = thread.activities.find(
-      (entry: ProviderRuntimeTestActivity) => entry.kind === "tool.started",
-    );
-    const payload = activity?.payload as Record<string, unknown> | undefined;
-    expect(payload).toMatchObject({
-      itemType: "command_execution",
-      toolCallId: "tool-call-9",
-      status: "inProgress",
-      detail: "Bash: vp test run",
-      data: {
-        toolName: "Bash",
-        input: { command: "vp test run" },
-      },
-    });
+    expect(
+      thread.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
+      ),
+    ).toBe(true);
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {

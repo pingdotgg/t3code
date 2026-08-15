@@ -25,7 +25,6 @@ import {
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   HammerIcon,
-  LayersIcon,
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   LinkIcon,
@@ -51,7 +50,6 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { changeRequestRepositoryUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -62,7 +60,6 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import {
@@ -77,7 +74,6 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { SegmentedTab, SegmentedTabList } from "../ui/segmented-tabs";
 import {
   Menu,
   MenuItem,
@@ -120,7 +116,6 @@ import {
 } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
-  PullRequestActorAvatar,
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
@@ -354,6 +349,7 @@ export function PullRequestDetailPanel({
   onClose,
   onStateChange,
   context = "page",
+  chromeVariant = "full",
   composerDraftTarget,
 }: {
   environmentId: EnvironmentId;
@@ -385,6 +381,12 @@ export function PullRequestDetailPanel({
    * again is at best a no-op and at worst git refusing a branch two checkouts.
    */
   context?: "page" | "thread";
+  /**
+   * How the metadata above the content behaves: `full` keeps every row pinned; `collapse`
+   * folds the whole of it into the top row once the active tab scrolls, and unfolds at the
+   * top — the chrome spends its height on what is being read.
+   */
+  chromeVariant?: "full" | "collapse";
   /**
    * The open thread's composer. Beside the thread whose own pull request this is, hand-offs
    * land here instead of opening a new thread — the branch is already under the reader's feet.
@@ -421,13 +423,26 @@ export function PullRequestDetailPanel({
     );
   }, [tab]);
   const [chromeCondensed, setChromeCondensed] = useState(false);
+  // Each tab remembers whether its chrome was condensed. Only the active tab can emit scroll
+  // events, so the capture handler always writes the active tab's entry — and a tab switch
+  // reads the destination's memory instead of inheriting the tab being left. A tab too short
+  // to scroll remembers "expanded", which is what keeps it from being stranded under a chrome
+  // it has no scrollbar to reopen.
   const chromeStateByTab = useRef<Partial<Record<DetailTab, boolean>>>({});
   useEffect(() => {
     setChromeCondensed(chromeStateByTab.current[tab] ?? false);
   }, [tab]);
-  const condensed = chromeCondensed;
+  const condensed = chromeVariant === "collapse" && chromeCondensed;
+  // Collapsing removes the fold's height from the chrome, which would otherwise hand that
+  // height to the scrollport and leap the content up by it mid-scroll. The cure is exact
+  // compensation: collapse only once the reader has scrolled at least the fold's height,
+  // then give that height back to `scrollTop` before the next paint — the content under
+  // their eyes does not move, and the collapse itself is the only thing that changes.
   const scrollerRef = useRef<HTMLElement | null>(null);
   const foldRef = useRef<HTMLDivElement | null>(null);
+  // The condensed chrome's second row opens as the fold closes, so the height the scrollport
+  // gains is the fold's minus this row's. Measured the same way the fold is: `scrollHeight`
+  // through a zero track reads its natural height in either state.
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
   const compensationRef = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -448,6 +463,7 @@ export function PullRequestDetailPanel({
     target: "branch name",
     timeout: 1600,
   });
+
   // The chunk is fetched as soon as the panel exists rather than waiting for the Code tab to be
   // clicked, so a reader who does click it lands on a chunk already in the module cache.
   useEffect(() => {
@@ -486,30 +502,6 @@ export function PullRequestDetailPanel({
           },
     [activity, coreDetail],
   );
-  const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
-  const baseBranchRefQuery = useEnvironmentQuery(
-    detail === null
-      ? null
-      : vcsEnvironment.listRefs({
-          environmentId,
-          input: {
-            cwd: detail.workspaceRoot,
-            query: detail.baseBranch,
-            includeMatchingRemoteRefs: true,
-            limit: 20,
-          },
-        }),
-  );
-  const matchingBaseBranchRefs =
-    detail === null
-      ? []
-      : (baseBranchRefQuery.data?.refs.filter(
-          (refName) =>
-            refName.name === detail.baseBranch || refName.name.endsWith(`/${detail.baseBranch}`),
-        ) ?? []);
-  const isStackedPullRequest =
-    matchingBaseBranchRefs.length > 0 &&
-    !matchingBaseBranchRefs.some((refName) => refName.isDefault);
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
   const refreshDetail = useCallback(() => {
@@ -1027,62 +1019,54 @@ export function PullRequestDetailPanel({
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
-  // One live action holds the slot. Conflicts take priority because every other completion action
-  // depends on resolving them first, even for a reader who cannot merge on the host themselves.
+  // One live action holds the slot. A conflicting change cannot be merged now, so the slot goes
+  // to the thing that would help instead of a Merge button that only ever says no.
   const primaryAction =
     detail === null || detail.state !== "open"
       ? null
-      : conflicting
-        ? "resolve"
-        : detail.isDraft && can("ready")
-          ? "ready"
-          : !can("merge")
-            ? null
+      : detail.isDraft && can("ready")
+        ? "ready"
+        : !can("merge")
+          ? null
+          : conflicting
+            ? "resolve"
             : allowedMergeMethods.length > 0
               ? "merge"
               : null;
   // The pull request number carries this state in the overview and the right-panel tab mirrors
-  // it. The conflict action is separate from this state: an open pull request remains green.
+  // it. Conflicts keep their own row below: an open pull request remains green there.
   const statePresentation = detail
     ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
     : null;
   const checksSummary = detail ? summarizePullRequestChecks(detail.checks) : null;
   const checksState = detail ? pullRequestChecksState(detail.checks) : null;
 
-  if (detailQuery.isPending && !detail) {
-    return <PullRequestDetailGhost />;
-  }
-
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">
+      {/* The top row's geometry never changes: both of its states occupy the same stacked
+          cell and crossfade, so the actions on the right have one home whatever the chrome
+          is doing below. The fold and this fade share one 200ms clock. */}
       <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
-        <div className="ml-4 grid h-7 min-w-0 items-center">
+        {/* The fixed height lives on the two top-row cells — not the grid, whose later rows
+            are the fold — so the actions have one immovable home in both states. */}
+        <div className="ml-4 grid h-11 min-w-0 items-center">
           <div
             aria-hidden={condensed}
             inert={condensed}
             className={cn(
-              "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-opacity sm:text-xs motion-reduce:transition-none",
+              // Sequenced, not simultaneous: the leaving layer clears quickly before the
+              // arriving one lands, so no frame shows both texts superimposed at half opacity.
               condensed
-                ? "pointer-events-none -translate-y-1 opacity-0 duration-100"
-                : "translate-y-0 opacity-100 delay-50 duration-150",
+                ? "pointer-events-none opacity-0 duration-100"
+                : "opacity-100 delay-75 duration-150",
             )}
           >
             {detail && statePresentation ? (
               <>
-                {repositoryUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
-                    className="min-w-0 truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    title={`Open ${detail.repository} repository`}
-                  >
-                    {detail.repository}
-                  </button>
-                ) : (
-                  <span className="min-w-0 truncate font-medium text-muted-foreground">
-                    {detail.repository}
-                  </span>
-                )}
+                <span className="min-w-0 truncate" title={detail.repository}>
+                  {detail.repository}
+                </span>
                 <button
                   type="button"
                   onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
@@ -1103,10 +1087,10 @@ export function PullRequestDetailPanel({
             aria-hidden={!condensed}
             inert={!condensed}
             className={cn(
-              "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              "col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 text-sm transition-opacity sm:text-xs motion-reduce:transition-none",
               condensed
-                ? "translate-y-0 opacity-100 delay-50 duration-150"
-                : "pointer-events-none translate-y-1 opacity-0 duration-100",
+                ? "opacity-100 delay-75 duration-150"
+                : "pointer-events-none opacity-0 duration-100",
             )}
           >
             {detail && statePresentation ? (
@@ -1125,14 +1109,30 @@ export function PullRequestDetailPanel({
                 >
                   #{detail.number}
                 </button>
-                <h1 className="min-w-0 truncate font-medium text-foreground" title={detail.title}>
+                <span className="min-w-0 truncate font-medium text-foreground" title={detail.title}>
                   {detail.title}
-                </h1>
+                </span>
+                {conflicting ? (
+                  <Badge
+                    variant="error"
+                    className="h-5 shrink-0 gap-1 rounded px-1.5 text-[10px] text-destructive"
+                  >
+                    <TriangleAlertIcon className="size-3" />
+                    Conflicts
+                  </Badge>
+                ) : checksSummary ? (
+                  <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                    {detail && checksState !== null ? (
+                      <PullRequestChecksPopover checks={detail.checks} checksState={checksState} />
+                    ) : null}
+                    {checksSummary}
+                  </span>
+                ) : null}
               </>
             ) : null}
           </div>
         </div>
-        <div className="mr-4 flex h-7 min-w-0 flex-nowrap items-center justify-end gap-1">
+        <div className="mr-4 flex h-11 min-w-0 flex-nowrap items-center justify-end gap-1">
           {detail ? (
             <>
               <Menu>
@@ -1140,7 +1140,7 @@ export function PullRequestDetailPanel({
                   render={
                     <Button
                       aria-label="More pull request actions"
-                      className="order-last size-6"
+                      className="size-6"
                       size="icon-xs"
                       variant="ghost-muted"
                     />
@@ -1312,15 +1312,16 @@ export function PullRequestDetailPanel({
                   <MenuTrigger
                     disabled={handoff !== null}
                     render={
-                      <Button size="xs" variant="outline" className="gap-0 p-0">
-                        <span className="inline-flex h-full items-center gap-1.5 ps-[8.5px] pe-2">
-                          <GitBranchIcon aria-hidden className="size-3.5" />
-                          {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
-                        </span>
-                        <span aria-hidden className="h-4 w-px shrink-0 bg-input" />
-                        <span className="inline-flex h-full w-6 shrink-0 items-center justify-center">
-                          <ChevronDownIcon aria-hidden className="size-4 text-muted-foreground" />
-                        </span>
+                      <Button size="xs" variant="outline">
+                        {handoff?.startsWith("checkout") ? (
+                          "Checking out..."
+                        ) : (
+                          <>
+                            <GitBranchIcon className="size-3" />
+                            Check out
+                            <ChevronDownIcon className="size-3 text-muted-foreground" />
+                          </>
+                        )}
                       </Button>
                     }
                   />
@@ -1366,22 +1367,7 @@ export function PullRequestDetailPanel({
                   Auto-merge
                 </Badge>
               ) : null}
-              {primaryAction === "resolve" ? (
-                <Badge
-                  variant="error"
-                  className="h-5 shrink-0 gap-1 rounded px-1.5 text-[10px] text-destructive hover:bg-destructive/14"
-                  render={
-                    <button
-                      type="button"
-                      disabled={handoff !== null}
-                      onClick={startResolveConflicts}
-                    />
-                  }
-                >
-                  <TriangleAlertIcon className="size-3" />
-                  {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
-                </Badge>
-              ) : primaryAction === "ready" ? (
+              {primaryAction === "ready" ? (
                 <Button size="xs" disabled={actionPending} onClick={() => void perform("ready")}>
                   Ready for review
                 </Button>
@@ -1408,86 +1394,113 @@ export function PullRequestDetailPanel({
           ) : null}
         </div>
 
-        <div className={cn("col-span-2 grid", condensed ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
+        {/* The condensed chrome's second row: the tabs that the closing fold takes with it,
+            and compact copies of the branch pair and diff stat so they stay in sight while
+            the full rows are folded away. Same zero-track mechanism as the fold, inverted. */}
+        <div
+          className={cn(
+            "col-span-2 grid",
+            // Inverse of the fold's track: closing eases while the fold above eases open,
+            // so the chrome trades rows in one motion instead of two jumps.
+            condensed
+              ? "grid-rows-[1fr]"
+              : "grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
           <div
             ref={condensedRowRef}
             className={cn(
-              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              "min-h-0 overflow-hidden",
               condensed
-                ? "translate-y-0 opacity-100 delay-50"
-                : "translate-y-1 opacity-0 duration-100",
+                ? "opacity-100 transition-opacity duration-200 ease-out motion-reduce:transition-none"
+                : "opacity-0",
             )}
             inert={!condensed}
           >
             {detail ? (
-              <div className="col-span-2 min-w-0 px-4 pb-2 pt-1">
-                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
-                    <PullRequestActorAvatar actor={detail.author} className="shrink-0" />
-                    <span className="sr-only">{detail.author?.login ?? "ghost"}</span>
-                    <span className="shrink-0">{formatRelativeTimeLabel(detail.updatedAt)}</span>
-                  </span>
-                  <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-                  <span
-                    className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[11px] text-muted-foreground/65"
-                    title={`${detail.baseBranch} ← ${detail.headBranch}`}
-                  >
-                    <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                      {isStackedPullRequest ? (
-                        <LayersIcon aria-label="Stacked pull request" className="size-3 shrink-0" />
-                      ) : null}
-                      <code className="min-w-0 truncate">{detail.baseBranch}</code>
-                    </span>
-                    {freshness ? (
-                      <PullRequestBaseFreshnessWarning
-                        baseBranch={detail.baseBranch}
-                        freshness={freshness}
-                        pending={actionPending}
-                        onUpdate={(method) => void perform("update-branch", undefined, method)}
-                        iconClassName="size-3"
-                      />
-                    ) : null}
-                    <ArrowLeftIcon
-                      aria-label="receives changes from"
-                      className="size-3 shrink-0 opacity-60"
-                    />
-                    <code className="min-w-0 flex-1 truncate">{detail.headBranch}</code>
-                  </span>
-                  <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-[11px]">
-                    <span
-                      className="inline-flex items-center gap-1 tabular-nums"
-                      aria-label={`${detail.changedFiles.toLocaleString()} changed ${
-                        detail.changedFiles === 1 ? "file" : "files"
-                      }`}
+              <div className="flex min-w-0 items-center gap-1 px-4 pb-2">
+                <nav aria-label="Pull request tabs" className="flex shrink-0 items-center gap-0.5">
+                  {visibleTabs.map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      tabIndex={condensed ? 0 : -1}
+                      aria-pressed={tab === item.value}
+                      onClick={() => setTab(item.value)}
+                      className={cn(
+                        "rounded-md px-2 py-1 text-[11px] transition-colors",
+                        tab === item.value
+                          ? "bg-accent text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
                     >
-                      <FileDiffIcon aria-hidden className="size-3" />
-                      {detail.changedFiles.toLocaleString()}
-                    </span>
-                    <PullRequestDiffStat
-                      additions={detail.additions}
-                      deletions={detail.deletions}
-                      className="shrink-0 font-mono text-[11px]"
+                      {item.label}
+                    </button>
+                  ))}
+                </nav>
+                <span
+                  className="ml-auto inline-flex min-w-0 shrink items-center gap-1 font-mono text-[11px] text-muted-foreground"
+                  title={`${detail.baseBranch} ← ${detail.headBranch}`}
+                >
+                  <span className="truncate">{detail.baseBranch}</span>
+                  {freshness ? (
+                    <PullRequestBaseFreshnessWarning
+                      baseBranch={detail.baseBranch}
+                      freshness={freshness}
+                      pending={actionPending}
+                      onUpdate={(method) => void perform("update-branch", undefined, method)}
+                      iconClassName="size-3"
                     />
+                  ) : null}
+                  <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
+                  <span className="truncate">{detail.headBranch}</span>
+                </span>
+                <span className="ml-2 inline-flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="inline-flex items-center gap-1 tabular-nums">
+                    <FileDiffIcon className="size-3" />
+                    {detail.changedFiles.toLocaleString()}
                   </span>
-                </div>
+                  <PullRequestDiffStat
+                    additions={detail.additions}
+                    deletions={detail.deletions}
+                    className="shrink-0 font-mono text-[11px]"
+                  />
+                </span>
               </div>
             ) : null}
           </div>
         </div>
 
-        <div className={cn("col-span-2 grid", condensed ? "grid-rows-[0fr]" : "grid-rows-[1fr]")}>
+        {/* Folding is a grid track going to zero: the rows below stay mounted, the track
+            animates closed over them, and `inert` takes the hidden controls out of the tab
+            order for as long as the chrome is condensed. */}
+        <div
+          className={cn(
+            "col-span-2 grid",
+            // Collapse is instant: it happens mid-scroll, and the compensation that keeps the
+            // content pinned would fight an animated track frame by frame. Reopening happens
+            // at the top with no compensation, so the fold can ease back in instead of
+            // snapping the content down.
+            condensed
+              ? "grid-rows-[0fr]"
+              : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
           <div
             ref={foldRef}
+            // One-way on purpose: appearing content eases in over ground the instant track
+            // already reserved; departing content cuts, because its ground is gone in the
+            // same frame and the scroll compensation reads it as scrolled past.
             className={cn(
-              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              "min-h-0 overflow-hidden",
               condensed
-                ? "-translate-y-1 opacity-0 duration-100"
-                : "translate-y-0 opacity-100 delay-50",
+                ? "opacity-0"
+                : "opacity-100 transition-opacity duration-200 ease-out motion-reduce:transition-none",
             )}
             inert={condensed}
           >
             {detail ? (
-              <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
+              <div className="col-span-2 mt-3 min-w-0 px-4 pb-4">
                 {titleDraft === null ? (
                   <div className="group flex min-w-0 items-start gap-1">
                     <h1 className="min-w-0 flex-1 text-base font-semibold leading-snug">
@@ -1554,56 +1567,47 @@ export function PullRequestDetailPanel({
                 </PullRequestMetaLine>
 
                 <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <span
-                    className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70"
-                    title={`${detail.baseBranch} ← ${detail.headBranch}`}
+                  <code
+                    className="min-w-0 max-w-48 shrink truncate rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground"
+                    title={detail.baseBranch}
                   >
-                    <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                      {isStackedPullRequest ? (
-                        <LayersIcon aria-label="Stacked pull request" className="size-3 shrink-0" />
-                      ) : null}
-                      <code className="min-w-0 truncate">{detail.baseBranch}</code>
-                    </span>
-                    {freshness ? (
-                      <PullRequestBaseFreshnessWarning
-                        baseBranch={detail.baseBranch}
-                        freshness={freshness}
-                        pending={actionPending}
-                        onUpdate={(method) => void perform("update-branch", undefined, method)}
-                      />
-                    ) : null}
-                    <ArrowLeftIcon
-                      aria-label="receives changes from"
-                      className="size-3.5 shrink-0 opacity-60"
+                    {detail.baseBranch}
+                  </code>
+                  {freshness ? (
+                    <PullRequestBaseFreshnessWarning
+                      baseBranch={detail.baseBranch}
+                      freshness={freshness}
+                      pending={actionPending}
+                      onUpdate={(method) => void perform("update-branch", undefined, method)}
                     />
-                    <button
-                      type="button"
-                      className="grid w-fit min-w-0 max-w-full shrink cursor-pointer rounded px-1 py-0.5 text-left outline-none transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                      aria-label={
-                        isBranchCopied ? "Branch name copied" : "Copy pull request branch"
-                      }
-                      title={isBranchCopied ? "Copied" : "Copy pull request branch"}
-                      onClick={() => copyBranchToClipboard(detail.headBranch)}
+                  ) : null}
+                  <ArrowLeftIcon aria-label="receives changes from" className="size-4 shrink-0" />
+                  <button
+                    type="button"
+                    className="grid min-w-0 max-w-64 shrink cursor-pointer rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                    aria-label={isBranchCopied ? "Branch name copied" : "Copy pull request branch"}
+                    title={isBranchCopied ? "Copied" : "Copy pull request branch"}
+                    onClick={() => copyBranchToClipboard(detail.headBranch)}
+                  >
+                    <code
+                      className={cn(
+                        "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
+                        isBranchCopied ? "opacity-0" : "opacity-100",
+                      )}
+                      title={detail.headBranch}
                     >
-                      <code
-                        className={cn(
-                          "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
-                          isBranchCopied ? "opacity-0" : "opacity-100",
-                        )}
-                      >
-                        {detail.headBranch}
-                      </code>
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          "col-start-1 row-start-1 truncate text-center transition-opacity duration-150 motion-reduce:transition-none",
-                          isBranchCopied ? "opacity-100" : "opacity-0",
-                        )}
-                      >
-                        Copied
-                      </span>
-                    </button>
-                  </span>
+                      {detail.headBranch}
+                    </code>
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "col-start-1 row-start-1 truncate text-center transition-opacity duration-150 motion-reduce:transition-none",
+                        isBranchCopied ? "opacity-100" : "opacity-0",
+                      )}
+                    >
+                      Copied
+                    </span>
+                  </button>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
                     <span className="inline-flex items-center gap-1.5 tabular-nums">
                       <FileDiffIcon className="size-3.5" />
@@ -1619,114 +1623,147 @@ export function PullRequestDetailPanel({
                 </div>
               </div>
             ) : null}
-          </div>
-        </div>
 
-        {detail ? (
-          <nav
-            className={cn(
-              "col-span-2 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-border/60 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-              condensed ? "py-1.5" : "py-2",
-            )}
-            aria-label="Pull request tabs"
-          >
-            <SegmentedTabList>
-              {visibleTabs.map((item) => (
-                <SegmentedTab
-                  key={item.value}
-                  selected={tab === item.value}
-                  onClick={() => setTab(item.value)}
+            {detail && conflicting ? (
+              <div className="col-span-2 flex items-center gap-1 px-4 pb-3">
+                <Badge
+                  variant="error"
+                  className="h-auto gap-1.5 rounded-md px-3 py-1.5 text-xs text-destructive"
                 >
-                  {item.label}
-                </SegmentedTab>
-              ))}
-            </SegmentedTabList>
-            {tab === "summary" ? (
-              <span
-                className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
-                aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
-              >
-                {checksState !== null ? (
-                  <PullRequestChecksPopover checks={detail.checks} checksState={checksState} />
-                ) : (
-                  <CircleDotIcon aria-hidden className="size-3.5" />
-                )}
-                {checksSummary}
-              </span>
-            ) : tab === "timeline" ? (
-              <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                <PullRequestMetaLine
-                  className={cn(
-                    "whitespace-nowrap text-[11px] transition-opacity",
-                    (activityPending || activityError) && "opacity-35",
-                  )}
-                >
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label={
-                      activityError
-                        ? "Comments unavailable"
-                        : `${detail.commentCount.toLocaleString()} ${
-                            detail.commentCount === 1 ? "comment" : "comments"
-                          }`
-                    }
-                  >
-                    <MessageSquareIcon aria-hidden className="size-3" />
-                    {activityError
-                      ? "—"
-                      : activityPending
-                        ? "…"
-                        : detail.commentCount.toLocaleString()}
-                  </span>
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label={
-                      activityError
-                        ? "Commits unavailable"
-                        : `${detail.commits.length.toLocaleString()} ${
-                            detail.commits.length === 1 ? "commit" : "commits"
-                          }`
-                    }
-                  >
-                    <GitCommitHorizontalIcon aria-hidden className="size-3" />
-                    {activityError
-                      ? "—"
-                      : activityPending
-                        ? "…"
-                        : detail.commits.length.toLocaleString()}
-                  </span>
-                </PullRequestMetaLine>
+                  <TriangleAlertIcon className="size-3.5" />
+                  Merge conflicts
+                </Badge>
                 <Button
                   size="xs"
                   variant="ghost"
-                  className="h-7 px-2 text-[10px] text-muted-foreground"
-                  aria-label={
-                    timelineOrder === "newest"
-                      ? "Show oldest activity first"
-                      : "Show newest activity first"
-                  }
-                  onClick={() =>
-                    setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
-                  }
+                  className="ml-auto text-destructive hover:bg-destructive/8 hover:text-destructive"
+                  disabled={handoff !== null}
+                  onClick={startResolveConflicts}
                 >
-                  <ArrowDownUpIcon aria-hidden className="size-3" />
-                  {timelineOrder === "newest" ? "Newest first" : "Oldest first"}
+                  {handoff === "conflicts" ? "Preparing..." : handoffLabels.resolve}
+                  <ArrowUpRightIcon className="size-3.5 text-destructive" />
                 </Button>
               </div>
             ) : null}
-          </nav>
-        ) : null}
+
+            {detail ? (
+              <nav
+                className="col-span-2 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-border/60 px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                aria-label="Pull request tabs"
+              >
+                {visibleTabs.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    aria-pressed={tab === item.value}
+                    onClick={() => setTab(item.value)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors",
+                      tab === item.value
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                {tab === "summary" ? (
+                  <span
+                    className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+                    aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                  >
+                    {/* The rollup icon opens the checks behind the summary; with none reported
+                        there is nothing to open, so the plain glyph stays. */}
+                    {detail && checksState !== null ? (
+                      <PullRequestChecksPopover checks={detail.checks} checksState={checksState} />
+                    ) : (
+                      <CircleDotIcon aria-hidden className="size-3.5" />
+                    )}
+                    {checksSummary}
+                  </span>
+                ) : tab === "timeline" ? (
+                  <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                    <PullRequestMetaLine
+                      className={cn(
+                        "whitespace-nowrap text-[11px] transition-opacity",
+                        (activityPending || activityError) && "opacity-35",
+                      )}
+                    >
+                      <span
+                        className="inline-flex items-center gap-1"
+                        aria-label={
+                          activityError
+                            ? "Comments unavailable"
+                            : `${detail.commentCount.toLocaleString()} ${
+                                detail.commentCount === 1 ? "comment" : "comments"
+                              }`
+                        }
+                      >
+                        <MessageSquareIcon aria-hidden className="size-3" />
+                        {activityError
+                          ? "—"
+                          : activityPending
+                            ? "…"
+                            : detail.commentCount.toLocaleString()}
+                      </span>
+                      <span
+                        className="inline-flex items-center gap-1"
+                        aria-label={
+                          activityError
+                            ? "Commits unavailable"
+                            : `${detail.commits.length.toLocaleString()} ${
+                                detail.commits.length === 1 ? "commit" : "commits"
+                              }`
+                        }
+                      >
+                        <GitCommitHorizontalIcon aria-hidden className="size-3" />
+                        {activityError
+                          ? "—"
+                          : activityPending
+                            ? "…"
+                            : detail.commits.length.toLocaleString()}
+                      </span>
+                    </PullRequestMetaLine>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      className="h-7 px-2 text-[10px] text-muted-foreground"
+                      aria-label={
+                        timelineOrder === "newest"
+                          ? "Show oldest activity first"
+                          : "Show newest activity first"
+                      }
+                      onClick={() =>
+                        setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
+                      }
+                    >
+                      <ArrowDownUpIcon aria-hidden className="size-3" />
+                      {timelineOrder === "newest" ? "Newest first" : "Oldest first"}
+                    </Button>
+                  </div>
+                ) : null}
+              </nav>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       <div
         className="relative min-h-0 flex-1 overflow-hidden"
+        // Scroll does not bubble, but it captures: one listener hears every tab's own scroll
+        // container. Collapse past two line-heights, expand only back at the very top, so the
+        // boundary row cannot flap the chrome open and shut.
         onScrollCapture={(event) => {
+          if (chromeVariant !== "collapse") return;
           const scroller = event.target as HTMLElement;
           scrollerRef.current = scroller;
           const top = scroller.scrollTop;
           setChromeCondensed((previous) => {
             let next = previous;
+            // `scrollHeight` reads the fold's natural height whichever state the track is in.
             const foldHeight = foldRef.current?.scrollHeight ?? 0;
+            // The chrome trades the fold for the condensed second row, so the height the
+            // scrollport actually gains is the difference between the two.
             const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
             if (previous) {
               // The hard top reopens the chrome with no refund: the reader asked for the top,
@@ -1744,7 +1781,17 @@ export function PullRequestDetailPanel({
           });
         }}
       >
-        {detailQuery.error && !detail ? (
+        {detailQuery.isPending && !detail ? (
+          // The ghost wears the shape of the tab being waited on, so switching tabs mid-load
+          // does not flash a summary outline under a timeline heading.
+          tab === "timeline" ? (
+            <PullRequestTimelineGhost />
+          ) : tab === "code" ? (
+            <DiffPanelLoadingState label="Loading pull request diff..." />
+          ) : (
+            <PullRequestDetailGhost />
+          )
+        ) : detailQuery.error && !detail ? (
           <PullRequestsUnavailableState error={detailQuery.error} onRetry={refreshDetail} />
         ) : detail ? (
           <>

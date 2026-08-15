@@ -248,7 +248,6 @@ describe("mergeUsage", () => {
     );
 
     expect(merged.sessions).toBe(1);
-    expect(merged.providers[0]?.sessions).toBe(1);
   });
 
   it("returns empty totals with no environments", () => {

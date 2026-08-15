@@ -554,49 +554,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
-  it("makes the whole live tool row expandable without adding a chevron", () => {
-    const turnId = TurnId.make("turn-live-tools");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        isWorking
-        activeTurnInProgress
-        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
-        latestTurn={{
-          turnId,
-          state: "running",
-          startedAt: "2026-03-17T19:12:28.000Z",
-          completedAt: null,
-        }}
-        runningTurnId={turnId}
-        timelineEntries={[
-          {
-            id: "entry-live-tool",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:29.000Z",
-            entry: {
-              id: "work-live-tool",
-              createdAt: "2026-03-17T19:12:29.000Z",
-              turnId,
-              toolCallId: "call-live-tool",
-              label: "Running tests",
-              command: "env -C /tmp sudo -iu postgres psql",
-              tone: "tool",
-              toolLifecycleStatus: "inProgress",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).not.toContain('aria-label="Expand current tool calls"');
-    expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("Running psql");
-    expect(markup).not.toContain("lucide-chevron-right");
-    expect(markup).not.toContain("hover:bg-accent/20");
-  });
-
-  it("summarizes completed changed-file activity", () => {
+  it("formats changed file paths from the workspace root", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -618,7 +576,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Changed 1 file");
+    expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
 

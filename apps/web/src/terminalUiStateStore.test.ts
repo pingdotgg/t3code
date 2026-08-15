@@ -18,7 +18,6 @@ describe("terminalUiStateStore actions", () => {
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
-      terminalCustomLabelsByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
     });
   });
@@ -249,8 +248,6 @@ describe("terminalUiStateStore actions", () => {
   it("reconciles terminal ids from an external ordered list", () => {
     const store = useTerminalUiStateStore.getState();
     store.setTerminalOpen(THREAD_REF, true);
-    store.setTerminalCustomLabel(THREAD_REF, "term-a", "API server");
-    store.setTerminalCustomLabel(THREAD_REF, "stale-term", "Old task");
     store.reconcileTerminalIds(THREAD_REF, ["term-a", "term-b"]);
 
     const terminalUiState = selectThreadTerminalUiState(
@@ -263,11 +260,6 @@ describe("terminalUiStateStore actions", () => {
       { id: "group-term-a", terminalIds: ["term-a"] },
       { id: "group-term-b", terminalIds: ["term-b"] },
     ]);
-    expect(
-      useTerminalUiStateStore.getState().terminalCustomLabelsByThreadKey[
-        scopedThreadKey(THREAD_REF)
-      ],
-    ).toEqual({ "term-a": "API server" });
   });
 
   it("does not import a closed panel terminal from stale metadata", () => {

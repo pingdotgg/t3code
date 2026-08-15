@@ -722,144 +722,24 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("shows a command from its start event while it is still running", () => {
+  it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "tool-start",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Command run started",
-        kind: "tool.started",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-1",
-          status: "inProgress",
-          title: "Command run",
-          detail: "Bash: vp test run",
-          data: {
-            toolName: "Bash",
-            input: { command: "vp test run" },
-          },
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities);
-    expect(entry).toMatchObject({
-      id: "tool-start",
-      command: "vp test run",
-      toolCallId: "call-1",
-      toolLifecycleStatus: "inProgress",
-      sourceActivityKind: "tool.started",
-    });
-  });
-
-  it("retains the start command when the matching completion omits it", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "tool-start",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Command run started",
-        kind: "tool.started",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-1",
-          status: "inProgress",
-          title: "Command run",
-          data: { input: { command: "vp test run" } },
-        },
-      }),
-      makeActivity({
-        id: "other-tool-start",
-        createdAt: "2026-02-23T00:00:02.500Z",
-        summary: "Other command started",
-        kind: "tool.started",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-2",
-          status: "inProgress",
-          title: "Other command",
-          data: { input: { command: "vp lint" } },
-        },
-      }),
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
-        summary: "Command run",
+        summary: "Tool call complete",
         kind: "tool.completed",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-1",
-          status: "completed",
-          title: "Command run",
-        },
       }),
       makeActivity({
-        id: "other-tool-complete",
-        createdAt: "2026-02-23T00:00:04.000Z",
-        summary: "Other command",
-        kind: "tool.completed",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-2",
-          status: "completed",
-          title: "Other command",
-        },
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Tool call",
+        kind: "tool.started",
       }),
     ];
 
     const entries = deriveWorkLogEntries(activities);
-    expect(entries).toHaveLength(2);
-    expect(entries[0]).toMatchObject({
-      id: "tool-complete",
-      command: "vp test run",
-      toolCallId: "call-1",
-      toolLifecycleStatus: "completed",
-      sourceActivityKind: "tool.completed",
-    });
-    expect(entries[1]).toMatchObject({
-      id: "other-tool-complete",
-      command: "vp lint",
-      toolCallId: "call-2",
-      toolLifecycleStatus: "completed",
-      sourceActivityKind: "tool.completed",
-    });
-  });
-
-  it("does not merge non-adjacent tool starts without stable call ids", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "unkeyed-start-1",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        summary: "Search started",
-        kind: "tool.started",
-        payload: { itemType: "search", title: "Search", status: "inProgress" },
-      }),
-      makeActivity({
-        id: "keyed-start",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Command started",
-        kind: "tool.started",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-between",
-          title: "Command",
-          status: "inProgress",
-        },
-      }),
-      makeActivity({
-        id: "unkeyed-start-2",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        summary: "Search started",
-        kind: "tool.started",
-        payload: { itemType: "search", title: "Search", status: "inProgress" },
-      }),
-    ];
-
-    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual([
-      "unkeyed-start-1",
-      "keyed-start",
-      "unkeyed-start-2",
-    ]);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
@@ -1359,7 +1239,6 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "grep-complete",
-      toolCallId: "tool-grep-1",
       toolTitle: "grep",
       detail: "19 files",
       itemType: "web_search",
