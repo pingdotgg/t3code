@@ -12,13 +12,19 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -163,11 +169,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
+      const lastKnownSlashCommands = yield* Ref.make<ReadonlyArray<ServerProviderSlashCommand>>([]);
+
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
-        () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+        () =>
+          Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+            Effect.tap((capabilities) =>
+              capabilities
+                ? Ref.set(lastKnownSlashCommands, capabilities.slashCommands)
+                : Effect.void,
+            ),
+          ),
         processEnv,
         cwd,
+        Ref.get(lastKnownSlashCommands),
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

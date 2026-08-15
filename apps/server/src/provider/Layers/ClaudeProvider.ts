@@ -811,6 +811,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  lastKnownSlashCommands?: Effect.Effect<ReadonlyArray<ServerProviderSlashCommand>>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -927,7 +928,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = capabilities?.slashCommands ?? [];
+  const slashCommands =
+    capabilities?.slashCommands ?? (lastKnownSlashCommands ? yield* lastKnownSlashCommands : []);
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
