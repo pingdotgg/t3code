@@ -1308,7 +1308,8 @@ function PullRequestsRouteView() {
       // anchor the thread view's controls and the sidebar trigger use, so
       // every titlebar cluster in the app sits one shared inset from its
       // edge.
-      className="workspace-titlebar-controls z-50 mr-px gap-1 [-webkit-app-region:no-drag]"
+      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      data-workspace-titlebar-controls
     >
       {panelToggleControls}
     </div>
@@ -1828,7 +1829,7 @@ function PullRequestsColumn({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <header
         className={cn(
-          "workspace-topbar drag-region gap-1.5 px-3 sm:px-5",
+          "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1.5 px-3 sm:px-5",
           // A closed right panel leaves this column full-width, so its header runs
           // underneath the native window controls on Windows; reserve the inset the
           // way Settings and the chat view do. While the panel is open the column
@@ -1903,7 +1904,7 @@ function PullRequestsColumn({
 
       <div
         ref={scrollRef}
-        className="pull-requests-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
+        className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
       >
         {/* The top padding is the fade band's own height (1.5rem here), the same pairing the
             settings page makes: at rest the controls sit fully below the mask, and only

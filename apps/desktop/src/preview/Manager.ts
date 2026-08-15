@@ -58,6 +58,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
+  MOUSE_NAVIGATE_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
@@ -645,6 +646,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (Option.isSome(next)) yield* emit(tabId, next.value);
+  });
+
+  /**
+   * Pushes a tab's zoom factor onto whichever guest it currently owns, reading
+   * both at call time. Anything that applies zoom after an await goes through
+   * here: a snapshot taken before the await can be older than a zoom action that
+   * landed in between, and re-applying it would roll that action back.
+   */
+  const assertTabZoom = Effect.fn("PreviewManager.assertTabZoom")(function* (tabId: string) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab || tab.webContentsId == null) return;
+    const wc = webContents.fromId(tab.webContentsId);
+    if (!wc || wc.isDestroyed()) return;
+    yield* attempt({ operation: "assertTabZoom", tabId, webContentsId: wc.id }, () =>
+      wc.setZoomFactor(tab.zoomFactor),
+    ).pipe(Effect.ignore);
   });
 
   const requireWebContents = Effect.fn("PreviewManager.requireWebContents")(function* (
@@ -1305,10 +1322,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       confirmedNavigation = false,
     ) {
       if (wc.isDestroyed()) return;
-      const zoomFactor = yield* attempt(
-        { operation: "syncWebContentsState.getZoomFactor", tabId, webContentsId: wc.id },
-        () => wc.getZoomFactor(),
-      ).pipe(Effect.option);
       const computedNavStatus = computeNavStatus(wc);
       const canGoBack = wc.navigationHistory.canGoBack();
       const canGoForward = wc.navigationHistory.canGoForward();
@@ -1338,7 +1351,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus,
           canGoBack,
           canGoForward,
-          ...(Option.isSome(zoomFactor) ? { zoomFactor: zoomFactor.value } : {}),
+          // zoomFactor is deliberately not read back from the guest: Chromium
+          // reports the level it inherited from the app window, so mirroring it
+          // would turn an app zoom into the preview's own zoom.
           updatedAt,
         };
         return [
@@ -1492,6 +1507,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
       runFork(handleHumanInput(rawSignal));
     };
+    const mouseNavigate = (_event: unknown, payload?: unknown): void => {
+      const direction =
+        typeof payload === "object" && payload !== null && "direction" in payload
+          ? (payload as { direction?: unknown }).direction
+          : undefined;
+      if (direction !== "back" && direction !== "forward") return;
+      runFork(
+        attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () => {
+          if (direction === "back") {
+            if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+          } else if (wc.navigationHistory.canGoForward()) {
+            wc.navigationHistory.goForward();
+          }
+        }).pipe(Effect.ignore),
+      );
+    };
     const forwardShortcut = Effect.fn("PreviewManager.forwardShortcut")(function* (
       event: Electron.Event,
       input: Electron.Input,
@@ -1538,6 +1569,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-fail-load", failed as never);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
       }).pipe(Effect.ignore),
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
@@ -1551,6 +1583,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-stop-loading", sync);
         wc.on("did-fail-load", failed as never);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler(({ url }) => {
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
@@ -1716,11 +1749,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     const currentAttachment = attached.get(webContentsId);
     if (tab.webContentsId === webContentsId && currentAttachment?.webContents === wc) {
-      const zoomFactor = yield* attempt(
-        { operation: "registerWebview.getZoomFactor", tabId, webContentsId },
-        () => wc.getZoomFactor(),
-      );
-      yield* update(tabId, { zoomFactor });
+      // The guest we already own re-announced itself, so nothing about the tab
+      // changed. Only push its zoom back down — Chromium may have just handed
+      // this guest the app window's zoom level.
+      yield* assertTabZoom(tabId);
       yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
         wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
       );
@@ -1749,18 +1781,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
-    const zoomFactor =
-      replacedWebContentsId !== null
-        ? yield* attempt(
-            { operation: "registerWebview.restoreZoomFactor", tabId, webContentsId },
-            () => {
-              wc.setZoomFactor(currentTab.zoomFactor);
-              return currentTab.zoomFactor;
-            },
-          )
-        : yield* attempt({ operation: "registerWebview.getZoomFactor", tabId, webContentsId }, () =>
-            wc.getZoomFactor(),
-          );
+    // Always assert the tab's own zoom rather than reading the guest's: a guest
+    // attaching while the app UI is zoomed starts at the embedder's inherited
+    // zoom level, which is not the preview's zoom. Done before the guest is
+    // published so it never paints a frame at the inherited zoom.
+    yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
+      wc.setZoomFactor(currentTab.zoomFactor),
+    );
     yield* attachListeners(tabId, wc);
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
@@ -1784,7 +1811,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
-          zoomFactor,
           updatedAt: registeredAt,
         };
         return [
@@ -1806,6 +1832,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const { state: registered, pendingUrl } = registration.value;
+    // A zoom action that landed while this attach was in flight addressed the
+    // guest this one replaced, so settle the new guest on the committed factor.
+    yield* assertTabZoom(tabId);
     runFork(restoreControlSession(tabId, wc));
     yield* emit(tabId, registered);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
@@ -2097,6 +2126,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return cancel;
       },
     );
+  });
+
+  /**
+   * Chromium hands every guest `<webview>` the embedder's zoom level, so zooming
+   * the app UI drags the previewed page along with it. The preview browser owns
+   * its own zoom factor, so re-assert it on each attached guest whenever the main
+   * window's zoom changes (see DesktopWindow.zoomMain).
+   */
+  const reapplyZoom = Effect.fn("PreviewManager.reapplyZoom")(function* () {
+    const tabIds = Array.from((yield* SynchronizedRef.get(tabsRef)).keys());
+    yield* Effect.forEach(tabIds, assertTabZoom, { discard: true });
   });
 
   const applyZoom = Effect.fn("PreviewManager.applyZoom")(function* (
@@ -3476,6 +3516,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     openPictureInPicture,
     openDevTools,
     pickElement,
+    reapplyZoom,
     refresh,
     registerWebview,
     resetZoom: (tabId: string) => applyZoom(tabId, () => DEFAULT_ZOOM_FACTOR),
@@ -3774,6 +3815,9 @@ export class PreviewManager extends Context.Service<
     readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    // Re-applies every attached guest's own zoom factor, undoing the zoom level
+    // Chromium inherits from the embedder when the app UI zooms.
+    readonly reapplyZoom: () => Effect.Effect<void>;
     readonly hardReload: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly setColorScheme: (
       tabId: string,
@@ -3874,6 +3918,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     zoomIn: operations.zoomIn,
     zoomOut: operations.zoomOut,
     resetZoom: operations.resetZoom,
+    reapplyZoom: operations.reapplyZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
     openDevTools: operations.openDevTools,

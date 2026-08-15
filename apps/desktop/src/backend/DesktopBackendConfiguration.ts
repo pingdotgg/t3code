@@ -19,6 +19,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -424,10 +425,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   never,
   | DesktopEnvironment.DesktopEnvironment
   | DesktopWslEnvironment.DesktopWslEnvironment
+  | DesktopWslServerTree.DesktopWslServerTree
   | FileSystem.FileSystem
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
 
   // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
   // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
@@ -464,31 +467,31 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
-  // In packaged builds environment.appRoot is .../resources/app.asar — an
-  // archive FILE. The Windows primary reads its entry through
-  // ELECTRON_RUN_AS_NODE (asar-aware), but the WSL backend launches plain
-  // `wsl.exe -- node`, which can't read inside an asar. electron-builder unpacks
-  // the server bundle + node-pty (see asarUnpack in build-desktop-artifact.ts)
-  // to the app.asar.unpacked sibling, so point WSL there. In dev appRoot is
-  // already a real directory, so this is a no-op.
-  const wslAppRoot = environment.isPackaged
-    ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
-    : environment.appRoot;
+  // In packaged builds the server tree ships inside resources/server.asar —
+  // an archive FILE the Windows primary reads through ELECTRON_RUN_AS_NODE
+  // (asar-aware). The WSL backend launches plain `wsl.exe -- node`, which
+  // can't read an asar, so materialize (or reuse) the extracted copy of the
+  // sidecar before preflighting. In dev the server tree is the real checkout
+  // directory and ensure returns it unchanged.
+  const serverTree = yield* wslServerTree.ensure;
+  const wslAppRoot = serverTree.ok ? serverTree.root : environment.serverRoot;
   const wslEntryPath = environment.path.join(wslAppRoot, "apps/server/dist/bin.mjs");
 
-  const preflight = yield* runWslPreflight({
-    distro: input.distro,
-    windowsEntryPath: wslEntryPath,
-    windowsRepoRoot: wslAppRoot,
-    // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
-    // attached to the Windows artifact — see build-desktop-artifact.ts), so the
-    // WSL backend never needs a compiler, node-gyp, or network on first launch.
-    // Compiling from source is a dev-only convenience: a checkout has no shipped
-    // prebuilt, and developers have the toolchain. In packaged builds we instead
-    // surface a clear diagnostic if the prebuilt can't load (unsupported
-    // arch/distro), rather than silently dropping into a fragile runtime build.
-    allowBuild: !environment.isPackaged,
-  });
+  const preflight = serverTree.ok
+    ? yield* runWslPreflight({
+        distro: input.distro,
+        windowsEntryPath: wslEntryPath,
+        windowsRepoRoot: wslAppRoot,
+        // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
+        // attached to the Windows artifact — see build-desktop-artifact.ts), so the
+        // WSL backend never needs a compiler, node-gyp, or network on first launch.
+        // Compiling from source is a dev-only convenience: a checkout has no shipped
+        // prebuilt, and developers have the toolchain. In packaged builds we instead
+        // surface a clear diagnostic if the prebuilt can't load (unsupported
+        // arch/distro), rather than silently dropping into a fragile runtime build.
+        allowBuild: !environment.isPackaged,
+      })
+    : ({ _tag: "Failed", reason: serverTree.reason, fatal: serverTree.fatal } as const);
 
   // Every operation after preflight uses the same concrete distro. In
   // default-tracking mode this closes the race where the system default
@@ -610,6 +613,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
   const crypto = yield* Crypto.Crypto;
   // SynchronizedRef (not a plain Ref) so the read-generate-write is atomic.
@@ -665,6 +669,7 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+      Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
   });
@@ -727,6 +732,7 @@ export const make = Effect.gen(function* () {
         return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+          Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
       }).pipe(
