@@ -83,6 +83,14 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
   return targetRef;
 }
 
+/** Shared micro icon control used by settings reset/remove/info actions. */
+export function SettingIconAction({
+  className,
+  ...props
+}: ComponentPropsWithoutRef<typeof Button>) {
+  return <Button size="icon-micro" variant="ghost-muted" className={className} {...props} />;
+}
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
@@ -90,9 +98,9 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <SettingIconAction aria-label="Background policy details">
             <InfoIcon className="size-3.5" />
-          </Button>
+          </SettingIconAction>
         }
       />
       <TooltipPopup side="top" className="max-w-72">
@@ -226,14 +234,6 @@ export function SettingResetButton({
       <TooltipPopup side="top">Reset to default</TooltipPopup>
     </Tooltip>
   );
-}
-
-/** Shared micro icon control used by settings reset/remove actions. */
-export function SettingIconAction({
-  className,
-  ...props
-}: ComponentPropsWithoutRef<typeof Button>) {
-  return <Button size="icon-micro" variant="ghost-muted" className={className} {...props} />;
 }
 
 export function SettingsPageContainer({
