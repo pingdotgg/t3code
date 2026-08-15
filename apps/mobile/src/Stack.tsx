@@ -92,11 +92,9 @@ function themedFormSheetContentStyle(theme: ReactNavigation.Theme) {
 }
 
 function themedOpaqueHeaderStyle(theme: ReactNavigation.Theme) {
-  return {
-    // native-stack types this as `string`, but the native side accepts any
-    // ColorValue including DynamicColorIOS.
-    backgroundColor: (theme as AppNavigationTheme).formSheetBackground as unknown as string,
-  };
+  // native-stack types this as `string`, but the native side accepts any
+  // ColorValue including DynamicColorIOS.
+  return themedFormSheetContentStyle(theme) as { readonly backgroundColor: string };
 }
 
 // Shared header presets. Screens only override genuinely dynamic values (titles,

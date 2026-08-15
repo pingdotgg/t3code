@@ -4,8 +4,12 @@ import {
   type PortableThemeColorOverrides,
 } from "./mobileThemeFile";
 
-export const MOBILE_APPEARANCE_MODES = ["system", "light", "dark"] as const;
-export type MobileAppearanceMode = (typeof MOBILE_APPEARANCE_MODES)[number];
+export const MOBILE_APPEARANCE_OPTIONS = [
+  { id: "system", label: "System" },
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
+] as const;
+export type MobileAppearanceMode = (typeof MOBILE_APPEARANCE_OPTIONS)[number]["id"];
 export type MobileThemeAppearance = Exclude<MobileAppearanceMode, "system">;
 
 export const MOBILE_THEME_OPTIONS = [
@@ -420,7 +424,7 @@ const THEME_VARIANTS: Readonly<
 };
 
 export function isMobileAppearanceMode(value: unknown): value is MobileAppearanceMode {
-  return MOBILE_APPEARANCE_MODES.some((mode) => mode === value);
+  return MOBILE_APPEARANCE_OPTIONS.some((option) => option.id === value);
 }
 
 export function isMobileBuiltInThemeId(value: unknown): value is MobileBuiltInThemeId {
@@ -526,34 +530,7 @@ function pickMobileCoreThemeColors(
   colors: PortableThemeColorOverrides,
 ): Readonly<Partial<MobileCoreThemeColors>> {
   const overrides: { -readonly [Role in keyof MobileCoreThemeColors]?: string } = {};
-  for (const role of [
-    "canvas",
-    "surface",
-    "surfaceRaised",
-    "surfaceOverlay",
-    "text",
-    "textMuted",
-    "border",
-    "input",
-    "accent",
-    "accentForeground",
-    "secondary",
-    "secondaryForeground",
-    "muted",
-    "mutedForeground",
-    "placeholder",
-    "error",
-    "errorForeground",
-    "errorSurface",
-    "messageSurface",
-    "messageForeground",
-    "codeBackground",
-    "codeForeground",
-    "sidebar",
-    "sidebarForeground",
-    "sidebarMutedForeground",
-    "sidebarControlSurface",
-  ] as const) {
+  for (const role of Object.keys(T3_CODE_COLORS.light) as Array<keyof MobileCoreThemeColors>) {
     const color = colors[role];
     if (color) overrides[role] = color;
   }

@@ -39,15 +39,8 @@ export function useNativeReviewDiffBridge(input: {
   );
 
   const theme = useMemo(
-    () => createNativeReviewDiffTheme(scheme, nativeSurfaceColors ?? undefined),
-    [
-      nativeSurfaceColors?.accent,
-      nativeSurfaceColors?.border,
-      nativeSurfaceColors?.foreground,
-      nativeSurfaceColors?.mutedForeground,
-      nativeSurfaceColors?.sheetBackground,
-      scheme,
-    ],
+    () => createNativeReviewDiffTheme(scheme, nativeSurfaceColors),
+    [nativeSurfaceColors, scheme],
   );
   const rowsJson = useMemo(() => JSON.stringify(data.rows), [data.rows]);
   const collapsedFileIdsJson = useMemo(() => JSON.stringify(collapsedFileIds), [collapsedFileIds]);

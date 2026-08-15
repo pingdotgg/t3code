@@ -292,16 +292,10 @@ function utf8ByteLength(value: string): number {
   return bytes;
 }
 
-export function importedMobileThemesKey(value: unknown): string {
-  return JSON.stringify(value) ?? "null";
-}
-
-function clampByte(value: number): number {
-  return Math.round(Math.min(255, Math.max(0, value)));
-}
-
 function byteToHex(value: number): string {
-  return clampByte(value).toString(16).padStart(2, "0");
+  return Math.round(Math.min(255, Math.max(0, value)))
+    .toString(16)
+    .padStart(2, "0");
 }
 
 function rgbaToHex(red: number, green: number, blue: number, alpha = 1): string {

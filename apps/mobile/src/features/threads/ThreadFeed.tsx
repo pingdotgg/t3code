@@ -1128,15 +1128,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     [nativeReviewDiffData.rows],
   );
   const nativeReviewDiffTheme = useMemo(
-    () => createNativeReviewDiffTheme(appearanceScheme, nativeSurfaceColors ?? undefined),
-    [
-      appearanceScheme,
-      nativeSurfaceColors?.accent,
-      nativeSurfaceColors?.border,
-      nativeSurfaceColors?.foreground,
-      nativeSurfaceColors?.mutedForeground,
-      nativeSurfaceColors?.sheetBackground,
-    ],
+    () => createNativeReviewDiffTheme(appearanceScheme, nativeSurfaceColors),
+    [appearanceScheme, nativeSurfaceColors],
   );
   const nativeRowsJson = useMemo(() => JSON.stringify(compactNativeRows), [compactNativeRows]);
   const nativeThemeJson = useMemo(

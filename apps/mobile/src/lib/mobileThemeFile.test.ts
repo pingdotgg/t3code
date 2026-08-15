@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   addImportedMobileTheme,
-  importedMobileThemesKey,
   MAX_IMPORTED_MOBILE_THEMES,
   MAX_IMPORTED_MOBILE_THEMES_BYTES,
   MAX_MOBILE_THEME_FILE_BYTES,
@@ -258,13 +257,6 @@ describe("addImportedMobileTheme", () => {
 });
 
 describe("sanitizeImportedMobileThemes", () => {
-  it("keeps the theme-variable key stable when unrelated preferences reload themes", () => {
-    const storedThemes = [themeFile()];
-    const reloadedThemes = JSON.parse(JSON.stringify(storedThemes)) as unknown;
-
-    expect(importedMobileThemesKey(reloadedThemes)).toBe(importedMobileThemesKey(storedThemes));
-  });
-
   it("keeps the first 20 themes at the installed-theme boundary", () => {
     const storedThemes = Array.from({ length: MAX_IMPORTED_MOBILE_THEMES + 1 }, (_, index) =>
       themeFile(`theme-${index}`),

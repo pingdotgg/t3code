@@ -469,15 +469,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
 
   const terminalTheme = useMemo(
-    () => getPierreTerminalTheme(appearanceScheme, nativeSurfaceColors ?? undefined),
-    [
-      appearanceScheme,
-      nativeSurfaceColors?.border,
-      nativeSurfaceColors?.mutedForeground,
-      nativeSurfaceColors?.terminalBackground,
-      nativeSurfaceColors?.terminalCursor,
-      nativeSurfaceColors?.terminalForeground,
-    ],
+    () => getPierreTerminalTheme(appearanceScheme, nativeSurfaceColors),
+    [appearanceScheme, nativeSurfaceColors],
   );
   const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =

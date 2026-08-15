@@ -16,6 +16,7 @@ import {
   isMobileThemeId,
   type MobileAppearanceMode,
 } from "../lib/mobileTheme";
+import type { ImportedMobileTheme } from "../lib/mobileThemeFile";
 import { environmentShell } from "./shell";
 import { environmentPresentations } from "./presentation";
 import {
@@ -89,6 +90,16 @@ export function usePlanModePreferenceReconciliationReady(): boolean {
     currentKey: reconciliationKey,
     appliedKey,
   });
+}
+
+function resolveLocalThemeId(
+  themeId: string,
+  importedThemes: ReadonlyArray<ImportedMobileTheme>,
+  writtenThemeId?: string,
+) {
+  return themeId === writtenThemeId || isMobileThemeId(themeId, importedThemes)
+    ? themeId
+    : DEFAULT_MOBILE_THEME_ID;
 }
 
 export function useSyncedClientPreferences(): void {
@@ -172,8 +183,7 @@ export function useSyncedClientPreferences(): void {
       return;
     }
     const importedThemes = preferencesResult.value.importedThemes ?? [];
-    const normalizeThemeId = (themeId: string) =>
-      isMobileThemeId(themeId, importedThemes) ? themeId : DEFAULT_MOBILE_THEME_ID;
+    const normalizeThemeId = (themeId: string) => resolveLocalThemeId(themeId, importedThemes);
     const reconciliation = reconcileSyncedClientPreferences({
       local: {
         values: {
@@ -270,9 +280,7 @@ function useUpdateSyncedClientPreference(field: SyncedClientPreferenceField) {
             target,
             result,
             normalizeThemeId: (themeId) =>
-              themeId === patch.themeId || isMobileThemeId(themeId, importedThemes)
-                ? themeId
-                : DEFAULT_MOBILE_THEME_ID,
+              resolveLocalThemeId(themeId, importedThemes, patch.themeId),
           });
           if (localPatch !== null) savePreferences(localPatch);
         }),

@@ -118,65 +118,57 @@ function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment
 
 export function createNativeReviewDiffTheme(
   scheme: TerminalAppearanceScheme,
-  overrides?: NativeReviewDiffThemeOverrides,
+  overrides: NativeReviewDiffThemeOverrides | null = null,
 ): NativeReviewDiffTheme {
   const terminalTheme = getPierreTerminalTheme(scheme);
   const [, terminalRed, , , terminalBlue] = terminalTheme.palette;
-
-  if (scheme === "dark") {
-    const theme = {
-      // Match the app surface (--color-sheet) so code views blend with the rest of
-      // the app instead of using a distinct code-editor background.
-      background: "#0e0e0e",
-      text: terminalTheme.foreground,
-      mutedText: terminalTheme.mutedForeground,
-      headerBackground: "#0e0e0e",
-      border: terminalTheme.border,
-      hunkBackground: "#071f28",
-      hunkText: terminalBlue ?? "#009fff",
-      addBackground: "#0d2f28",
-      deleteBackground: "#391415",
-      addBar: "#00cab1",
-      deleteBar: terminalRed ?? "#ff2e3f",
-      addText: "#5ECC71",
-      deleteText: "#FF6762",
-    };
-    return overrides ? applyNativeReviewDiffThemeOverrides(theme, overrides) : theme;
-  }
-
-  const theme = {
-    // Match the app surface (--color-sheet) so code views blend with the rest of the
-    // app instead of using a distinct code-editor background.
-    background: "#f2f2f7",
-    text: "#070707",
-    mutedText: terminalTheme.mutedForeground,
-    headerBackground: "#f2f2f7",
-    border: terminalTheme.border,
-    hunkBackground: "#e0f2ff",
-    hunkText: terminalBlue ?? "#009fff",
-    addBackground: "#e5f8f5",
-    deleteBackground: "#ffe6e7",
-    addBar: "#00cab1",
-    deleteBar: terminalRed ?? "#ff2e3f",
-    addText: "#199F43",
-    deleteText: "#D52C36",
-  };
-  return overrides ? applyNativeReviewDiffThemeOverrides(theme, overrides) : theme;
-}
-
-function applyNativeReviewDiffThemeOverrides(
-  theme: NativeReviewDiffTheme,
-  overrides: NativeReviewDiffThemeOverrides,
-): NativeReviewDiffTheme {
-  return {
-    ...theme,
-    background: overrides.sheetBackground,
-    text: overrides.foreground,
-    mutedText: overrides.mutedForeground,
-    headerBackground: overrides.sheetBackground,
-    border: overrides.border,
-    hunkText: overrides.accent,
-  };
+  const theme: NativeReviewDiffTheme =
+    scheme === "dark"
+      ? {
+          // Match the app surface (--color-sheet) so code views blend with the rest of
+          // the app instead of using a distinct code-editor background.
+          background: "#0e0e0e",
+          text: terminalTheme.foreground,
+          mutedText: terminalTheme.mutedForeground,
+          headerBackground: "#0e0e0e",
+          border: terminalTheme.border,
+          hunkBackground: "#071f28",
+          hunkText: terminalBlue ?? "#009fff",
+          addBackground: "#0d2f28",
+          deleteBackground: "#391415",
+          addBar: "#00cab1",
+          deleteBar: terminalRed ?? "#ff2e3f",
+          addText: "#5ECC71",
+          deleteText: "#FF6762",
+        }
+      : {
+          // Match the app surface (--color-sheet) so code views blend with the rest of the
+          // app instead of using a distinct code-editor background.
+          background: "#f2f2f7",
+          text: "#070707",
+          mutedText: terminalTheme.mutedForeground,
+          headerBackground: "#f2f2f7",
+          border: terminalTheme.border,
+          hunkBackground: "#e0f2ff",
+          hunkText: terminalBlue ?? "#009fff",
+          addBackground: "#e5f8f5",
+          deleteBackground: "#ffe6e7",
+          addBar: "#00cab1",
+          deleteBar: terminalRed ?? "#ff2e3f",
+          addText: "#199F43",
+          deleteText: "#D52C36",
+        };
+  return overrides
+    ? {
+        ...theme,
+        background: overrides.sheetBackground,
+        text: overrides.foreground,
+        mutedText: overrides.mutedForeground,
+        headerBackground: overrides.sheetBackground,
+        border: overrides.border,
+        hunkText: overrides.accent,
+      }
+    : theme;
 }
 
 function mapChangeType(file: ReviewRenderableFile): NativeReviewDiffRow["changeType"] {

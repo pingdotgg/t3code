@@ -4,26 +4,13 @@ import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, View } from "r
 import { AppText as Text, AppTextInput as TextInput } from "../../../../components/AppText";
 import { SymbolView } from "../../../../components/AppSymbol";
 import {
-  MOBILE_APPEARANCE_MODES,
+  MOBILE_APPEARANCE_OPTIONS,
   resolveMobileThemePickerOptions,
-  type MobileAppearanceMode,
   type MobileThemePickerOption,
 } from "../../../../lib/mobileTheme";
 import { useThemeColor } from "../../../../lib/useThemeColor";
 import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-
-const APPEARANCE_MODE_LABELS: Readonly<Record<MobileAppearanceMode, string>> = {
-  system: "System",
-  light: "Light",
-  dark: "Dark",
-};
-
-function chunk<T>(items: readonly T[], size: number): ReadonlyArray<ReadonlyArray<T>> {
-  return Array.from({ length: Math.ceil(items.length / size) }, (_, index) =>
-    items.slice(index * size, (index + 1) * size),
-  );
-}
 
 function ThemePreview(props: { readonly theme: MobileThemePickerOption }) {
   return (
@@ -153,10 +140,12 @@ export function ColorSchemeAppearanceSection() {
     setThemeId,
     themeId,
   } = useAppearancePreferences();
-  const themeRows = useMemo(
-    () => chunk(resolveMobileThemePickerOptions(importedThemes), 2),
-    [importedThemes],
-  );
+  const themeRows = useMemo(() => {
+    const themes = resolveMobileThemePickerOptions(importedThemes);
+    return Array.from({ length: Math.ceil(themes.length / 2) }, (_, index) =>
+      themes.slice(index * 2, index * 2 + 2),
+    );
+  }, [importedThemes]);
 
   const confirmRemoveTheme = (theme: MobileThemePickerOption) => {
     Alert.alert("Remove theme?", `Remove ${theme.label} from this device?`, [
@@ -174,15 +163,15 @@ export function ColorSchemeAppearanceSection() {
       <View className="gap-3 p-4">
         <Text className="text-sm font-t3-medium text-foreground-muted">Appearance</Text>
         <View className="flex-row gap-2">
-          {MOBILE_APPEARANCE_MODES.map((mode) => {
-            const selected = appearanceMode === mode;
+          {MOBILE_APPEARANCE_OPTIONS.map((option) => {
+            const selected = appearanceMode === option.id;
             return (
               <Pressable
-                key={mode}
+                key={option.id}
                 accessibilityRole="radio"
                 accessibilityState={{ checked: selected, disabled: !isReady }}
                 disabled={!isReady}
-                onPress={() => setAppearanceMode(mode)}
+                onPress={() => setAppearanceMode(option.id)}
                 className={
                   selected
                     ? "min-h-11 flex-1 items-center justify-center rounded-xl bg-primary px-2"
@@ -196,7 +185,7 @@ export function ColorSchemeAppearanceSection() {
                       : "text-sm font-t3-medium text-foreground"
                   }
                 >
-                  {APPEARANCE_MODE_LABELS[mode]}
+                  {option.label}
                 </Text>
               </Pressable>
             );

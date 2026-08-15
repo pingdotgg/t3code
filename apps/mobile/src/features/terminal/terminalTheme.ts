@@ -75,7 +75,7 @@ const PIERRE_DARK_THEME: TerminalTheme = {
 
 export function getPierreTerminalTheme(
   scheme: TerminalAppearanceScheme,
-  overrides?: TerminalThemeOverrides,
+  overrides: TerminalThemeOverrides | null = null,
 ): TerminalTheme {
   const base = scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
   if (!overrides) return base;

@@ -173,15 +173,8 @@ function NativeSourceFileSurface(
     [targetIndex],
   );
   const themeJson = useMemo(
-    () => JSON.stringify(createNativeSourceFileTheme(theme, nativeSurfaceColors ?? undefined)),
-    [
-      nativeSurfaceColors?.accent,
-      nativeSurfaceColors?.border,
-      nativeSurfaceColors?.foreground,
-      nativeSurfaceColors?.mutedForeground,
-      nativeSurfaceColors?.sheetBackground,
-      theme,
-    ],
+    () => JSON.stringify(createNativeSourceFileTheme(theme, nativeSurfaceColors)),
+    [nativeSurfaceColors, theme],
   );
   const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
   const contentWidth = codeWordBreak
