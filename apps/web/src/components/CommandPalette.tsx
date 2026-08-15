@@ -869,6 +869,7 @@ function OpenCommandPaletteDialog(props: {
           environmentId: browseEnvironmentId,
           input: {
             partialPath: browsePath.directoryPath,
+            sortOrder: clientSettings.addProjectFolderSortOrder,
             ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
           },
         })
@@ -902,11 +903,18 @@ function OpenCommandPaletteDialog(props: {
         environmentId,
         input: {
           partialPath,
+          sortOrder: clientSettings.addProjectFolderSortOrder,
           ...(cwd ? { cwd } : {}),
         },
       });
     },
-    [browseEnvironmentId, currentProjectCwdForBrowse, environments, loadBrowsePath],
+    [
+      browseEnvironmentId,
+      clientSettings.addProjectFolderSortOrder,
+      currentProjectCwdForBrowse,
+      environments,
+      loadBrowsePath,
+    ],
   );
 
   useEffect(

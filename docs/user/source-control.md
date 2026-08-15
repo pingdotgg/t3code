@@ -21,6 +21,9 @@ T3 Code works with the platforms your team already uses:
 - Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
 - Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start coding
 
+When browsing local folders, use **Settings → General → Folder sort order** to list folders by
+name or with the most recently modified folders first.
+
 **Publish local projects to the cloud**
 
 - Have a local Git repository without a remote?

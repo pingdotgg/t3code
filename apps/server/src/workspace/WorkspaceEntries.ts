@@ -230,9 +230,30 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const entriesByName = () =>
+        entries.toSorted((left, right) => left.name.localeCompare(right.name));
+      if (input.sortOrder !== "modified") {
+        return { parentPath, entries: entriesByName() };
+      }
+
+      const entriesWithModifiedTime = yield* Effect.forEach(
+        entries,
+        (entry) =>
+          Effect.tryPromise(() => NodeFSP.stat(entry.fullPath)).pipe(
+            Effect.map((stats) => ({ entry, modifiedAt: stats.mtimeMs })),
+            Effect.orElseSucceed(() => ({ entry, modifiedAt: Number.NEGATIVE_INFINITY })),
+          ),
+        { concurrency: 16 },
+      );
+
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entriesWithModifiedTime
+          .toSorted(
+            (left, right) =>
+              right.modifiedAt - left.modifiedAt || left.entry.name.localeCompare(right.entry.name),
+          )
+          .map(({ entry }) => entry),
       };
     },
   );

@@ -520,6 +520,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
+      ...(settings.addProjectFolderSortOrder !== DEFAULT_UNIFIED_SETTINGS.addProjectFolderSortOrder
+        ? ["Folder sort order"]
+        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -534,6 +537,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.addProjectFolderSortOrder,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
@@ -642,6 +646,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      addProjectFolderSortOrder: DEFAULT_UNIFIED_SETTINGS.addProjectFolderSortOrder,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
@@ -2179,6 +2184,48 @@ export function GeneralSettingsPanel() {
               spellCheck={false}
               aria-label="Add project base directory"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("folder-sort-order")}
+          description="Choose how folders are ordered in the Add Project browser."
+          resetAction={
+            settings.addProjectFolderSortOrder !==
+            DEFAULT_UNIFIED_SETTINGS.addProjectFolderSortOrder ? (
+              <SettingResetButton
+                label="folder sort order"
+                onClick={() =>
+                  updateSettings({
+                    addProjectFolderSortOrder: DEFAULT_UNIFIED_SETTINGS.addProjectFolderSortOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.addProjectFolderSortOrder}
+              onValueChange={(value) => {
+                if (value === "name" || value === "modified") {
+                  updateSettings({ addProjectFolderSortOrder: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Folder sort order">
+                <SelectValue>
+                  {settings.addProjectFolderSortOrder === "modified" ? "Last modified" : "Name"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="name">
+                  Name
+                </SelectItem>
+                <SelectItem hideIndicator value="modified">
+                  Last modified
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 
