@@ -117,4 +117,151 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+
+  it.effect("includes inspect skills and slash commands when ACP discovery fails", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-inspect-" });
+          const workspace = path.join(dir, "repo");
+          yield* fs.makeDirectory(workspace, { recursive: true });
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            path.join(dir, "inspect.json"),
+            JSON.stringify({
+              skills: [
+                {
+                  name: "create-skill",
+                  description: "Create a new Grok skill",
+                  source: { type: "bundled", path: "/bundled/create-skill/SKILL.md" },
+                  userInvocable: true,
+                },
+                {
+                  name: "docx",
+                  description: "Word documents",
+                  source: { type: "bundled", path: "/bundled/docx/SKILL.md" },
+                  userInvocable: false,
+                },
+              ],
+            }),
+          );
+          yield* fs.writeFileString(
+            grokPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "inspect" ]; then',
+              '  cat "$(dirname "$0")/inspect.json"',
+              "  exit 0",
+              "fi",
+              'printf "grok-cli 0.0.99\\n"',
+              "exit 0",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.env,
+            workspace,
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.skills.map((skill) => skill.name).sort()).toEqual(["create-skill", "docx"]);
+      expect(snapshot.skills.find((skill) => skill.name === "create-skill")?.scope).toBe("bundled");
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["create-skill"]);
+    }),
+  );
+
+  it.effect("falls back to filesystem skills when inspect JSON has no skills array", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-noskills-" });
+          const workspace = path.join(dir, "repo");
+          yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+          const skillDir = path.join(workspace, ".grok", "skills", "fs-only");
+          yield* fs.makeDirectory(skillDir, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(skillDir, "SKILL.md"),
+            "---\nname: fs-only\ndescription: Filesystem project skill.\n---\n",
+          );
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            grokPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "inspect" ]; then',
+              "  printf '%s\\n' '{\"grokVersion\":\"1.0.4\"}'",
+              "  exit 0",
+              "fi",
+              'printf "grok-cli 0.0.99\\n"',
+              "exit 0",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.env,
+            workspace,
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.skills.some((skill) => skill.name === "fs-only")).toBe(true);
+      expect(snapshot.slashCommands).toEqual([]);
+    }),
+  );
+
+  it.effect("does not spawn inspect when Grok is disabled", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-disabled-" });
+          const workspace = path.join(dir, "repo");
+          yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+          const marker = path.join(dir, "inspect-ran");
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            grokPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "inspect" ]; then',
+              `  printf ran > "${marker}"`,
+              "  exit 0",
+              "fi",
+              'printf "grok-cli 0.0.99\\n"',
+              "exit 0",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          const result = yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: false, binaryPath: grokPath }),
+            process.env,
+            workspace,
+          );
+          const inspectRan = yield* fs.exists(marker);
+          expect(inspectRan).toBe(false);
+          return result;
+        }),
+      );
+
+      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.slashCommands).toEqual([]);
+    }),
+  );
 });

@@ -310,11 +310,35 @@ const program = Effect.gen(function* () {
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      yield* agent.client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [
+            {
+              name: "compact",
+              description: "Compress conversation history to save context window",
+              input: { hint: "optional context about what to preserve" },
+            },
+            {
+              name: "create-skill",
+              description: "Create a new Grok skill",
+              _meta: {
+                scope: "bundled",
+                path: "/mock/bundled/skills/create-skill/SKILL.md",
+                bareName: "create-skill",
+              },
+            },
+          ],
+        },
+      });
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 

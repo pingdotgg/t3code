@@ -116,6 +116,34 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("captures available_commands_update advertised during session/new", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+      const commands = yield* runtime.getAvailableCommands;
+      expect(commands.map((command) => command.name)).toEqual(["compact", "create-skill"]);
+      expect(commands[0]?.input?.hint).toBe("optional context about what to preserve");
+      expect(commands[1]?._meta).toMatchObject({
+        scope: "bundled",
+        bareName: "create-skill",
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("keeps assistant item IDs unique when a provider session restarts", () => {
     const collectFirstAssistantItemId = Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

@@ -4,7 +4,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverGrokSkills } from "./GrokSkills.ts";
+import {
+  discoverGrokSkills,
+  parseGrokAvailableCommands,
+  parseGrokInspectReport,
+  queryGrokInspectCatalog,
+  resolveGrokPickerCatalog,
+} from "./GrokSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -16,6 +22,203 @@ const writeSkill = Effect.fn(function* (
   const skillDir = path.join(skillsDir, directoryName);
   yield* fs.makeDirectory(skillDir, { recursive: true });
   yield* fs.writeFileString(path.join(skillDir, "SKILL.md"), contents);
+});
+
+it("parseGrokInspectReport includes bundled skills and invocable slash names", () => {
+  const catalog = parseGrokInspectReport(
+    {
+      skills: [
+        {
+          name: "create-skill",
+          description: "Create a skill.",
+          source: { type: "bundled", path: "/bundled/create-skill/SKILL.md" },
+          userInvocable: true,
+        },
+        {
+          name: "imagine",
+          description: "Generate an image.",
+          source: { type: "bundled", path: "/bundled/imagine/SKILL.md" },
+          userInvocable: true,
+          invocableAs: "bundled:imagine",
+        },
+        {
+          name: "local-review",
+          description: "Project review skill.",
+          source: { type: "project", path: "/repo/.grok/skills/local-review/SKILL.md" },
+          userInvocable: true,
+        },
+        {
+          name: "docx",
+          description: "Word docs.",
+          source: { type: "bundled", path: "/bundled/docx/SKILL.md" },
+          userInvocable: false,
+        },
+      ],
+    },
+    "/repo",
+  );
+
+  assert.ok(
+    catalog.skills.some((skill) => skill.name === "create-skill" && skill.scope === "bundled"),
+  );
+  assert.equal(catalog.skills.find((skill) => skill.name === "create-skill")?.sourceCwd, undefined);
+  assert.equal(catalog.skills.find((skill) => skill.name === "local-review")?.sourceCwd, "/repo");
+  assert.ok(catalog.skills.some((skill) => skill.name === "docx"));
+  assert.ok(catalog.slashCommands.some((command) => command.name === "create-skill"));
+  assert.ok(catalog.slashCommands.some((command) => command.name === "bundled:imagine"));
+  assert.ok(!catalog.slashCommands.some((command) => command.name === "docx"));
+});
+
+it("parseGrokInspectReport ignores extra inspect report fields", () => {
+  const catalog = parseGrokInspectReport({
+    grokVersion: "1.0.4",
+    cwd: "/repo",
+    skills: [
+      {
+        name: "review",
+        description: "Review changes.",
+        source: { type: "bundled", path: "/bundled/review/SKILL.md", extra: true },
+        userInvocable: true,
+        collidesWith: "review",
+      },
+    ],
+  });
+  assert.equal(catalog.skills[0]?.name, "review");
+  assert.equal(catalog.slashCommands[0]?.name, "review");
+});
+
+it("parseGrokAvailableCommands splits harness features from skill commands", () => {
+  const catalog = parseGrokAvailableCommands(
+    [
+      {
+        name: "compact",
+        description: "Compress conversation history",
+        input: { hint: "optional context" },
+      },
+      {
+        name: "create-skill",
+        description: "Create a skill",
+        _meta: {
+          scope: "bundled",
+          path: "/bundled/create-skill/SKILL.md",
+          bareName: "create-skill",
+        },
+      },
+      {
+        name: "local:review",
+        description: "Review the project",
+        _meta: {
+          scope: "local",
+          path: "/repo/.grok/skills/review/SKILL.md",
+          bareName: "review",
+        },
+      },
+    ],
+    "/repo",
+  );
+
+  assert.deepEqual(
+    catalog.slashCommands.map((command) => command.name),
+    ["compact", "create-skill", "local:review"],
+  );
+  assert.equal(catalog.slashCommands[0]?.input?.hint, "optional context");
+  assert.equal(catalog.skills.find((skill) => skill.name === "create-skill")?.scope, "bundled");
+  assert.equal(catalog.skills.find((skill) => skill.name === "review")?.sourceCwd, "/repo");
+});
+
+it("parseGrokInspectReport treats a JSON object without skills as empty", () => {
+  const catalog = parseGrokInspectReport({ grokVersion: "1.0.4", ok: true });
+  assert.deepEqual(catalog, { skills: [], slashCommands: [] });
+});
+
+it("resolveGrokPickerCatalog uses inspect as the skill authority", () => {
+  const catalog = resolveGrokPickerCatalog({
+    filesystemSkills: [
+      {
+        name: "fs-only",
+        path: "/fs/fs-only/SKILL.md",
+        enabled: true,
+        scope: "project",
+        sourceCwd: "/repo-b",
+      },
+    ],
+    inspectCatalog: {
+      skills: [
+        {
+          name: "create-skill",
+          path: "/bundled/create-skill/SKILL.md",
+          enabled: true,
+          scope: "bundled",
+        },
+      ],
+      slashCommands: [{ name: "create-skill", description: "Create a skill" }],
+    },
+    acpCatalog: {
+      skills: [
+        {
+          name: "create-skill",
+          path: "/bundled/create-skill/SKILL.md",
+          enabled: true,
+          scope: "bundled",
+        },
+      ],
+      slashCommands: [
+        { name: "compact", description: "Compress history" },
+        { name: "create-skill", description: "Create a skill" },
+      ],
+    },
+  });
+  assert.deepEqual(
+    catalog.skills.map((skill) => skill.name),
+    ["create-skill"],
+  );
+  assert.deepEqual(
+    catalog.slashCommands.map((command) => command.name),
+    ["compact", "create-skill"],
+  );
+});
+
+it("resolveGrokPickerCatalog unions filesystem and ACP skills when inspect is missing", () => {
+  const catalog = resolveGrokPickerCatalog({
+    filesystemSkills: [
+      {
+        name: "fs-only",
+        path: "/fs/fs-only/SKILL.md",
+        enabled: true,
+        scope: "project",
+        sourceCwd: "/repo-b",
+      },
+      {
+        name: "shared",
+        path: "/fs/shared/SKILL.md",
+        enabled: true,
+        scope: "user",
+      },
+    ],
+    acpCatalog: {
+      skills: [
+        {
+          name: "create-skill",
+          path: "/bundled/create-skill/SKILL.md",
+          enabled: true,
+          scope: "bundled",
+        },
+        {
+          name: "shared",
+          path: "/bundled/shared/SKILL.md",
+          enabled: true,
+          scope: "bundled",
+        },
+      ],
+      slashCommands: [{ name: "compact", description: "Compress history" }],
+    },
+  });
+  assert.deepEqual(
+    catalog.skills.map((skill) => skill.name),
+    ["create-skill", "fs-only", "shared"],
+  );
+  assert.equal(catalog.skills.find((skill) => skill.name === "shared")?.scope, "bundled");
+  assert.equal(catalog.slashCommands[0]?.name, "compact");
 });
 
 it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
@@ -122,5 +325,177 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         "From native grok.",
       );
     }),
+  );
+});
+
+it.layer(NodeServices.layer)("queryGrokInspectCatalog", (it) => {
+  it.effect("parses inspect --json from the harness binary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-inspect-" });
+        const workspace = path.join(dir, "repo");
+        yield* fs.makeDirectory(workspace, { recursive: true });
+        const grokPath = path.join(dir, "grok");
+        yield* fs.writeFileString(
+          path.join(dir, "inspect.json"),
+          JSON.stringify({
+            skills: [
+              {
+                name: "create-skill",
+                description: "Create a skill.",
+                source: { type: "bundled", path: "/bundled/create-skill/SKILL.md" },
+                userInvocable: true,
+              },
+              {
+                name: "project-review",
+                description: "Review this repo.",
+                source: {
+                  type: "project",
+                  path: `${workspace}/.grok/skills/project-review/SKILL.md`,
+                },
+                userInvocable: true,
+              },
+            ],
+          }),
+        );
+        yield* fs.writeFileString(
+          grokPath,
+          [
+            "#!/bin/sh",
+            'if [ "$1" = "inspect" ]; then',
+            '  cat "$(dirname "$0")/inspect.json"',
+            "  exit 0",
+            "fi",
+            "exit 1",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(grokPath, 0o755);
+
+        const catalog = yield* queryGrokInspectCatalog({
+          binaryPath: grokPath,
+          cwd: workspace,
+        });
+        assert.ok(catalog);
+        assert.ok(catalog?.skills.some((skill) => skill.name === "create-skill"));
+        assert.equal(
+          catalog?.skills.find((skill) => skill.name === "project-review")?.sourceCwd,
+          workspace,
+        );
+        assert.ok(catalog?.slashCommands.some((command) => command.name === "create-skill"));
+      }),
+    ),
+  );
+
+  it.effect("returns undefined when inspect output is not a report", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-inspect-bad-" });
+        const grokPath = path.join(dir, "grok");
+        yield* fs.writeFileString(
+          grokPath,
+          ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+        );
+        yield* fs.chmod(grokPath, 0o755);
+
+        const catalog = yield* queryGrokInspectCatalog({
+          binaryPath: grokPath,
+          cwd: dir,
+        });
+        assert.equal(catalog, undefined);
+      }),
+    ),
+  );
+
+  it.effect("returns undefined when inspect JSON has no skills array", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-inspect-noskills-" });
+        const grokPath = path.join(dir, "grok");
+        yield* fs.writeFileString(
+          grokPath,
+          [
+            "#!/bin/sh",
+            'printf \'%s\\n\' \'{"grokVersion":"1.0.4","ok":true}\'',
+            "exit 0",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(grokPath, 0o755);
+
+        const catalog = yield* queryGrokInspectCatalog({
+          binaryPath: grokPath,
+          cwd: dir,
+        });
+        assert.equal(catalog, undefined);
+      }),
+    ),
+  );
+
+  it.effect("keeps filesystem project skills for a cwd whose inspect report is invalid", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-inspect-partial-" });
+        const good = path.join(dir, "good");
+        const bad = path.join(dir, "bad");
+        yield* fs.makeDirectory(path.join(good, ".git"), { recursive: true });
+        yield* fs.makeDirectory(path.join(bad, ".git"), { recursive: true });
+        yield* writeSkill(
+          path.join(bad, ".grok", "skills"),
+          "bad-fs",
+          "---\nname: bad-fs\ndescription: From the failed inspect cwd.\n---\n",
+        );
+        yield* fs.writeFileString(
+          path.join(dir, "inspect.json"),
+          JSON.stringify({
+            skills: [
+              {
+                name: "good-inspect",
+                description: "From the successful inspect cwd.",
+                source: { type: "project", path: `${good}/.grok/skills/good-inspect/SKILL.md` },
+                userInvocable: true,
+              },
+            ],
+          }),
+        );
+        const grokPath = path.join(dir, "grok");
+        yield* fs.writeFileString(
+          grokPath,
+          [
+            "#!/bin/sh",
+            'if [ "$1" = "inspect" ]; then',
+            '  case "$PWD" in',
+            "    */good)",
+            '      cat "$(dirname "$0")/inspect.json"',
+            "      exit 0",
+            "      ;;",
+            "  esac",
+            "  printf '%s\\n' '{\"ok\":true}'",
+            "  exit 0",
+            "fi",
+            "exit 1",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(grokPath, 0o755);
+
+        const catalog = yield* queryGrokInspectCatalog({
+          binaryPath: grokPath,
+          cwd: [good, bad],
+        });
+        assert.ok(catalog);
+        assert.ok(catalog?.skills.some((skill) => skill.name === "good-inspect"));
+        assert.ok(catalog?.skills.some((skill) => skill.name === "bad-fs"));
+        assert.equal(catalog?.skills.find((skill) => skill.name === "bad-fs")?.sourceCwd, bad);
+      }),
+    ),
   );
 });

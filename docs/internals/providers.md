@@ -47,6 +47,14 @@ project skills are not limited to the server process cwd. Each project skill is 
 Stamps are absolute and passed through `normalizeProviderSkillWorkspacePath` so they match client
 path forms (trailing separators, `.` / `..`, mixed slashes).
 
+Grok prefers the harness over a filesystem reimplementation. `grok inspect --json` is the
+inventory Grok itself would load (bundled, user, project, plugin) and is the `$` picker
+authority when the report includes a `skills` array. ACP `available_commands_update` on
+session start is the live `/` menu: built-in features such as `compact` and `deep-research`,
+plus user-invocable skills. Filesystem scanning of `.grok/skills`, `.claude/skills`, and
+`.agents/skills` fills in when inspect is missing, including project skills from a workspace
+whose inspect probe failed.
+
 Clients must not show the raw union in the `$` picker. They filter with
 `filterProviderSkillsForWorkspace` (`@t3tools/shared/providerSkills`) using the active chat's
 `worktreePath ?? project.workspaceRoot`, and may pass `projectRoot` so worktree chats still see
