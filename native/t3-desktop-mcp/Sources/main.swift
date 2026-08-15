@@ -429,8 +429,19 @@ func windowTarget(under point: CGPoint) -> WindowTarget? {
         else { continue }
         let pid = pid_t(pidValue.int32Value)
         let number = numberValue.uint32Value
-        // Skip the agent's own pointer, which sits above everything by design.
+        // Skip this process and the separate T3AgentCursor overlay, which sits
+        // above the click point by design and would steal hit-testing.
         if pid == getpid() { continue }
+        if let owner = window[kCGWindowOwnerName as String] as? String,
+           owner == "T3AgentCursor" || owner.hasPrefix("T3AgentCursor")
+        {
+            continue
+        }
+        if let app = NSRunningApplication(processIdentifier: pid),
+           app.bundleIdentifier == "com.t3tools.t3code.agent-cursor"
+        {
+            continue
+        }
         if CGRect(x: x, y: y, width: width, height: height).contains(point) {
             return WindowTarget(
                 pid: pid,
@@ -1157,8 +1168,17 @@ func toolDrag(_ args: [String: Any]) -> String {
         end = resolved
     }
     let element = (args["from_element_id"] as? String).flatMap { Registry.get($0) }
-    let target = element.flatMap { windowTarget(for: $0) }
-        ?? resolveTargetPid(args).flatMap { windowTarget(forPid: $0) }
+    let underStart = windowTarget(under: start)
+    let target: WindowTarget?
+    if let element {
+        target = windowTarget(for: element)
+    } else if args["app"] != nil, let appPid = resolveTargetPid(args) {
+        // Explicit app constrains the under-point window; do not fall back to
+        // Registry.targetPid from an earlier get_app_state.
+        target = underStart.flatMap { $0.pid == appPid ? $0 : nil } ?? windowTarget(forPid: appPid)
+    } else {
+        target = underStart
+    }
     if let target, !target.frame.contains(end) {
         if let dest = windowTarget(under: end), dest.wid != target.wid || dest.pid != target.pid {
             return "error: cross-window drag is not supported — keep the drag inside one window"
