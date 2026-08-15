@@ -174,6 +174,9 @@ impl BrowserBridge {
                 .replies
                 .recv_timeout(remaining)
                 .map_err(|_| format!("browser_{command} timed out waiting for the extension"))?;
+            if reply.get("disconnected").and_then(Value::as_bool) == Some(true) {
+                return Err("the extension disconnected".to_string());
+            }
             if reply.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
@@ -240,10 +243,17 @@ fn spawn_listener(outgoing: Arc<Mutex<Option<SendHalf>>>, sender: Sender<Value>)
                 }
             }
 
-            // The host went away; drop the writer so `call` reports honestly.
+            // The host went away; drop the writer so `call` reports honestly,
+            // and wake any in-flight `dispatch` wait instead of letting it sit
+            // until CALL_TIMEOUT.
             if let Ok(mut guard) = outgoing.lock() {
                 *guard = None;
             }
+            let _ = sender.send(json!({
+                "disconnected": true,
+                "ok": false,
+                "error": "the extension disconnected",
+            }));
         }
     });
 }

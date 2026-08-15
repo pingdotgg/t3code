@@ -306,6 +306,18 @@ impl LinuxDesktop {
         pid != 0 && largest_window_id_for_pid(pid).is_ok()
     }
 
+    /// True when the frontmost app owns an X11/XWayland window, so XTEST can
+    /// reach it even on a Wayland session.
+    fn focused_app_is_x11_backed(&self) -> bool {
+        let Ok(apps) = apps::list_apps() else {
+            return false;
+        };
+        let Some(focused) = apps.into_iter().find(|app| app.frontmost) else {
+            return false;
+        };
+        focused.pid != 0 && largest_window_id_for_pid(focused.pid).is_ok()
+    }
+
     fn pid_for_bus(&self, bus: &str) -> u32 {
         let Ok(connection) = self.bus() else {
             return 0;
@@ -497,9 +509,12 @@ impl LinuxDesktop {
         max_depth: usize,
         max_elements: usize,
         next_id: &mut u32,
+        visited: &mut usize,
         lines: &mut Vec<String>,
     ) {
-        if depth > max_depth || lines.len() >= max_elements {
+        // Count every node we inspect — unnamed non-interactive parents still
+        // cost D-Bus round-trips and must not bypass `max_elements`.
+        if depth > max_depth || *visited >= max_elements {
             return;
         }
         // Read everything the proxy can tell us, then drop it: it borrows
@@ -517,6 +532,7 @@ impl LinuxDesktop {
         }) else {
             return;
         };
+        *visited += 1;
 
         let interactive = matches!(
             role,
@@ -555,7 +571,7 @@ impl LinuxDesktop {
         }
 
         for child in children {
-            if lines.len() >= max_elements {
+            if *visited >= max_elements {
                 lines.push(format!(
                     "{}… truncated at {max_elements} elements — raise max_elements or target a child",
                     "  ".repeat(depth + 1)
@@ -566,7 +582,15 @@ impl LinuxDesktop {
                 bus: child.name().map(|name| name.to_string()).unwrap_or_default(),
                 path: child.path().to_string(),
             };
-            self.walk(&reference, depth + 1, max_depth, max_elements, next_id, lines);
+            self.walk(
+                &reference,
+                depth + 1,
+                max_depth,
+                max_elements,
+                next_id,
+                visited,
+                lines,
+            );
         }
     }
 
@@ -861,6 +885,7 @@ impl Desktop for LinuxDesktop {
         let (reference, name, _) = match_application(&applications, app)?;
 
         let mut next_id = 0u32;
+        let mut visited = 0usize;
         let mut lines = vec![format!("{name}")];
         self.walk(
             &reference,
@@ -868,6 +893,7 @@ impl Desktop for LinuxDesktop {
             max_depth,
             max_elements,
             &mut next_id,
+            &mut visited,
             &mut lines,
         );
         if next_id == 0 {
@@ -887,7 +913,29 @@ impl Desktop for LinuxDesktop {
                 "missing required argument 'app' — pass an app name from list_apps",
             ));
         }
-        let applications = self.applications()?;
+        let applications = match self.applications() {
+            Ok(apps) => apps,
+            Err(_) => {
+                // list_apps can still enumerate X11 windows when AT-SPI is down;
+                // activate those via EWMH instead of failing on the missing bus.
+                let pid = apps::resolve_pid(app)?;
+                let name = apps::list_apps()
+                    .ok()
+                    .and_then(|apps| {
+                        apps.into_iter()
+                            .find(|entry| entry.pid == pid)
+                            .map(|entry| entry.name)
+                    })
+                    .unwrap_or_else(|| app.to_string());
+                return match self.raise_x11_window(pid) {
+                    Ok(()) => Ok(format!("activated {name} (pid {pid})")),
+                    Err(error) => Err(DesktopError::new(format!(
+                        "{name} refused focus ({error}) — accessibility is unavailable and no \
+                         X11 window could be raised"
+                    ))),
+                };
+            }
+        };
         let (reference, name, a11y_pid) = match_application(&applications, app)?;
 
         // The application object itself cannot take focus; its first frame can.
@@ -1069,12 +1117,14 @@ impl Desktop for LinuxDesktop {
     }
 
     fn press_key(&mut self, key: &str, modifiers: &[String]) -> Result<String> {
-        // XTEST reaches X11/XWayland clients only. On a Wayland session, refuse
-        // rather than silently dropping keys for native Wayland apps.
-        if crate::capture::on_wayland() {
+        // XTEST reaches X11/XWayland clients only. On Wayland, allow when the
+        // focused app is X11-backed (same heuristic as clicks); refuse native
+        // Wayland clients rather than silently dropping keys.
+        if crate::capture::on_wayland() && !self.focused_app_is_x11_backed() {
             return Err(DesktopError::new(
-                "press_key is not supported on Wayland — synthetic XTEST keys do not reach \
-                 native Wayland apps. Use type_text or set_value on an element, or run under X11",
+                "press_key is not supported for native Wayland apps — synthetic XTEST keys do not \
+                 reach them. Focus an X11/XWayland client, use type_text or set_value on an \
+                 element, or run under X11",
             ));
         }
         let keysym = if let Some(named) = named_keysym(key) {
