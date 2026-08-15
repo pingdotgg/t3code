@@ -67,6 +67,7 @@ import {
   PreviewAutomationEvaluateInput,
   PreviewAutomationHost,
   PreviewAutomationHostFocus,
+  PreviewAutomationCookie,
   PreviewAutomationPressInput,
   PreviewAutomationResponse,
   PreviewAutomationScrollInput,
@@ -975,6 +976,11 @@ export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   colorScheme: DesktopPreviewColorSchemeSchema,
 });
 
+export const DesktopPreviewSetCookieInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  cookie: PreviewAutomationCookie,
+});
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1117,6 +1123,8 @@ export interface DesktopPreviewBridge {
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
   clearCookies: () => Promise<void>;
+  /** Set one cookie in an environment-scoped preview partition. */
+  setCookie: (environmentId: EnvironmentId, cookie: PreviewAutomationCookie) => Promise<void>;
   /** Drop the HTTP cache for the preview partition (all tabs). */
   clearCache: () => Promise<void>;
   /**

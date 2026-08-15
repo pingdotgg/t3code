@@ -1,4 +1,4 @@
-import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { PreviewAutomationOperation, PreviewSessionSnapshot } from "@t3tools/contracts";
 
 interface PreviewAutomationSessionIndex {
   readonly snapshot: PreviewSessionSnapshot | null;
@@ -8,7 +8,9 @@ interface PreviewAutomationSessionIndex {
 export function needsPreviewAutomationSessionSync(
   state: PreviewAutomationSessionIndex,
   requestedTabId: string | undefined,
+  operation: PreviewAutomationOperation,
 ): boolean {
+  if (operation === "setCookie") return false;
   return (
     Object.keys(state.sessions).length === 0 ||
     requestedTabId === undefined ||

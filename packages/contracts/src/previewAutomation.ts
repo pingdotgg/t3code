@@ -43,6 +43,7 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
   "setColorScheme",
+  "setCookie",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
@@ -443,6 +444,62 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
     "Evaluates JavaScript in the page. Prefer snapshot and semantic actions; use evaluate for inspection or unsupported interactions.",
 });
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
+
+export const PreviewAutomationCookie = Schema.Struct({
+  url: BoundedUrl.annotate({
+    description: "HTTP(S) URL whose origin receives the cookie.",
+  }),
+  name: Schema.String.check(Schema.isTrimmed())
+    .check(Schema.isNonEmpty({ description: "Cookie name." }))
+    .check(Schema.isMaxLength(256))
+    .annotateKey({ description: "Cookie name." }),
+  value: Schema.String.check(Schema.isMaxLength(16_384)).annotate({
+    description: "Cookie value, including an empty value when required.",
+  }),
+  domain: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(253)).annotate({
+      description: "Optional cookie domain; omit to scope the cookie to the URL host.",
+    }),
+  ).annotate({
+    description: "Optional cookie domain; omit to scope the cookie to the URL host.",
+  }),
+  path: Schema.optional(
+    Schema.String.check(Schema.isTrimmed())
+      .check(Schema.isNonEmpty())
+      .check(Schema.isMaxLength(1_024))
+      .annotate({ description: "Optional cookie path, for example /." }),
+  ).annotate({ description: "Optional cookie path, for example /." }),
+  secure: Schema.optional(
+    Schema.Boolean.annotate({ description: "Whether to mark the cookie Secure." }),
+  ).annotate({ description: "Whether to mark the cookie Secure." }),
+  httpOnly: Schema.optional(
+    Schema.Boolean.annotate({ description: "Whether to mark the cookie HTTP-only." }),
+  ).annotate({ description: "Whether to mark the cookie HTTP-only." }),
+  sameSite: Schema.optional(
+    Schema.Literals(["unspecified", "no_restriction", "lax", "strict"]).annotate({
+      description: "Optional SameSite policy.",
+    }),
+  ).annotate({ description: "Optional SameSite policy." }),
+  expirationDate: Schema.optional(
+    Schema.Number.check(Schema.isFinite()).check(Schema.isGreaterThan(0)).annotate({
+      description: "Optional expiry as Unix epoch seconds; omit for a session cookie.",
+    }),
+  ).annotate({ description: "Optional expiry as Unix epoch seconds; omit for a session cookie." }),
+});
+export type PreviewAutomationCookie = typeof PreviewAutomationCookie.Type;
+
+export const PreviewAutomationSetCookieInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  ...PreviewAutomationCookie.fields,
+}).annotate({
+  description: "Sets one cookie in this environment's isolated preview browser partition.",
+});
+export type PreviewAutomationSetCookieInput = typeof PreviewAutomationSetCookieInput.Type;
+
+export const PreviewAutomationSetCookiePayload = Schema.Struct({
+  cookie: PreviewAutomationCookie,
+});
+export type PreviewAutomationSetCookiePayload = typeof PreviewAutomationSetCookiePayload.Type;
 
 export const PreviewAutomationWaitForInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,

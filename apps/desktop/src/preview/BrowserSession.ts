@@ -1,4 +1,5 @@
-import type { Session } from "electron";
+import type { PreviewAutomationCookie } from "@t3tools/contracts";
+import type { CookiesSetDetails, Session } from "electron";
 import { session } from "electron";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -78,6 +79,18 @@ export class BrowserSessionCacheClearError extends Schema.TaggedErrorClass<Brows
   }
 }
 
+export class BrowserSessionCookieSetError extends Schema.TaggedErrorClass<BrowserSessionCookieSetError>()(
+  "BrowserSessionCookieSetError",
+  {
+    partition: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to set a cookie in desktop preview partition ${this.partition}.`;
+  }
+}
+
 export const BrowserSessionGetSessionError = Schema.Union([
   BrowserSessionPartitionDerivationError,
   BrowserSessionCreationError,
@@ -90,6 +103,7 @@ export const BrowserSessionError = Schema.Union([
   BrowserSessionCreationError,
   BrowserSessionStorageClearError,
   BrowserSessionCacheClearError,
+  BrowserSessionCookieSetError,
 ]);
 export type BrowserSessionError = typeof BrowserSessionError.Type;
 export const isBrowserSessionError = Schema.is(BrowserSessionError);
@@ -102,6 +116,10 @@ export class BrowserSession extends Context.Service<
     ) => Effect.Effect<string, BrowserSessionPartitionDerivationError>;
     readonly isPartition: (partition: string) => boolean;
     readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionGetSessionError>;
+    readonly setCookie: (
+      scope: string,
+      cookie: PreviewAutomationCookie,
+    ) => Effect.Effect<void, BrowserSessionGetSessionError | BrowserSessionCookieSetError>;
     readonly clearCookies: () => Effect.Effect<void, BrowserSessionStorageClearError>;
     readonly clearCache: () => Effect.Effect<void, BrowserSessionCacheClearError>;
   }
@@ -161,6 +179,25 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getPartition,
     isPartition: (partition) => partition.startsWith(PREVIEW_PARTITION_PREFIX),
     getSession,
+    setCookie: Effect.fn("BrowserSession.setCookie")(function* (scope, cookie) {
+      const partition = yield* getPartition(scope);
+      const browserSession = yield* getSession(scope);
+      const details: CookiesSetDetails = {
+        url: cookie.url,
+        name: cookie.name,
+        value: cookie.value,
+        ...(cookie.domain === undefined ? {} : { domain: cookie.domain }),
+        ...(cookie.path === undefined ? {} : { path: cookie.path }),
+        ...(cookie.secure === undefined ? {} : { secure: cookie.secure }),
+        ...(cookie.httpOnly === undefined ? {} : { httpOnly: cookie.httpOnly }),
+        ...(cookie.sameSite === undefined ? {} : { sameSite: cookie.sameSite }),
+        ...(cookie.expirationDate === undefined ? {} : { expirationDate: cookie.expirationDate }),
+      };
+      yield* Effect.tryPromise({
+        try: () => browserSession.cookies.set(details),
+        catch: (cause) => new BrowserSessionCookieSetError({ partition, cause }),
+      });
+    }),
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* () {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       yield* Effect.all(

@@ -166,6 +166,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     openDevTools: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, { tabId }),
     clearCookies: () => ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL),
+    setCookie: (environmentId, cookie) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COOKIE_CHANNEL, { environmentId, cookie }),
     clearCache: () => ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL),
     getPreviewConfig: (environmentId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId }),

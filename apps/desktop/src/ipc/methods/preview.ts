@@ -8,6 +8,7 @@ import {
   DesktopPreviewAutomationTypeInputSchema,
   DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
+  DesktopPreviewSetCookieInputSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
@@ -186,6 +187,16 @@ export const clearCookies = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.clearCookies")(function* () {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.clearCookies();
+  }),
+});
+
+export const setCookie = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_COOKIE_CHANNEL,
+  payload: DesktopPreviewSetCookieInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setCookie")(function* ({ environmentId, cookie }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setCookie(environmentId, cookie);
   }),
 });
 
@@ -369,6 +380,7 @@ export const methods = [
   setColorScheme,
   openDevTools,
   clearCookies,
+  setCookie,
   clearCache,
   getPreviewConfig,
   setAnnotationTheme,

@@ -6,6 +6,8 @@ import type {
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeResult,
   PreviewAutomationSetColorSchemeResult,
+  PreviewAutomationSetCookieInput,
+  PreviewAutomationSetCookiePayload,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
   PreviewTabId,
@@ -60,6 +62,12 @@ const invokeTargeted = <A>(
   return invoke<A>(operation, operationInput, timeoutMs, tabId);
 };
 
+const setCookie = (input: PreviewAutomationSetCookieInput) => {
+  const { tabId, ...cookie } = input;
+  const payload: PreviewAutomationSetCookiePayload = { cookie };
+  return invoke<void>("setCookie", payload, undefined, tabId);
+};
+
 const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
@@ -79,6 +87,7 @@ const handlers = {
   preview_scroll: (input) => invokeTargeted<void>("scroll", input).pipe(Effect.as(null)),
   preview_evaluate: (input) =>
     invokeTargeted<unknown>("evaluate", input).pipe(Effect.map((result) => result ?? null)),
+  preview_set_cookie: (input) => setCookie(input).pipe(Effect.as(null)),
   preview_wait_for: (input) =>
     invokeTargeted<void>("waitFor", input, input.timeoutMs).pipe(Effect.as(null)),
   preview_recording_start: (input) =>

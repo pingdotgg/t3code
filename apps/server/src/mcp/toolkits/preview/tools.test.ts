@@ -3,6 +3,10 @@ import { Tool } from "effect/unstable/ai";
 
 import { PreviewToolkit } from "./tools.ts";
 
+it("exposes generic cookie setting", () => {
+  expect(Object.keys(PreviewToolkit.tools)).toContain("preview_set_cookie");
+});
+
 const schemaHasDescription = (schema: unknown): boolean => {
   if (!schema || typeof schema !== "object") return false;
   const record = schema as Record<string, unknown>;

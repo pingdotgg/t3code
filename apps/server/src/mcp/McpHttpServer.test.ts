@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PREVIEW_AUTOMATION_OPERATIONS,
+  PreviewTabId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -159,10 +165,12 @@ it.effect("registers annotated tools and preserves authenticated request context
       const routedRequests: Array<{
         readonly operation: string;
         readonly tabId?: string | undefined;
+        readonly input?: unknown;
       }> = [];
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
         environmentId,
+        supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
       });
       yield* Stream.runForEach(events, (event) => {
         if (event.type === "connected") return Effect.void;
@@ -224,6 +232,10 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
       expect(navigateTool?.tool.annotations?.openWorldHint).toBe(true);
 
+      const setCookieTool = server.tools.find(({ tool }) => tool.name === "preview_set_cookie");
+      expect(setCookieTool?.tool.annotations?.destructiveHint).toBe(true);
+      expect(setCookieTool?.tool.annotations?.openWorldHint).toBe(true);
+
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })
         .pipe(
@@ -269,6 +281,42 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(press.isError).toBe(false);
       expect(press.structuredContent).toBeNull();
       expect(press.content).toEqual([{ type: "text", text: "null" }]);
+
+      const cookieSet = yield* server
+        .callTool({
+          name: "preview_set_cookie",
+          arguments: {
+            url: "https://example.test/account",
+            name: "preview_session",
+            value: "session-value",
+            domain: "example.test",
+            path: "/account",
+            secure: true,
+            httpOnly: true,
+            sameSite: "strict",
+            expirationDate: 4_000_000_000,
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(cookieSet.isError).toBe(false);
+      expect(cookieSet.structuredContent).toBeNull();
+      expect(cookieSet.content).toEqual([{ type: "text", text: "null" }]);
+      expect(routedRequests.find(({ operation }) => operation === "setCookie")?.input).toEqual({
+        cookie: {
+          url: "https://example.test/account",
+          name: "preview_session",
+          value: "session-value",
+          domain: "example.test",
+          path: "/account",
+          secure: true,
+          httpOnly: true,
+          sameSite: "strict",
+          expirationDate: 4_000_000_000,
+        },
+      });
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

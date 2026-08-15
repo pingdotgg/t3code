@@ -23,15 +23,22 @@ describe("preview automation target selection", () => {
       needsPreviewAutomationSessionSync(
         { snapshot: active, sessions: { [active.tabId]: active } },
         undefined,
+        "snapshot",
       ),
     ).toBe(true);
+  });
+
+  it("does not sync sessions for environment-scoped cookie writes", () => {
+    expect(
+      needsPreviewAutomationSessionSync({ snapshot: null, sessions: {} }, undefined, "setCookie"),
+    ).toBe(false);
   });
 
   it("refreshes an explicit tab only when it is absent locally", () => {
     const active = snapshot("tab-active");
     const state = { snapshot: active, sessions: { [active.tabId]: active } };
-    expect(needsPreviewAutomationSessionSync(state, active.tabId)).toBe(false);
-    expect(needsPreviewAutomationSessionSync(state, "tab-missing")).toBe(true);
+    expect(needsPreviewAutomationSessionSync(state, active.tabId, "snapshot")).toBe(false);
+    expect(needsPreviewAutomationSessionSync(state, "tab-missing", "snapshot")).toBe(true);
   });
 
   it("does not report the active tab under an unknown requested tab id", () => {

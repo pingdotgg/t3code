@@ -13,6 +13,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     {
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
+      readonly cookies: { readonly set: ReturnType<typeof vi.fn> };
       readonly getUserAgent: ReturnType<typeof vi.fn>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
@@ -39,6 +40,7 @@ describe("BrowserSession", () => {
       const browserSession = {
         clearCache: vi.fn(() => Promise.resolve()),
         clearStorageData: vi.fn(() => Promise.resolve()),
+        cookies: { set: vi.fn(() => Promise.resolve()) },
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
@@ -189,6 +191,57 @@ describe("BrowserSession", () => {
         ]);
         assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
       }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("sets a cookie in only the requested environment partition", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const cookie = {
+        url: "https://example.test/",
+        name: "preview_session",
+        value: "session-value",
+        domain: "example.test",
+        path: "/account",
+        secure: true,
+        httpOnly: true as const,
+        sameSite: "lax" as const,
+        expirationDate: 2_000_000_000,
+      };
+
+      yield* browserSessions.setCookie("environment-a", cookie);
+
+      const targetPartition = yield* browserSessions.getPartition("environment-a");
+      const targetSession = sessions.get(targetPartition);
+      assert.isDefined(targetSession);
+      assert.deepEqual(targetSession.cookies.set.mock.calls, [[cookie]]);
+      assert.strictEqual(sessions.size, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("does not expose a rejected cookie value in its error message", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const cookie = {
+        url: "https://example.test/",
+        name: "preview_session",
+        value: "cookie-value-must-stay-secret",
+        path: "/",
+        secure: true,
+        httpOnly: true as const,
+        sameSite: "lax" as const,
+        expirationDate: 2_000_000_000,
+      };
+      const partition = yield* browserSessions.getPartition("environment-a");
+      const browser = yield* browserSessions.getSession("environment-a");
+      vi.mocked(browser.cookies.set).mockRejectedValueOnce(new Error("cookie rejected"));
+
+      const error = yield* browserSessions.setCookie("environment-a", cookie).pipe(Effect.flip);
+
+      assert.instanceOf(error, BrowserSession.BrowserSessionCookieSetError);
+      assert.equal(error.partition, partition);
+      assert.notInclude(error.message, cookie.value);
+      assert.notInclude(error.message, cookie.name);
     }).pipe(Effect.provide(layer)),
   );
 
