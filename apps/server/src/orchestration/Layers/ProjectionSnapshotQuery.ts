@@ -2249,6 +2249,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const getProjectShellsWithoutEnrichment: ProjectionSnapshotQueryShape["getProjectShellsWithoutEnrichment"] =
+    () =>
+      listProjectRows(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getProjectShellsWithoutEnrichment:query",
+            "ProjectionSnapshotQuery.getProjectShellsWithoutEnrichment:decodeRows",
+          ),
+        ),
+        Effect.map((rows) =>
+          Arr.filterMap(rows, (row) =>
+            row.deletedAt === null
+              ? Result.succeed(mapProjectShellRow(row, null))
+              : Result.failVoid,
+          ),
+        ),
+      );
+
   const getFirstActiveThreadIdByProjectId: ProjectionSnapshotQueryShape["getFirstActiveThreadIdByProjectId"] =
     (projectId) =>
       getFirstActiveThreadIdByProject({ projectId }).pipe(
@@ -2717,6 +2735,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getCounts,
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
+    getProjectShellsWithoutEnrichment,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
     getFullThreadDiffContext,

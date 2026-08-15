@@ -1210,6 +1210,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       const shell = yield* projectionStore.getShellSnapshot();
       const rolledBackShellThread = shell.threads.find((entry) => entry.id === threadId);
       assert.isDefined(rolledBackShellThread);
+      assert.isNull(rolledBackShellThread.latestVisibleMessage);
       assert.deepEqual(rolledBackShellThread?.pendingBackgroundTasks ?? [], []);
     }),
   );

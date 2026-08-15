@@ -76,6 +76,7 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   archivedShellStreamItemFromThreadShell,
+  buildActiveShellSnapshot,
   coalesceShellApplicationEvents,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
@@ -84,6 +85,7 @@ import {
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
 } from "./orchestration-v2/ShellStream.ts";
+import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
 import {
   decideThreadResume,
   threadReplayEncodedBytes,
@@ -740,18 +742,32 @@ const makeWsRpcLayer = (
           readonly requestCompletionMarker?: boolean;
         }) {
           const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
+          const loadProjectMetadataSnapshot = Effect.fn(
+            "ws.orchestrationV2.loadProjectMetadataSnapshot",
+          )(function* (snapshotSequence: number) {
+            const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
+            const enriched = yield* enrichProjectShells(projects);
+            return {
+              snapshot: {
+                schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+                snapshotSequence,
+                projects: enriched.projects,
+                threads: [],
+                archivedThreads: [],
+              } as OrchestrationV2ShellSnapshot,
+              resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
+            };
+          });
           const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
             const base = yield* sql.withTransaction(
               Effect.gen(function* () {
-                const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
-                const threads = yield* threadManagement.getShellSnapshot();
-                return {
-                  schemaVersion: threads.schemaVersion,
+                const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
+                const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+                return buildActiveShellSnapshot({
+                  projects,
+                  threads,
                   snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-                  projects: projects.projects,
-                  threads: threads.threads,
-                  archivedThreads: threads.archivedThreads,
-                } as const;
+                });
               }),
             );
             const enriched = yield* enrichProjectShells(base.projects);
@@ -822,7 +838,8 @@ const makeWsRpcLayer = (
             Stream.filter((change) => change.repositoryIdentityResolved),
             Stream.groupedWithin(64, Duration.millis(25)),
             Stream.mapEffect((changes) =>
-              loadSnapshot().pipe(
+              applicationEvents.latestApplicationSequence.pipe(
+                Effect.flatMap(loadProjectMetadataSnapshot),
                 Effect.map(({ snapshot }) =>
                   shellStreamItemFromEnrichmentRefresh({
                     snapshot,
@@ -880,11 +897,10 @@ const makeWsRpcLayer = (
             Stream.concat(completionMarker, liveFrom(afterSequence));
 
           const stream = yield* Effect.gen(function* () {
-            const loaded = yield* loadSnapshot();
-            const initial = initialSnapshotItems(loaded);
             if (input.afterSequence === undefined) {
+              const loaded = yield* loadSnapshot();
               return composeShellStreamWithEnrichment({
-                initial,
+                initial: initialSnapshotItems(loaded),
                 tail: completionThenLive(loaded.snapshot.snapshotSequence),
                 enrichment: enrichmentRefreshes,
               });
@@ -893,13 +909,15 @@ const makeWsRpcLayer = (
             const highWater = yield* applicationEvents.latestApplicationSequence;
             const replayGap = highWater - input.afterSequence;
             if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
+              const loaded = yield* loadSnapshot();
               return composeShellStreamWithEnrichment({
-                initial,
+                initial: initialSnapshotItems(loaded),
                 tail: completionThenLive(loaded.snapshot.snapshotSequence),
                 enrichment: enrichmentRefreshes,
               });
             }
 
+            const loaded = yield* loadProjectMetadataSnapshot(highWater);
             const replay = toShellStream(
               applicationEvents.readApplicationEvents({
                 afterSequence: input.afterSequence,
@@ -936,12 +954,12 @@ const makeWsRpcLayer = (
       const getOrchestrationV2ArchivedShellSnapshot = sql
         .withTransaction(
           Effect.gen(function* () {
-            const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
-            const threads = yield* threadManagement.getShellSnapshot();
+            const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
+            const threads = yield* threadManagement.getShellSnapshot({ location: "archive" });
             return {
               schemaVersion: threads.schemaVersion,
               snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-              projects: projects.projects,
+              projects,
               threads: threads.archivedThreads,
             } as const;
           }),

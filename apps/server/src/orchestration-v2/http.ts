@@ -24,6 +24,7 @@ import {
   selectHistoryPageFromCursor,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { buildActiveShellSnapshot } from "./ShellStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 function isThreadNotFound(error: unknown): boolean {
@@ -88,15 +89,13 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* () {
       const base = yield* sql.withTransaction(
         Effect.gen(function* () {
-          const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
-          const threads = yield* threadManagement.getShellSnapshot();
-          return {
-            schemaVersion: threads.schemaVersion,
+          const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
+          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+          return buildActiveShellSnapshot({
+            projects,
+            threads,
             snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-            projects: projects.projects,
-            threads: threads.threads,
-            archivedThreads: threads.archivedThreads,
-          } as const;
+          });
         }),
       );
       const projects = yield* enrichProjectShells(base.projects);
