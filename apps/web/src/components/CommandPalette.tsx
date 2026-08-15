@@ -71,6 +71,8 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments"
 import { useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { openLinearImport } from "../linearImportBus";
+import { LinearIcon } from "./Icons";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -1454,6 +1456,17 @@ function OpenCommandPaletteDialog(props: {
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:import-linear",
+    searchTerms: ["linear", "import", "issue", "ticket", "task", "create from linear"],
+    title: "Import from Linear",
+    icon: <LinearIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openLinearImport();
+    },
+  });
 
   actionItems.push({
     kind: "action",

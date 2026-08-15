@@ -92,6 +92,17 @@ import {
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
 import {
+  LinearAuthError,
+  LinearAuthStatus,
+  LinearFetchIssuesInput,
+  LinearFetchIssuesResult,
+  LinearRequestError,
+  LinearSearchIssuesInput,
+  LinearSearchIssuesResult,
+  LinearSetTokenInput,
+  LinearTokenStoreError,
+} from "./linear.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -298,6 +309,13 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Linear issue import (read-only + token management)
+  linearAuthStatus: "linear.authStatus",
+  linearSearchIssues: "linear.searchIssues",
+  linearFetchIssues: "linear.fetchIssues",
+  linearSetToken: "linear.setToken",
+  linearClearToken: "linear.clearToken",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -608,6 +626,43 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
   },
 );
+
+const LinearReadError = Schema.Union([
+  LinearAuthError,
+  LinearRequestError,
+  LinearTokenStoreError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsLinearAuthStatusRpc = Rpc.make(WS_METHODS.linearAuthStatus, {
+  payload: Schema.Struct({}),
+  success: LinearAuthStatus,
+  error: Schema.Union([LinearRequestError, LinearTokenStoreError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearSearchIssuesRpc = Rpc.make(WS_METHODS.linearSearchIssues, {
+  payload: LinearSearchIssuesInput,
+  success: LinearSearchIssuesResult,
+  error: LinearReadError,
+});
+
+export const WsLinearFetchIssuesRpc = Rpc.make(WS_METHODS.linearFetchIssues, {
+  payload: LinearFetchIssuesInput,
+  success: LinearFetchIssuesResult,
+  error: LinearReadError,
+});
+
+export const WsLinearSetTokenRpc = Rpc.make(WS_METHODS.linearSetToken, {
+  payload: LinearSetTokenInput,
+  success: LinearAuthStatus,
+  error: Schema.Union([LinearTokenStoreError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearClearTokenRpc = Rpc.make(WS_METHODS.linearClearToken, {
+  payload: Schema.Struct({}),
+  success: LinearAuthStatus,
+  error: Schema.Union([LinearTokenStoreError, EnvironmentAuthorizationError]),
+});
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -1016,6 +1071,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsLinearAuthStatusRpc,
+  WsLinearSearchIssuesRpc,
+  WsLinearFetchIssuesRpc,
+  WsLinearSetTokenRpc,
+  WsLinearClearTokenRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

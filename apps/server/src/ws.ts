@@ -113,6 +113,7 @@ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
+import * as LinearApi from "./linear/LinearApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -412,6 +413,7 @@ const makeWsRpcLayer = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const linear = yield* LinearApi.LinearApi;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -1747,6 +1749,30 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.linearAuthStatus]: (_input) =>
+          observeRpcEffect(WS_METHODS.linearAuthStatus, linear.probeAuth, {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearSearchIssues]: (input) =>
+          observeRpcEffect(WS_METHODS.linearSearchIssues, linear.searchIssues(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearFetchIssues]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.linearFetchIssues,
+            linear.fetchIssues(input).pipe(Effect.map((issues) => ({ issues }))),
+            {
+              "rpc.aggregate": "linear",
+            },
+          ),
+        [WS_METHODS.linearSetToken]: (input) =>
+          observeRpcEffect(WS_METHODS.linearSetToken, linear.setToken(input.token), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearClearToken]: (_input) =>
+          observeRpcEffect(WS_METHODS.linearClearToken, linear.clearToken, {
+            "rpc.aggregate": "linear",
+          }),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -2321,6 +2347,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(LinearApi.layer),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
