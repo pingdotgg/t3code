@@ -3,6 +3,8 @@ import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell"
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -15,7 +17,46 @@ import {
   resolveSyncedPlanModeHydrationAction,
   type SyncedClientPreferenceHydrationInput,
   type SyncedPlanModeHydrationInput,
+  useSyncedClientPreferenceHydrationEffect,
 } from "./synced-client-preferences";
+
+function createHookTestRoot() {
+  const noop = () => {};
+  class TestHTMLElement {
+    readonly nodeType = 1;
+  }
+  class TestHtmlIFrameElement extends TestHTMLElement {}
+  const document = {
+    nodeType: 9,
+    addEventListener: noop,
+    removeEventListener: noop,
+    defaultView: globalThis,
+    activeElement: null,
+    body: null as unknown,
+    documentElement: null as unknown,
+  };
+  const container = {
+    nodeType: 1,
+    nodeName: "DIV",
+    tagName: "DIV",
+    namespaceURI: "http://www.w3.org/1999/xhtml",
+    ownerDocument: document,
+    addEventListener: noop,
+    removeEventListener: noop,
+    firstChild: null,
+    lastChild: null,
+    parentNode: null,
+    textContent: "",
+  };
+  document.body = container;
+  document.documentElement = container;
+  vi.stubGlobal("window", globalThis);
+  vi.stubGlobal("document", document);
+  vi.stubGlobal("HTMLElement", TestHTMLElement);
+  vi.stubGlobal("HTMLIFrameElement", TestHtmlIFrameElement);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  return createRoot(container as unknown as Element);
+}
 
 describe("synced client preferences", () => {
   it("adopts an environment value over the local cache", () => {
@@ -714,8 +755,11 @@ describe("synced client preferences", () => {
   );
 
   it("does not adopt stale shell preferences after an inactive patch settles", async () => {
+    type HydrationInput = SyncedClientPreferenceHydrationInput<"planModeEnabled", never>;
+
     const environmentId = EnvironmentId.make("primary");
-    const controller = createSyncedPlanModeHydrationController();
+    const nextPrimaryEnvironmentId = EnvironmentId.make("next-primary");
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
     const previous = {
       planModeEnabled: false,
       updatedAt: "2026-08-14T12:00:00.000Z",
@@ -724,10 +768,8 @@ describe("synced client preferences", () => {
       planModeEnabled: false,
       updatedAt: "2026-08-14T12:01:00.000Z",
     } as const;
-    let resolvePatch!: (
-      result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>,
-    ) => void;
-    const patch = vi.fn<SyncedPlanModeHydrationInput<never>["patch"]>(
+    let resolvePatch!: (result: Awaited<ReturnType<HydrationInput["patch"]>>) => void;
+    const patch = vi.fn<HydrationInput["patch"]>(
       () =>
         new Promise((resolve) => {
           resolvePatch = resolve;
@@ -739,56 +781,85 @@ describe("synced client preferences", () => {
       localValue = value;
       persisted.push(value);
     };
-    const deactivate = controller.synchronize({
-      environmentId,
-      primaryEnvironmentId: environmentId,
-      clientHydrated: true,
-      clientValue: localValue,
-      live: true,
-      serverPreferences: previous,
-      canPatch: true,
-      now: previous.updatedAt,
-      patch,
-      persist,
-    });
+    const HydrationHook = ({ input }: { input: HydrationInput }) => {
+      useSyncedClientPreferenceHydrationEffect(controller, input);
+      return null;
+    };
+    const root = createHookTestRoot();
 
-    localValue = true;
-    controller.write({
-      environmentId,
-      value: localValue,
-      serverPreferences: previous,
-      canPatch: true,
-      now: "2026-08-14T12:02:00.000Z",
-      patch,
-      persist,
-    });
-    deactivate?.();
-    resolvePatch(
-      AsyncResult.success({
-        planModeEnabled: true,
-        updatedAt: "2026-08-14T12:02:00.000Z",
-      }),
-    );
-    await Promise.resolve();
+    try {
+      const input = {
+        environmentId,
+        primaryEnvironmentId: environmentId,
+        clientHydrated: true,
+        clientValue: localValue,
+        live: true,
+        serverPreferences: previous,
+        canPatch: true,
+        now: previous.updatedAt,
+        patch,
+        persist,
+      } satisfies HydrationInput;
 
-    expect(persisted).toEqual([]);
+      await act(async () => {
+        root.render(createElement(HydrationHook, { input }));
+      });
 
-    controller.synchronize({
-      environmentId,
-      primaryEnvironmentId: environmentId,
-      clientHydrated: true,
-      clientValue: localValue,
-      live: true,
-      serverPreferences: stale,
-      canPatch: true,
-      now: "2026-08-14T12:03:00.000Z",
-      patch,
-      persist,
-    });
+      localValue = true;
+      controller.write({
+        environmentId,
+        value: localValue,
+        serverPreferences: previous,
+        canPatch: true,
+        now: "2026-08-14T12:02:00.000Z",
+        patch,
+        persist,
+      });
+      await act(async () => {
+        root.render(
+          createElement(HydrationHook, {
+            input: {
+              ...input,
+              environmentId: nextPrimaryEnvironmentId,
+              primaryEnvironmentId: nextPrimaryEnvironmentId,
+              clientValue: false,
+              serverPreferences: stale,
+            },
+          }),
+        );
+      });
+      await act(async () => {
+        resolvePatch(
+          AsyncResult.success({
+            planModeEnabled: true,
+            updatedAt: "2026-08-14T12:02:00.000Z",
+          }),
+        );
+        await Promise.resolve();
+      });
 
-    expect(localValue).toBe(true);
-    expect(persisted).toEqual([]);
-    expect(patch).toHaveBeenCalledOnce();
+      expect(persisted).toEqual([]);
+
+      await act(async () => {
+        root.render(
+          createElement(HydrationHook, {
+            input: {
+              ...input,
+              clientValue: localValue,
+              serverPreferences: stale,
+              now: "2026-08-14T12:03:00.000Z",
+            },
+          }),
+        );
+      });
+
+      expect(localValue).toBe(true);
+      expect(persisted).toEqual([]);
+      expect(patch).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps the latest rapid toggle when responses settle out of order", async () => {
