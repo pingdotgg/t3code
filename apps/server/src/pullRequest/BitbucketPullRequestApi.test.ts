@@ -776,7 +776,13 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         number: 7,
         verdict: "request-changes",
         body: "Two things.",
-        comments: [{ path: "src/a.ts", line: 12, side: "left", body: "why remove?" }],
+        comments: [
+          {
+            path: "src/a.ts",
+            position: { kind: "deleted", oldLine: 12 },
+            body: "why remove?",
+          },
+        ],
       });
 
       expect(callAt(0).url).toContain("/pullrequests/7/comments");

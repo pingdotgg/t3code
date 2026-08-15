@@ -1534,7 +1534,7 @@ it.effect("refuses line comments on a host that takes only a summary", () =>
         number: 1,
         verdict: "comment",
         body: "",
-        comments: [{ path: "src/a.ts", line: 1, side: "right", body: "nit" }],
+        comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 1 }, body: "nit" }],
       }),
     );
 

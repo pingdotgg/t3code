@@ -1624,7 +1624,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
         verdict: "approve",
         body: "Looks right.",
-        comments: [{ path: "src/a.ts", line: 4, side: "right", body: "nit" }],
+        comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
       });
 
       expect(callAt(0).args).toEqual([

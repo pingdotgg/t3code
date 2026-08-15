@@ -856,6 +856,26 @@ export const PullRequestCommentUpdateInput = Schema.Struct({
 });
 export type PullRequestCommentUpdateInput = typeof PullRequestCommentUpdateInput.Type;
 
+/** The coordinates of one line in a pull request diff. */
+export const PullRequestReviewPosition = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("added"),
+    newLine: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("deleted"),
+    oldLine: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("context"),
+    oldLine: PositiveInt,
+    newLine: PositiveInt,
+    /** Which copy of an unchanged line the reviewer selected in a split diff. */
+    side: PullRequestDiffSide,
+  }),
+]);
+export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type;
+
 /** One remark in a review that has not been sent yet, anchored to a line of the diff. */
 export const PullRequestReviewCommentDraft = Schema.Struct({
   path: TrimmedNonEmptyString,
@@ -865,8 +885,7 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
    * the hosts that address a comment by one path ignore this.
    */
   oldPath: Schema.optional(TrimmedNonEmptyString),
-  line: PositiveInt,
-  side: PullRequestDiffSide,
+  position: PullRequestReviewPosition,
   body: CommentBody,
 });
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
