@@ -28,6 +28,14 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
 
+#### Chat / synthetic chat project
+
+A chat is an ordinary thread that lives under a hidden synthetic project (`kind: "chat"`) instead of a user workspace. The environment keeps one such project, titled "Chats", rooted at a scratch directory in T3 home. Each chat thread gets its own scratch `worktreePath` under that root.
+
+The shell snapshot omits `kind: "chat"` projects from the projects list but still ships their threads. Clients identify a chat thread as one whose `projectId` is missing from the visible projects list after the shell has loaded. `projectHasWorkspace` in `packages/client-runtime` is the client guard — `activeProject !== null` is not a proxy for having a workspace.
+
+Creating the synthetic project is converge-on-read (`getOrCreateChatProject`). Bootstrap `createInChatScratch` resolves that project on the server and ignores the client's `projectId` semantics. Promoting a chat into a real project later (reassign `projectId`, clear `worktreePath`) is a documented hook, not implemented. Prior art: branch `experiment/hermes-provider-ui`.
+
 ### Thread timeline
 
 #### Thread

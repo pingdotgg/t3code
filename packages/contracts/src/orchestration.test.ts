@@ -135,6 +135,7 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
     assert.strictEqual(parsed.title, "Project Title");
     assert.strictEqual(parsed.workspaceRoot, "/tmp/workspace");
     assert.strictEqual(parsed.createWorkspaceRootIfMissing, undefined);
+    assert.strictEqual(parsed.kind, undefined);
     assert.deepStrictEqual(parsed.defaultModelSelection, {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.2",
@@ -158,6 +159,22 @@ it.effect("decodes project.create with createWorkspaceRootIfMissing enabled", ()
   }),
 );
 
+it.effect("decodes project.create kind chat", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreateCommand({
+      type: "project.create",
+      commandId: "cmd-1",
+      projectId: "project-1",
+      title: "Chats",
+      workspaceRoot: "/tmp/scratch/chats",
+      kind: "chat",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.kind, "chat");
+  }),
+);
+
 it.effect("decodes historical project.created payloads with a default provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatedPayload({
@@ -173,6 +190,7 @@ it.effect("decodes historical project.created payloads with a default provider",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.instanceId, "codex");
+    assert.strictEqual(parsed.kind, "workspace");
   }),
 );
 
@@ -288,9 +306,44 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
+    assert.strictEqual(parsed.bootstrap?.createThread?.createInChatScratch, undefined);
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
     assert.strictEqual(parsed.bootstrap?.runSetupScript, true);
+  }),
+);
+
+it.effect("decodes thread.turn.start createInChatScratch bootstrap", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-chat",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-chat",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      bootstrap: {
+        createThread: {
+          projectId: "ignored",
+          title: "Chat",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createInChatScratch: true,
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.bootstrap?.createThread?.createInChatScratch, true);
   }),
 );
 

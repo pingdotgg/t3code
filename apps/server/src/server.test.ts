@@ -209,6 +209,7 @@ const makeDefaultOrchestrationReadModel = () => {
         title: "Default Project",
         workspaceRoot: "/tmp/default-project",
         defaultModelSelection,
+        kind: "workspace" as const,
         scripts: [],
         createdAt: now,
         updatedAt: now,
@@ -5832,6 +5833,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             title: "Project A",
             workspaceRoot: "/tmp/project-a",
             defaultModelSelection,
+            kind: "workspace" as const,
             scripts: [],
             createdAt: now,
             updatedAt: now,
@@ -6756,6 +6758,71 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const [first] = Array.from(items);
       assert.equal(first?.kind, "project-removed");
       assert.equal(first?.kind === "project-removed" ? first.projectId : null, projectId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeShell omits chat projects from live upserts", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-chat");
+      const now = "2026-01-01T00:00:00.000Z";
+      const chatProject = {
+        id: projectId,
+        title: "Chats",
+        workspaceRoot: "/tmp/chats",
+        defaultModelSelection: null,
+        kind: "chat" as const,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(1),
+            readEvents: () =>
+              Stream.succeed({
+                sequence: 1,
+                eventId: EventId.make("event-chat-project"),
+                aggregateKind: "project",
+                aggregateId: projectId,
+                occurredAt: now,
+                commandId: null,
+                causationEventId: null,
+                correlationId: null,
+                metadata: {},
+                type: "project.created",
+                payload: {
+                  projectId,
+                  title: "Chats",
+                  workspaceRoot: "/tmp/chats",
+                  defaultModelSelection: null,
+                  faviconPath: null,
+                  kind: "chat",
+                  scripts: [],
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              } as OrchestrationEvent),
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: () => Effect.succeed(Option.some(chatProject)),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+            afterSequence: 0,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(1), Stream.runCollect),
+        ),
+      );
+
+      const [first] = Array.from(items);
+      assert.deepEqual(first, { kind: "synchronized" });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

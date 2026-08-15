@@ -3,8 +3,10 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -100,6 +102,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
+import { prepareChatScratchCreateThread } from "./chat/ChatProject.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
@@ -357,6 +360,8 @@ const makeWsRpcLayer = (
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -619,11 +624,16 @@ const makeWsRpcLayer = (
                     projectId,
                   }),
                 onSome: (nextProject) =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "project-upserted" as const,
-                    sequence,
-                    project: nextProject,
-                  }),
+                  // Match getShellSnapshot: chat projects stay off the client
+                  // project list. Live upserts that leak them make chats look
+                  // like a workspace named "Chats".
+                  nextProject.kind === "chat"
+                    ? Option.none()
+                    : Option.some<OrchestrationShellStreamEvent>({
+                        kind: "project-upserted" as const,
+                        sequence,
+                        project: nextProject,
+                      }),
               }),
             ),
           ),
@@ -764,6 +774,35 @@ const makeWsRpcLayer = (
           let targetProjectId = bootstrap?.createThread?.projectId;
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
+          let createThread = bootstrap?.createThread;
+          let skipPrepareWorktree = false;
+
+          if (createThread?.createInChatScratch === true) {
+            const prepared = yield* prepareChatScratchCreateThread({
+              threadId: command.threadId,
+              createThread,
+            }).pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(
+                OrchestrationEngine.OrchestrationEngineService,
+                orchestrationEngine,
+              ),
+              Effect.provideService(
+                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+                projectionSnapshotQuery,
+              ),
+              Effect.provideService(ServerConfig.ServerConfig, config),
+              Effect.mapError((cause) =>
+                toDispatchCommandError(cause, "Failed to prepare chat scratch"),
+              ),
+            );
+            createThread = prepared.createThread;
+            skipPrepareWorktree = prepared.skipPrepareWorktree;
+            targetProjectId = createThread.projectId;
+            targetWorktreePath = createThread.worktreePath;
+          }
 
           const cleanupCreatedThread = () =>
             createdThread
@@ -858,7 +897,7 @@ const makeWsRpcLayer = (
 
           const runSetupProgram = () =>
             Effect.gen(function* () {
-              if (!bootstrap?.runSetupScript || !targetWorktreePath) {
+              if (!bootstrap?.runSetupScript || !targetWorktreePath || skipPrepareWorktree) {
                 return;
               }
               const worktreePath = targetWorktreePath;
@@ -895,24 +934,24 @@ const makeWsRpcLayer = (
             });
 
           const bootstrapProgram = Effect.gen(function* () {
-            if (bootstrap?.createThread) {
+            if (createThread) {
               yield* orchestrationEngine.dispatch({
                 type: "thread.create",
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
                 threadId: command.threadId,
-                projectId: bootstrap.createThread.projectId,
-                title: bootstrap.createThread.title,
-                modelSelection: bootstrap.createThread.modelSelection,
-                runtimeMode: bootstrap.createThread.runtimeMode,
-                interactionMode: bootstrap.createThread.interactionMode,
-                branch: bootstrap.createThread.branch,
-                worktreePath: bootstrap.createThread.worktreePath,
-                createdAt: bootstrap.createThread.createdAt,
+                projectId: createThread.projectId,
+                title: createThread.title,
+                modelSelection: createThread.modelSelection,
+                runtimeMode: createThread.runtimeMode,
+                interactionMode: createThread.interactionMode,
+                branch: createThread.branch,
+                worktreePath: createThread.worktreePath,
+                createdAt: createThread.createdAt,
               });
               createdThread = true;
             }
 
-            if (bootstrap?.prepareWorktree) {
+            if (bootstrap?.prepareWorktree && !skipPrepareWorktree) {
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
               // "Start from origin" is a stored default; repos without an
               // origin remote fall back to the local base branch instead of

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 
-import { applyShellStreamEvent } from "./shellReducer.ts";
+import { applyShellStreamEvent, omitHiddenShellProjects } from "./shellReducer.ts";
 
 const baseSnapshot: OrchestrationShellSnapshot = {
   snapshotSequence: 0,
@@ -18,6 +18,7 @@ const stubProject = {
   workspaceRoot: "/workspace/test",
   repositoryIdentity: null,
   defaultModelSelection: null,
+  kind: "workspace",
   scripts: [],
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
@@ -100,6 +101,34 @@ describe("applyShellStreamEvent", () => {
       expect(next.projects[0]?.title).toBe("Updated Title");
       expect(next.snapshotSequence).toBe(2);
     });
+
+    it("does not add a chat project to the visible shell", () => {
+      const chatProject = { ...stubProject, kind: "chat" as const, title: "Chats" };
+      const next = applyShellStreamEvent(baseSnapshot, {
+        kind: "project-upserted",
+        sequence: 1,
+        project: chatProject,
+      });
+
+      expect(next.projects).toHaveLength(0);
+      expect(next.snapshotSequence).toBe(1);
+    });
+
+    it("removes a leaked chat project on upsert", () => {
+      const chatProject = { ...stubProject, kind: "chat" as const, title: "Chats" };
+      const snapshotWithChat: OrchestrationShellSnapshot = {
+        ...baseSnapshot,
+        projects: [chatProject],
+      };
+      const next = applyShellStreamEvent(snapshotWithChat, {
+        kind: "project-upserted",
+        sequence: 2,
+        project: chatProject,
+      });
+
+      expect(next.projects).toHaveLength(0);
+      expect(next.snapshotSequence).toBe(2);
+    });
   });
 
   describe("project-removed", () => {
@@ -175,6 +204,19 @@ describe("applyShellStreamEvent", () => {
       expect(next.threads).toHaveLength(0);
       expect(next.snapshotSequence).toBe(6);
     });
+  });
+
+  it("strips chat projects from a snapshot without copying when none are present", () => {
+    expect(omitHiddenShellProjects(baseSnapshot)).toBe(baseSnapshot);
+  });
+
+  it("strips chat projects from a snapshot", () => {
+    const chatProject = { ...stubProject, kind: "chat" as const, title: "Chats" };
+    const snapshot: OrchestrationShellSnapshot = {
+      ...baseSnapshot,
+      projects: [stubProject, chatProject],
+    };
+    expect(omitHiddenShellProjects(snapshot).projects).toEqual([stubProject]);
   });
 
   it("returns original snapshot for unrecognized event kinds", () => {

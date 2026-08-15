@@ -49,6 +49,7 @@ function project(input: {
         }
       : {}),
     defaultModelSelection: null,
+    kind: "workspace" as const,
     scripts: [],
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt: "2026-07-01T00:00:00Z",

@@ -25,6 +25,7 @@ const seedProjectCreated = (sequence: number): OrchestrationEvent => ({
     title: "Env mode",
     workspaceRoot: "/tmp/env-mode",
     defaultModelSelection: null,
+    kind: "workspace" as const,
     scripts: [],
     createdAt: now,
     updatedAt: now,

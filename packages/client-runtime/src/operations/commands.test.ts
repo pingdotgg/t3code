@@ -82,6 +82,7 @@ describe("environment commands", () => {
         projectId: ProjectId.make("project-1"),
         title: "Project",
         workspaceRoot: "/workspace/project",
+        kind: "workspace",
         createdAt: "2026-06-06T00:00:00.000Z",
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
@@ -93,6 +94,7 @@ describe("environment commands", () => {
           projectId: "project-1",
           title: "Project",
           workspaceRoot: "/workspace/project",
+          kind: "workspace",
           createdAt: "2026-06-06T00:00:00.000Z",
         },
       ]);

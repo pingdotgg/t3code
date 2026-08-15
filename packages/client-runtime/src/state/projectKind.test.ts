@@ -1,0 +1,83 @@
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { expect, it } from "vite-plus/test";
+
+import {
+  CHAT_DRAFT_PROJECT_ID,
+  chatLogicalProjectKey,
+  isChatDraft,
+  isChatThread,
+  isVisibleShellProject,
+  isWorkspaceThread,
+  projectHasWorkspace,
+} from "./projectKind.ts";
+
+const env = EnvironmentId.make("env-1");
+const workspaceProjectId = ProjectId.make("project-1");
+
+it("uses a stable chat draft sentinel and logical key", () => {
+  expect(CHAT_DRAFT_PROJECT_ID).toBe("chat");
+  expect(chatLogicalProjectKey(env)).toBe("env-1:chat");
+});
+
+it("treats missing and chat-kind projects as having no workspace", () => {
+  expect(projectHasWorkspace(null)).toBe(false);
+  expect(projectHasWorkspace(undefined)).toBe(false);
+  expect(projectHasWorkspace({ kind: "chat" })).toBe(false);
+  expect(projectHasWorkspace({ kind: "workspace" })).toBe(true);
+  expect(projectHasWorkspace({})).toBe(true);
+});
+
+it("hides chat-kind projects from the visible shell", () => {
+  expect(isVisibleShellProject({ kind: "chat" })).toBe(false);
+  expect(isVisibleShellProject({ kind: "workspace" })).toBe(true);
+  expect(isVisibleShellProject({})).toBe(true);
+});
+
+it("identifies chat drafts only when the scratch flag is set", () => {
+  expect(isChatDraft(null)).toBe(false);
+  expect(isChatDraft({})).toBe(false);
+  expect(isChatDraft({ createInChatScratch: false })).toBe(false);
+  expect(isChatDraft({ createInChatScratch: true })).toBe(true);
+});
+
+it("does not treat missing projects as chats until the shell is known", () => {
+  const thread = { environmentId: env, projectId: ProjectId.make("hidden") };
+  expect(
+    isChatThread({
+      thread,
+      projects: [],
+      projectsKnown: false,
+    }),
+  ).toBe(false);
+  expect(
+    isChatThread({
+      thread,
+      projects: [],
+      projectsKnown: true,
+    }),
+  ).toBe(true);
+});
+
+it("treats threads whose project is in the visible list as workspace threads", () => {
+  const thread = { environmentId: env, projectId: workspaceProjectId };
+  const projects = [{ environmentId: env, id: workspaceProjectId }];
+  expect(isWorkspaceThread({ thread, projects })).toBe(true);
+  expect(
+    isChatThread({
+      thread,
+      projects,
+      projectsKnown: true,
+    }),
+  ).toBe(false);
+});
+
+it("does not treat a hidden or still-loading project as a workspace thread", () => {
+  const thread = { environmentId: env, projectId: ProjectId.make("hidden") };
+  expect(isWorkspaceThread({ thread, projects: [] })).toBe(false);
+  expect(
+    isWorkspaceThread({
+      thread,
+      projects: [{ environmentId: env, id: workspaceProjectId }],
+    }),
+  ).toBe(false);
+});

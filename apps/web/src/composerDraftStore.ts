@@ -217,6 +217,7 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  createInChatScratch: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -321,6 +322,7 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  createInChatScratch: boolean;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -385,6 +387,7 @@ interface ComposerDraftStoreState {
       startFromOrigin?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      createInChatScratch?: boolean;
     },
   ) => void;
   /** Creates or updates the draft session tracked for a concrete project ref. */
@@ -400,6 +403,7 @@ interface ComposerDraftStoreState {
       startFromOrigin?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      createInChatScratch?: boolean;
     },
   ) => void;
   /** Updates mutable draft-session metadata without touching composer content. */
@@ -414,6 +418,7 @@ interface ComposerDraftStoreState {
       startFromOrigin?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      createInChatScratch?: boolean;
     },
   ) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
@@ -1373,6 +1378,7 @@ function createDraftThreadState(
     startFromOrigin?: boolean;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
+    createInChatScratch?: boolean;
   },
 ): DraftThreadState {
   // A project change (including switching environments within a logical
@@ -1413,6 +1419,9 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    createInChatScratch:
+      options?.createInChatScratch ??
+      (projectChanged ? false : (existingThread?.createInChatScratch ?? false)),
     promotedTo: null,
   };
 }
@@ -1445,6 +1454,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    left.createInChatScratch === right.createInChatScratch &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1588,6 +1598,7 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        createInChatScratch: candidateDraftThread.createInChatScratch === true,
         promotedTo,
       };
     }
@@ -1634,6 +1645,7 @@ function normalizePersistedDraftThreads(
           worktreePath: null,
           envMode: "local",
           startFromOrigin: false,
+          createInChatScratch: false,
           promotedTo: null,
         };
       } else if (
@@ -2237,6 +2249,7 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    createInChatScratch: persistedDraftThread.createInChatScratch,
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2471,6 +2484,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              createInChatScratch:
+                options.createInChatScratch ??
+                (projectChanged ? false : existing.createInChatScratch),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2484,6 +2500,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              nextDraftThread.createInChatScratch === existing.createInChatScratch &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

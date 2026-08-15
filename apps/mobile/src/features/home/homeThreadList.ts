@@ -261,6 +261,7 @@ export function buildHomeThreadGroups(input: {
               pendingTask.creation.projectCwd ?? String(pendingTask.creation.projectId),
             repositoryIdentity: null,
             defaultModelSelection: null,
+            kind: "workspace",
             scripts: [],
             createdAt: pendingTask.message.createdAt,
             updatedAt: pendingTask.message.createdAt,

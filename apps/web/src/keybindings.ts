@@ -435,6 +435,14 @@ export function isChatNewLocalShortcut(
   return matchesCommandShortcut(event, keybindings, "chat.newLocal", options);
 }
 
+export function isChatNewChatShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "chat.newChat", options);
+}
+
 export function isOpenFavoriteEditorShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

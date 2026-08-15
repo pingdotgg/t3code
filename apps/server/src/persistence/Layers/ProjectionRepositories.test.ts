@@ -34,6 +34,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "gpt-5.4",
         },
         defaultThreadEnvMode: null,
+        kind: "workspace",
         scripts: [],
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",

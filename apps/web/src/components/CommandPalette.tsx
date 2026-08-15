@@ -35,6 +35,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  MessageSquarePlusIcon,
   PaletteIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -56,7 +57,7 @@ import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useHandleNewChat, useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
@@ -583,6 +584,7 @@ function OpenCommandPaletteDialog(props: {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const handleNewChat = useHandleNewChat();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -696,8 +698,9 @@ function OpenCommandPaletteDialog(props: {
         activeThread: activeThread ?? undefined,
         defaultProjectRef,
         handleNewThread,
+        projects,
       }),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread],
+    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
   );
   const projectPickerEntries = useMemo(
     () =>
@@ -1416,6 +1419,20 @@ function OpenCommandPaletteDialog(props: {
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
+  if (primaryEnvironmentId) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-chat",
+      searchTerms: ["new chat", "standalone chat", "talk", "conversation"],
+      title: "New chat",
+      icon: <MessageSquarePlusIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.newChat",
+      run: async () => {
+        await handleNewChat();
+      },
+    });
+  }
+
   if (projects.length > 0) {
     const activeProjectTitle =
       projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
@@ -1439,6 +1456,7 @@ function OpenCommandPaletteDialog(props: {
             activeThread: activeThread ?? undefined,
             defaultProjectRef,
             handleNewThread,
+            projects,
           });
         },
       });
@@ -1697,6 +1715,7 @@ function OpenCommandPaletteDialog(props: {
           title: inferProjectTitleFromPath(cwd),
           workspaceRoot: cwd,
           createWorkspaceRootIfMissing: true,
+          kind: "workspace",
           defaultModelSelection: resolveDefaultProviderModelSelection(
             targetEnvironmentProviders,
             null,

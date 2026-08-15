@@ -222,6 +222,7 @@ export function buildProjectCreateCommand(input: {
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
     defaultModelSelection: null,
+    kind: "workspace",
     createdAt: input.createdAt,
   };
 }

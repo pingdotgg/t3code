@@ -1,10 +1,12 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { isChatDraft, isWorkspaceThread } from "@t3tools/client-runtime/state/project-kind";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 interface ThreadContextLike {
   environmentId: EnvironmentId;
   projectId: ProjectId;
+  createInChatScratch?: boolean;
 }
 
 interface NewThreadHandler {
@@ -25,6 +27,10 @@ export interface ChatThreadActionContext {
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
   readonly handleNewThread: NewThreadHandler;
+  readonly projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+  }>;
 }
 
 export function resolveNewDraftStartFromOrigin(input: {
@@ -37,10 +43,16 @@ export function resolveNewDraftStartFromOrigin(input: {
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
-  if (context.activeThread) {
+  if (
+    context.activeThread &&
+    isWorkspaceThread({
+      thread: context.activeThread,
+      projects: context.projects,
+    })
+  ) {
     return scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
   }
-  if (context.activeDraftThread) {
+  if (context.activeDraftThread && !isChatDraft(context.activeDraftThread)) {
     return scopeProjectRef(
       context.activeDraftThread.environmentId,
       context.activeDraftThread.projectId,
@@ -54,7 +66,8 @@ export function resolveThreadActionProjectRef(
 // carrying them over from the viewed thread meant "new thread" silently
 // reused checkouts and branches. Explicit affordances (branch toolbar's
 // "new thread in this worktree") pass those options to handleNewThread
-// directly instead.
+// directly instead. Chat context is skipped: the synthetic chat project is
+// hidden, so "new thread" from a chat falls back to the default workspace.
 export async function startNewThreadFromContext(
   context: ChatThreadActionContext,
 ): Promise<boolean> {

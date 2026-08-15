@@ -1,6 +1,15 @@
 import * as Arr from "effect/Array";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 
+import { isVisibleShellProject } from "./projectKind.ts";
+
+export function omitHiddenShellProjects(
+  snapshot: OrchestrationShellSnapshot,
+): OrchestrationShellSnapshot {
+  const projects = snapshot.projects.filter(isVisibleShellProject);
+  return projects.length === snapshot.projects.length ? snapshot : { ...snapshot, projects };
+}
+
 /**
  * Reduce a single shell stream event into an existing snapshot, returning a new
  * snapshot with the event's changes applied. This is a pure reducer that both
@@ -17,6 +26,13 @@ export function applyShellStreamEvent(
 
   switch (event.kind) {
     case "project-upserted": {
+      if (!isVisibleShellProject(event.project)) {
+        return {
+          ...snapshot,
+          projects: Arr.filter(snapshot.projects, (p) => p.id !== event.project.id),
+          snapshotSequence: event.sequence,
+        };
+      }
       const projects = snapshot.projects.some((p) => p.id === event.project.id)
         ? Arr.map(snapshot.projects, (p) => (p.id === event.project.id ? event.project : p))
         : Arr.append(snapshot.projects, event.project);

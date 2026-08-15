@@ -40,6 +40,7 @@ layer("OrchestrationEventStore", (it) => {
           title: "Roundtrip Project",
           workspaceRoot: "/tmp/project-roundtrip",
           defaultModelSelection: null,
+          kind: "workspace" as const,
           scripts: [],
           createdAt: now,
           updatedAt: now,

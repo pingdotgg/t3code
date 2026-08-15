@@ -23,7 +23,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
-import { applyShellStreamEvent } from "./shellReducer.ts";
+import { applyShellStreamEvent, omitHiddenShellProjects } from "./shellReducer.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -67,7 +67,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     ),
   );
   const state = yield* SubscriptionRef.make<EnvironmentShellState>({
-    snapshot: cachedSnapshot,
+    snapshot: Option.map(cachedSnapshot, omitHiddenShellProjects),
     status: shellStatusForSnapshot(cachedSnapshot),
     error: Option.none(),
   });
@@ -151,12 +151,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     const current = yield* SubscriptionRef.get(state);
     const nextSnapshot =
       item.kind === "snapshot"
-        ? item.snapshot
+        ? omitHiddenShellProjects(item.snapshot)
         : Option.match(current.snapshot, {
             onNone: () => null,
             onSome: (snapshot) =>
               item.sequence > snapshot.snapshotSequence
-                ? applyShellStreamEvent(snapshot, item)
+                ? omitHiddenShellProjects(applyShellStreamEvent(snapshot, item))
                 : snapshot,
           });
     if (nextSnapshot === null) {

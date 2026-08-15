@@ -1,0 +1,26 @@
+# Chats
+
+A chat is a conversation with any of your configured providers that is not attached to a project.
+Use it when you want to talk to a model the way you would in ChatGPT or Claude — ask questions,
+draft text, or think something through — without opening a workspace.
+
+Chats still support attachments. Images and file contents you add are sent with the message. The
+model does not see your project files unless you attach them.
+
+You can switch models mid-chat, the same way you do in a project thread.
+
+Because a chat has no workspace, there is no branch, worktree, diff, terminal, or project scripts
+chrome. Checkpoint restore does not apply.
+
+## Starting a chat
+
+Open the command palette and choose **New chat**, or use the New chat shortcut (see
+[Keyboard shortcuts](./keybindings.md)).
+
+Send the first message from the chat composer. T3 Code creates the conversation when you send.
+
+Chats appear in the thread list alongside project threads, with a speech-bubble icon
+instead of a project folder. Rename, pin, snooze, and archive work the same as they
+do for any other thread.
+
+Attaching an existing chat to a project later is not available yet.
