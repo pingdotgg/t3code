@@ -841,6 +841,10 @@ func toolClick(_ args: [String: Any]) -> String {
     }
 
     if let x = args["x"] as? Double, let y = args["y"] as? Double {
+        guard Int(exactly: x.rounded(.towardZero)) != nil,
+              Int(exactly: y.rounded(.towardZero)) != nil else {
+            return "error: coordinates must be finite and representable as integers"
+        }
         let point = CGPoint(x: x, y: y)
         AgentCursor.shared.press(at: point)
         // Prefer the window under the point so backgroundClick uses the correct
