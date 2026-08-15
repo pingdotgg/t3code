@@ -98,6 +98,7 @@ import {
 } from "../wslPaths";
 import {
   ADDON_ICON_CLASS,
+  browseInputEndPaddingClass,
   buildBrowseGroups,
   buildProjectActionItems,
   buildRootGroups,
@@ -2351,9 +2352,10 @@ function OpenCommandPaletteDialog(props: {
           addProjectCloneFlow?.step === "repository"
             ? "*:data-[slot=autocomplete-input]:pe-32!"
             : isBrowsing
-              ? willCreateProjectPath
-                ? "*:data-[slot=autocomplete-input]:pe-38!"
-                : "*:data-[slot=autocomplete-input]:pe-24!"
+              ? browseInputEndPaddingClass({
+                  willCreateProjectPath,
+                  hasHighlightedBrowseItem,
+                })
               : undefined,
         placeholder: inputPlaceholder,
         wrapperClassName: isSubmenu
