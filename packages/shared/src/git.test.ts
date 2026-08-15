@@ -7,6 +7,7 @@ import {
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  sanitizeFeatureBranchName,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -98,6 +99,30 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+});
+
+describe("sanitizeFeatureBranchName", () => {
+  it("preserves an existing feature/ prefix", () => {
+    expect(sanitizeFeatureBranchName("feature/refine-toolbar")).toBe("feature/refine-toolbar");
+  });
+
+  it("preserves a fix/ prefix instead of double-prefixing it", () => {
+    expect(sanitizeFeatureBranchName("fix/calendar-recruitment-filter")).toBe(
+      "fix/calendar-recruitment-filter",
+    );
+  });
+
+  it("preserves a feat/ prefix", () => {
+    expect(sanitizeFeatureBranchName("feat/user-auth")).toBe("feat/user-auth");
+  });
+
+  it("prepends feature/ to a plain fragment", () => {
+    expect(sanitizeFeatureBranchName("refine toolbar")).toBe("feature/refine-toolbar");
+  });
+
+  it("prepends feature/ to an unrecognized namespace", () => {
+    expect(sanitizeFeatureBranchName("add/user-auth")).toBe("feature/add/user-auth");
   });
 });
 
