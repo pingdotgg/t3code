@@ -1,18 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { BraveIcon, EdgeIcon, FirefoxIcon } from "./browserBrandIcons";
-import { SettingsRow } from "./settingsLayout";
-
-function RowTitle({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      {icon}
-      {children}
-    </span>
-  );
-}
+import { SettingRowTitle, SettingsRow } from "./settingsLayout";
 
 /** Chromium/Firefox setup disclosure for Computer Use settings. */
 export function ComputerUseMoreBrowsers() {
@@ -21,7 +12,9 @@ export function ComputerUseMoreBrowsers() {
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <SettingsRow
-        title={<RowTitle icon={<EdgeIcon className="size-5" />}>More browsers</RowTitle>}
+        title={
+          <SettingRowTitle icon={<EdgeIcon className="size-5" />}>More browsers</SettingRowTitle>
+        }
         description="Set up the same extension in other Chromium browsers."
         control={
           <CollapsibleTrigger

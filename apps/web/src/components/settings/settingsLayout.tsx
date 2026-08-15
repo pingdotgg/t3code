@@ -91,6 +91,16 @@ export function SettingIconAction({
   return <Button size="icon-micro" variant="ghost-muted" className={className} {...props} />;
 }
 
+/** Shared settings row title with optional leading icon. */
+export function SettingRowTitle({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      {icon}
+      <span>{children}</span>
+    </span>
+  );
+}
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
