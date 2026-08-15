@@ -89,12 +89,12 @@ import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestG
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
-import type { PullRequestAskSelectionInput } from "./PullRequestCodeTab";
+import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
-  buildAskAboutLinesHandoff,
+  buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
@@ -102,8 +102,9 @@ import {
   buildResolveConflictsPrompt,
   handoffPrompt,
   handoffReviewComments,
-  pullRequestActionNeedsHostRefresh,
   pullRequestActionMenuHasGroup,
+  pullRequestActionNeedsHostRefresh,
+  pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   readableFailure,
@@ -677,7 +678,7 @@ export function PullRequestDetailPanel({
   // Beside the thread whose own pull request this is, a task belongs in that thread's composer:
   // the branch is already checked out under it, so opening a second thread would only scatter
   // the work.
-  const attachTarget = context === "thread" ? (composerDraftTarget ?? null) : null;
+  const attachTarget = pullRequestComposerTarget(context, composerDraftTarget);
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
 
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
@@ -921,20 +922,20 @@ export function PullRequestDetailPanel({
     });
   };
 
-  /** Lines the reader marked in the diff, asked about rather than commented on. */
-  const askAboutSelection = (selection: PullRequestAskSelectionInput) => {
+  const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
     if (!detail) return;
-    void startAsk(`ask:${selection.comment.id}`, {
-      ...buildAskAboutLinesHandoff({
+    void startAsk(
+      `selection:${selection.comment.id}`,
+      buildAddSelectionToAgentHandoff({
         number: detail.number,
         title: detail.title,
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
         comment: selection.comment,
-        question: selection.question,
+        request: selection.request,
       }),
-    });
+    );
   };
 
   const startCheckout = (mode: "worktree" | "local") => {
@@ -1862,7 +1863,7 @@ export function PullRequestDetailPanel({
               <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
                 <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
                   <PullRequestCodeTab
-                    onAskAboutSelection={askAboutSelection}
+                    {...(attachTarget ? { onAddToAgentSelection: addSelectionToAgent } : {})}
                     environmentId={environmentId}
                     reference={reference}
                     detail={detail}
