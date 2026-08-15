@@ -337,6 +337,22 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         retainTerminalOnBranchMismatch: true,
       }),
     ).toBeNull();
+    expect(
+      resolveDisplayedThreadPr({
+        threadBranch: null,
+        gitStatus: status({ refName: "main", pr: null }),
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: true,
+      }),
+    ).toBeNull();
+    expect(
+      resolveDisplayedThreadPrProvider({
+        threadBranch: null,
+        gitStatus: status({ refName: "main", pr: null }),
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: true,
+      }),
+    ).toBeUndefined();
   });
 
   it("does not erase a terminal snapshot when VCS data is missing", () => {

@@ -261,6 +261,7 @@ export function resolveDisplayedThreadPr(input: {
   }
 
   if (
+    threadBranch !== null &&
     retainTerminalOnBranchMismatch &&
     snapshot != null &&
     isTerminalChangeRequestState(snapshot.pr.state)
@@ -288,6 +289,7 @@ export function resolveDisplayedThreadPrProvider(input: {
   }
 
   if (
+    threadBranch !== null &&
     retainTerminalOnBranchMismatch &&
     snapshot != null &&
     isTerminalChangeRequestState(snapshot.pr.state)
