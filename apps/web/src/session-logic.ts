@@ -976,7 +976,7 @@ function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undef
   ) {
     return undefined;
   }
-  return entry.collapseKey ?? (entry.toolCallId ? `tool:${entry.toolCallId}` : undefined);
+  return entry.toolCallId ? `tool:${entry.toolCallId}` : undefined;
 }
 
 function collapseDerivedWorkLogEntries(

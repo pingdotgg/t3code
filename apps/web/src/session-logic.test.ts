@@ -825,6 +825,43 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("does not merge non-adjacent tool starts without stable call ids", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "unkeyed-start-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Search started",
+        kind: "tool.started",
+        payload: { itemType: "search", title: "Search", status: "inProgress" },
+      }),
+      makeActivity({
+        id: "keyed-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Command started",
+        kind: "tool.started",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-between",
+          title: "Command",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "unkeyed-start-2",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Search started",
+        kind: "tool.started",
+        payload: { itemType: "search", title: "Search", status: "inProgress" },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual([
+      "unkeyed-start-1",
+      "keyed-start",
+      "unkeyed-start-2",
+    ]);
+  });
+
   it("omits task.started but shows task.progress and task.completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
