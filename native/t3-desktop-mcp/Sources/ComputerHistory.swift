@@ -187,7 +187,9 @@ private final class DaemonState {
       return false
     }
     guard let url = context.url else {
-      return !includeOnly
+      // Without a URL we cannot evaluate website filters — fail closed whenever
+      // any filters are configured (exclude list or includeOnly).
+      return isBrowser && !siteNeedles.isEmpty ? false : !includeOnly
     }
     let lowered = url.lowercased()
     if isBrowser, Self.isPrivateBrowsing(text: lowered) {
