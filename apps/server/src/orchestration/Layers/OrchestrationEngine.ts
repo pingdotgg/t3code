@@ -41,6 +41,7 @@ import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as TurnAdmissionGate from "../TurnAdmissionGate.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -82,6 +83,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const turnAdmissionGate = yield* TurnAdmissionGate.TurnAdmissionGate;
   const crypto = yield* Crypto.Crypto;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -300,7 +302,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* projectionPipeline.bootstrap;
   commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
 
-  const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
+  const processQueuedEnvelope = (envelope: CommandEnvelope) =>
+    envelope.command.type === "thread.turn.start"
+      ? turnAdmissionGate
+          .admitTurn(
+            processEnvelope(envelope),
+            () =>
+              new OrchestrationCommandInvariantError({
+                commandType: envelope.command.type,
+                detail:
+                  "The server is activating an update. Retry this message after reconnecting.",
+              }),
+          )
+          .pipe(Effect.catch((error) => Deferred.fail(envelope.result, error).pipe(Effect.asVoid)))
+      : processEnvelope(envelope);
+
+  // Admission belongs to the queued work, not the requesting fiber. A client
+  // disconnect can interrupt Deferred.await below without releasing the
+  // update barrier while its already-enqueued command is still processing.
+  const worker = Effect.forever(
+    Queue.take(commandQueue).pipe(Effect.flatMap(processQueuedEnvelope)),
+  );
   yield* Effect.forkScoped(worker);
   yield* Effect.logDebug("orchestration engine started").pipe(
     Effect.annotateLogs({ sequence: commandReadModel.snapshotSequence }),
@@ -309,7 +331,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive, limit) =>
     eventStore.readFromSequence(fromSequenceExclusive, limit);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+  const dispatchUnlocked: OrchestrationEngineShape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, {
@@ -319,6 +341,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       });
       return yield* Deferred.await(result);
     });
+
+  const dispatch: OrchestrationEngineShape["dispatch"] = dispatchUnlocked;
 
   return {
     readEvents,

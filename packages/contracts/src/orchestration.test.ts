@@ -19,10 +19,12 @@ import {
   OrchestrationThreadShell,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadSessionSetPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
+  TURN_START_DELIVERY_PROTOCOL,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -53,6 +55,7 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadSessionSetPayload = Schema.decodeUnknownEffect(ThreadSessionSetPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -511,6 +514,77 @@ it.effect("decodes thread settled and unsettled events", () =>
   }),
 );
 
+it.effect("decodes a correlated turn-start delivery marker on session events", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadSessionSetPayload({
+      threadId: "thread-1",
+      session: {
+        threadId: "thread-1",
+        status: "starting",
+        providerName: "codex",
+        providerInstanceId: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      turnStartDelivery: {
+        messageId: "message-1",
+        requestSequence: 42,
+      },
+    });
+
+    assert.deepStrictEqual(parsed.turnStartDelivery, {
+      messageId: "message-1",
+      requestSequence: 42,
+    });
+  }),
+);
+
+it.effect("decodes correlated pending turn-start recovery failure commands and events", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.turn-start.recovery-fail",
+      commandId: "cmd-recovery-fail",
+      threadId: "thread-1",
+      messageId: "message-1",
+      requestSequence: null,
+      detail: "Provider delivery could not be proven.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 42,
+      eventId: "event-recovery-fail",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-recovery-fail",
+      causationEventId: null,
+      correlationId: "cmd-recovery-fail",
+      metadata: {},
+      type: "thread.turn-start-recovery-failed",
+      payload: {
+        threadId: "thread-1",
+        messageId: "message-1",
+        requestSequence: null,
+        detail: "Provider delivery could not be proven.",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(command.type, "thread.turn-start.recovery-fail");
+    if (command.type !== "thread.turn-start.recovery-fail") {
+      return;
+    }
+    assert.strictEqual(command.requestSequence, null);
+    assert.strictEqual(event.type, "thread.turn-start-recovery-failed");
+    if (event.type !== "thread.turn-start-recovery-failed") {
+      return;
+    }
+    assert.strictEqual(event.payload.messageId, "message-1");
+  }),
+);
+
 it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -718,10 +792,35 @@ it.effect(
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       assert.strictEqual(parsed.modelSelection, undefined);
+      assert.strictEqual(parsed.deliveryProtocol, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
+);
+
+it.effect("decodes the durable turn-start delivery protocol when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.deliveryProtocol, TURN_START_DELIVERY_PROTOCOL);
+  }),
+);
+
+it.effect("keeps protocol-one turn-start events decodable as legacy history", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-legacy-protocol",
+      deliveryProtocol: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.deliveryProtocol, 1);
+  }),
 );
 
 it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>

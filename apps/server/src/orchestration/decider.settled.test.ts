@@ -383,6 +383,10 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           commandId: CommandId.make("cmd-session-set"),
           threadId: ThreadId.make("thread-1"),
           session: makeSession("running"),
+          turnStartDelivery: {
+            messageId: MessageId.make("message-1"),
+            requestSequence: 42,
+          },
           createdAt: NOW,
         },
         // A keep-active pin is also an override: real activity clears it
@@ -394,6 +398,9 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         "thread.unsettled",
         "thread.session-set",
       ]);
+      expect(sessionEvents[1]?.payload).toMatchObject({
+        turnStartDelivery: { messageId: "message-1", requestSequence: 42 },
+      });
     }),
   );
 
@@ -448,6 +455,36 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         "thread.unsettled",
         "thread.activity-appended",
       ]);
+    }),
+  );
+
+  it.effect("emits a correlated pending turn-start recovery failure event", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn-start.recovery-fail",
+          commandId: CommandId.make("cmd-turn-start-recovery-fail"),
+          threadId: ThreadId.make("thread-missing-from-read-model"),
+          messageId: MessageId.make("message-recovery-fail"),
+          requestSequence: 42,
+          detail: "Provider delivery could not be proven.",
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null),
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: "thread.turn-start-recovery-failed",
+        payload: {
+          threadId: "thread-missing-from-read-model",
+          messageId: "message-recovery-fail",
+          requestSequence: 42,
+          detail: "Provider delivery could not be proven.",
+          createdAt: NOW,
+        },
+      });
     }),
   );
 

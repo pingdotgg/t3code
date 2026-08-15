@@ -1,6 +1,13 @@
 import { expect, it } from "@effect/vitest";
 
-import { runServicePreflight } from "./servicePreflight.ts";
+import {
+  decodeServicePreflightResult,
+  PENDING_TURN_RECOVERY_PROTOCOL,
+  PENDING_TURN_RECOVERY_REQUIRED_REASON,
+  PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+  PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON,
+  runServicePreflight,
+} from "./servicePreflight.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
 it("requires the database-snapshot launcher protocol", () => {
@@ -22,5 +29,52 @@ it("requires the database-snapshot launcher protocol", () => {
     status: "ready",
     version: "1.2.3",
     launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+    providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+    pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL,
+  });
+});
+
+it("blocks a candidate that would remove durable pending-turn recovery", () => {
+  expect(
+    decodeServicePreflightResult({
+      status: "ready",
+      version: "1.2.4",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+    }),
+  ).toEqual({
+    status: "blocked",
+    version: "1.2.4",
+    reason: PENDING_TURN_RECOVERY_REQUIRED_REASON,
+  });
+});
+
+it("blocks protocol two because stale recovery can still erase a newer pending request", () => {
+  expect(
+    decodeServicePreflightResult({
+      status: "ready",
+      version: "1.2.4",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+      pendingTurnRecoveryProtocol: 2,
+    }),
+  ).toEqual({
+    status: "blocked",
+    version: "1.2.4",
+    reason: PENDING_TURN_RECOVERY_REQUIRED_REASON,
+  });
+});
+
+it("blocks a candidate that would remove automatic provider lifecycle recovery", () => {
+  expect(
+    decodeServicePreflightResult({
+      status: "ready",
+      version: "1.2.4",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+    }),
+  ).toEqual({
+    status: "blocked",
+    version: "1.2.4",
+    reason: PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON,
   });
 });

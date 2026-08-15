@@ -1,5 +1,6 @@
 import {
   EventId,
+  TURN_START_DELIVERY_PROTOCOL,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -973,6 +974,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
@@ -1180,6 +1182,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           session: command.session,
+          ...(command.turnStartDelivery !== undefined
+            ? { turnStartDelivery: command.turnStartDelivery }
+            : {}),
         },
       };
       // Only a session coming alive is activity worth waking a settled thread
@@ -1389,6 +1394,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       return [unsettledEvent, activityAppendedEvent];
     }
+
+    case "thread.turn-start.recovery-fail":
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-start-recovery-failed",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          requestSequence: command.requestSequence,
+          detail: command.detail,
+          createdAt: command.createdAt,
+        },
+      };
 
     default: {
       command satisfies never;

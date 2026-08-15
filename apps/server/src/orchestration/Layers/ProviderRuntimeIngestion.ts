@@ -17,21 +17,27 @@ import {
   type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
+  type ProviderSession,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
+import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
@@ -46,6 +52,59 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
+const RESTART_INTERRUPTION_DETAIL =
+  "The provider process ended while T3 Code was restarting. Send the message again to resume.";
+const RUNTIME_INTERRUPTION_DETAIL =
+  "The provider process failed to start or ended without reporting turn completion. T3 Code recovered the thread automatically; send the message again to resume.";
+const PROVIDER_LIVENESS_SWEEP_INTERVAL = Duration.seconds(5);
+const PROVIDER_LIVENESS_CONFIRMATION_DELAY = Duration.seconds(2);
+const PROVIDER_STARTING_GRACE_PERIOD = Duration.seconds(30);
+
+const isLiveProviderSession = (session: ProviderSession) =>
+  session.status === "connecting" || session.status === "ready" || session.status === "running";
+
+const liveProviderSessionsForThread = (
+  threadId: ThreadId,
+  providerSessions: ReadonlyArray<ProviderSession>,
+) =>
+  providerSessions.filter(
+    (session) => session.threadId === threadId && isLiveProviderSession(session),
+  );
+
+const hasAuthoritativeLiveProviderSession = (
+  thread: OrchestrationThreadShell,
+  providerSessions: ReadonlyArray<ProviderSession>,
+) => {
+  const liveSessions = liveProviderSessionsForThread(thread.id, providerSessions);
+  const projectedInstanceId = thread.session?.providerInstanceId;
+  return projectedInstanceId === undefined
+    ? liveSessions.length > 0
+    : liveSessions.some((session) => session.providerInstanceId === projectedInstanceId);
+};
+
+const findAuthoritativeLiveProviderSession = (
+  thread: OrchestrationThreadShell,
+  providerSessions: ReadonlyArray<ProviderSession>,
+): ProviderSession | undefined => {
+  const liveSessions = liveProviderSessionsForThread(thread.id, providerSessions);
+  const projectedInstanceId = thread.session?.providerInstanceId;
+  if (projectedInstanceId !== undefined) {
+    return liveSessions.find((session) => session.providerInstanceId === projectedInstanceId);
+  }
+  // A legacy unbound projection may be restored only from an unambiguous
+  // inventory; array order never decides ownership.
+  return liveSessions.length === 1 ? liveSessions[0] : undefined;
+};
+
+const hasSameRecoveryObservation = (
+  first: OrchestrationThreadShell,
+  second: OrchestrationThreadShell,
+) =>
+  first.session?.status === second.session?.status &&
+  first.session?.providerInstanceId === second.session?.providerInstanceId &&
+  first.session?.activeTurnId === second.session?.activeTurnId &&
+  first.session?.updatedAt === second.session?.updatedAt &&
+  first.backgroundLiveness === second.backgroundLiveness;
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -112,6 +171,12 @@ type RuntimeIngestionInput =
   | {
       source: "domain";
       event: TurnStartRequestedDomainEvent;
+    }
+  | {
+      source: "recovery";
+      thread: OrchestrationThreadShell;
+      detail: string;
+      commandTag: "restart-recovery" | "runtime-recovery";
     };
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
@@ -282,6 +347,23 @@ function orchestrationSessionStatusFromRuntimeState(
     case "interrupted":
       return "interrupted";
     case "stopped":
+      return "stopped";
+    case "error":
+      return "error";
+  }
+}
+
+function orchestrationSessionStatusFromProviderSession(
+  status: ProviderSession["status"],
+): "starting" | "running" | "ready" | "stopped" | "error" {
+  switch (status) {
+    case "connecting":
+      return "starting";
+    case "running":
+      return "running";
+    case "ready":
+      return "ready";
+    case "closed":
       return "stopped";
     case "error":
       return "error";
@@ -874,6 +956,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
@@ -1477,6 +1560,24 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
+      const projectedProviderInstanceId = thread.session?.providerInstanceId;
+      // ProviderService stamps every production event with its source instance.
+      // Once projection is instance-bound, an unstamped event is uncorrelatable
+      // and must fail closed just like an explicitly different instance.
+      if (
+        projectedProviderInstanceId !== undefined &&
+        event.providerInstanceId !== projectedProviderInstanceId
+      ) {
+        yield* Effect.logDebug("provider runtime ingestion ignored stale provider instance event", {
+          threadId: thread.id,
+          eventId: event.eventId,
+          eventType: event.type,
+          projectedProviderInstanceId,
+          eventProviderInstanceId: event.providerInstanceId,
+        });
+        return;
+      }
+
       let loadedThreadDetail: OrchestrationThread | null | undefined;
       const getLoadedThreadDetail = () =>
         Effect.gen(function* () {
@@ -2022,8 +2123,124 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 
-  const processInput = (input: RuntimeIngestionInput) =>
-    input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
+  const processRecoveryInput = Effect.fn("processProviderRecoveryInput")(function* (
+    input: Extract<RuntimeIngestionInput, { source: "recovery" }>,
+  ) {
+    // Recovery shares the same drainable worker as provider events. If a
+    // provider lifecycle event was already published, it is applied before
+    // this check; if it is published while this mutation runs, it is applied
+    // afterward. That prevents a valid lifecycle event from being committed
+    // first and then overwritten by a stale recovery observation.
+    const current = yield* projectionSnapshotQuery.getThreadShellById(input.thread.id);
+    if (Option.isNone(current) || !hasSameRecoveryObservation(input.thread, current.value)) {
+      return;
+    }
+    const providerSessions = yield* providerService.listSessions();
+    if (hasAuthoritativeLiveProviderSession(current.value, providerSessions)) {
+      return;
+    }
+
+    const session = current.value.session;
+    if (session === null) {
+      // A background-only recovery has no durable session mutation to guard.
+      // Confirm inventory once more immediately before clearing its in-memory
+      // liveness, covering a provider that appeared after the final read.
+      const liveSession = (yield* providerService.listSessions()).find(
+        (candidate) => candidate.threadId === input.thread.id && isLiveProviderSession(candidate),
+      );
+      if (liveSession !== undefined) {
+        return;
+      }
+      threadBackgroundLiveness.clearThreadLiveness(input.thread.id);
+      threadPlanProgress.clearThreadPlanProgress(input.thread.id);
+      return;
+    }
+
+    const interruptedAt = DateTime.formatIso(yield* DateTime.now);
+    const commandUuid = yield* crypto.randomUUIDv4;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make(`provider:${input.commandTag}:${commandUuid}`),
+      threadId: input.thread.id,
+      session: {
+        ...session,
+        status: "interrupted",
+        activeTurnId: null,
+        lastError: input.detail,
+        updatedAt: interruptedAt,
+      },
+      createdAt: interruptedAt,
+    });
+
+    // Inventory can change after the final pre-mutation read. When it does,
+    // restore from the authoritative ProviderSession—not from process
+    // presence or a guessed lifecycle state. The exact interruption marker
+    // prevents this correction from overwriting any newer projection update.
+    const providerSessionsAfterInterruption = yield* providerService.listSessions();
+    const afterInterruption = yield* projectionSnapshotQuery.getThreadShellById(input.thread.id);
+    if (Option.isSome(afterInterruption)) {
+      const interruptedSession = afterInterruption.value.session;
+      const liveSession = findAuthoritativeLiveProviderSession(
+        afterInterruption.value,
+        providerSessionsAfterInterruption,
+      );
+      if (
+        liveSession !== undefined &&
+        interruptedSession !== null &&
+        interruptedSession.status === "interrupted" &&
+        interruptedSession.updatedAt === interruptedAt &&
+        interruptedSession.lastError === input.detail
+      ) {
+        const restoredAt = DateTime.formatIso(yield* DateTime.now);
+        const restoreUuid = yield* crypto.randomUUIDv4;
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(
+            `provider:${input.commandTag}:live-session-restored:${restoreUuid}`,
+          ),
+          threadId: input.thread.id,
+          session: {
+            threadId: input.thread.id,
+            status: orchestrationSessionStatusFromProviderSession(liveSession.status),
+            providerName: liveSession.provider,
+            ...(liveSession.providerInstanceId !== undefined
+              ? { providerInstanceId: liveSession.providerInstanceId }
+              : {}),
+            runtimeMode: liveSession.runtimeMode,
+            activeTurnId: liveSession.activeTurnId ?? null,
+            lastError: liveSession.lastError ?? null,
+            updatedAt: restoredAt,
+          },
+          createdAt: restoredAt,
+        });
+        yield* Effect.logInfo("provider runtime recovery restored a live provider session", {
+          recovery: input.commandTag,
+          threadId: input.thread.id,
+          providerInstanceId: liveSession.providerInstanceId,
+          providerStatus: liveSession.status,
+        });
+        return;
+      }
+    }
+
+    threadBackgroundLiveness.clearThreadLiveness(input.thread.id);
+    threadPlanProgress.clearThreadPlanProgress(input.thread.id);
+    yield* Effect.logWarning("provider.runtime.reconciled-interrupted-session", {
+      recovery: input.commandTag,
+      threadId: input.thread.id,
+    });
+  });
+
+  const processInput = (input: RuntimeIngestionInput) => {
+    switch (input.source) {
+      case "runtime":
+        return processRuntimeEvent(input.event);
+      case "domain":
+        return processDomainEvent(input.event);
+      case "recovery":
+        return processRecoveryInput(input);
+    }
+  };
 
   const processInputSafely = (input: RuntimeIngestionInput) =>
     processInput(input).pipe(
@@ -2033,14 +2250,106 @@ const make = Effect.gen(function* () {
         }
         return Effect.logWarning("provider runtime ingestion failed to process event", {
           source: input.source,
-          eventId: input.event.eventId,
-          eventType: input.event.type,
+          ...(input.source === "recovery"
+            ? { threadId: input.thread.id, recovery: input.commandTag }
+            : { eventId: input.event.eventId, eventType: input.event.type }),
           cause: Cause.pretty(cause),
         });
       }),
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
+
+  const readMissingActiveSessions = Effect.fn("readMissingActiveProviderSessions")(function* (
+    recovery: "restart" | "runtime",
+  ) {
+    const [snapshot, providerSessions] = yield* Effect.all([
+      projectionSnapshotQuery.getShellSnapshot(),
+      providerService.listSessions(),
+    ]);
+    const observedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    return snapshot.threads.filter((thread) => {
+      const session = thread.session;
+      const status = session?.status;
+      const staleStartingSession =
+        session !== null &&
+        status === "starting" &&
+        (recovery === "restart" ||
+          observedAtMs - DateTime.toEpochMillis(DateTime.makeUnsafe(session.updatedAt)) >=
+            Duration.toMillis(PROVIDER_STARTING_GRACE_PERIOD));
+      const hasProjectedWork =
+        (session !== null && status === "running") ||
+        staleStartingSession ||
+        thread.backgroundLiveness != null;
+      return hasProjectedWork && !hasAuthoritativeLiveProviderSession(thread, providerSessions);
+    });
+  });
+
+  const interruptMissingActiveSessions = Effect.fn("interruptMissingActiveProviderSessions")(
+    function* (
+      interruptedThreads: ReadonlyArray<OrchestrationThreadShell>,
+      detail: string,
+      commandTag: "restart-recovery" | "runtime-recovery",
+    ) {
+      if (interruptedThreads.length === 0) {
+        return;
+      }
+
+      yield* Effect.forEach(
+        interruptedThreads,
+        (thread) => worker.enqueue({ source: "recovery", thread, detail, commandTag }),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* worker.drain;
+    },
+  );
+
+  const reconcileInterruptedSessionsAfterRestart = readMissingActiveSessions("restart").pipe(
+    Effect.flatMap((threads) =>
+      interruptMissingActiveSessions(threads, RESTART_INTERRUPTION_DETAIL, "restart-recovery"),
+    ),
+  );
+
+  const rehydratePersistedTaskLiveness = Effect.gen(function* () {
+    const persistedTasks = yield* projectionThreadActivityRepository.listLatestTaskLiveness();
+    for (const task of persistedTasks) {
+      threadBackgroundLiveness.recordTaskLiveness({
+        threadId: task.threadId,
+        taskId: task.taskId,
+        taskType: task.taskType ?? undefined,
+        status: task.status ?? undefined,
+        agentId: task.agentId ?? undefined,
+        kind:
+          task.kind === "task.started"
+            ? "started"
+            : task.kind === "task.progress"
+              ? "progress"
+              : task.kind === "task.updated"
+                ? "updated"
+                : "completed",
+      });
+    }
+  });
+
+  const reconcileInterruptedSessionsDuringRuntime = Effect.gen(function* () {
+    const firstObservation = yield* readMissingActiveSessions("runtime");
+    if (firstObservation.length === 0) {
+      return;
+    }
+
+    yield* Effect.sleep(PROVIDER_LIVENESS_CONFIRMATION_DELAY);
+    const secondObservation = yield* readMissingActiveSessions("runtime");
+    const firstByThreadId = new Map(firstObservation.map((thread) => [thread.id, thread]));
+    const confirmedMissing = secondObservation.filter((thread) => {
+      const first = firstByThreadId.get(thread.id);
+      return first !== undefined && hasSameRecoveryObservation(first, thread);
+    });
+    yield* interruptMissingActiveSessions(
+      confirmedMissing,
+      RUNTIME_INTERRUPTION_DETAIL,
+      "runtime-recovery",
+    );
+  });
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
@@ -2057,6 +2366,25 @@ const make = Effect.gen(function* () {
           return worker.enqueue({ source: "domain", event });
         }),
       );
+      // Provider subprocesses do not survive a server restart. Reconcile the
+      // persisted read model after subscriptions are parked so a dead turn can
+      // never remain "running" forever, while adapters that did retain a live
+      // session stay untouched.
+      yield* rehydratePersistedTaskLiveness.pipe(Effect.orDie);
+      yield* reconcileInterruptedSessionsAfterRestart.pipe(Effect.orDie);
+      yield* forkParked(
+        reconcileInterruptedSessionsDuringRuntime.pipe(
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return Effect.failCause(cause);
+            }
+            return Effect.logWarning("provider runtime liveness reconciliation failed", {
+              cause: Cause.pretty(cause),
+            });
+          }),
+          Effect.repeat(Schedule.spaced(PROVIDER_LIVENESS_SWEEP_INTERVAL)),
+        ),
+      );
     });
 
   return {
@@ -2068,4 +2396,7 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+  Layer.provide(ProjectionThreadActivityRepositoryLive),
+);

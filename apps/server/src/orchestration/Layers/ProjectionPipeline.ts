@@ -1153,6 +1153,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
+            requestSequence: event.sequence,
+            deliverySequence: null,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
             requestedAt: event.payload.createdAt,
@@ -1160,7 +1162,63 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.turn-start-recovery-failed": {
+          const settled = yield* projectionTurnRepository.settlePendingTurnStartIfMatches({
+            threadId: event.payload.threadId,
+            messageId: event.payload.messageId,
+            requestSequence: event.payload.requestSequence,
+          });
+          if (!settled) {
+            return;
+          }
+          const session = yield* projectionThreadSessionRepository.getByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isSome(session) && session.value.status === "starting") {
+            yield* projectionThreadSessionRepository.upsert({
+              ...session.value,
+              status: "error",
+              activeTurnId: null,
+              lastError: event.payload.detail,
+              // Recovery replays use a fresh starting timestamp while the
+              // failure event retains the original request timestamp. Never
+              // move projected liveness backwards when terminalizing it.
+              updatedAt:
+                session.value.updatedAt > event.payload.createdAt
+                  ? session.value.updatedAt
+                  : event.payload.createdAt,
+            });
+          }
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: event.eventId,
+            threadId: event.payload.threadId,
+            turnId: null,
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { detail: event.payload.detail },
+            createdAt: event.payload.createdAt,
+          });
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
         case "thread.session-set": {
+          const turnStartDelivery = event.payload.turnStartDelivery;
+          if (turnStartDelivery !== undefined) {
+            yield* projectionTurnRepository.markPendingTurnDeliveryStarted({
+              threadId: event.payload.threadId,
+              messageId: turnStartDelivery.messageId,
+              requestSequence: turnStartDelivery.requestSequence,
+              deliverySequence: event.sequence,
+            });
+            if (event.payload.session.status === "running") {
+              // This is a durable pre-delivery marker for a message steering an
+              // already-running session, not a provider turn-start signal. The
+              // provider's later running event owns pending-to-turn promotion.
+              return;
+            }
+          }
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
             if (

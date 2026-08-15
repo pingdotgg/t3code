@@ -14,10 +14,12 @@ import {
   GetProjectionPendingTurnStartInput,
   GetProjectionTurnByTurnIdInput,
   ListProjectionTurnsByThreadInput,
+  MarkProjectionPendingTurnDeliveryInput,
   ProjectionPendingTurnStart,
   ProjectionTurn,
   ProjectionTurnById,
   ProjectionTurnRepository,
+  SettleProjectionPendingTurnStartInput,
   type ProjectionTurnRepositoryShape,
 } from "../Services/ProjectionTurns.ts";
 
@@ -116,6 +118,8 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           thread_id,
           turn_id,
           pending_message_id,
+          request_sequence,
+          delivery_sequence,
           source_proposed_plan_thread_id,
           source_proposed_plan_id,
           assistant_message_id,
@@ -132,6 +136,8 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.threadId},
           NULL,
           ${row.messageId},
+          ${row.requestSequence},
+          ${row.deliverySequence},
           ${row.sourceProposedPlanThreadId},
           ${row.sourceProposedPlanId},
           NULL,
@@ -155,6 +161,8 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           pending_message_id AS "messageId",
+          request_sequence AS "requestSequence",
+          delivery_sequence AS "deliverySequence",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
           requested_at AS "requestedAt"
@@ -166,6 +174,66 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           AND checkpoint_turn_count IS NULL
         ORDER BY requested_at DESC
         LIMIT 1
+      `,
+  });
+
+  const listPendingProjectionTurns = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionPendingTurnStart,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          request_sequence AS "requestSequence",
+          delivery_sequence AS "deliverySequence",
+          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          source_proposed_plan_id AS "sourceProposedPlanId",
+          requested_at AS "requestedAt"
+        FROM projection_turns
+        WHERE turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id IS NOT NULL
+          AND checkpoint_turn_count IS NULL
+        ORDER BY
+          CASE WHEN request_sequence IS NULL THEN 0 ELSE 1 END ASC,
+          request_sequence ASC,
+          requested_at ASC,
+          row_id ASC
+      `,
+  });
+
+  const markPendingProjectionTurnDelivery = SqlSchema.void({
+    Request: MarkProjectionPendingTurnDeliveryInput,
+    execute: ({ threadId, messageId, requestSequence, deliverySequence }) =>
+      sql`
+        UPDATE projection_turns
+        SET delivery_sequence = ${deliverySequence}
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id = ${messageId}
+          AND request_sequence = ${requestSequence}
+          AND checkpoint_turn_count IS NULL
+      `,
+  });
+
+  const settlePendingProjectionTurnStart = SqlSchema.findOneOption({
+    Request: SettleProjectionPendingTurnStartInput,
+    Result: Schema.Struct({ threadId: GetProjectionPendingTurnStartInput.fields.threadId }),
+    execute: ({ threadId, messageId, requestSequence }) =>
+      sql`
+        DELETE FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id = ${messageId}
+          AND (
+            request_sequence = ${requestSequence}
+            OR (request_sequence IS NULL AND ${requestSequence} IS NULL)
+          )
+          AND checkpoint_turn_count IS NULL
+        RETURNING thread_id AS "threadId"
       `,
   });
 
@@ -296,6 +364,42 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ),
       );
 
+  const listPendingTurnStarts: ProjectionTurnRepositoryShape["listPendingTurnStarts"] = () =>
+    listPendingProjectionTurns().pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionTurnRepository.listPendingTurnStarts:query",
+          "ProjectionTurnRepository.listPendingTurnStarts:decodeRows",
+        ),
+      ),
+      Effect.map(
+        (rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionPendingTurnStart>>,
+      ),
+    );
+
+  const markPendingTurnDeliveryStarted: ProjectionTurnRepositoryShape["markPendingTurnDeliveryStarted"] =
+    (input) =>
+      markPendingProjectionTurnDelivery(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionTurnRepository.markPendingTurnDeliveryStarted:query",
+            "ProjectionTurnRepository.markPendingTurnDeliveryStarted:encodeRequest",
+          ),
+        ),
+      );
+
+  const settlePendingTurnStartIfMatches: ProjectionTurnRepositoryShape["settlePendingTurnStartIfMatches"] =
+    (input) =>
+      settlePendingProjectionTurnStart(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionTurnRepository.settlePendingTurnStartIfMatches:query",
+            "ProjectionTurnRepository.settlePendingTurnStartIfMatches:decodeResult",
+          ),
+        ),
+        Effect.map(Option.isSome),
+      );
+
   const listByThreadId: ProjectionTurnRepositoryShape["listByThreadId"] = (input) =>
     listProjectionTurnsByThread(input).pipe(
       Effect.mapError(
@@ -341,6 +445,9 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     upsertByTurnId,
     replacePendingTurnStart,
     getPendingTurnStartByThreadId,
+    listPendingTurnStarts,
+    markPendingTurnDeliveryStarted,
+    settlePendingTurnStartIfMatches,
     deletePendingTurnStartByThreadId,
     listByThreadId,
     getByTurnId,
