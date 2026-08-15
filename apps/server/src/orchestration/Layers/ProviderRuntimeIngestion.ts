@@ -1882,7 +1882,7 @@ const make = Effect.gen(function* () {
                 ? { providerInstanceId: event.providerInstanceId }
                 : {}),
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: eventTurnId ?? null,
+              activeTurnId: null,
               lastError: runtimeErrorMessage,
               updatedAt: now,
             },

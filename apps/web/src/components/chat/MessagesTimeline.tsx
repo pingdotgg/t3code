@@ -2228,7 +2228,12 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
-  const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
+  const showRejectedIndicator = workEntry.sourceActivityKind === "provider.turn.steer.rejected";
+  const entryIconName = showWarningIndicator
+    ? "x"
+    : showRejectedIndicator
+      ? "circle-alert"
+      : workEntryIconName(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
@@ -2248,17 +2253,21 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     "flex size-5 shrink-0 items-center justify-center",
     showWarningIndicator
       ? "text-destructive"
-      : showDestructiveRowStyle
-        ? "text-destructive"
-        : workEntry.tone === "tool" || showFailedIndicator
-          ? "text-icon-muted"
-          : iconConfig.className,
+      : showRejectedIndicator
+        ? "text-warning"
+        : showDestructiveRowStyle
+          ? "text-destructive"
+          : workEntry.tone === "tool" || showFailedIndicator
+            ? "text-icon-muted"
+            : iconConfig.className,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"
-    : showDestructiveRowStyle
-      ? "font-medium text-destructive"
-      : "font-medium text-foreground";
+    : showRejectedIndicator
+      ? "font-medium text-warning"
+      : showDestructiveRowStyle
+        ? "font-medium text-destructive"
+        : "font-medium text-foreground";
   const turnSettled = !activity.activeTurnInProgress;
   const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
   const showSuccessIndicator =

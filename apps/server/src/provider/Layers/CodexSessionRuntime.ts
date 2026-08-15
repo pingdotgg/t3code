@@ -28,6 +28,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -83,6 +84,7 @@ const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartP
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
   CodexTurnStartParamsWithCollaborationMode,
 );
+const decodeCodexTurnSteerParams = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerParams);
 
 export type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
@@ -135,7 +137,7 @@ export interface CodexSessionRuntimeShape {
   readonly getSession: Effect.Effect<ProviderSession>;
   readonly sendTurn: (
     input: CodexSessionRuntimeSendTurnInput,
-  ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
+  ) => Effect.Effect<CodexSendTurnResult, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
   readonly rollbackThread: (
@@ -158,7 +160,8 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimePendingApprovalNotFoundError
   | CodexSessionRuntimePendingUserInputNotFoundError
   | CodexSessionRuntimeInvalidUserInputAnswersError
-  | CodexSessionRuntimeThreadIdMissingError;
+  | CodexSessionRuntimeThreadIdMissingError
+  | CodexSessionRuntimeTurnSteerRejectedError;
 
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
@@ -201,6 +204,97 @@ export class CodexSessionRuntimeThreadIdMissingError extends Schema.TaggedErrorC
 ) {
   override get message(): string {
     return `Codex session is missing a provider thread id for ${this.threadId}`;
+  }
+}
+
+/**
+ * The one rejection the runtime may recover from on its own: the steer lost
+ * a race with the end of the turn it named, so nothing was delivered and the
+ * message can be re-issued as a fresh `turn/start`. Kept as its own literal
+ * union so retryability is a type-level property rather than a convention —
+ * {@link isRetryableCodexTurnSteerRejection} is the only place that decides.
+ */
+export const CodexTurnSteerRetryableReason = Schema.Literals([
+  "stale-expected-turn-id",
+  "turn-interrupting",
+]);
+export type CodexTurnSteerRetryableReason = typeof CodexTurnSteerRetryableReason.Type;
+
+export const CodexTurnSteerTerminalReason = Schema.Literals([
+  // Documented protocol outcome, not a fault: the running turn is a
+  // `/review` or manual `/compact`, which never accepts same-turn steering.
+  "active-turn-not-steerable",
+  // The send asks for a model/effort/service tier/interaction mode the
+  // running turn cannot adopt — steering would silently drop the switch.
+  "turn-settings-changed",
+  // The app-server answered with some other turn: the message may have
+  // landed, so re-issuing it risks a double post.
+  "turn-id-mismatch",
+  // Refused while the runtime still sees the turn running: unclassified, and
+  // re-issuing could double post.
+  "rejected",
+]);
+export type CodexTurnSteerTerminalReason = typeof CodexTurnSteerTerminalReason.Type;
+
+export const CodexTurnSteerRejectionReason = Schema.Union([
+  CodexTurnSteerRetryableReason,
+  CodexTurnSteerTerminalReason,
+]);
+export type CodexTurnSteerRejectionReason = typeof CodexTurnSteerRejectionReason.Type;
+
+const isCodexTurnSteerRetryableReason = Schema.is(CodexTurnSteerRetryableReason);
+
+export function isRetryableCodexTurnSteerRejection(
+  reason: CodexTurnSteerRejectionReason,
+): reason is CodexTurnSteerRetryableReason {
+  return isCodexTurnSteerRetryableReason(reason);
+}
+
+export class CodexSessionRuntimeTurnSteerRejectedError extends Schema.TaggedErrorClass<CodexSessionRuntimeTurnSteerRejectedError>()(
+  "CodexSessionRuntimeTurnSteerRejectedError",
+  {
+    threadId: Schema.String,
+    expectedTurnId: Schema.String,
+    reason: CodexTurnSteerRejectionReason,
+    turnKind: Schema.optionalKey(Schema.String),
+    changedSetting: Schema.optionalKey(Schema.String),
+    steeredTurnId: Schema.optionalKey(Schema.String),
+    detail: Schema.optionalKey(Schema.String),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  /**
+   * A rejected steer never delivers the message, and it never means the
+   * session is broken — the running turn keeps going. Callers use this to
+   * keep the send out of the session-error path.
+   */
+  get retryable(): boolean {
+    return isRetryableCodexTurnSteerRejection(this.reason);
+  }
+
+  override get message(): string {
+    switch (this.reason) {
+      case "active-turn-not-steerable":
+        // `turnKind` is only rendered when the app-server actually named one;
+        // a placeholder would read as a real turn kind to the user.
+        return this.turnKind
+          ? `Codex is running a ${this.turnKind} turn, which does not accept new messages until it finishes.`
+          : "Codex is running a turn that does not accept new messages until it finishes.";
+      case "turn-settings-changed":
+        return `Codex cannot change ${this.changedSetting ?? "turn settings"} while a turn is running; send this message after the current turn finishes.`;
+      case "turn-id-mismatch":
+        return `Codex steered turn ${this.steeredTurnId ?? "an unnamed turn"} instead of the expected active turn ${this.expectedTurnId}.`;
+      case "stale-expected-turn-id":
+        return `Codex turn ${this.expectedTurnId} ended before the message reached it${
+          this.detail ? `: ${this.detail}` : "."
+        }`;
+      case "turn-interrupting":
+        return `Codex turn ${this.expectedTurnId} is stopping; the message was not sent.`;
+      default:
+        return `Codex rejected steering turn ${this.expectedTurnId}${
+          this.detail ? `: ${this.detail}` : "."
+        }`;
+    }
   }
 }
 
@@ -408,6 +502,51 @@ export function buildTurnStartParams(input: {
         "decode-request-payload",
         cause,
         { method: "turn/start" },
+      ),
+    ),
+  );
+}
+
+/**
+ * Steering carries the message and nothing else: the wire contract has no
+ * model, effort, sandbox or collaboration fields because the turn that is
+ * already running keeps the settings it started with. `expectedTurnId` is a
+ * precondition — the app-server fails the request when it is not the turn
+ * currently active on the thread.
+ */
+export function buildTurnSteerParams(input: {
+  readonly threadId: string;
+  readonly expectedTurnId: TurnId;
+  readonly prompt?: string;
+  readonly attachments?: ReadonlyArray<{
+    readonly type: "image";
+    readonly url: string;
+  }>;
+}): Effect.Effect<
+  EffectCodexSchema.V2TurnSteerParams,
+  CodexErrors.CodexAppServerProtocolParseError
+> {
+  const turnInput: Array<EffectCodexSchema.V2TurnSteerParams__UserInput> = [];
+  if (input.prompt) {
+    turnInput.push({
+      type: "text",
+      text: input.prompt,
+    });
+  }
+  for (const attachment of input.attachments ?? []) {
+    turnInput.push(attachment);
+  }
+
+  return decodeCodexTurnSteerParams({
+    threadId: input.threadId,
+    expectedTurnId: input.expectedTurnId,
+    input: turnInput,
+  }).pipe(
+    Effect.mapError((cause) =>
+      CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+        "decode-request-payload",
+        cause,
+        { method: "turn/steer" },
       ),
     ),
   );
@@ -838,6 +977,423 @@ function parseThreadSnapshot(
   };
 }
 
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * JSON-RPC code every steer rejection captured against codex-cli 0.147.0
+ * carries. Anything else is not a steer precondition failure.
+ */
+const CODEX_STEER_REJECTION_CODE = -32600;
+
+/**
+ * Matching on message text is unavoidable here: captured codex-cli 0.147.0
+ * responses carry no structured error data. Keep the two observed refusals
+ * distinct. "No active" permits a fresh start only after the serialized
+ * runtime view is also idle; "found B" proves B is running and must never
+ * directly fall back to turn/start.
+ */
+function isNoActiveTurnRejection(cause: CodexErrors.CodexAppServerRequestError): boolean {
+  return (
+    cause.code === CODEX_STEER_REJECTION_CODE &&
+    cause.errorMessage.trim().toLowerCase().startsWith("no active turn to steer")
+  );
+}
+
+function readFoundActiveTurnId(cause: CodexErrors.CodexAppServerRequestError): TurnId | undefined {
+  if (cause.code !== CODEX_STEER_REJECTION_CODE) {
+    return undefined;
+  }
+  const match = /^expected active turn id `[^`]+` but found `([^`]+)`/i.exec(
+    cause.errorMessage.trim(),
+  );
+  return match?.[1] ? TurnId.make(match[1]) : undefined;
+}
+
+/**
+ * Reads the `activeTurnNotSteerable` codex error info the generated schema
+ * declares as a `CodexErrorInfo` variant.
+ *
+ * Schema-declared, wire-unproven: no capture of this refusal exists. Every
+ * steer rejection captured against codex-cli 0.147.0 is a bare
+ * `{code: -32600, message}` with no `data`, and the `/review` refusal that
+ * would carry the variant was never reproduced. This reads the one position
+ * the schema implies (`data.codexErrorInfo`) purely so the day it appears is
+ * a better message rather than a surprise.
+ *
+ * A miss can only make a rejection *more* conservative: unmatched refusals
+ * stay terminal and are never re-issued. `turnKind` stays absent unless the
+ * payload names one — the user-facing message must not invent a turn kind.
+ */
+function readActiveTurnNotSteerable(
+  data: unknown,
+): { readonly turnKind: string | undefined } | undefined {
+  const variant = readRecord(readRecord(readRecord(data)?.codexErrorInfo)?.activeTurnNotSteerable);
+  return variant
+    ? { turnKind: typeof variant.turnKind === "string" ? variant.turnKind : undefined }
+    : undefined;
+}
+
+interface CodexTurnSubmitClient {
+  readonly raw: {
+    readonly request: (
+      method: string,
+      payload?: unknown,
+    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+  };
+  readonly request: (
+    method: "turn/steer",
+    payload: CodexRpc.ClientRequestParamsByMethod["turn/steer"],
+  ) => Effect.Effect<
+    CodexRpc.ClientRequestResponsesByMethod["turn/steer"],
+    CodexErrors.CodexAppServerError
+  >;
+}
+
+/**
+ * Settings the running turn was started with. Steering carries none of them
+ * (the wire contract has no such fields), so a send that asks to change one
+ * has to be refused rather than folded in — otherwise the UI shows a switch
+ * the model never received.
+ *
+ * `interrupting` flips the moment `turn/interrupt` is issued: a message typed
+ * right after Stop must not be folded into the turn being aborted.
+ */
+export interface CodexActiveTurnState {
+  readonly turnId: TurnId;
+  readonly model: string | undefined;
+  readonly effort: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
+  readonly serviceTier: CodexServiceTier | undefined;
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly interrupting: boolean;
+}
+
+export interface CodexSendTurnResult extends ProviderTurnStartResult {
+  /** True when the message folded into an already-running turn. */
+  readonly steered: boolean;
+}
+
+/**
+ * Names the first setting the send asks to change, or undefined when it asks
+ * for nothing the running turn cannot already provide. An omitted field is
+ * "no preference", not "reset to default", so it never counts as a change.
+ */
+function readTurnSettingsChange(
+  active: CodexActiveTurnState,
+  turn: CodexSessionRuntimeSendTurnInput,
+): string | undefined {
+  const requestedModel = normalizeCodexModelSlug(turn.model);
+  if (requestedModel !== undefined && requestedModel !== active.model) {
+    return "the model";
+  }
+  if (turn.effort !== undefined && turn.effort !== active.effort) {
+    return "reasoning effort";
+  }
+  if (turn.serviceTier !== undefined && turn.serviceTier !== active.serviceTier) {
+    return "the service tier";
+  }
+  if (turn.interactionMode !== undefined && turn.interactionMode !== active.interactionMode) {
+    return "the interaction mode";
+  }
+  return undefined;
+}
+
+/**
+ * Submits one user message to a Codex thread.
+ *
+ * Idle session → `turn/start`, which opens a new provider turn exactly as
+ * before.
+ *
+ * Mid-turn → `turn/steer`, which folds the message into the turn that is
+ * already running. Codex answers a steer with the id of that same turn and
+ * emits no `turn/started` notification, so nothing downstream projects a new
+ * turn and the runtime's active-turn bookkeeping is left untouched: the
+ * caller gets the running turn's id back and the message lands in that
+ * turn's stream.
+ *
+ * Issuing `turn/start` mid-turn instead — what this runtime used to do — is
+ * worse than it looks. Captured against codex-cli 0.147.0, the response
+ * hands back a *different* turn id that never starts: no `turn/started`, no
+ * items and no `turn/completed` ever carry it, while the message itself
+ * folds into the turn already running. The runtime then reported that
+ * phantom id as the turn's id, so callers persisted it as the active turn
+ * and `turn/interrupt` was refused ("expected active turn id … but found
+ * …"). Steering returns the id the server actually accepts.
+ *
+ * Only an idle session takes the `turn/start` path. A turn already being
+ * interrupted rejects the send retryably until its terminal lifecycle
+ * arrives, while a known active turn whose start-time settings are missing
+ * rejects rather than risking a mid-turn phantom `turn/start` response.
+ *
+ * Rejections split by whether the message can still be delivered:
+ *
+ * - The steer lost a race with the end of its turn — the app-server refuses a
+ *   stale `expectedTurnId`, and the runtime's own view has since gone idle.
+ *   Nothing was delivered (the precondition failed), so the message is
+ *   re-issued as a `turn/start` exactly once. This is the ordinary
+ *   end-of-turn race, not a fault.
+ * - `activeTurnNotSteerable` (`/review`, manual `/compact`) is a documented
+ *   protocol outcome and is never re-issued: the running turn keeps going and
+ *   the caller is told the message was not sent.
+ * - A refusal reporting "found B" is terminal and reconciles B as active;
+ *   its failed precondition proves this message was not delivered. A
+ *   successful response naming a different turn is also terminal, but its
+ *   delivery is uncertain, so re-issuing it risks a double post.
+ *
+ * No rejection is ever a session-level failure — see
+ * `CodexSessionRuntimeTurnSteerRejectedError`.
+ */
+export const sendCodexTurn = (input: {
+  readonly client: CodexTurnSubmitClient;
+  readonly sessionRef: Ref.Ref<ProviderSession>;
+  readonly activeTurnRef: Ref.Ref<CodexActiveTurnState | undefined>;
+  readonly pendingTurnStartIdRef?: Ref.Ref<Deferred.Deferred<TurnId | undefined> | undefined>;
+  readonly threadId: ThreadId;
+  readonly runtimeMode: RuntimeMode;
+  readonly turn: CodexSessionRuntimeSendTurnInput;
+}): Effect.Effect<CodexSendTurnResult, CodexSessionRuntimeError> =>
+  Effect.gen(function* () {
+    const session = yield* Ref.get(input.sessionRef);
+    const providerThreadId = currentProviderThreadId(session);
+    if (!providerThreadId) {
+      return yield* new CodexSessionRuntimeThreadIdMissingError({
+        threadId: input.threadId,
+      });
+    }
+
+    const startTurn = Effect.gen(function* () {
+      const pendingTurnStartId = input.pendingTurnStartIdRef
+        ? yield* Deferred.make<TurnId | undefined>()
+        : undefined;
+      if (pendingTurnStartId && input.pendingTurnStartIdRef) {
+        yield* Ref.set(input.pendingTurnStartIdRef, pendingTurnStartId);
+      }
+
+      return yield* Effect.gen(function* () {
+        // Read the model fresh: on the end-of-turn retry path the session has
+        // moved on since the snapshot above.
+        const current = yield* Ref.get(input.sessionRef);
+        const requestedModel = normalizeCodexModelSlug(input.turn.model ?? current.model);
+        const effectiveSettings = {
+          model:
+            requestedModel ??
+            (input.turn.interactionMode !== undefined ? DEFAULT_MODEL : undefined),
+          effort:
+            input.turn.effort ?? (input.turn.interactionMode !== undefined ? "medium" : undefined),
+          serviceTier: input.turn.serviceTier,
+          interactionMode: input.turn.interactionMode,
+        } as const;
+        const startParams = yield* buildTurnStartParams({
+          threadId: providerThreadId,
+          runtimeMode: input.runtimeMode,
+          ...(input.turn.input ? { prompt: input.turn.input } : {}),
+          ...(input.turn.attachments ? { attachments: input.turn.attachments } : {}),
+          ...(effectiveSettings.model ? { model: effectiveSettings.model } : {}),
+          ...(effectiveSettings.serviceTier ? { serviceTier: effectiveSettings.serviceTier } : {}),
+          ...(effectiveSettings.effort ? { effort: effectiveSettings.effort } : {}),
+          ...(effectiveSettings.interactionMode
+            ? { interactionMode: effectiveSettings.interactionMode }
+            : {}),
+        });
+        const rawResponse = yield* input.client.raw.request("turn/start", startParams);
+        const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
+          Effect.mapError((error) =>
+            CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+              "decode-response-payload",
+              error,
+              { method: "turn/start" },
+            ),
+          ),
+        );
+        const startedTurnId = TurnId.make(response.turn.id);
+        // The response id is what the server validates `expectedTurnId` and
+        // `turn/interrupt` against, so it wins over any id a `turn/started`
+        // notification published — including when that notification arrived
+        // first. The two agree for ordinary turns; a captured `/review` shows
+        // them diverging, with the server naming the response id as active.
+        yield* updateSession(input.sessionRef, {
+          status: "running",
+          activeTurnId: startedTurnId,
+          ...(effectiveSettings.model ? { model: effectiveSettings.model } : {}),
+        });
+        yield* Ref.set(input.activeTurnRef, {
+          turnId: startedTurnId,
+          ...effectiveSettings,
+          interrupting: false,
+        });
+        if (pendingTurnStartId) {
+          yield* Deferred.succeed(pendingTurnStartId, startedTurnId);
+        }
+        return startedTurnId;
+      }).pipe(
+        Effect.ensuring(
+          pendingTurnStartId && input.pendingTurnStartIdRef
+            ? Deferred.succeed(pendingTurnStartId, undefined).pipe(
+                Effect.andThen(Ref.set(input.pendingTurnStartIdRef, undefined)),
+              )
+            : Effect.void,
+        ),
+      );
+    });
+
+    const finish = (turnId: TurnId, steered: boolean) =>
+      Effect.gen(function* () {
+        const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(input.sessionRef));
+        return {
+          threadId: input.threadId,
+          turnId,
+          ...(resumedProviderThreadId
+            ? { resumeCursor: { threadId: resumedProviderThreadId } }
+            : {}),
+          steered,
+        } satisfies CodexSendTurnResult;
+      });
+
+    const activeTurnId = session.activeTurnId;
+    const activeTurn = yield* Ref.get(input.activeTurnRef);
+    if (activeTurnId === undefined) {
+      return yield* finish(yield* startTurn, false);
+    }
+    if (activeTurn === undefined || activeTurn.turnId !== activeTurnId) {
+      return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+        threadId: input.threadId,
+        expectedTurnId: activeTurnId,
+        reason: "rejected",
+        detail: "active turn metadata is unavailable; message was not sent",
+      });
+    }
+    if (activeTurn.interrupting) {
+      return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+        threadId: input.threadId,
+        expectedTurnId: activeTurnId,
+        reason: "turn-interrupting",
+      });
+    }
+
+    const changedSetting = readTurnSettingsChange(activeTurn, input.turn);
+    if (changedSetting) {
+      return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+        threadId: input.threadId,
+        expectedTurnId: activeTurnId,
+        reason: "turn-settings-changed",
+        changedSetting,
+      });
+    }
+
+    // `expectedTurnId` must be the id the SERVER considers active, which is
+    // the one it returned from `turn/start` — not necessarily the one a
+    // `turn/started` notification published. A captured `/review` shows the
+    // two diverging, with the server accepting only the response id. The
+    // runtime tracks the response id for exactly this reason (see the start
+    // path). If the server still reports a different active id, reconcile it
+    // below and leave this message terminally undelivered.
+    const steerParams = yield* buildTurnSteerParams({
+      threadId: providerThreadId,
+      expectedTurnId: activeTurnId,
+      ...(input.turn.input ? { prompt: input.turn.input } : {}),
+      ...(input.turn.attachments ? { attachments: input.turn.attachments } : {}),
+    });
+    const steered = yield* input.client.request("turn/steer", steerParams).pipe(
+      Effect.map((response) => ({ ok: true as const, turnId: TurnId.make(response.turnId) })),
+      Effect.catchTag("CodexAppServerRequestError", (cause) =>
+        Effect.succeed({ ok: false as const, cause }),
+      ),
+    );
+
+    if (steered.ok) {
+      if (steered.turnId !== activeTurnId) {
+        return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+          threadId: input.threadId,
+          expectedTurnId: activeTurnId,
+          reason: "turn-id-mismatch",
+          steeredTurnId: steered.turnId,
+        });
+      }
+      // Deliberately no session update: the steered message belongs to a turn
+      // that is already tracked, and its settings are unchanged by
+      // construction (see the refusal above).
+      return yield* finish(activeTurnId, true);
+    }
+
+    // Classify from the response itself. The `activeTurnNotSteerable`
+    // variant is checked first so the schema-declared refusal, if it ever
+    // arrives, cannot be mistaken for a stale precondition and re-issued.
+    const notSteerable = readActiveTurnNotSteerable(steered.cause.data);
+    if (notSteerable) {
+      return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+        threadId: input.threadId,
+        expectedTurnId: activeTurnId,
+        reason: "active-turn-not-steerable",
+        ...(notSteerable.turnKind ? { turnKind: notSteerable.turnKind } : {}),
+        detail: steered.cause.message,
+        cause: steered.cause,
+      });
+    }
+
+    const foundActiveTurnId = readFoundActiveTurnId(steered.cause);
+    if (foundActiveTurnId !== undefined) {
+      yield* updateSession(input.sessionRef, {
+        status: "running",
+        activeTurnId: foundActiveTurnId,
+      });
+      yield* Ref.set(input.activeTurnRef, {
+        ...activeTurn,
+        turnId: foundActiveTurnId,
+      });
+      return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+        threadId: input.threadId,
+        expectedTurnId: activeTurnId,
+        reason: "rejected",
+        steeredTurnId: foundActiveTurnId,
+        detail: `${steered.cause.message}; active turn reconciled, message was not sent`,
+        cause: steered.cause,
+      });
+    }
+
+    if (!isNoActiveTurnRejection(steered.cause)) {
+      return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+        threadId: input.threadId,
+        expectedTurnId: activeTurnId,
+        reason: "rejected",
+        detail: steered.cause.message,
+        cause: steered.cause,
+      });
+    }
+
+    const latestSession = yield* Ref.get(input.sessionRef);
+    const latestActiveTurn = yield* Ref.get(input.activeTurnRef);
+    if (latestSession.activeTurnId !== undefined || latestActiveTurn !== undefined) {
+      return yield* new CodexSessionRuntimeTurnSteerRejectedError({
+        threadId: input.threadId,
+        expectedTurnId: activeTurnId,
+        reason: "rejected",
+        detail: `${steered.cause.message}; runtime still reports an active turn, message was not sent`,
+        cause: steered.cause,
+      });
+    }
+
+    const rejection = new CodexSessionRuntimeTurnSteerRejectedError({
+      threadId: input.threadId,
+      expectedTurnId: activeTurnId,
+      reason: "stale-expected-turn-id",
+      detail: steered.cause.message,
+      cause: steered.cause,
+    });
+
+    // The serialized runtime view independently confirms the refused turn is
+    // gone. Re-issue exactly once as a fresh turn. A failure here keeps its
+    // turn-start error type rather than being disguised as a steer rejection.
+    yield* Effect.logDebug("codex refused a stale steer precondition; re-issuing as turn/start", {
+      threadId: input.threadId,
+      expectedTurnId: activeTurnId,
+      cause: rejection.detail,
+    });
+    return yield* finish(yield* startTurn, false);
+  });
+
 export const makeCodexSessionRuntime = (
   options: CodexSessionRuntimeOptions,
 ): Effect.Effect<
@@ -857,6 +1413,19 @@ export const makeCodexSessionRuntime = (
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
+    /**
+     * Settings of the turn currently running, plus whether it is being
+     * interrupted. Steering carries neither, so both have to be remembered
+     * here to decide whether a mid-turn send can fold in.
+     */
+    const activeTurnRef = yield* Ref.make<CodexActiveTurnState | undefined>(undefined);
+    const pendingTurnStartIdRef = yield* Ref.make<
+      Deferred.Deferred<TurnId | undefined> | undefined
+    >(undefined);
+    // One runtime owns one provider thread. Serialize the complete
+    // decision/RPC/fallback span so concurrent sends always re-read the state
+    // produced by the preceding send before choosing steer versus start.
+    const turnSubmissionSemaphore = yield* Semaphore.make(1);
     const closedRef = yield* Ref.make(false);
 
     // `~` is not shell-expanded when env vars are set via
@@ -1249,7 +1818,7 @@ export const makeCodexSessionRuntime = (
 
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
-        const payload = notification.params;
+        let payload: unknown = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
         const childParentTurnId = (() => {
@@ -1352,6 +1921,23 @@ export const makeCodexSessionRuntime = (
           }
         }
 
+        if (notification.method === "turn/started") {
+          const pendingTurnStartId = yield* Ref.get(pendingTurnStartIdRef);
+          const authoritativeTurnId = pendingTurnStartId
+            ? yield* Deferred.await(pendingTurnStartId)
+            : (yield* Ref.get(sessionRef)).activeTurnId;
+          if (authoritativeTurnId) {
+            turnId = authoritativeTurnId;
+            payload = {
+              ...notification.params,
+              turn: {
+                ...notification.params.turn,
+                id: authoritativeTurnId,
+              },
+            };
+          }
+        }
+
         yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
         yield* emitEvent({
           kind: "notification",
@@ -1389,10 +1975,15 @@ export const makeCodexSessionRuntime = (
           if (providerThreadId && payload.threadId !== providerThreadId) {
             return Effect.void;
           }
-          return updateSession(sessionRef, {
+          return updateSession(sessionRef, (session) => ({
             status: "running",
-            activeTurnId: TurnId.make(payload.turn.id),
-          });
+            // Only fills a gap — it never renames a turn the runtime already
+            // tracks. A captured `/review` publishes a different id here than
+            // the one the server accepts for steer and interrupt, so letting
+            // this overwrite the start response's id would point both at an
+            // id the server rejects.
+            activeTurnId: session.activeTurnId ?? TurnId.make(payload.turn.id),
+          }));
         }),
       ),
     );
@@ -1411,26 +2002,43 @@ export const makeCodexSessionRuntime = (
             status: payload.turn.status === "failed" ? "error" : "ready",
             activeTurnId: undefined,
             ...(lastError ? { lastError } : {}),
-          });
+          }).pipe(Effect.andThen(Ref.set(activeTurnRef, undefined)));
         }),
       ),
     );
 
     yield* client.handleServerNotification("error", (payload) =>
-      currentSessionProviderThreadId.pipe(
-        Effect.flatMap((providerThreadId) => {
-          const payloadThreadId = payload.threadId;
-          if (providerThreadId && payloadThreadId && payloadThreadId !== providerThreadId) {
-            return Effect.void;
-          }
-          const errorMessage = payload.error.message;
-          const willRetry = payload.willRetry;
-          return updateSession(sessionRef, {
-            status: willRetry ? "running" : "error",
+      Effect.gen(function* () {
+        const session = yield* Ref.get(sessionRef);
+        const providerThreadId = currentProviderThreadId(session);
+        const payloadThreadId = payload.threadId;
+        if (providerThreadId && payloadThreadId && payloadThreadId !== providerThreadId) {
+          return;
+        }
+        const errorMessage = payload.error.message;
+        // The protocol makes `turnId` required. An error about some other
+        // turn must not rewrite this session's status, and — the bug this
+        // scoping fixes — a terminal error must not leave `activeTurnId`
+        // pointing at a turn that is already dead, which is what made a
+        // later send try to steer a turn that no longer existed.
+        if (session.activeTurnId === undefined || payload.turnId !== session.activeTurnId) {
+          return yield* errorMessage
+            ? updateSession(sessionRef, { lastError: errorMessage })
+            : Effect.void;
+        }
+        if (payload.willRetry) {
+          return yield* updateSession(sessionRef, {
+            status: "running",
             ...(errorMessage ? { lastError: errorMessage } : {}),
           });
-        }),
-      ),
+        }
+        yield* updateSession(sessionRef, {
+          status: "error",
+          activeTurnId: undefined,
+          ...(errorMessage ? { lastError: errorMessage } : {}),
+        });
+        yield* Ref.set(activeTurnRef, undefined);
+      }),
     );
 
     yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
@@ -1666,6 +2274,7 @@ export const makeCodexSessionRuntime = (
               status: nextStatus,
               activeTurnId: undefined,
             }).pipe(
+              Effect.andThen(Ref.set(activeTurnRef, undefined)),
               Effect.andThen(
                 emitSessionEvent(
                   "session/exited",
@@ -1733,6 +2342,7 @@ export const makeCodexSessionRuntime = (
         status: "closed",
         activeTurnId: undefined,
       });
+      yield* Ref.set(activeTurnRef, undefined);
       yield* emitSessionEvent("session/closed", "Session stopped").pipe(
         Effect.catch((cause) =>
           Effect.logError("Failed to emit Codex session closed event.", { cause }),
@@ -1747,62 +2357,47 @@ export const makeCodexSessionRuntime = (
       start,
       getSession: Ref.get(sessionRef),
       sendTurn: (input) =>
-        Effect.gen(function* () {
-          const providerThreadId = yield* readProviderThreadId;
-          if (hasConfiguredMcpServer(options.appServerArgs)) {
-            yield* client.request("config/mcpServer/reload", undefined).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
-                  cause,
-                }),
-              ),
-            );
-          }
-          const normalizedModel = normalizeCodexModelSlug(
-            input.model ?? (yield* Ref.get(sessionRef)).model,
-          );
-          const params = yield* buildTurnStartParams({
-            threadId: providerThreadId,
-            runtimeMode: options.runtimeMode,
-            ...(input.input ? { prompt: input.input } : {}),
-            ...(input.attachments ? { attachments: input.attachments } : {}),
-            ...(normalizedModel ? { model: normalizedModel } : {}),
-            ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
-            ...(input.effort ? { effort: input.effort } : {}),
-            ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-          });
-          const rawResponse = yield* client.raw.request("turn/start", params);
-          const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
-            Effect.mapError((error) =>
-              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
-                "decode-response-payload",
-                error,
-                { method: "turn/start" },
-              ),
-            ),
-          );
-          const turnId = TurnId.make(response.turn.id);
-          yield* updateSession(sessionRef, (session) => ({
-            status: "running",
-            // Codex accepts follow-ups while the current turn is still
-            // running. The response contains the queued turn id, but
-            // turn/interrupt only accepts the id that is active now.
-            activeTurnId: session.activeTurnId ?? turnId,
-            ...(normalizedModel ? { model: normalizedModel } : {}),
-          }));
-          const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
-          return {
-            threadId: options.threadId,
-            turnId,
-            ...(resumedProviderThreadId
-              ? { resumeCursor: { threadId: resumedProviderThreadId } }
-              : {}),
-          } satisfies ProviderTurnStartResult;
-        }),
+        turnSubmissionSemaphore.withPermit(
+          Effect.gen(function* () {
+            // Fail before touching the MCP catalog when the session has no
+            // provider thread yet.
+            yield* readProviderThreadId;
+            if (hasConfiguredMcpServer(options.appServerArgs)) {
+              yield* client.request("config/mcpServer/reload", undefined).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
+                    cause,
+                  }),
+                ),
+              );
+            }
+            return yield* sendCodexTurn({
+              client,
+              sessionRef,
+              activeTurnRef,
+              pendingTurnStartIdRef,
+              threadId: options.threadId,
+              runtimeMode: options.runtimeMode,
+              turn: input,
+            });
+          }),
+        ),
       interruptTurn: (turnId) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           const session = yield* Ref.get(sessionRef);
+          const effectiveTurnId = turnId ?? session.activeTurnId;
+          if (!effectiveTurnId) {
+            return;
+          }
+          const previousActiveTurn = yield* Ref.get(activeTurnRef);
+          // Stop makes the turn unsteerable from this instant, before any RPC
+          // goes out: a message typed right after Stop belongs to the next
+          // turn, not the one being aborted (it would otherwise be folded
+          // into a turn that is about to stop reading).
+          yield* Ref.update(activeTurnRef, (current) =>
+            current?.turnId === effectiveTurnId ? { ...current, interrupting: true } : current,
+          );
           // Stop-everything: children are full threads with their own turns;
           // interrupting only the parent leaves the fleet running. Interrupt
           // each live child turn first, best-effort per child, BOUNDED: the
@@ -1823,14 +2418,22 @@ export const makeCodexSessionRuntime = (
                 .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
             { concurrency: 8, discard: true },
           ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
-          const effectiveTurnId = turnId ?? session.activeTurnId;
-          if (!effectiveTurnId) {
-            return;
-          }
-          yield* client.request("turn/interrupt", {
-            threadId: providerThreadId,
-            turnId: effectiveTurnId,
-          });
+          yield* client
+            .request("turn/interrupt", {
+              threadId: providerThreadId,
+              turnId: effectiveTurnId,
+            })
+            .pipe(
+              Effect.onExit((exit) =>
+                Exit.isSuccess(exit)
+                  ? Effect.void
+                  : Ref.update(activeTurnRef, (current) =>
+                      current?.turnId === effectiveTurnId && current.interrupting
+                        ? previousActiveTurn
+                        : current,
+                    ),
+              ),
+            );
         }),
       readThread: Effect.gen(function* () {
         const providerThreadId = yield* readProviderThreadId;
@@ -1851,6 +2454,7 @@ export const makeCodexSessionRuntime = (
             status: "ready",
             activeTurnId: undefined,
           });
+          yield* Ref.set(activeTurnRef, undefined);
           return parseThreadSnapshot(response);
         }),
       respondToRequest: (requestId, decision) =>

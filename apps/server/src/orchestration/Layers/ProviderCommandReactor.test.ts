@@ -2382,6 +2382,164 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  effectIt.effect("keeps the session healthy when the provider refuses to steer a turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      // A turn is running: this is the state a mid-turn send arrives in.
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-steering"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-running"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+
+      // A turn that cannot absorb the message — a `/review`, or one whose
+      // settings the send asks to change. The provider declined; nothing is
+      // broken.
+      harness.sendTurn.mockImplementationOnce(
+        () =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "codex",
+              method: "turn/steer",
+              detail: "Codex is running a review turn, which does not accept new messages.",
+            }),
+          ) as unknown as ReturnType<typeof harness.sendTurn>,
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-steer-refused"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-steer-refused"),
+          role: "user",
+          text: "one more thing",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+          return (
+            thread?.activities.some(
+              (activity) => activity.kind === "provider.turn.steer.rejected",
+            ) ?? false
+          );
+        }),
+      );
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.steer.rejected"),
+      ).toMatchObject({
+        tone: "info",
+        summary: "Message not sent",
+        payload: { detail: expect.stringContaining("does not accept new messages") },
+      });
+      // Reporting it as a turn-start failure would mark the session errored
+      // and null out its active turn, making the turn the provider is still
+      // working on vanish from the UI.
+      expect(
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toBe(false);
+      expect(thread?.session?.status).not.toBe("error");
+      expect(thread?.session?.lastError ?? null).toBe(null);
+    }),
+  );
+
+  effectIt.effect("reports uncertain delivery when steer succeeds for an unexpected turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-steer-uncertain"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-running"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+
+      const uncertainError = Object.assign(
+        new ProviderAdapterRequestError({
+          provider: "codex",
+          method: "turn/steer",
+          detail: "Codex steered turn turn-other instead of the expected active turn turn-running.",
+        }),
+        { reason: "turn-id-mismatch", delivery: "uncertain" as const },
+      );
+      harness.sendTurn.mockImplementationOnce(
+        () => Effect.fail(uncertainError) as unknown as ReturnType<typeof harness.sendTurn>,
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-steer-uncertain"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-steer-uncertain"),
+          role: "user",
+          text: "one more thing",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+          return (
+            thread?.activities.some(
+              (activity) => activity.kind === "provider.turn.steer.rejected",
+            ) ?? false
+          );
+        }),
+      );
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.steer.rejected"),
+      ).toMatchObject({
+        tone: "info",
+        summary: "Delivery uncertain",
+        payload: { detail: expect.stringContaining("unexpected active turn") },
+      });
+      expect(thread?.session?.status).not.toBe("error");
+    }),
+  );
+
   it("rejects cross-driver provider changes after the existing thread session has stopped", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

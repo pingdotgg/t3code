@@ -42,6 +42,17 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+/**
+ * Server-internal widening of the wire contract: adapters that fold a
+ * mid-turn message into the running turn report it here, so callers can tell
+ * "a new turn started" from "an existing turn absorbed this message" without
+ * inferring it from turn ids. Absent means a new turn, which is what every
+ * adapter that cannot steer reports.
+ */
+export interface ProviderAdapterTurnStartResult extends ProviderTurnStartResult {
+  readonly steered?: boolean;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -61,7 +72,7 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
-  ) => Effect.Effect<ProviderTurnStartResult, TError>;
+  ) => Effect.Effect<ProviderAdapterTurnStartResult, TError>;
 
   /**
    * Interrupt an active turn.
