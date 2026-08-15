@@ -44,4 +44,8 @@ describe("relativePathWithinRoot", () => {
   it("treats a Windows drive root as case-insensitive", () => {
     expect(relativePathWithinRoot("C:\\", "c:\\foo.md")).toBe("foo.md");
   });
+
+  it("keeps the POSIX root as a valid workspace root", () => {
+    expect(relativePathWithinRoot("/", "/tmp/secret.ts")).toBe("tmp/secret.ts");
+  });
 });

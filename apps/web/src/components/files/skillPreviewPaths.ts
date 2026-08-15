@@ -28,14 +28,16 @@ export function collapseDotSegments(path: string): string {
 }
 
 export function relativePathWithinRoot(rootPath: string, targetPath: string): string | null {
-  const root = collapseDotSegments(rootPath).replace(/\/+$/, "");
+  const collapsedRoot = collapseDotSegments(rootPath);
+  const root = collapsedRoot === "/" ? "/" : collapsedRoot.replace(/\/+$/, "");
   if (!root) return null;
   const target = collapseDotSegments(targetPath);
   const caseInsensitive = /^[A-Za-z]:(?:\/|$)/.test(root);
   const comparableRoot = caseInsensitive ? root.toLowerCase() : root;
   const comparableTarget = caseInsensitive ? target.toLowerCase() : target;
-  if (!comparableTarget.startsWith(`${comparableRoot}/`)) return null;
-  return target.slice(root.length + 1);
+  const comparablePrefix = comparableRoot === "/" ? "/" : `${comparableRoot}/`;
+  if (!comparableTarget.startsWith(comparablePrefix)) return null;
+  return target.slice(root === "/" ? 1 : root.length + 1);
 }
 
 export function skillRootPath(skillPath: string): string {
