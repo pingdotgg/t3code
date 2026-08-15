@@ -1650,23 +1650,25 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 
   return (
     <>
-      <SettingsRow
-        title="T3 Connect"
-        description={
-          managedTunnelActive
-            ? "This environment is available to your other devices through T3 Connect."
-            : "Make this environment available to your other devices through T3 Connect."
-        }
-        status={operationError ?? primaryCloudLinkState.error}
-        control={
-          <CloudLinkSwitch
-            checked={managedTunnelActive}
-            disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
-            disabledReason={disabledReason}
-            onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
-          />
-        }
-      />
+      {window.desktopBridge ? (
+        <SettingsRow
+          title="T3 Connect"
+          description={
+            managedTunnelActive
+              ? "This environment is available to your other devices through T3 Connect."
+              : "Make this environment available to your other devices through T3 Connect."
+          }
+          status={operationError ?? primaryCloudLinkState.error}
+          control={
+            <CloudLinkSwitch
+              checked={managedTunnelActive}
+              disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
+              disabledReason={disabledReason}
+              onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
+            />
+          }
+        />
+      ) : null}
       <SettingsRow
         title="Publish agent activity"
         description="Send activity from this environment to your mobile clients for push notifications and Live Activities. Works without a T3 Connect tunnel."
