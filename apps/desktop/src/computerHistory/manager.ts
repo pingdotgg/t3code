@@ -117,17 +117,27 @@ export const make = Effect.gen(function* () {
     const child = state.child;
     if (!child) return;
 
-    const stopping = new Promise<void>((resolve) => {
+    let stopping!: Promise<void>;
+    stopping = new Promise<void>((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
       const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        child.off("exit", onExit);
         if (state.child === child) {
           state.child = null;
         }
-        state.stopping = null;
+        // Only clear if this stop still owns the slot — a later stop must keep its promise.
+        if (state.stopping === stopping) {
+          state.stopping = null;
+        }
         resolve();
       };
 
       const onExit = () => {
-        clearTimeout(timer);
         finish();
       };
       child.once("exit", onExit);
@@ -137,7 +147,7 @@ export const make = Effect.gen(function* () {
         finish();
         return;
       }
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         try {
           child.kill("SIGKILL");
         } catch {
