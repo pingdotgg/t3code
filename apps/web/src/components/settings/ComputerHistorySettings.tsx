@@ -9,6 +9,7 @@ import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
+// Chip remove + dialog Cancel live in PrivacyControls (SettingIconAction / outline).
 import { ComputerHistoryPrivacyDialog } from "./ComputerHistoryPrivacyControls";
 import {
   SettingResetButton,
