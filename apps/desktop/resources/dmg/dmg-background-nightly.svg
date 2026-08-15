@@ -1,0 +1,64 @@
+<svg width="1080" height="760" viewBox="0 0 540 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="night-sky" x1="28" y1="0" x2="510" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07152F"/>
+      <stop offset="0.52" stop-color="#151443"/>
+      <stop offset="1" stop-color="#32155B"/>
+    </linearGradient>
+    <radialGradient id="night-glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(420 18) rotate(157) scale(260 126)">
+      <stop stop-color="#5165D8" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#283075" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#111635" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="night-cloud" x1="18" y1="62" x2="260" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4EA4FF" stop-opacity="0.5"/>
+      <stop offset="0.52" stop-color="#696FEA" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#A85BEA" stop-opacity="0.5"/>
+    </linearGradient>
+    <filter id="night-soft" x="-24" y="35" width="588" height="101" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <rect width="540" height="380" fill="#F7F7F5"/>
+  <rect width="540" height="112" fill="url(#night-sky)"/>
+  <rect width="540" height="112" fill="url(#night-glow)"/>
+
+  <g fill="#E4EAFF">
+    <circle cx="20" cy="18" r="0.8" opacity="0.82"/>
+    <circle cx="76" cy="27" r="0.55" opacity="0.55"/>
+    <circle cx="133" cy="13" r="0.65" opacity="0.7"/>
+    <circle cx="198" cy="28" r="0.5" opacity="0.5"/>
+    <circle cx="258" cy="15" r="0.75" opacity="0.8"/>
+    <circle cx="326" cy="29" r="0.5" opacity="0.55"/>
+    <circle cx="384" cy="12" r="0.65" opacity="0.72"/>
+    <circle cx="455" cy="26" r="0.55" opacity="0.58"/>
+    <circle cx="517" cy="15" r="0.75" opacity="0.78"/>
+  </g>
+  <g stroke="#EEF2FF" stroke-linecap="round" stroke-width="0.65" opacity="0.68">
+    <path d="M104 30V34M102 32H106"/>
+    <path d="M448 24V28M446 26H450"/>
+  </g>
+
+  <g filter="url(#night-soft)">
+    <path d="M-12 112V101C-12 87 0 76 14 76C18 63 30 54 44 54C58 54 70 62 74 75C79 70 86 67 94 67C110 67 123 79 124 95C132 96 138 101 141 112H-12Z" fill="url(#night-cloud)"/>
+    <path d="M374 112C375 98 387 87 401 87C405 72 418 62 434 62C450 62 463 72 467 87C478 87 488 94 492 104C506 103 518 106 526 112H374Z" fill="url(#night-cloud)" opacity="0.82"/>
+  </g>
+  <path d="M0 111.5H540" stroke="#050A19" stroke-opacity="0.3"/>
+  <path d="M32 28H64" stroke="#FFFFFF" stroke-width="2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, sans-serif" fill="#FFFFFF">
+    <text x="32" y="50" font-size="12" font-weight="600" letter-spacing="1.4">T3 CODE</text>
+    <text x="32" y="82" font-size="22" font-weight="600" letter-spacing="-0.45">Desktop</text>
+    <text x="508" y="50" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="8.5" font-weight="600" letter-spacing="1.2" opacity="0.84">NIGHTLY BUILD</text>
+  </g>
+
+  <path d="M196 224C242 239 307 201 362 220" stroke="#71717A" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="1 7" opacity="0.42"/>
+  <circle cx="362" cy="220" r="2" fill="#71717A" opacity="0.55"/>
+  <path d="M176 204V227L182 221L187.5 232L192 229.8L186.5 219H194L176 204Z" fill="#71717A" stroke="#F7F7F5" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, sans-serif" text-anchor="middle">
+    <text x="270" y="322" font-size="13" font-weight="600" letter-spacing="-0.1" fill="#18181B">Drag T3 Code to Applications</text>
+    <text x="270" y="345" font-size="9.5" fill="#71717A">Open it from Applications when the copy finishes.</text>
+  </g>
+</svg>
