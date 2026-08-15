@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
 import {
+  appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
   inferProjectTitleFromPath,
@@ -221,6 +222,25 @@ export function getCloneDestinationPath(
     return directoryPath;
   }
   return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+}
+
+/**
+ * Destination query after choosing a directory while the clone folder is
+ * pinned in the path input. Selecting an existing directory with the pinned
+ * name uses that directory directly instead of producing `repo/repo`.
+ */
+export function getCloneDestinationBrowsePath(input: {
+  readonly browseDirectoryPath: string;
+  readonly selectedDirectoryName: string;
+  readonly cloneDirectoryName: string;
+}): string {
+  const selectedDirectoryPath = appendBrowsePathSegment(
+    input.browseDirectoryPath,
+    input.selectedDirectoryName,
+  );
+  return input.selectedDirectoryName === input.cloneDirectoryName
+    ? selectedDirectoryPath
+    : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
 }
 
 export function resolveAddProjectPath(input: {

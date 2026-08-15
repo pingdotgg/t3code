@@ -3,6 +3,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
+  getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
 } from "@t3tools/client-runtime/operations/projects";
@@ -112,6 +113,7 @@ import {
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
   filterCommandPaletteGroups,
+  filterPinnedBrowseEntries,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
@@ -891,13 +893,16 @@ function OpenCommandPaletteDialog(props: {
   const browseResult = browseQuery.data;
   const isBrowsePending = browseQuery.isPending;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
-  // A pinned repository folder does not exist yet, so filtering the listing by
-  // it would empty the folder picker. Anything the user typed still filters.
-  const browseFilterQuery =
-    browsePath.filterQuery === pinnedCloneDirectoryName ? "" : browsePath.filterQuery;
   const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
-    () => filterFilesystemBrowseEntries(browseEntries, browseFilterQuery),
-    [browseEntries, browseFilterQuery],
+    () =>
+      pinnedCloneDirectoryName
+        ? filterPinnedBrowseEntries({
+            browseEntries,
+            filterQuery: browsePath.filterQuery,
+            pinnedDirectoryName: pinnedCloneDirectoryName,
+          })
+        : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery),
+    [browseEntries, browsePath.filterQuery, pinnedCloneDirectoryName],
   );
 
   const prefetchBrowsePath = useCallback(
@@ -1929,10 +1934,13 @@ function OpenCommandPaletteDialog(props: {
 
   const browseTo = useCallback(
     async (name: string): Promise<void> => {
-      const nextQuery = getCloneDestinationPath(
-        appendBrowsePathSegment(query, name),
-        pinnedCloneDirectoryName,
-      );
+      const nextQuery = pinnedCloneDirectoryName
+        ? getCloneDestinationBrowsePath({
+            browseDirectoryPath: browsePath.directoryPath,
+            selectedDirectoryName: name,
+            cloneDirectoryName: pinnedCloneDirectoryName,
+          })
+        : appendBrowsePathSegment(query, name);
       await browseNavigation.run(
         () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
         () => {
@@ -1942,7 +1950,13 @@ function OpenCommandPaletteDialog(props: {
         },
       );
     },
-    [browseNavigation, pinnedCloneDirectoryName, prefetchBrowsePath, query],
+    [
+      browseNavigation,
+      browsePath.directoryPath,
+      pinnedCloneDirectoryName,
+      prefetchBrowsePath,
+      query,
+    ],
   );
 
   const browseUp = useCallback(async (): Promise<void> => {

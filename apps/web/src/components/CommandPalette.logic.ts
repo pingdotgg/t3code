@@ -3,6 +3,7 @@ import {
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -382,6 +383,18 @@ export function buildBrowseGroups(input: {
   }
 
   return [{ value: "directories", label: "Directories", items }];
+}
+
+export function filterPinnedBrowseEntries(input: {
+  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  filterQuery: string;
+  pinnedDirectoryName: string;
+}): ReturnType<typeof filterFilesystemBrowseEntries> {
+  const visibleFilterQuery =
+    input.filterQuery === input.pinnedDirectoryName ? "" : input.filterQuery;
+  const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
+  const { exactEntry } = filterFilesystemBrowseEntries(input.browseEntries, input.filterQuery);
+  return { visibleEntries, exactEntry };
 }
 
 export function getCommandPaletteMode(input: {

@@ -13,6 +13,7 @@ import {
   canCreateProjectInEnvironment,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
   resolveAddProjectPath,
@@ -80,6 +81,23 @@ describe("add project shared logic", () => {
     expect(getCloneDestinationPath("C:\\work\\", "repo")).toBe("C:\\work\\repo");
     expect(getCloneDestinationPath("~/Projects/", null)).toBe("~/Projects/");
     expect(getCloneDestinationPath("~/Projects/", "")).toBe("~/Projects/");
+  });
+
+  it("keeps pinned clone destinations anchored to the browsed directory", () => {
+    expect(
+      getCloneDestinationBrowsePath({
+        browseDirectoryPath: "~/Projects/",
+        selectedDirectoryName: "work",
+        cloneDirectoryName: "repo",
+      }),
+    ).toBe("~/Projects/work/repo");
+    expect(
+      getCloneDestinationBrowsePath({
+        browseDirectoryPath: "~/Projects/",
+        selectedDirectoryName: "repo",
+        cloneDirectoryName: "repo",
+      }),
+    ).toBe("~/Projects/repo/");
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {
