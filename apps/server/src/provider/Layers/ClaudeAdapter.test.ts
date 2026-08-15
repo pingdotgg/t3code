@@ -2287,6 +2287,77 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("consumes Claude command lifecycle notifications silently", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const sessionId = "6e81554e-5cff-4b37-8a39-f3a9051ac234";
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const readyMessage = "command lifecycle test ready";
+      const readyFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "runtime.warning" && event.payload.message === readyMessage,
+      ).pipe(Stream.runDrain, Effect.forkChild);
+      harness.query.emit({
+        type: "system",
+        subtype: "notification",
+        key: "command-lifecycle-ready",
+        text: readyMessage,
+        priority: "high",
+        session_id: sessionId,
+        uuid: "command-lifecycle-ready",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(readyFiber);
+
+      const processedMessage = "command lifecycle messages processed";
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "runtime.warning" && event.payload.message === processedMessage,
+      ).pipe(Stream.runCollect, Effect.forkChild);
+      for (const [state, uuid] of [
+        ["started", "command-started"],
+        ["completed", "command-completed"],
+      ]) {
+        harness.query.emit({
+          type: "command_lifecycle",
+          command_uuid: "4cd8e8a3-df7a-425d-b6c9-4053abc0b8fd",
+          state,
+          session_id: sessionId,
+          uuid,
+        } as unknown as SDKMessage);
+      }
+      harness.query.emit({
+        type: "system",
+        subtype: "notification",
+        key: "command-lifecycle-processed",
+        text: processedMessage,
+        priority: "high",
+        session_id: sessionId,
+        uuid: "command-lifecycle-processed",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        ["runtime.warning"],
+      );
+      const warning = runtimeEvents[0];
+      assert.equal(warning?.type, "runtime.warning");
+      if (warning?.type === "runtime.warning") {
+        assert.equal(warning.payload.message, processedMessage);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("emits thread token usage updates from Claude task progress", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

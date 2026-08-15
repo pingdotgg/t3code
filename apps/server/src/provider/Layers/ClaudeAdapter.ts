@@ -3490,6 +3490,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* logNativeSdkMessage(context, message);
     yield* ensureThreadId(context, message);
 
+    // Wire-only command bookkeeping has no user-facing T3 lifecycle.
+    if (sdkMessageType(message) === "command_lifecycle") {
+      return;
+    }
+
     switch (message.type) {
       case "stream_event":
         yield* handleStreamEvent(context, message);
