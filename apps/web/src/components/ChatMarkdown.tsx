@@ -117,6 +117,8 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  /** Parse sanitized raw HTML instead of displaying its source text. */
+  parseRawHtml?: boolean;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -1360,6 +1362,7 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  parseRawHtml = true,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1622,7 +1625,7 @@ function ChatMarkdown({
           />
         );
       },
-      a({ node, href, children, ...props }) {
+      a({ node, href, children, title: _title, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
@@ -1707,6 +1710,9 @@ function ChatMarkdown({
           props.className,
         );
       },
+      img({ node: _node, title: _title, ...props }) {
+        return <img {...props} />;
+      },
       code({ node, children, className, ...props }) {
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
@@ -1777,6 +1783,9 @@ function ChatMarkdown({
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 
+  // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
+  // Keep that behavior explicit because literal mode depends on escaping the
+  // complete source token instead of dropping it from the rendered message.
   return (
     <div
       className={cn(
@@ -1789,7 +1798,8 @@ function ChatMarkdown({
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
+        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+        skipHtml={false}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

@@ -12,6 +12,7 @@ import {
   formatTimestamp,
   getRelativeTimeState,
   getTimestampFormatOptions,
+  resolveTimestampLocale,
 } from "./timestampFormat";
 
 describe("getTimestampFormatOptions", () => {
@@ -38,6 +39,40 @@ describe("getTimestampFormatOptions", () => {
       minute: "2-digit",
       hour12: false,
     });
+  });
+});
+
+describe("resolveTimestampLocale", () => {
+  it("defers to the runtime default when the host reports no locale", () => {
+    expect(resolveTimestampLocale(null)).toBeUndefined();
+    expect(resolveTimestampLocale(undefined)).toBeUndefined();
+    expect(resolveTimestampLocale("   ")).toBeUndefined();
+  });
+
+  it("uses a BCP-47 tag reported by the host", () => {
+    expect(resolveTimestampLocale("en-GB")).toBe("en-GB");
+  });
+
+  it("defers to the runtime default rather than throwing on an unusable tag", () => {
+    // The desktop bridge normalizes POSIX identifiers before reporting them, so
+    // anything Intl still rejects here falls back instead of breaking every
+    // timestamp in the UI.
+    expect(resolveTimestampLocale("not a locale")).toBeUndefined();
+    expect(resolveTimestampLocale("en_GB")).toBeUndefined();
+  });
+
+  it("renders the host locale's hour cycle under the locale setting", () => {
+    const formatAt1544 = (systemLocale: string | null) =>
+      new Intl.DateTimeFormat(resolveTimestampLocale(systemLocale), {
+        ...getTimestampFormatOptions("locale", false),
+        timeZone: "UTC",
+      })
+        .format(new Date("2026-04-07T15:44:00.000Z"))
+        // ICU separates the day period with a narrow no-break space.
+        .replace(/[  ]/g, " ");
+
+    expect(formatAt1544("en-GB")).toBe("15:44");
+    expect(formatAt1544("en-US")).toBe("3:44 PM");
   });
 });
 
@@ -139,6 +174,20 @@ describe("formatDayAwareTimestamp", () => {
     expect(formatDayAwareTimestamp(messageAt, "12-hour", now)).toBe(
       `${datePart} ${time(messageAt)}`,
     );
+  });
+
+  it("uses the host locale for both the numeric date and wall-clock time", async () => {
+    vi.stubGlobal("window", {
+      desktopBridge: { getSystemLocale: () => "en-GB" },
+    });
+    vi.resetModules();
+
+    const { formatDayAwareTimestamp: formatWithHostLocale } = await import("./timestampFormat");
+    const messageAt = iso(2026, 7, 12, 15, 44);
+
+    expect(formatWithHostLocale(messageAt, "locale", now)).toBe("12/08 15:44");
+
+    vi.unstubAllGlobals();
   });
 
   it("returns an empty string for invalid input", () => {
