@@ -315,6 +315,7 @@ export function ComputerUseSettings() {
               <CollapsibleTrigger
                 render={<Button type="button" variant="outline" size="sm" />}
                 aria-controls="more-browsers-panel"
+                aria-expanded={moreBrowsersOpen}
               >
                 {moreBrowsersOpen ? "Hide" : "Show"}
               </CollapsibleTrigger>
