@@ -366,8 +366,8 @@ export function PullRequestCodeTab({
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
   const canCommentOnLines = review.inlineComment && commit === null;
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
-  // rather than one per slice already on screen. Its cache key carries the theme, which is what
-  // the tokenizer caches against, so a theme change is still a fresh parse.
+  // rather than one per slice already on screen. Structural parse identity stays independent of
+  // theme; the item version below carries syntax identity so colors refresh without reminting ids.
   const parsedSlices = useMemo(
     () =>
       loadedSlices.map((slice) => {
