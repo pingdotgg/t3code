@@ -47,7 +47,6 @@ import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
-import { DIFF_HEADER_ICON_BUTTON_CLASS_NAME } from "./diffs/diffHeaderControls";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
@@ -921,7 +920,6 @@ export default function DiffPanel({
                               variant="ghost"
                               className={cn(
                                 "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
-                                DIFF_HEADER_ICON_BUTTON_CLASS_NAME,
                                 getDiffCollapseIconClassName(fileDiff),
                               )}
                               aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
