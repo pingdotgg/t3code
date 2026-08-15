@@ -3009,13 +3009,32 @@ export default function Sidebar() {
           if (defaultPreset) {
             void (async () => {
               const shell = readThreadShell(activeThreadRef) ?? activeThread;
-              const hasBlockingRequest = shell.hasPendingApprovals || shell.hasPendingUserInput;
-              if (hasBlockingRequest) {
-                await stopThreadSession({
+              const isWorking =
+                shell.session?.status === "running" ||
+                shell.session?.status === "starting" ||
+                shell.hasPendingApprovals ||
+                shell.hasPendingUserInput ||
+                hasQueuedTurnStart(shell, { now: new Date().toISOString() });
+              if (isWorking) {
+                const runningTurnId =
+                  shell.session?.status === "running"
+                    ? (shell.session.activeTurnId ?? undefined)
+                    : undefined;
+                await interruptThreadTurn({
                   environmentId: activeThreadRef.environmentId,
-                  input: { threadId: activeThreadRef.threadId },
+                  input: {
+                    threadId: activeThreadRef.threadId,
+                    ...(runningTurnId ? { turnId: runningTurnId } : {}),
+                  },
                 });
-                const stopped = await waitForSessionStopped(activeThreadRef, 2500);
+                let stopped = await waitForSessionStopped(activeThreadRef, 1500);
+                if (!stopped) {
+                  await stopThreadSession({
+                    environmentId: activeThreadRef.environmentId,
+                    input: { threadId: activeThreadRef.threadId },
+                  });
+                  stopped = await waitForSessionStopped(activeThreadRef, 2500);
+                }
                 if (!stopped) {
                   toastManager.add(
                     stackedThreadToast({
@@ -3070,9 +3089,31 @@ export default function Sidebar() {
         }
         void (async () => {
           if (activeSection === "snoozed") {
-            await attemptUnsnooze(activeThreadRef);
+            const unsnoozeResult = await unsnoozeThread(activeThreadRef);
+            if (unsnoozeResult._tag === "Failure" && !isAtomCommandInterrupted(unsnoozeResult)) {
+              const error = squashAtomCommandFailure(unsnoozeResult);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to unsnooze thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+              return;
+            }
           } else if (activeSection === "settled") {
-            await attemptUnsettle(activeThreadRef);
+            const unsettleResult = await unsettleThread(activeThreadRef);
+            if (unsettleResult._tag === "Failure" && !isAtomCommandInterrupted(unsettleResult)) {
+              const error = squashAtomCommandFailure(unsettleResult);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to unsettle thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+              return;
+            }
           }
           const result = await pinThread(
             activeThreadRef,
@@ -4189,7 +4230,7 @@ export default function Sidebar() {
                             style={{ width: listContainerRef.current?.offsetWidth ?? undefined }}
                             className="w-[var(--sidebar-width,260px)] max-w-xs cursor-grabbing rounded-lg border border-dashed border-foreground/35 bg-sidebar/95 shadow-2xl backdrop-blur-sm"
                           >
-                            {renderThreadRow(activeDragThread, "active", undefined, true)}
+                            {renderThreadRow(activeDragThread, activeDragSection, undefined, true)}
                           </div>
                         ) : null}
                       </DragOverlay>,
