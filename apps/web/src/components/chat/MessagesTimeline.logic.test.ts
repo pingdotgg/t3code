@@ -9,6 +9,7 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineToolPresentation,
+  shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
 import {
   createMessageAttachmentPreviewProjector,
@@ -348,6 +349,17 @@ describe("streaming row projection", () => {
         : message,
     );
     check({ revertTurnCountByUserMessageId: new Map([[MessageId.make("live-user"), 3]]) });
+  });
+});
+
+describe("shouldPreserveAssistantLineBreaks", () => {
+  it("preserves Claude insight formatting without changing regular markdown", () => {
+    expect(
+      shouldPreserveAssistantLineBreaks(
+        "★ Insight ─────────────────\\nFirst observation\\nSecond observation\\n─────────────────",
+      ),
+    ).toBe(true);
+    expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
   });
 });
 
