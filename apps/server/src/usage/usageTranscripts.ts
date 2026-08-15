@@ -68,7 +68,18 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  switch (provider) {
+    case "claude":
+      return line.includes('"usage"');
+    case "codex":
+      return line.includes('"token_count"');
+    case "grok":
+      // Token rows and model-change events (every model event's `msg` contains
+      // "model") both need to pass through the reducer.
+      return line.includes("inference_done") || line.includes("model");
+    default:
+      return false;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -293,6 +304,134 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     reportedCostUsd: null,
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
+    dedupeKey: null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Grok                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Rolling state for the Grok CLI's global `unified.jsonl` log.
+ *
+ * Token rows (`shell.turn.inference_done`) carry counts but no model id. The
+ * CLI also logs model-change events keyed by process id, so we keep a per-`pid`
+ * "current model" and attribute each inference to it — the same approach
+ * OpenUsage's `GrokLogUsageScanner` uses.
+ */
+export interface GrokScanState {
+  /** Active model per CLI process id. */
+  modelByPid: Map<number, string>;
+}
+
+export function initialGrokScanState(): GrokScanState {
+  return { modelByPid: new Map() };
+}
+
+function grokModelId(msg: string, ctx: Record<string, unknown>): string | null {
+  let raw: unknown;
+  switch (msg) {
+    case "model changed":
+      raw = ctx["model"];
+      break;
+    case "model catalog: notifying clients":
+      raw = ctx["current_model_id"];
+      break;
+    case "backend_search: model switch":
+      raw = ctx["model"] ?? ctx["current_model_id"] ?? ctx["model_id"];
+      break;
+    case "subagent model resolved":
+      raw = ctx["model_id"] ?? ctx["model"];
+      break;
+    default:
+      return null;
+  }
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Feeds one line of Grok's `unified.jsonl` into `state`.
+ *
+ * Returns a usage record for in-window `inference_done` rows that can be
+ * attributed to a model. Model-change lines update state and return `null`.
+ */
+export function parseGrokLine(line: string, state: GrokScanState): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  const msg = record["msg"];
+  if (typeof msg !== "string") return null;
+
+  const ctxRaw = record["ctx"];
+  const ctx =
+    typeof ctxRaw === "object" && ctxRaw !== null ? (ctxRaw as Record<string, unknown>) : {};
+
+  const pidRaw = record["pid"];
+  const pid =
+    typeof pidRaw === "number" && Number.isFinite(pidRaw)
+      ? Math.trunc(pidRaw)
+      : typeof pidRaw === "string" && pidRaw.length > 0 && Number.isFinite(Number(pidRaw))
+        ? Math.trunc(Number(pidRaw))
+        : null;
+
+  const modelFromEvent = grokModelId(msg, ctx);
+  if (modelFromEvent !== null) {
+    if (pid !== null) state.modelByPid.set(pid, modelFromEvent);
+    return null;
+  }
+
+  if (msg !== "shell.turn.inference_done") return null;
+
+  const timestampMs = parseTimestampMs(record["ts"]);
+  if (timestampMs === null) return null;
+  if (pid === null) return null;
+
+  const model = state.modelByPid.get(pid);
+  if (model === undefined || model.length === 0) return null;
+
+  const promptRaw = ctx["prompt_tokens"];
+  if (typeof promptRaw !== "number" || !Number.isFinite(promptRaw)) return null;
+  const promptTokens = Math.max(0, Math.trunc(promptRaw));
+
+  const cachedRaw = ctx["cached_prompt_tokens"];
+  const cached =
+    typeof cachedRaw === "number" && Number.isFinite(cachedRaw)
+      ? Math.min(Math.max(0, Math.trunc(cachedRaw)), promptTokens)
+      : 0;
+  const completionTokens = int(ctx["completion_tokens"]);
+  const reasoningTokens = int(ctx["reasoning_tokens"]);
+  // Grok's reasoning is billed like output and is not already inside
+  // completion_tokens (unlike Codex), so fold it into the output bucket.
+  const outputTokens = completionTokens + reasoningTokens;
+
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: Math.max(0, promptTokens - cached),
+    cachedInputTokens: cached,
+    cacheCreationTokens: 0,
+    outputTokens,
+    reasoningTokens: Math.min(outputTokens, reasoningTokens),
+  };
+
+  if (totalTokens(totals) === 0) return null;
+
+  const sid = typeof record["sid"] === "string" ? record["sid"] : "";
+
+  return {
+    provider: "grok",
+    timestampMs,
+    model,
+    sessionId: sid,
+    totals,
+    reportedCostUsd: null,
     dedupeKey: null,
   };
 }

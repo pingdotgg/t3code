@@ -281,4 +281,34 @@ describe("mergeUsage", () => {
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
   });
+
+  it("merges buckets from the newer provider kinds", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ provider: "cursor", model: "composer-2", costUsd: 3 }),
+              bucket({ provider: "grok", model: "grok-build", costUsd: 2 }),
+              bucket({ provider: "opencode", model: "opencode-go", costUsd: 1 }),
+            ],
+            [
+              { provider: "cursor", hostId: "mac", homePath: "/a/state.vscdb" },
+              { provider: "grok", hostId: "mac", homePath: "/a/.grok" },
+              { provider: "opencode", hostId: "mac", homePath: "/a/opencode" },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(6);
+    expect(merged.providers.map((provider) => provider.provider).sort()).toEqual([
+      "cursor",
+      "grok",
+      "opencode",
+    ]);
+  });
 });

@@ -2,8 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   initialCodexScanState,
+  initialGrokScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseGrokLine,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -233,6 +235,70 @@ describe("parseCodexLine", () => {
       );
       expect(record).not.toBeNull();
     });
+  });
+});
+
+describe("parseGrokLine", () => {
+  it("attributes inference_done tokens to the pid's current model", () => {
+    const state = initialGrokScanState();
+    expect(
+      parseGrokLine(
+        JSON.stringify({
+          msg: "model changed",
+          pid: 42,
+          ts: "2026-06-17T11:59:00.000Z",
+          ctx: { model: "grok-build" },
+        }),
+        state,
+      ),
+    ).toBeNull();
+
+    const record = parseGrokLine(
+      JSON.stringify({
+        msg: "shell.turn.inference_done",
+        pid: 42,
+        sid: "session-1",
+        ts: "2026-06-17T12:00:00.000Z",
+        ctx: {
+          prompt_tokens: 100,
+          cached_prompt_tokens: 40,
+          completion_tokens: 10,
+          reasoning_tokens: 5,
+        },
+      }),
+      state,
+    );
+
+    expect(record).toEqual({
+      provider: "grok",
+      timestampMs: Date.parse("2026-06-17T12:00:00.000Z"),
+      model: "grok-build",
+      sessionId: "session-1",
+      totals: {
+        uncachedInputTokens: 60,
+        cachedInputTokens: 40,
+        cacheCreationTokens: 0,
+        outputTokens: 15,
+        reasoningTokens: 5,
+      },
+      reportedCostUsd: null,
+      dedupeKey: null,
+    });
+  });
+
+  it("drops inference rows that cannot be attributed to a model", () => {
+    const state = initialGrokScanState();
+    expect(
+      parseGrokLine(
+        JSON.stringify({
+          msg: "shell.turn.inference_done",
+          pid: 7,
+          ts: "2026-06-17T12:00:00.000Z",
+          ctx: { prompt_tokens: 10, completion_tokens: 1, reasoning_tokens: 0 },
+        }),
+        state,
+      ),
+    ).toBeNull();
   });
 });
 

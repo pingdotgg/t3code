@@ -19,9 +19,11 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import {
   initialCodexScanState,
+  initialGrokScanState,
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
+  parseGrokLine,
   type UsageRecord,
 } from "./usageTranscripts.ts";
 
@@ -98,8 +100,8 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
  * under the same `(size, mtime)` key would silently drop that file's usage
  * until the file next changes.
  *
- * Codex carries the active model on `turn_context` lines that hold no usage of
- * their own, so those still have to pass through the reducer to keep model
+ * Codex and Grok carry the active model on lines that hold no usage of their
+ * own, so those still have to pass through the reducer to keep model
  * attribution correct.
  */
 export async function readTranscriptRecords(
@@ -108,6 +110,7 @@ export async function readTranscriptRecords(
 ): Promise<readonly UsageRecord[] | null> {
   const records: UsageRecord[] = [];
   const codexState = initialCodexScanState();
+  const grokState = initialGrokScanState();
 
   try {
     const lines = NodeReadline.createInterface({
@@ -129,9 +132,18 @@ export async function readTranscriptRecords(
         continue;
       }
 
-      if (!mightCarryUsage(line, provider)) continue;
-      const record = parseClaudeLine(line);
-      if (record !== null) records.push(record);
+      if (provider === "grok") {
+        if (!mightCarryUsage(line, provider)) continue;
+        const record = parseGrokLine(line, grokState);
+        if (record !== null) records.push(record);
+        continue;
+      }
+
+      if (provider === "claude") {
+        if (!mightCarryUsage(line, provider)) continue;
+        const record = parseClaudeLine(line);
+        if (record !== null) records.push(record);
+      }
     }
   } catch {
     return null;
