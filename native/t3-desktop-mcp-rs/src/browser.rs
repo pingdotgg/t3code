@@ -334,11 +334,17 @@ fn describe(command: &str, result: &Value, args: &Value) -> String {
         // confirmation is what was done and where. Worded as the macOS server
         // words it, so a model reads the same feedback on either platform.
         other => {
-            let tab = args
-                .get("tab_id")
-                .and_then(Value::as_i64)
-                .or_else(|| args.get("index").and_then(Value::as_i64))
-                .unwrap_or(-1);
+            let tab = match other {
+                "select_tab" => result.get("tabId").and_then(Value::as_i64),
+                "close_tab" => result
+                    .get("closed")
+                    .and_then(Value::as_i64)
+                    .or_else(|| result.get("tabId").and_then(Value::as_i64)),
+                _ => None,
+            }
+            .or_else(|| args.get("tab_id").and_then(Value::as_i64))
+            .or_else(|| args.get("index").and_then(Value::as_i64))
+            .unwrap_or(-1);
             match other {
                 "click" => format!("clicked in tab {tab}"),
                 "type" => format!(

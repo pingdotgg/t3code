@@ -850,12 +850,16 @@ func toolClick(_ args: [String: Any]) -> String {
         }
         let point = CGPoint(x: x, y: y)
         AgentCursor.shared.press(at: point)
-        // Prefer the under-point window when it belongs to the resolved app; otherwise
-        // fall back to that app's AX window so a frontmost overlap cannot steal the click.
-        let resolvedPid = resolveTargetPid(args)
-        let target = windowTarget(under: point).flatMap { candidate in
-            resolvedPid == nil || candidate.pid == resolvedPid ? candidate : nil
-        } ?? resolvedPid.flatMap(windowTarget(forPid:))
+        // Prefer the window under the point. Only constrain to an app PID when the
+        // caller passed `app` explicitly — Registry.targetPid from get_app_state
+        // must not discard a same-desktop under-point window.
+        let under = windowTarget(under: point)
+        let target: WindowTarget?
+        if args["app"] != nil, let appPid = resolveTargetPid(args) {
+            target = under.flatMap { $0.pid == appPid ? $0 : nil } ?? windowTarget(forPid: appPid)
+        } else {
+            target = under ?? resolveTargetPid(args).flatMap(windowTarget(forPid:))
+        }
         if let target, backgroundClick(target, at: point, clickCount: clickCount) {
             return "clicked at (\(Int(x)), \(Int(y))) in background"
         }
@@ -1101,15 +1105,31 @@ func postDrag(from start: CGPoint, to end: CGPoint, pid: pid_t?) {
 
 // MARK: - Additional tools
 
-func resolvePoint(_ args: [String: Any], xKey: String, yKey: String, idKey: String) -> CGPoint? {
-    if let id = args[idKey] as? String, let el = Registry.get(id) { return visibleCenter(of: el) }
-    if let x = args[xKey] as? Double, let y = args[yKey] as? Double { return CGPoint(x: x, y: y) }
-    return nil
+func resolvePoint(_ args: [String: Any], xKey: String, yKey: String, idKey: String) -> Result<CGPoint, String> {
+    if let id = args[idKey] as? String {
+        guard let el = Registry.get(id) else {
+            return .failure("error: unknown element_id \(id) — call get_app_state again to refresh ids")
+        }
+        guard let point = visibleCenter(of: el) else {
+            return .failure(
+                "error: \(id) is not visible in its window — scroll it into view and call get_app_state again"
+            )
+        }
+        return .success(point)
+    }
+    if let x = args[xKey] as? Double, let y = args[yKey] as? Double {
+        return .success(CGPoint(x: x, y: y))
+    }
+    return .failure("error: provide either \(idKey), or both \(xKey) and \(yKey)")
 }
 
 func toolRightClick(_ args: [String: Any]) -> String {
-    guard let point = resolvePoint(args, xKey: "x", yKey: "y", idKey: "element_id") else {
-        return "error: provide either element_id, or both x and y"
+    let point: CGPoint
+    switch resolvePoint(args, xKey: "x", yKey: "y", idKey: "element_id") {
+    case .failure(let message):
+        return message
+    case .success(let resolved):
+        point = resolved
     }
     let element = (args["element_id"] as? String).flatMap { Registry.get($0) }
     let target = element.flatMap { windowTarget(for: $0) }
@@ -1122,11 +1142,19 @@ func toolRightClick(_ args: [String: Any]) -> String {
 }
 
 func toolDrag(_ args: [String: Any]) -> String {
-    guard let start = resolvePoint(args, xKey: "from_x", yKey: "from_y", idKey: "from_element_id") else {
-        return "error: provide from_element_id, or both from_x and from_y"
+    let start: CGPoint
+    switch resolvePoint(args, xKey: "from_x", yKey: "from_y", idKey: "from_element_id") {
+    case .failure(let message):
+        return message
+    case .success(let resolved):
+        start = resolved
     }
-    guard let end = resolvePoint(args, xKey: "to_x", yKey: "to_y", idKey: "to_element_id") else {
-        return "error: provide to_element_id, or both to_x and to_y"
+    let end: CGPoint
+    switch resolvePoint(args, xKey: "to_x", yKey: "to_y", idKey: "to_element_id") {
+    case .failure(let message):
+        return message
+    case .success(let resolved):
+        end = resolved
     }
     let element = (args["from_element_id"] as? String).flatMap { Registry.get($0) }
     let target = element.flatMap { windowTarget(for: $0) }
