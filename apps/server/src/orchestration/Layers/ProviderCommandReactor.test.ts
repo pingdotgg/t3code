@@ -30,7 +30,7 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { it as effectIt } from "@effect/vitest";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -100,6 +100,20 @@ describe("ProviderCommandReactor", () => {
   const createdStateDirs = new Set<string>();
   const createdBaseDirs = new Set<string>();
 
+  // The workspace existence guard in ProviderCommandReactor checks that the
+  // project's workspaceRoot exists on disk before starting a provider session.
+  // Create the paths the suite uses once for the whole run.
+  const WORKSPACE_ROOT = "/tmp/provider-project";
+  const WORKSPACE_WORKTREE = "/tmp/provider-project-worktree";
+  beforeAll(() => {
+    NodeFS.mkdirSync(WORKSPACE_ROOT, { recursive: true });
+    NodeFS.mkdirSync(WORKSPACE_WORKTREE, { recursive: true });
+  });
+  afterAll(() => {
+    NodeFS.rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
+    NodeFS.rmSync(WORKSPACE_WORKTREE, { recursive: true, force: true });
+  });
+
   afterEach(async () => {
     if (scope) {
       await Effect.runPromise(Scope.close(scope, Exit.void));
@@ -145,6 +159,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly workspaceRoot?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -429,7 +444,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
+        workspaceRoot: input?.workspaceRoot ?? "/tmp/provider-project",
         defaultModelSelection: modelSelection,
         createdAt: now,
       }),
@@ -659,6 +674,44 @@ describe("ProviderCommandReactor", () => {
       thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       expect(thread?.session?.status).toBe("starting");
       expect(thread?.session?.lastError).toBeNull();
+    }),
+  );
+
+  effectIt.effect("rejects a turn when the workspace directory no longer exists", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ workspaceRoot: "/tmp/provider-project-missing" }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-missing-workspace"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-workspace"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+              ?.status === "error"
+          );
+        }),
+      );
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session?.lastError).toContain("no longer exists");
+      expect(harness.startSession).not.toHaveBeenCalled();
     }),
   );
 

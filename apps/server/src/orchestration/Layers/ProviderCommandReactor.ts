@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -604,6 +605,18 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+
+    if (effectiveCwd) {
+      const fs = yield* FileSystem.FileSystem;
+      const exists = yield* fs.exists(effectiveCwd).pipe(Effect.orElseSucceed(() => false));
+      if (!exists) {
+        return yield* new ProviderAdapterRequestError({
+          provider: preferredProvider,
+          method: "thread.turn.start",
+          detail: `Workspace directory '${effectiveCwd}' no longer exists. Has it been moved or renamed? Update the project's workspace root in Settings to point at the new location.`,
+        });
+      }
+    }
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
