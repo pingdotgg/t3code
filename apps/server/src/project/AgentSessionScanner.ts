@@ -29,6 +29,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -155,32 +156,40 @@ export const make = Effect.gen(function* () {
     fileSystem.stat(target).pipe(Effect.map(Option.some), Effect.orElseSucceed(Option.none));
 
   /**
-   * Read the head of a transcript and return its first complete line. Returns
-   * `null` when the file is unreadable or its first line exceeds the prefix.
+   * Read the head of a transcript and return its complete lines. Returns an
+   * empty list when the file is unreadable; a trailing partial line (cut by
+   * the prefix cap) is dropped rather than parsed as truncated JSON.
    */
-  const readFirstLine = Effect.fn("AgentSessionScanner.readFirstLine")(function* (
+  const readHeadLines = Effect.fn("AgentSessionScanner.readHeadLines")(function* (
     filePath: string,
-  ): Effect.fn.Return<string | null> {
+  ): Effect.fn.Return<ReadonlyArray<string>> {
     const prefix = yield* Effect.scoped(
       fileSystem
         .open(filePath, { flag: "r" })
         .pipe(Effect.flatMap((file) => file.readAlloc(TRANSCRIPT_PREFIX_BYTES))),
     ).pipe(Effect.orElseSucceed(Option.none<Uint8Array>));
-    if (Option.isNone(prefix)) return null;
+    if (Option.isNone(prefix)) return [];
 
     const text = decoder.decode(prefix.value);
-    const newlineIndex = text.indexOf("\n");
-    if (newlineIndex === -1) {
-      // Either a single-line file smaller than the prefix, or a first record
-      // too large to trust as complete JSON.
-      return prefix.value.length < TRANSCRIPT_PREFIX_BYTES ? text : null;
+    const lines = text.split("\n");
+    // A prefix-capped read may end mid-line; only a file smaller than the cap
+    // is guaranteed to have a complete final line.
+    if (prefix.value.length >= TRANSCRIPT_PREFIX_BYTES) {
+      lines.pop();
     }
-    return text.slice(0, newlineIndex);
+    return lines;
   });
 
+  // Transcripts often open with records that carry no cwd (Claude writes
+  // file-history snapshots and queue operations first), so scan every
+  // complete line in the prefix for the first one that names a directory.
   const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (filePath: string) {
-    const line = yield* readFirstLine(filePath);
-    return line === null ? null : extractCwd(line.trim());
+    const lines = yield* readHeadLines(filePath);
+    for (const line of lines) {
+      const cwd = extractCwd(line.trim());
+      if (cwd !== null) return cwd;
+    }
+    return null;
   });
 
   const latestMtimeMs = Effect.fn("AgentSessionScanner.latestMtimeMs")(function* (
@@ -404,25 +413,29 @@ export const make = Effect.gen(function* () {
           : Math.max(existing.lastActiveAtMs, candidate.lastActiveAtMs);
     }
 
+    // One snapshot read, compared with the same normalization the
+    // project.create invariant uses, so a root that differs only by case or
+    // separators is still recognized as imported.
+    const shellSnapshot = yield* projectionSnapshotQuery
+      .getShellSnapshot()
+      .pipe(
+        Effect.mapError(
+          (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+        ),
+      );
+    const importedRoots = new Set(
+      shellSnapshot.projects.map((project) =>
+        normalizeProjectPathForComparison(project.workspaceRoot),
+      ),
+    );
+
     const candidates: Array<AgentSessionProjectCandidate> = [];
     for (const [key, entry] of merged.entries()) {
       // Projects may have been created under either the recorded spelling or
       // the resolved realpath (e.g. a symlinked home) — check both.
-      const lookupPaths = key === entry.path ? [entry.path] : [entry.path, key];
-      let alreadyImported = false;
-      for (const lookupPath of lookupPaths) {
-        const existingProject = yield* projectionSnapshotQuery
-          .getActiveProjectByWorkspaceRoot(lookupPath)
-          .pipe(
-            Effect.mapError(
-              (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
-            ),
-          );
-        if (Option.isSome(existingProject)) {
-          alreadyImported = true;
-          break;
-        }
-      }
+      const alreadyImported =
+        importedRoots.has(normalizeProjectPathForComparison(entry.path)) ||
+        importedRoots.has(normalizeProjectPathForComparison(key));
       candidates.push({
         path: entry.path,
         title: path.basename(entry.path) || entry.path,

@@ -1,10 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { type OrchestrationProject, ProjectId } from "@t3tools/contracts";
+import { type OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
@@ -12,7 +11,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
-const makeProject = (workspaceRoot: string): OrchestrationProject => ({
+const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => ({
   id: ProjectId.make("project-1"),
   title: "Imported",
   workspaceRoot,
@@ -20,24 +19,24 @@ const makeProject = (workspaceRoot: string): OrchestrationProject => ({
   scripts: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
-  deletedAt: null,
 });
 
-/** Only `getActiveProjectByWorkspaceRoot` is exercised; the rest must not be called. */
+/** Only `getShellSnapshot` is exercised; the rest must not be called. */
 const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<string>) =>
   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
-    getShellSnapshot: () => Effect.die("unused"),
+    getShellSnapshot: () =>
+      Effect.succeed({
+        snapshotSequence: 0,
+        projects: importedWorkspaceRoots.map((workspaceRoot) => makeProjectShell(workspaceRoot)),
+        threads: [],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
     getArchivedShellSnapshot: () => Effect.die("unused"),
     getSnapshotSequence: () => Effect.die("unused"),
     getCounts: () => Effect.die("unused"),
-    getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
-      Effect.succeed(
-        importedWorkspaceRoots.includes(workspaceRoot)
-          ? Option.some(makeProject(workspaceRoot))
-          : Option.none(),
-      ),
+    getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
     getProjectShellById: () => Effect.die("unused"),
     getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
     getThreadCheckpointContext: () => Effect.die("unused"),
@@ -344,6 +343,32 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
 
         expect(result.candidates).toEqual([]);
+      }),
+    );
+
+    it.effect("finds the cwd on a later line when the first records carry none", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        // Claude transcripts often open with records that have no cwd.
+        const contents = [
+          JSON.stringify({ type: "file-history-snapshot", messageId: "m1" }),
+          JSON.stringify({ type: "queue-operation", operation: "enqueue" }),
+          JSON.stringify({ type: "user", cwd: workspace, sessionId: "s1" }),
+          "",
+        ].join("\n");
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          contents,
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
       }),
     );
 

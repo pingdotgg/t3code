@@ -57,10 +57,19 @@ export function FirstRunGate({
   // own cwd auto-bootstrap: web mode creates a project + thread from cwd at
   // startup (`autoBootstrapProjectFromCwd` defaults on there), so "no
   // projects at all" would mean `npx t3` users never see the wizard. Any
-  // other project, or more than one thread, is real user state.
+  // other project, more than one thread, or state in a non-primary
+  // environment is real user state — the aggregate hooks span every
+  // environment, and a saved remote's project must never read as "the
+  // bootstrap project" just because its root string matches the primary cwd.
   const serverCwd = serverConfig?.cwd ?? null;
+  const primaryEnvironmentId = serverConfig?.environment.environmentId ?? null;
   const workspaceFresh =
-    projects.every((project) => project.workspaceRoot === serverCwd) && threads.length <= 1;
+    projects.every(
+      (project) =>
+        project.environmentId === primaryEnvironmentId && project.workspaceRoot === serverCwd,
+    ) &&
+    threads.length <= 1 &&
+    threads.every((thread) => thread.environmentId === primaryEnvironmentId);
 
   useEffect(() => {
     if (decision !== "pending" || !hydrated) return;

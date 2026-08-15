@@ -31,5 +31,6 @@ have already run and offers them as projects. The default imports projects
 active in the last 30 days; **Choose** lists everything found. Imports create
 projects only — thread history import is coming later.
 
-Every step after the connection choice can be skipped. Projects can always be
-added later from the command palette.
+The agent and import steps can be skipped, and the remote paths offer Back to
+choose a different connection. Projects can always be added later from the
+command palette.

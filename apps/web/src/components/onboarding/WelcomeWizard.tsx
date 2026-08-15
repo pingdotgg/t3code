@@ -27,7 +27,9 @@ import { agentSessionScan } from "../../state/agentSessions";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
-import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+
+import { serverEnvironment } from "../../state/server";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
@@ -51,20 +53,33 @@ import { cn } from "../../lib/utils";
 
 type WizardStep = "connection" | "connect-machines" | "pair-direct" | "agents" | "import";
 
+type ConnectionMode = "local" | "connect" | "direct";
+
 /**
- * The machine the agent and import steps run against: the primary environment
- * when it's connected, otherwise the first connected environment (the remote
- * paths on web/hosted have no primary). Deliberately not a persisted "primary
- * machine" concept — just whichever machine is reachable right now, labeled
- * inline on each step.
+ * The machine the agent and import steps run against. Local mode targets the
+ * primary environment; the remote modes prefer the machine the user just
+ * connected (the most recently added connected non-primary environment), so
+ * probing and import happen where their code lives rather than on the local
+ * server that happens to serve the app. Deliberately not a persisted
+ * "primary machine" concept — just whichever machine fits the chosen path
+ * right now, labeled inline on each step.
  */
-function useOnboardingTargetEnvironment() {
+function useOnboardingTargetEnvironment(mode: ConnectionMode) {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const connectedRemotes = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.entry.target._tag !== "PrimaryConnectionTarget",
+  );
+  if (mode !== "local" && connectedRemotes.length > 0) {
+    // Registry order is append-order, so the last entry is the newest link.
+    return connectedRemotes[connectedRemotes.length - 1] ?? null;
+  }
   if (primaryEnvironment !== null && primaryEnvironment.connection.phase === "connected") {
     return primaryEnvironment;
   }
-  return environments.find((environment) => environment.connection.phase === "connected") ?? null;
+  return connectedRemotes[0] ?? null;
 }
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
@@ -85,6 +100,7 @@ export function WelcomeWizard({
 }) {
   const completeOnboarding = useCompleteOnboarding();
   const [step, setStep] = useState<WizardStep>("connection");
+  const [mode, setMode] = useState<ConnectionMode>("local");
   const finish = useCallback(() => {
     completeOnboarding();
     onDone();
@@ -105,9 +121,18 @@ export function WelcomeWizard({
         {step === "connection" ? (
           <ConnectionStep
             localAvailable={localAvailable}
-            onLocal={() => setStep("agents")}
-            onConnect={() => setStep("connect-machines")}
-            onDirect={() => setStep("pair-direct")}
+            onLocal={() => {
+              setMode("local");
+              setStep("agents");
+            }}
+            onConnect={() => {
+              setMode("connect");
+              setStep("connect-machines");
+            }}
+            onDirect={() => {
+              setMode("direct");
+              setStep("pair-direct");
+            }}
           />
         ) : step === "connect-machines" ? (
           <ConnectMachinesStep
@@ -117,9 +142,13 @@ export function WelcomeWizard({
         ) : step === "pair-direct" ? (
           <PairDirectStep onBack={() => setStep("connection")} onPaired={() => setStep("agents")} />
         ) : step === "agents" ? (
-          <AgentsStep onContinue={() => setStep("import")} onSkip={() => setStep("import")} />
+          <AgentsStep
+            mode={mode}
+            onContinue={() => setStep("import")}
+            onSkip={() => setStep("import")}
+          />
         ) : (
-          <ImportStep onDone={finish} />
+          <ImportStep mode={mode} onDone={finish} />
         )}
       </section>
     </div>
@@ -208,9 +237,11 @@ function ConnectionCard({
   return (
     <button
       type="button"
+      aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "flex flex-col rounded-xl border p-4 text-left transition-colors",
+        "flex cursor-pointer flex-col rounded-xl border p-4 text-left transition-colors",
+        "outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
           ? "border-primary bg-primary/5 ring-1 ring-primary/25"
           : "border-border/70 bg-background/40 hover:border-border",
@@ -450,13 +481,15 @@ const AGENT_LOGIN_COMMANDS: Record<string, string> = {
  * path), and the terminal also handles the interactive login that follows.
  */
 function AgentsStep({
+  mode,
   onContinue,
   onSkip,
 }: {
+  readonly mode: ConnectionMode;
   readonly onContinue: () => void;
   readonly onSkip: () => void;
 }) {
-  const targetEnvironment = useOnboardingTargetEnvironment();
+  const targetEnvironment = useOnboardingTargetEnvironment(mode);
   if (targetEnvironment === null) {
     return (
       <StepShell title="Set up your agents" description="Waiting for an environment connection…">
@@ -501,10 +534,22 @@ function ConnectedAgentsStep({
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
+  // A driver can have several instances; the card should reflect the most
+  // usable one (ready beats needs-login beats installed beats present), not
+  // whichever happened to be listed first.
   const byDriver = useMemo(() => {
+    const usability = (provider: ServerProvider): number => {
+      if (!provider.enabled) return 0;
+      if (!provider.installed) return 1;
+      if (provider.auth.status !== "authenticated") return 2;
+      return 3;
+    };
     const map = new Map<string, ServerProvider>();
     for (const provider of providers ?? []) {
-      if (!map.has(provider.driver)) map.set(provider.driver, provider);
+      const existing = map.get(provider.driver);
+      if (existing === undefined || usability(provider) > usability(existing)) {
+        map.set(provider.driver, provider);
+      }
     }
     return map;
   }, [providers]);
@@ -588,6 +633,9 @@ function AgentCard({
   const Icon = meta?.icon;
   const displayName = driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver);
   const summary = getProviderSummary(provider);
+  // `undefined` means the probe hasn't reported yet — offering Install
+  // against unknown state would be wrong either way it resolves.
+  const pending = provider === undefined;
   // A provider disabled in settings is neither ready nor installable from
   // here; the summary already reads "Disabled" and the card offers no action.
   const disabled = provider !== undefined && !provider.enabled;
@@ -599,7 +647,7 @@ function AgentCard({
     <div
       className={cn(
         "rounded-xl border p-4",
-        ready ? "border-emerald-500/40" : terminalOpen ? "border-primary" : "border-border/70",
+        ready ? "border-success/30" : terminalOpen ? "border-primary" : "border-border/70",
       )}
     >
       <div className="flex items-center gap-2.5">
@@ -612,10 +660,12 @@ function AgentCard({
       </p>
       <div className="mt-3">
         {ready ? (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-500">
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-success-foreground">
             <CheckIcon className="size-3.5" />
             Ready
           </span>
+        ) : pending ? (
+          <span className="text-xs text-muted-foreground">Checking…</span>
         ) : disabled ? (
           <span className="text-xs text-muted-foreground">Enable in Settings</span>
         ) : (
@@ -651,8 +701,9 @@ function AgentInstallTerminal({
   readonly installed: boolean;
   readonly onClose: () => void;
 }) {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  // Keybindings follow the machine the terminal runs on, not the primary.
+  const keybindings = serverConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   // Same terminal typography preference the thread drawer honors.
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -701,7 +752,16 @@ function AgentInstallTerminal({
           preparedRef.current = false;
           return;
         }
-        if (cancelled || command.length === 0) return;
+        // Cleanup may have run while the open was in flight — its close was a
+        // no-op against a not-yet-created session, so reap the PTY here.
+        if (cancelled) {
+          void closeTerminal({
+            environmentId,
+            input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId },
+          });
+          return;
+        }
+        if (command.length === 0) return;
         // Pre-type without the trailing carriage return; the user submits.
         // The terminal id is unique to this mount, so this session has never
         // been written to before.
@@ -778,8 +838,14 @@ function AgentInstallTerminal({
  * Choose expands a checklist including older ones. Projects only — thread
  * history import is a follow-up.
  */
-function ImportStep({ onDone }: { readonly onDone: () => void }) {
-  const targetEnvironment = useOnboardingTargetEnvironment();
+function ImportStep({
+  mode,
+  onDone,
+}: {
+  readonly mode: ConnectionMode;
+  readonly onDone: () => void;
+}) {
+  const targetEnvironment = useOnboardingTargetEnvironment(mode);
   const environmentId = targetEnvironment?.environmentId ?? null;
   const machineLabel = targetEnvironment?.label ?? "this machine";
   const providers = useAtomValue(
@@ -793,6 +859,16 @@ function ImportStep({ onDone }: { readonly onDone: () => void }) {
   const [deselected, setDeselected] = useState<ReadonlySet<string>>(new Set());
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState("");
+  // Paths that already imported this session, so a retry after a partial
+  // failure skips them instead of tripping the duplicate-root invariant.
+  const importedPathsRef = useRef(new Set<string>());
+
+  // Candidate paths are per-environment; a target switch would otherwise
+  // leave stale entries in the deselection set (and stale success records).
+  useEffect(() => {
+    setDeselected(new Set());
+    importedPathsRef.current = new Set();
+  }, [environmentId]);
 
   const candidates = useMemo(
     () => (scan.data?.candidates ?? []).filter((candidate) => !candidate.alreadyImported),
@@ -819,10 +895,16 @@ function ImportStep({ onDone }: { readonly onDone: () => void }) {
     const defaultModelSelection = resolveDefaultProviderModelSelection(providers ?? [], null);
     // Interrupted imports are neither failures nor successes — the command was
     // superseded or the environment dropped — but they still didn't land, so
-    // they must not read as "imported everything".
-    let imported = 0;
+    // they must not read as "imported everything". Retries skip paths that
+    // already landed this session (re-creating them would only trip the
+    // duplicate-root invariant and read as a failure).
+    let imported =
+      importedPathsRef.current.size > 0
+        ? selection.filter((candidate) => importedPathsRef.current.has(candidate.path)).length
+        : 0;
     let failed = 0;
     for (const candidate of selection) {
+      if (importedPathsRef.current.has(candidate.path)) continue;
       const result = await createProject({
         environmentId,
         input: {
@@ -835,6 +917,7 @@ function ImportStep({ onDone }: { readonly onDone: () => void }) {
       });
       if (result._tag === "Success") {
         imported += 1;
+        importedPathsRef.current.add(candidate.path);
       } else if (!isAtomCommandInterrupted(result)) {
         failed += 1;
       }
@@ -981,14 +1064,10 @@ function StepShell({
   return (
     <>
       {onBack ? (
-        <button
-          type="button"
-          onClick={onBack}
-          className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
+        <Button className="-ml-2 mt-3" onClick={onBack} size="xs" variant="ghost-muted">
           <ChevronLeftIcon className="size-3.5" />
           Back
-        </button>
+        </Button>
       ) : null}
       <h1
         className={cn(
@@ -1016,6 +1095,23 @@ function CommandBlock({
   readonly prominent?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  // The Clipboard API only exists in secure contexts; the wizard's Direct
+  // path explicitly supports plain-HTTP LAN servers, so fall back to the
+  // selection-based copy there.
+  const copyCommand = () => {
+    if (navigator.clipboard !== undefined) {
+      void navigator.clipboard.writeText(command);
+    } else {
+      const scratch = document.createElement("textarea");
+      scratch.value = command;
+      document.body.append(scratch);
+      scratch.select();
+      document.execCommand("copy");
+      scratch.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
   return (
     <div
       className={cn(
@@ -1028,16 +1124,7 @@ function CommandBlock({
         <span className="mr-2 text-muted-foreground">$</span>
         {command}
       </span>
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        aria-label="Copy command"
-        onClick={() => {
-          void navigator.clipboard.writeText(command);
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
-        }}
-      >
+      <Button size="icon-xs" variant="ghost" aria-label="Copy command" onClick={copyCommand}>
         {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </Button>
     </div>
