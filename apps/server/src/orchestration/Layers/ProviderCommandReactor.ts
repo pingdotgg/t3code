@@ -753,6 +753,10 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
+    // ProviderService validates the user's text before appending persisted
+    // attachment paths. Keep the original text here so file metadata does not
+    // consume the provider input limit, and let that service filter native
+    // image content from reference-only file attachments.
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService

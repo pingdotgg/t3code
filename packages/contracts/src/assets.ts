@@ -12,6 +12,7 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    fileName: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

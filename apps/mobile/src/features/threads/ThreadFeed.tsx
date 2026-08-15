@@ -1,7 +1,13 @@
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import type {
+  ChatFileAttachment,
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
@@ -121,6 +127,12 @@ function formatMessageTime(input: string): string {
   return MESSAGE_TIME_FORMATTER.format(timestamp);
 }
 
+function formatAttachmentSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // Pre-measurement heights for getFixedItemSize, mirroring renderFeedEntry's
 // classNames. The fold row's min-h-11 (44px) stays taller than its single
 // text-sm line at every supported base font size (26px at the 22pt maximum),
@@ -190,6 +202,39 @@ function MessageAttachmentImage(props: {
   return (
     <TouchableOpacity activeOpacity={0.7} onPress={() => props.onPressImage(uri)}>
       <Image source={{ uri }} className={props.className} resizeMode="cover" />
+    </TouchableOpacity>
+  );
+}
+
+function MessageAttachmentFile(props: {
+  readonly environmentId: EnvironmentId;
+  readonly attachment: ChatFileAttachment;
+  readonly className: string;
+}) {
+  const uri = useAssetUrl(props.environmentId, {
+    _tag: "attachment",
+    attachmentId: props.attachment.id,
+    fileName: props.attachment.name,
+  });
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      disabled={uri === null}
+      onPress={() => {
+        if (uri !== null) void Linking.openURL(uri);
+      }}
+      className={`${props.className} flex-row items-center gap-2 rounded-[14px] px-3 py-2.5`}
+    >
+      {uri === null ? <ActivityIndicator /> : <Text className="text-base">📄</Text>}
+      <View className="min-w-0 flex-1">
+        <Text numberOfLines={1} className="font-t3-medium text-sm">
+          {props.attachment.name}
+        </Text>
+        <Text className="text-xs text-foreground-muted">
+          {formatAttachmentSize(props.attachment.sizeBytes)}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -933,6 +978,16 @@ function renderFeedEntry(
               />
             ) : null}
             {attachments.map((attachment) => {
+              if (attachment.type === "file") {
+                return (
+                  <MessageAttachmentFile
+                    key={attachment.id}
+                    environmentId={props.environmentId}
+                    attachment={attachment}
+                    className="bg-white/15"
+                  />
+                );
+              }
               return (
                 <MessageAttachmentImage
                   key={attachment.id}
@@ -994,6 +1049,16 @@ function renderFeedEntry(
           )
         ) : null}
         {attachments.map((attachment) => {
+          if (attachment.type === "file") {
+            return (
+              <MessageAttachmentFile
+                key={attachment.id}
+                environmentId={props.environmentId}
+                attachment={attachment}
+                className="bg-neutral-200 dark:bg-neutral-800"
+              />
+            );
+          }
           return (
             <MessageAttachmentImage
               key={attachment.id}

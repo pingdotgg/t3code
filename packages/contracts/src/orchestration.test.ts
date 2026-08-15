@@ -5,6 +5,9 @@ import * as Schema from "effect/Schema";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  ChatAttachment,
+  ChatFileAttachment,
+  ChatImageAttachment,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -933,5 +936,53 @@ it.effect("project favicon overrides accept only supported image files", () =>
       }),
     );
     assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
+const decodeChatAttachment = Schema.decodeUnknownEffect(ChatAttachment);
+const decodeChatFileAttachment = Schema.decodeUnknownEffect(ChatFileAttachment);
+const decodeChatImageAttachment = Schema.decodeUnknownEffect(ChatImageAttachment);
+
+it.effect("ChatAttachment decodes a file attachment with a non-image mime type", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeChatAttachment({
+      type: "file",
+      id: "file-1",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 2_048,
+    });
+    assert.strictEqual(parsed.type, "file");
+    assert.strictEqual(parsed.name, "report.pdf");
+  }),
+);
+
+it.effect("ChatImageAttachment rejects non-image mime types", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeChatImageAttachment({
+        type: "image",
+        id: "img-1",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 2_048,
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("ChatFileAttachment rejects sizeBytes over the attachment limit", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeChatFileAttachment({
+        type: "file",
+        id: "file-1",
+        name: "big.bin",
+        mimeType: "application/octet-stream",
+        sizeBytes: 10 * 1024 * 1024 + 1,
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
   }),
 );

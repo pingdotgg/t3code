@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { inferImageExtension, parseBase64DataUrl } from "./imageMime.ts";
+import { inferFileExtension, inferImageExtension, parseBase64DataUrl } from "./imageMime.ts";
 
 describe("imageMime", () => {
   it("parses base64 data URL with mime type", () => {
@@ -91,5 +91,15 @@ describe("imageMime", () => {
 
   it("does not read inherited keys from mime extension map", () => {
     expect(inferImageExtension({ mimeType: "constructor" })).toBe(".bin");
+  });
+
+  it("infers common file extensions from names and MIME types", () => {
+    expect(
+      inferFileExtension({ mimeType: "application/octet-stream", fileName: "report.PDF" }),
+    ).toBe(".pdf");
+    expect(inferFileExtension({ mimeType: "text/plain", fileName: "notes" })).toBe(".txt");
+    expect(inferFileExtension({ mimeType: "application/x-unknown", fileName: "payload.exe" })).toBe(
+      ".bin",
+    );
   });
 });

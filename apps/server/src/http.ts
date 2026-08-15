@@ -27,7 +27,11 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  contentDispositionForDownload,
+  resolveAsset,
+} from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -45,10 +49,21 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-export function assetResponseHeaders(filePath: string): Record<string, string> {
+export function assetResponseHeaders(
+  filePath: string,
+  download = false,
+  downloadName?: string,
+): Record<string, string> {
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
+    ...(download
+      ? {
+          "Content-Disposition": contentDispositionForDownload(
+            downloadName ?? filePath.replace(/^.*[/\\]/, ""),
+          ),
+        }
+      : {}),
     ...(filePath.toLowerCase().endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
@@ -217,9 +232,11 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
+    const download = "download" in asset && asset.download === true;
+    const downloadName = "downloadName" in asset ? asset.downloadName : undefined;
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
-      headers: assetResponseHeaders(asset.path),
+      headers: assetResponseHeaders(asset.path, download, downloadName),
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );

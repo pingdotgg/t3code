@@ -52,6 +52,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  FileTextIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -103,6 +104,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { formatAttachmentSizeLabel } from "~/lib/attachmentSize";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
@@ -970,8 +972,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
   ];
-  const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
-  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const previewImages = userImages.filter(
+    (image): image is Extract<typeof image, { type: "image" }> =>
+      image.type === "image" && image.name.startsWith("preview-annotation-"),
+  );
+  const regularImages = userImages.filter(
+    (image): image is Extract<typeof image, { type: "image" }> =>
+      image.type === "image" && !image.name.startsWith("preview-annotation-"),
+  );
+  const fileAttachments = userImages.filter((attachment) => attachment.type === "file");
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
@@ -979,7 +988,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {regularImages.map((image) => (
               <div
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
@@ -1008,6 +1017,38 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 )}
               </div>
             ))}
+          </div>
+        )}
+        {fileAttachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {fileAttachments.map((attachment) => {
+              const chipContent = (
+                <>
+                  <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="max-w-48 truncate">{attachment.name}</span>
+                  <span className="text-muted-foreground/70">
+                    {formatAttachmentSizeLabel(attachment.sizeBytes)}
+                  </span>
+                </>
+              );
+              const chipClassName =
+                "inline-flex items-center gap-1.5 rounded-md border border-border/80 bg-background/70 px-2 py-1 text-[11px]";
+              return attachment.previewUrl ? (
+                <a
+                  key={attachment.id}
+                  href={attachment.previewUrl}
+                  download={attachment.name}
+                  className={`${chipClassName} hover:bg-background`}
+                  aria-label={`Download ${attachment.name}`}
+                >
+                  {chipContent}
+                </a>
+              ) : (
+                <span key={attachment.id} className={chipClassName}>
+                  {chipContent}
+                </span>
+              );
+            })}
           </div>
         )}
         {previewAnnotations.map((annotation, index) => (
@@ -1529,7 +1570,7 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
 
 function UserMessagePreviewAnnotationCard(props: {
   annotation: ParsedPreviewAnnotation;
-  image: NonNullable<TimelineMessage["attachments"]>[number] | null;
+  image: Extract<NonNullable<TimelineMessage["attachments"]>[number], { type: "image" }> | null;
 }) {
   const ctx = use(TimelineRowCtx);
   return (
