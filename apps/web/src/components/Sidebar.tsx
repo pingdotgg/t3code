@@ -30,6 +30,7 @@ import {
   changeRequestAutoSettles,
   effectiveSettled,
   effectiveSnoozed,
+  hasQueuedTurnStart,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -464,7 +465,11 @@ function DroppableShelfHeader(props: { id: string; className?: string; children:
   );
 }
 
-function DroppableActiveDropZone(props: { id: string; children?: ReactNode }) {
+function DroppableThreadZone(props: {
+  id: string;
+  className?: string | undefined;
+  children?: ReactNode;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: props.id });
   return (
     <li
@@ -475,27 +480,10 @@ function DroppableActiveDropZone(props: { id: string; children?: ReactNode }) {
         isOver
           ? "border-foreground/30 bg-sidebar-row-hover text-sidebar-foreground scale-[1.01]"
           : "border-sidebar-border/40 text-muted-foreground/50",
+        props.className,
       )}
     >
       {props.children ?? "Move to active"}
-    </li>
-  );
-}
-
-function DroppableSettledBottomZone(props: { id: string; children?: ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: props.id });
-  return (
-    <li
-      ref={setNodeRef}
-      data-thread-selection-safe
-      className={cn(
-        "list-none rounded-md border border-dashed px-2.5 py-4 min-h-[72px] flex items-center justify-center text-xs transition-all duration-150",
-        isOver
-          ? "border-foreground/30 bg-sidebar-row-hover text-sidebar-foreground scale-[1.01]"
-          : "border-sidebar-border/40 text-muted-foreground/50",
-      )}
-    >
-      {props.children ?? "Move to settled"}
     </li>
   );
 }
@@ -2220,9 +2208,14 @@ export default function Sidebar() {
     [setSettledShelfExpanded],
   );
   const renderedSettledThreads = useMemo(() => {
-    if (!settledShelfExpanded) return [];
-    return visibleSettledThreads;
-  }, [settledShelfExpanded, visibleSettledThreads]);
+    if (settledShelfExpanded) return visibleSettledThreads;
+    if (routeThreadKey === null) return [];
+    const routeThread = settledThreads.find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    return routeThread === undefined ? [] : [routeThread];
+  }, [routeThreadKey, settledShelfExpanded, settledThreads, visibleSettledThreads]);
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
@@ -2312,9 +2305,7 @@ export default function Sidebar() {
       ),
     [orderedThreads],
   );
-  // Handlers read these through refs: depending on per-update Map/Set
-  // identities would give every row a fresh callback prop on each shell
-  // event and defeat row memoization during streaming.
+  const listContainerRef = useRef<HTMLUListElement | null>(null);
   const threadByKeyRef = useRef(threadByKey);
   threadByKeyRef.current = threadByKey;
   // handleNewThread is inherently unstable (depends on the projects list);
@@ -2954,14 +2945,26 @@ export default function Sidebar() {
         if (activeSection !== "settled") {
           void (async () => {
             if (activeSection === "snoozed") {
-              await unsnoozeThread(activeThreadRef);
+              const unsnoozeResult = await unsnoozeThread(activeThreadRef);
+              if (unsnoozeResult._tag === "Failure" && !isAtomCommandInterrupted(unsnoozeResult)) {
+                const error = squashAtomCommandFailure(unsnoozeResult);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to unsnooze thread",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+                return;
+              }
             }
             const shell = readThreadShell(activeThreadRef) ?? activeThread;
             const isWorking =
               shell.session?.status === "running" ||
               shell.session?.status === "starting" ||
               shell.hasPendingApprovals ||
-              shell.hasPendingUserInput;
+              shell.hasPendingUserInput ||
+              hasQueuedTurnStart(shell, { now: new Date().toISOString() });
             if (isWorking) {
               const runningTurnId =
                 shell.session?.status === "running"
@@ -3012,7 +3015,18 @@ export default function Sidebar() {
                   environmentId: activeThreadRef.environmentId,
                   input: { threadId: activeThreadRef.threadId },
                 });
-                await waitForSessionStopped(activeThreadRef, 2500);
+                const stopped = await waitForSessionStopped(activeThreadRef, 2500);
+                if (!stopped) {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Failed to snooze thread",
+                      description:
+                        "Active session is still stopping. Please try again in a moment.",
+                    }),
+                  );
+                  return;
+                }
               }
               attemptSnooze(activeThreadRef, defaultPreset, { force: true });
             })();
@@ -3076,27 +3090,6 @@ export default function Sidebar() {
           }
         })();
         return;
-      }
-
-      if (activeSection === "active" && overSection === "active") {
-        const firstPinnedKey = orderedPinnedThreads[0]?.pinOrderKey ?? null;
-        const orderKey = pinOrderKeyBetween(null, firstPinnedKey) ?? undefined;
-        void (async () => {
-          const result = await pinThread(
-            activeThreadRef,
-            orderKey !== undefined ? { orderKey } : {},
-          );
-          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to pin thread",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          }
-        })();
       }
     },
     [
@@ -3989,7 +3982,7 @@ export default function Sidebar() {
           {!isSearchingThreads ? (
             <TooltipProvider
               key="sidebar-thread-tooltips-150"
-              delay={activeDragKey !== null ? 999999 : 150}
+              delay={150}
               closeDelay={0}
               timeout={400}
             >
@@ -3997,7 +3990,6 @@ export default function Sidebar() {
                 key="sidebar-threads-dnd"
                 sensors={pinnedDndSensors}
                 collisionDetection={collisionDetectionStrategy}
-                autoScroll={false}
                 onDragStart={(event: DragStartEvent) => {
                   setActiveDragKey(String(event.active.id));
                 }}
@@ -4009,7 +4001,14 @@ export default function Sidebar() {
                   setActiveDragKey(null);
                 }}
               >
-                <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-col gap-px">
+                <ul
+                  ref={(el) => {
+                    listContainerRef.current = el;
+                    attachListAutoAnimateRef(el);
+                  }}
+                  role="list"
+                  className="flex flex-col gap-px"
+                >
                   {(() => {
                     const items: ReactNode[] = [
                       <SidebarDraftBlock
@@ -4054,7 +4053,7 @@ export default function Sidebar() {
                     }
                     if (activeThreads.length === 0 && activeDragKey !== null) {
                       items.push(
-                        <DroppableActiveDropZone key="active-drop-zone" id="active-drop-zone" />,
+                        <DroppableThreadZone key="active-drop-zone" id="active-drop-zone" />,
                       );
                     }
                     for (const thread of activeThreads) {
@@ -4107,9 +4106,9 @@ export default function Sidebar() {
                       }
                       if (activeDragKey !== null && visibleSnoozedThreads.length === 0) {
                         items.push(
-                          <DroppableActiveDropZone key="snoozed-drop-zone" id="snoozed-drop-zone">
+                          <DroppableThreadZone key="snoozed-drop-zone" id="snoozed-drop-zone">
                             Move to snoozed
-                          </DroppableActiveDropZone>,
+                          </DroppableThreadZone>,
                         );
                       }
                     }
@@ -4153,12 +4152,13 @@ export default function Sidebar() {
                       }
                       if (activeDragKey !== null) {
                         items.push(
-                          <DroppableSettledBottomZone
+                          <DroppableThreadZone
                             key="settled-bottom-drop-zone"
                             id="settled-bottom-drop-zone"
+                            className="min-h-[72px] py-4 flex items-center justify-center"
                           >
                             Move to settled
-                          </DroppableSettledBottomZone>,
+                          </DroppableThreadZone>,
                         );
                       }
                     }
@@ -4185,7 +4185,10 @@ export default function Sidebar() {
                         modifiers={[snapCenterToCursor]}
                       >
                         {activeDragThread ? (
-                          <div className="w-[var(--sidebar-width,260px)] max-w-xs cursor-grabbing rounded-lg border border-dashed border-foreground/35 bg-sidebar/95 shadow-2xl backdrop-blur-sm">
+                          <div
+                            style={{ width: listContainerRef.current?.offsetWidth ?? undefined }}
+                            className="w-[var(--sidebar-width,260px)] max-w-xs cursor-grabbing rounded-lg border border-dashed border-foreground/35 bg-sidebar/95 shadow-2xl backdrop-blur-sm"
+                          >
                             {renderThreadRow(activeDragThread, "active", undefined, true)}
                           </div>
                         ) : null}
