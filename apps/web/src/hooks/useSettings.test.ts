@@ -428,6 +428,52 @@ describe("synced plan mode", () => {
     controller.reset();
   });
 
+  it("bounds automatic patch retries", async () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const scheduledRetries: Array<{ readonly delayMs: number; readonly run: () => void }> = [];
+    const controller = createSyncedPlanModeHydrationController((retry, delayMs) => {
+      scheduledRetries.push({ delayMs, run: retry });
+      return vi.fn();
+    });
+    const previous = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
+    const hydrationInput = {
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist: vi.fn(),
+    } satisfies SyncedPlanModeHydrationInput<string>;
+
+    controller.synchronize(hydrationInput);
+    controller.write({
+      environmentId: primaryEnvironmentId,
+      value: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist: hydrationInput.persist,
+    });
+    await Promise.resolve();
+    scheduledRetries[0]?.run();
+    await Promise.resolve();
+    scheduledRetries[1]?.run();
+    await Promise.resolve();
+
+    expect(patch).toHaveBeenCalledTimes(3);
+    expect(scheduledRetries.map(({ delayMs }) => delayMs)).toEqual([1_000, 2_000]);
+    controller.reset();
+  });
+
   it("does not retry or persist a failed patch after changing primaries", async () => {
     const previousPrimaryEnvironmentId = EnvironmentId.make("previous-primary");
     const nextPrimaryEnvironmentId = EnvironmentId.make("next-primary");

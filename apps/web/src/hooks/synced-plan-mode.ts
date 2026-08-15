@@ -114,11 +114,12 @@ export function resolveSyncedPlanModeHydrationAction(input: {
 }
 
 const SYNCED_PLAN_MODE_RETRY_DELAY_MS = 1_000;
+const SYNCED_PLAN_MODE_MAX_ATTEMPTS = 3;
 
-type SyncedPlanModeRetryScheduler = (retry: () => void) => () => void;
+type SyncedPlanModeRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
-const scheduleSyncedPlanModeRetry: SyncedPlanModeRetryScheduler = (retry) => {
-  const timer = setTimeout(retry, SYNCED_PLAN_MODE_RETRY_DELAY_MS);
+const scheduleSyncedPlanModeRetry: SyncedPlanModeRetryScheduler = (retry, delayMs) => {
+  const timer = setTimeout(retry, delayMs);
   return () => clearTimeout(timer);
 };
 
@@ -133,6 +134,7 @@ export function createSyncedPlanModeHydrationController(
     pendingAdoption?: { readonly value: boolean; readonly updatedAt: string };
     readonly synchronizeAgainByOwner: Map<symbol, () => void>;
     cancelRetry?: () => void;
+    patchAttempt: number;
   }
 
   const imperativeSynchronizationOwner = Symbol();
@@ -140,7 +142,10 @@ export function createSyncedPlanModeHydrationController(
   const stateFor = (environmentId: EnvironmentId) => {
     const current = stateByEnvironment.get(environmentId);
     if (current !== undefined) return current;
-    const state: SyncedPlanModeEnvironmentState = { synchronizeAgainByOwner: new Map() };
+    const state: SyncedPlanModeEnvironmentState = {
+      synchronizeAgainByOwner: new Map(),
+      patchAttempt: 0,
+    };
     stateByEnvironment.set(environmentId, state);
     return state;
   };
@@ -163,11 +168,18 @@ export function createSyncedPlanModeHydrationController(
     return latest;
   };
   const requestRetry = (state: SyncedPlanModeEnvironmentState) => {
-    if (state.cancelRetry !== undefined || getSynchronizeAgain(state) === undefined) return;
+    if (
+      state.patchAttempt >= SYNCED_PLAN_MODE_MAX_ATTEMPTS ||
+      state.cancelRetry !== undefined ||
+      getSynchronizeAgain(state) === undefined
+    ) {
+      return;
+    }
+    const delayMs = SYNCED_PLAN_MODE_RETRY_DELAY_MS * 2 ** (state.patchAttempt - 1);
     state.cancelRetry = scheduleRetry(() => {
       delete state.cancelRetry;
       getSynchronizeAgain(state)?.();
-    });
+    }, delayMs);
   };
   const markAdopted = (state: SyncedPlanModeEnvironmentState, updatedAt: string) => {
     if (state.adoptedUpdatedAt === undefined || updatedAt > state.adoptedUpdatedAt) {
@@ -187,9 +199,10 @@ export function createSyncedPlanModeHydrationController(
       delete state.writeInFlightUpdatedAt;
     }
     if (input.result._tag === "Failure") {
-      if (state.seedPendingUpdatedAt === input.requestedUpdatedAt) {
-        delete state.seedPendingUpdatedAt;
-      }
+      const matchingWrite = state.writePending?.updatedAt === input.requestedUpdatedAt;
+      const matchingSeed = state.seedPendingUpdatedAt === input.requestedUpdatedAt;
+      if (!matchingWrite && !matchingSeed) return;
+      if (matchingSeed) delete state.seedPendingUpdatedAt;
       requestRetry(state);
       return;
     }
@@ -204,6 +217,7 @@ export function createSyncedPlanModeHydrationController(
     if (!matchingWrite && !matchingSeed) return;
 
     cancelRetry(state);
+    state.patchAttempt = 0;
     if (matchingWrite) delete state.writePending;
     const resultUpdatedAt = getSyncedClientPreferenceUpdatedAt(
       input.result.value,
@@ -225,7 +239,9 @@ export function createSyncedPlanModeHydrationController(
   }) => {
     const { environmentId } = input.target;
     const requestedUpdatedAt = input.target.input.updatedAt;
-    stateFor(environmentId).writeInFlightUpdatedAt = requestedUpdatedAt;
+    const state = stateFor(environmentId);
+    state.patchAttempt += 1;
+    state.writeInFlightUpdatedAt = requestedUpdatedAt;
     void input.patch(input.target).then((result) => {
       settlePatch({ environmentId, requestedUpdatedAt, result, persist: input.persist });
     });
@@ -237,7 +253,7 @@ export function createSyncedPlanModeHydrationController(
   ) => {
     const environmentId = input.environmentId;
     if (environmentId === null) return;
-    if (environmentId !== input.primaryEnvironmentId || !input.live) {
+    if (!input.live) {
       deactivate(environmentId, owner);
       return;
     }
@@ -279,13 +295,22 @@ export function createSyncedPlanModeHydrationController(
       delete state.writePending;
       delete state.writeInFlightUpdatedAt;
       cancelRetry(state);
+      state.patchAttempt = 0;
     }
     const activePendingWrite = state.writePending;
+    if (
+      state.patchAttempt >= SYNCED_PLAN_MODE_MAX_ATTEMPTS &&
+      state.cancelRetry === undefined &&
+      state.writeInFlightUpdatedAt === undefined
+    ) {
+      state.patchAttempt = 0;
+    }
     if (
       input.canPatch &&
       activePendingWrite !== undefined &&
       (serverUpdatedAt === undefined || serverUpdatedAt < activePendingWrite.updatedAt) &&
-      state.writeInFlightUpdatedAt !== activePendingWrite.updatedAt
+      state.writeInFlightUpdatedAt !== activePendingWrite.updatedAt &&
+      state.cancelRetry === undefined
     ) {
       dispatchPatch<E>({
         target: {
@@ -299,6 +324,7 @@ export function createSyncedPlanModeHydrationController(
         persist: input.persist,
       });
     }
+    if (environmentId !== input.primaryEnvironmentId) return deactivateSynchronization;
 
     const action = resolveSyncedPlanModeHydrationAction({
       clientHydrated: input.clientHydrated,
@@ -345,6 +371,8 @@ export function createSyncedPlanModeHydrationController(
     if (input.environmentId === null) return;
     const environmentId = input.environmentId;
     const state = stateFor(environmentId);
+    cancelRetry(state);
+    state.patchAttempt = 0;
     const controllerUpdatedAt = [
       state.adoptedUpdatedAt,
       state.seedPendingUpdatedAt,

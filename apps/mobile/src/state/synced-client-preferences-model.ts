@@ -55,28 +55,20 @@ export function createPlanModePreferenceReconciliationKey(
     readonly preferences: SyncedClientPreferences | undefined;
   }>,
 ): string {
-  return JSON.stringify(
-    states
-      .map(({ environmentId, connectionState, shellStatus, preferences }) => {
-        if (connectionState === "connected" && shellStatus === "live") {
-          return [
-            environmentId,
-            "live",
-            preferences?.planModeEnabled,
-            getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
-          ];
-        }
-        if (
-          connectionState === "available" ||
-          connectionState === "error" ||
-          connectionState === "offline"
-        ) {
-          return [environmentId, "fallback"];
-        }
-        return [environmentId, "pending"];
-      })
-      .sort(([left], [right]) => String(left).localeCompare(String(right))),
-  );
+  // Readiness is a monotonic watermark: after the first pass, only a newer live
+  // preference stamp can close it; connection churn, removals, and fallback states cannot.
+  return states.reduce((newestUpdatedAt, { connectionState, shellStatus, preferences }) => {
+    if (connectionState !== "connected" || shellStatus !== "live") return newestUpdatedAt;
+    const updatedAt = getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled");
+    return updatedAt !== undefined && updatedAt > newestUpdatedAt ? updatedAt : newestUpdatedAt;
+  }, "");
+}
+
+export function advancePlanModePreferenceReconciliationKey(
+  appliedKey: string | null,
+  currentKey: string,
+): string {
+  return appliedKey === null || currentKey > appliedKey ? currentKey : appliedKey;
 }
 
 export function isPlanModePreferenceReconciliationReady(input: {
@@ -87,7 +79,8 @@ export function isPlanModePreferenceReconciliationReady(input: {
 }): boolean {
   return (
     input.connectionsLoaded &&
-    (input.environmentCount === 0 || input.appliedKey === input.currentKey)
+    (input.environmentCount === 0 ||
+      (input.appliedKey !== null && input.currentKey <= input.appliedKey))
   );
 }
 

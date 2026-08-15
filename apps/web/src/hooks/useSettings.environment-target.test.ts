@@ -1,6 +1,7 @@
 import { EnvironmentId, type PatchSyncedClientPreferencesRequest } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { reactHookHarness as hooks } from "../test/reactHookHarness";
 
@@ -114,6 +115,10 @@ describe("useUpdateEnvironmentSettings", () => {
     testState.sessionEnvironmentIds.length = 0;
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("patches synced preferences in the supplied secondary environment", () => {
     const secondaryEnvironmentId = EnvironmentId.make("secondary");
     hooks.beginRender();
@@ -152,5 +157,37 @@ describe("useUpdateEnvironmentSettings", () => {
     expect(
       useEnvironmentSettings(secondaryEnvironmentId, (settings) => settings.planModeEnabled),
     ).toBe(true);
+  });
+
+  it("retries a failed secondary preference patch and reconciles the UI", async () => {
+    vi.useFakeTimers();
+    const secondaryEnvironmentId = EnvironmentId.make("secondary");
+    testState.patchPreferences
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
+      .mockImplementationOnce(async (target) =>
+        AsyncResult.success({
+          planModeEnabled: false,
+          updatedAt: target.input.updatedAt,
+        }),
+      );
+    hooks.beginRender();
+    useEnvironmentSettings(secondaryEnvironmentId);
+    hooks.beginRender();
+    const updateSettings = useUpdateEnvironmentSettings(secondaryEnvironmentId);
+
+    updateSettings({ planModeEnabled: true });
+    await Promise.resolve();
+    hooks.beginRender();
+    expect(
+      useEnvironmentSettings(secondaryEnvironmentId, (settings) => settings.planModeEnabled),
+    ).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(testState.patchPreferences).toHaveBeenCalledTimes(2);
+    hooks.beginRender();
+    expect(
+      useEnvironmentSettings(secondaryEnvironmentId, (settings) => settings.planModeEnabled),
+    ).toBe(false);
   });
 });

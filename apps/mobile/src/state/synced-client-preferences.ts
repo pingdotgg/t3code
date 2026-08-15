@@ -18,6 +18,7 @@ import { serverEnvironment } from "./server";
 import { environmentSession } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 import {
+  advancePlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWriteController,
@@ -87,6 +88,7 @@ export function useSyncedClientPreferences(): void {
   const persistReconciledPreferences = useAtomSet(persistReconciledMobilePreferencesAtom);
   const { connectionsLoaded, reconciliationKey, states } =
     useConnectedEnvironmentPreferenceStates();
+  const reconciledKey = useAtomValue(planModePreferenceReconciledKeyAtom);
   const setReconciledKey = useAtomSet(planModePreferenceReconciledKeyAtom);
   const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
     label: "synced client preferences reconciliation",
@@ -116,8 +118,16 @@ export function useSyncedClientPreferences(): void {
           : undefined;
       reconciliationController.observe(environmentId, updatedAt);
     }
-    if (!connectionsLoaded || states.length === 0) {
+    if (!connectionsLoaded) {
       setReconciledKey(null);
+      return;
+    }
+    const nextReconciledKey = advancePlanModePreferenceReconciliationKey(
+      reconciledKey,
+      reconciliationKey,
+    );
+    if (states.length === 0) {
+      setReconciledKey(nextReconciledKey);
       return;
     }
     if (!AsyncResult.isSuccess(preferencesResult)) return;
@@ -131,7 +141,7 @@ export function useSyncedClientPreferences(): void {
     if (liveStates.length === 0) {
       // A loaded catalog with only terminal offline states has no server value
       // to apply. The device value governs until an environment reconnects.
-      setReconciledKey(reconciliationKey);
+      setReconciledKey(nextReconciledKey);
       return;
     }
     const reconciliation = reconcilePlanModePreferences({
@@ -159,12 +169,13 @@ export function useSyncedClientPreferences(): void {
           }),
       });
     }
-    setReconciledKey(reconciliationKey);
+    setReconciledKey(nextReconciledKey);
   }, [
     connectionsLoaded,
     patchPreferences,
     persistReconciledPreferences,
     preferencesResult,
+    reconciledKey,
     reconciliationKey,
     reconciliationController,
     savePreferences,

@@ -4,6 +4,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  advancePlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWrite,
@@ -135,6 +136,35 @@ describe("synced client preferences", () => {
     ).toBe(true);
   });
 
+  it("keeps the applied reconciliation state when an offline environment leaves", () => {
+    const remainingOfflineEnvironment = {
+      environmentId: environmentId("remaining-offline"),
+      connectionState: "offline",
+      shellStatus: "cached",
+      preferences: undefined,
+    } as const;
+    const offlineKey = createPlanModePreferenceReconciliationKey([
+      {
+        environmentId: environmentId("offline"),
+        connectionState: "offline",
+        shellStatus: "cached",
+        preferences: undefined,
+      },
+      remainingOfflineEnvironment,
+    ]);
+    const remainingKey = createPlanModePreferenceReconciliationKey([remainingOfflineEnvironment]);
+
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: remainingKey,
+        appliedKey: offlineKey,
+      }),
+    ).toBe(true);
+    expect(advancePlanModePreferenceReconciliationKey(offlineKey, remainingKey)).toBe(offlineKey);
+  });
+
   it("does not accept a stale live shell while its environment is reconnecting", () => {
     expect(
       hasPlanModePreferenceReconciliationAttempted([
@@ -171,7 +201,7 @@ describe("synced client preferences", () => {
     ).toBe(true);
   });
 
-  it("closes device fallback gating when an offline environment starts reconnecting", () => {
+  it("reconciles a newly live newer preference without blocking reconnect churn", () => {
     const environment = {
       environmentId: environmentId("environment-1"),
       shellStatus: "cached",
@@ -186,9 +216,20 @@ describe("synced client preferences", () => {
     const reconnectingKey = createPlanModePreferenceReconciliationKey([
       { ...environment, connectionState: "reconnecting" },
     ]);
+    const liveKey = createPlanModePreferenceReconciliationKey([
+      {
+        ...environment,
+        connectionState: "connected",
+        shellStatus: "live",
+        preferences: {
+          planModeEnabled: true,
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      },
+    ]);
 
     expect(connectingKey).toBe(reconnectingKey);
-    expect(connectingKey).not.toBe(offlineKey);
+    expect(connectingKey).toBe(offlineKey);
     expect(
       isPlanModePreferenceReconciliationReady({
         connectionsLoaded: true,
@@ -196,7 +237,47 @@ describe("synced client preferences", () => {
         currentKey: reconnectingKey,
         appliedKey: offlineKey,
       }),
+    ).toBe(true);
+    expect(liveKey).not.toBe(offlineKey);
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: liveKey,
+        appliedKey: offlineKey,
+      }),
     ).toBe(false);
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey: liveKey,
+        appliedKey: advancePlanModePreferenceReconciliationKey(offlineKey, liveKey),
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps gating open for a newly live preference older than the applied watermark", () => {
+    const currentKey = createPlanModePreferenceReconciliationKey([
+      {
+        environmentId: environmentId("older"),
+        connectionState: "connected",
+        shellStatus: "live",
+        preferences: {
+          planModeEnabled: false,
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      },
+    ]);
+
+    expect(
+      isPlanModePreferenceReconciliationReady({
+        connectionsLoaded: true,
+        environmentCount: 1,
+        currentKey,
+        appliedKey: "2026-08-14T12:01:00.000Z",
+      }),
+    ).toBe(true);
   });
 
   it("bounds excessively future-skewed local stamps", () => {
