@@ -147,7 +147,12 @@ interface ClaudeTurnState {
 interface AssistantTextBlockState {
   readonly itemId: string;
   readonly blockIndex: number;
-  emittedTextDelta: boolean;
+  /**
+   * Text already shipped to the client as `content.delta`. The projection appends
+   * deltas, so this is what the user currently sees for this block — it lets a
+   * stalled stream be repaired by sending only the missing suffix.
+   */
+  streamedText: string;
   fallbackText: string;
   streamClosed: boolean;
   completionEmitted: boolean;
@@ -1813,7 +1818,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const block: AssistantTextBlockState = {
       itemId: yield* randomUUIDv4,
       blockIndex,
-      emittedTextDelta: false,
+      streamedText: "",
       fallbackText: options?.fallbackText ?? "",
       streamClosed: options?.streamClosed ?? false,
       completionEmitted: false,
@@ -1857,7 +1862,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    if (!block.emittedTextDelta && block.fallbackText.length > 0) {
+    // The snapshot text can be ahead of what the delta stream actually delivered: when a
+    // stream stalls mid-message the CLI ships the finished message as one `claude/assistant`
+    // snapshot and never sends the remaining deltas (nor `content_block_stop`). Emit only the
+    // part the client has not seen yet, so a repair never duplicates text. When nothing
+    // streamed at all this degrades to shipping the whole fallback, as before.
+    const pendingText = block.fallbackText.startsWith(block.streamedText)
+      ? block.fallbackText.slice(block.streamedText.length)
+      : "";
+
+    if (pendingText.length > 0) {
+      block.streamedText = block.fallbackText;
       const deltaStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
         type: "content.delta",
@@ -1869,7 +1884,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId: asRuntimeItemId(block.itemId),
         payload: {
           streamKind: "assistant_text",
-          delta: block.fallbackText,
+          delta: pendingText,
         },
         providerRefs: nativeProviderRefs(context),
         ...(options?.rawMethod || options?.rawPayload
@@ -1935,8 +1950,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       block,
     }));
 
+    // A snapshot describes ONE assistant message, but `assistantTextBlockOrder` accumulates
+    // every text block of the whole turn and is never reset between messages. Matching from
+    // the head therefore poured the snapshot's text into blocks of *earlier* messages once a
+    // turn contained more than one of them, leaving the message whose stream actually broke
+    // unrepaired. The snapshot's blocks are the most recent ones, so skip the leftovers of
+    // earlier messages. Never shift past the head: when the snapshot has MORE text blocks than
+    // the turn recorded, some block never started streaming at all, and the trailing entries
+    // are the ones missing — those still have to be synthesized head-first, as before.
+    const tailOffset = Math.max(0, orderedBlocks.length - snapshotTextBlocks.length);
+
     for (const [position, text] of snapshotTextBlocks.entries()) {
-      const existingEntry = orderedBlocks[position];
+      const existingEntry = orderedBlocks[tailOffset + position];
       const entry =
         existingEntry ??
         (yield* createSyntheticAssistantTextBlock(context, text).pipe(
@@ -1948,15 +1973,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             return created;
           }),
         ));
-      if (!entry) {
+      if (!entry || entry.block.completionEmitted) {
         continue;
       }
 
-      if (entry.block.fallbackText.length === 0) {
-        entry.block.fallbackText = text;
-      }
+      // For a block that has not been delivered yet the snapshot is authoritative: a stalled
+      // stream leaves a partial prefix behind, and only the snapshot knows the rest.
+      entry.block.fallbackText = text;
 
-      if (entry.block.streamClosed && !entry.block.completionEmitted) {
+      if (entry.block.streamClosed) {
         yield* completeAssistantTextBlock(context, entry.block, {
           rawMethod: "claude/assistant",
           rawPayload: message,
@@ -2468,7 +2493,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                 }
               : undefined;
         if (assistantBlockEntry?.block && event.delta.type === "text_delta") {
-          assistantBlockEntry.block.emittedTextDelta = true;
+          assistantBlockEntry.block.streamedText += deltaText;
         }
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({

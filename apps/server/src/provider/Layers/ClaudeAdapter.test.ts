@@ -2951,6 +2951,171 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "repairs a stalled text stream from the snapshot of a later message in the turn",
+    () => {
+      const harness = makeHarness();
+      const fullText = "PR is open: https://example.test/pull/1";
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        // Deliberately one short of the full sequence: without the repair delta the stream still
+        // reaches 10 events (it ends with turn.completed instead), so a regression fails on the
+        // assertion below rather than hanging until the test timeout.
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "go",
+          attachments: [],
+        });
+
+        // First assistant message of the turn streams and closes normally.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stalled-stream",
+          uuid: "stalled-start-1",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stalled-stream",
+          uuid: "stalled-delta-1",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "Pushing now." },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stalled-stream",
+          uuid: "stalled-stop-1",
+          parent_tool_use_id: null,
+          event: { type: "content_block_stop", index: 0 },
+        } as unknown as SDKMessage);
+
+        // Second message: the stream dies after one delta. No content_block_stop ever arrives.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stalled-stream",
+          uuid: "stalled-start-2",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stalled-stream",
+          uuid: "stalled-delta-2",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "P" },
+          },
+        } as unknown as SDKMessage);
+
+        // The CLI then hands over the finished message as a single snapshot.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-stalled-stream",
+          uuid: "stalled-assistant-snapshot",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-message-stalled",
+            content: [{ type: "text", text: fullText }],
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-stalled-stream",
+          uuid: "result-stalled",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        assert.deepEqual(
+          runtimeEvents.map((event) => event.type),
+          [
+            "session.started",
+            "session.configured",
+            "session.state.changed",
+            "turn.started",
+            "thread.started",
+            "content.delta",
+            "item.completed",
+            "content.delta",
+            "content.delta",
+            "item.completed",
+          ],
+        );
+
+        const assistantDeltas = runtimeEvents.filter(
+          (event) =>
+            event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+        );
+        assert.equal(assistantDeltas.length, 3);
+
+        // The repair ships only the suffix the client never saw, so appending the deltas of the
+        // second message reconstructs the full text exactly once.
+        const secondMessageDeltas = assistantDeltas.slice(1);
+        assert.equal(
+          secondMessageDeltas
+            .map((event) => (event.type === "content.delta" ? event.payload.delta : ""))
+            .join(""),
+          fullText,
+        );
+
+        // Both deltas of the second message must belong to the same item — the whole bug was the
+        // repair landing on the item of an earlier message.
+        const secondMessageItemIds = new Set(
+          secondMessageDeltas.map((event) => String(event.itemId)),
+        );
+        assert.equal(secondMessageItemIds.size, 1);
+        assert.notEqual(String(assistantDeltas[0]?.itemId), String(assistantDeltas[1]?.itemId));
+
+        const assistantCompletions = runtimeEvents.filter(
+          (event) =>
+            event.type === "item.completed" && event.payload.itemType === "assistant_message",
+        );
+        assert.equal(assistantCompletions.length, 2);
+        assert.equal(String(assistantCompletions[1]?.itemId), String(assistantDeltas[1]?.itemId));
+        const secondCompletion = assistantCompletions[1];
+        if (secondCompletion?.type === "item.completed") {
+          assert.equal(secondCompletion.payload.detail, fullText);
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("segments Claude assistant text blocks around tool calls", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
