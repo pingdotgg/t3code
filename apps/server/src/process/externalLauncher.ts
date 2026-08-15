@@ -108,8 +108,43 @@ const CommandLookupEnvConfig = Config.all({
   PATHEXT: Config.string("PATHEXT").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
+const MacAppLookupEnvConfig = Config.all({
+  HOME: Config.string("HOME").pipe(Config.option),
+}).pipe(Config.map(compactEnv));
+
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+const readMacAppLookupEnv = MacAppLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+
+const MAC_SYSTEM_APPLICATIONS_DIR = "/Applications";
+
+function macAppNameOf(editor: (typeof EDITORS)[number]): string | undefined {
+  return "macAppName" in editor ? editor.macAppName : undefined;
+}
+
+// macOS editors ship as app bundles and installing their CLI shim on PATH is
+// a separate, optional step. Discovery therefore also accepts an installed
+// bundle in the system or per-user Applications folder.
+const resolveMacAppBundle = Effect.fn("externalLauncher.resolveMacAppBundle")(function* (
+  appName: string,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const home = env.HOME;
+  const applicationDirs = [
+    MAC_SYSTEM_APPLICATIONS_DIR,
+    ...(home === undefined ? [] : [path.join(home, "Applications")]),
+  ];
+  for (const dir of applicationDirs) {
+    const bundlePath = path.join(dir, `${appName}.app`);
+    const stat = yield* fileSystem.stat(bundlePath).pipe(Effect.orElseSucceed(() => null));
+    if (stat !== null && stat.type === "Directory") {
+      return Option.some(bundlePath);
+    }
+  }
+  return Option.none();
+});
 
 function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAndPosition> {
   const match = TARGET_WITH_POSITION_PATTERN.exec(target);
@@ -265,6 +300,7 @@ function buildBrowserLaunch(
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  macEnv: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<EditorId>, never, FileSystem.FileSystem | Path.Path> {
   const available: EditorId[] = [];
 
@@ -277,8 +313,25 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
       continue;
     }
 
+    const macAppName = platform === "darwin" ? macAppNameOf(editor) : undefined;
+    if (
+      macAppName !== undefined &&
+      "macRequiresAppBundle" in editor &&
+      editor.macRequiresAppBundle
+    ) {
+      if (Option.isSome(yield* resolveMacAppBundle(macAppName, macEnv))) {
+        available.push(editor.id);
+      }
+      continue;
+    }
+
     const command = yield* resolveAvailableCommand(editor.commands, env);
     if (Option.isSome(command)) {
+      available.push(editor.id);
+      continue;
+    }
+
+    if (macAppName !== undefined && Option.isSome(yield* resolveMacAppBundle(macAppName, macEnv))) {
       available.push(editor.id);
     }
   }
@@ -297,7 +350,8 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
-  return yield* buildAvailableEditors(platform, env);
+  const macEnv = platform === "darwin" ? yield* readMacAppLookupEnv : {};
+  return yield* buildAvailableEditors(platform, env, macEnv);
 });
 
 // Editor discovery walks PATH for every known editor and runs for every
@@ -360,14 +414,33 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
-      () => editorDef.commands[0],
-    );
+    const command = yield* resolveAvailableCommand(editorDef.commands, env);
+    if (Option.isSome(command)) {
+      return {
+        editor: editorDef.id,
+        target: input.cwd,
+        command: command.value,
+        args: resolveEditorArgs(editorDef, input.cwd),
+      };
+    }
+
+    const macAppName = platform === "darwin" ? macAppNameOf(editorDef) : undefined;
+    if (macAppName !== undefined) {
+      const macEnv = yield* readMacAppLookupEnv;
+      if (Option.isSome(yield* resolveMacAppBundle(macAppName, macEnv))) {
+        return {
+          editor: editorDef.id,
+          target: input.cwd,
+          command: "open",
+          args: ["-a", macAppName, input.cwd],
+        };
+      }
+    }
+
     return {
       editor: editorDef.id,
       target: input.cwd,
-      command,
+      command: editorDef.commands[0],
       args: resolveEditorArgs(editorDef, input.cwd),
     };
   }
