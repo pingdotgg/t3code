@@ -440,6 +440,78 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("keeps generated image messages visible before the terminal answer", () => {
+    const turnId = TurnId.make("turn-image");
+    const thread = makeThread({
+      id: ThreadId.make("thread-image"),
+      projectId: ProjectId.make("project-1"),
+      title: "Generated image",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:12.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-image"),
+          role: "assistant",
+          text: "",
+          attachments: [
+            {
+              type: "image",
+              id: "generated-image-1" as never,
+              name: "generated.png",
+              mimeType: "image/png",
+              sizeBytes: 67,
+            },
+          ],
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:08.000Z",
+          updatedAt: "2026-04-01T00:00:08.000Z",
+        },
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "Here is the generated image.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:11.000Z",
+          updatedAt: "2026-04-01T00:00:12.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Generated image",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: {
+            title: "Generated image",
+            itemType: "dynamic_tool_call",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+
+    const collapsed = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+    expect(collapsed.map((entry) => entry.id)).toEqual([
+      "turn-fold:turn-image",
+      "assistant-image",
+      "assistant-final",
+    ]);
+  });
+
   it("measures a steer-superseded turn from its user boundary through trailing work", () => {
     const firstTurnId = TurnId.make("turn-1");
     const secondTurnId = TurnId.make("turn-2");

@@ -43,6 +43,10 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  extractAssistantImageInputs,
+  persistAssistantImageInputs,
+} from "../AssistantImageAttachments.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -1737,6 +1741,34 @@ const make = Effect.gen(function* () {
       if (proposedPlanDelta && proposedPlanDelta.length > 0) {
         const planId = proposedPlanIdFromEvent(event, thread.id);
         yield* appendBufferedProposedPlan(planId, proposedPlanDelta, now);
+      }
+
+      if (event.type === "item.completed") {
+        const imageInputs = extractAssistantImageInputs(event.payload.data, {
+          provider: event.provider,
+        });
+        if (imageInputs.length > 0) {
+          const imageMessageId = MessageId.make(`assistant-image:${event.itemId ?? event.eventId}`);
+          const detailedThread = yield* getLoadedThreadDetail();
+          if (!findMessageById(detailedThread?.messages ?? [], imageMessageId)) {
+            const attachments = yield* persistAssistantImageInputs({
+              threadId: thread.id,
+              inputs: imageInputs,
+            });
+            if (attachments.length > 0) {
+              const turnId = toTurnId(event.turnId);
+              yield* orchestrationEngine.dispatch({
+                type: "thread.message.assistant.complete",
+                commandId: yield* providerCommandId(event, "assistant-image-complete"),
+                threadId: thread.id,
+                messageId: imageMessageId,
+                attachments,
+                ...(turnId ? { turnId } : {}),
+                createdAt: now,
+              });
+            }
+          }
+        }
       }
 
       const assistantCompletion =

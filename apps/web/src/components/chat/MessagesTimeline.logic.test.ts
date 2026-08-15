@@ -541,6 +541,72 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps generated image messages visible when a later assistant response is terminal", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:05Z",
+            turnId: "turn-image" as never,
+            label: "Generated image",
+            tone: "tool",
+          },
+        },
+        {
+          id: "assistant-image-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:08Z",
+          message: {
+            id: "assistant-image" as never,
+            role: "assistant",
+            text: "",
+            attachments: [
+              {
+                type: "image",
+                id: "generated-image-1" as never,
+                name: "generated.png",
+                mimeType: "image/png",
+                sizeBytes: 67,
+              },
+            ],
+            turnId: "turn-image" as never,
+            createdAt: "2026-01-01T00:00:08Z",
+            updatedAt: "2026-01-01T00:00:08Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-final-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant",
+            text: "Here is the generated image.",
+            turnId: "turn-image" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            updatedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "turn-fold:turn-image",
+      "assistant-image-entry",
+      "assistant-final-entry",
+    ]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The

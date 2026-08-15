@@ -72,3 +72,36 @@ export function useAssetUrls(
     [preparedConnection, resources, results],
   );
 }
+
+export function useAssetUrlStates(
+  environmentId: EnvironmentId,
+  resources: ReadonlyArray<AssetResource>,
+): ReadonlyArray<AssetUrlState> {
+  const preparedConnection = usePreparedConnection(environmentId);
+  const results = useAtomValue(
+    assetEnvironment.createUrls({
+      environmentId,
+      resources,
+    }),
+  );
+  return useMemo(
+    () =>
+      results.map((result) => {
+        if (AsyncResult.isFailure(result)) return { _tag: "Failure" } as const;
+        if (preparedConnection._tag === "None" || !AsyncResult.isSuccess(result)) {
+          return { _tag: "Loading" } as const;
+        }
+        const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
+        return url === null
+          ? ({ _tag: "Failure" } as const)
+          : ({
+              _tag: "Success",
+              url,
+              ...(result.value.sourcePath !== undefined
+                ? { sourcePath: result.value.sourcePath }
+                : {}),
+            } as const);
+      }),
+    [preparedConnection, results],
+  );
+}

@@ -71,6 +71,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { AssistantMessageImages } from "./AssistantMessageImages";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -1103,17 +1104,29 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const assistantImages = row.message.attachments ?? [];
+  const messageText =
+    row.message.text ||
+    (row.message.streaming || assistantImages.length > 0 ? "" : "(empty response)");
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          isStreaming={Boolean(row.message.streaming)}
-          skills={ctx.skills}
+        {messageText ? (
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={Boolean(row.message.streaming)}
+            skills={ctx.skills}
+          />
+        ) : null}
+        <AssistantMessageImages
+          images={assistantImages}
+          onExpand={(imageId) => {
+            const preview = buildExpandedImagePreview(assistantImages, imageId);
+            if (preview) ctx.onImageExpand(preview);
+          }}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}

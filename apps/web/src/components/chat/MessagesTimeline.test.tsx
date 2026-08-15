@@ -432,6 +432,46 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
   });
 
+  it("renders an assistant image attachment as an inline image with actions", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-assistant-generated-image",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-generated-image"),
+              role: "assistant",
+              text: "Here is the generated image.",
+              attachments: [
+                {
+                  type: "image",
+                  id: "generated-image-attachment-1",
+                  name: "generated-sunset.png",
+                  mimeType: "image/png",
+                  sizeBytes: 67,
+                  previewUrl: "blob:https://app.t3.codes/generated-image-1",
+                },
+              ],
+              turnId: TurnId.make("turn-generated-image"),
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('<img src="blob:https://app.t3.codes/generated-image-1"');
+    expect(markup).toContain('alt="generated-sunset.png"');
+    expect(markup).toContain('aria-label="Expand generated-sunset.png"');
+    expect(markup).toContain('aria-label="Download generated-sunset.png"');
+    expect(markup).toContain("Loading image…");
+  });
+
   it("renders collapse controls for long user messages", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
