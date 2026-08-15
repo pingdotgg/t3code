@@ -7,6 +7,10 @@ public struct SettingsView: View {
     @State private var isSaving = false
     @State private var saveErrorMessage: String?
 
+#if DEBUG
+    private static let devBuildMetadata = DebugBuildMetadata(info: Bundle.main.infoDictionary)
+#endif
+
     public init(model: FeatureRootModel) {
         self.model = model
         _settings = State(initialValue: model.snapshot.settings)
@@ -168,6 +172,12 @@ public struct SettingsView: View {
                 SettingsValueRow(title: "App", value: appDisplayName)
                 settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
+#if DEBUG
+                if Self.devBuildMetadata.commit != "unknown" {
+                    settingsDivider
+                    developmentBuildRow
+                }
+#endif
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
                     SettingsNavigationRow(
@@ -180,6 +190,23 @@ public struct SettingsView: View {
             }
         }
     }
+
+#if DEBUG
+    @ViewBuilder
+    private var developmentBuildRow: some View {
+        if let url = Self.devBuildMetadata.commitURL {
+            Link(destination: url) {
+                DevelopmentBuildRow(
+                    metadata: Self.devBuildMetadata,
+                    opensCommit: true
+                )
+            }
+            .buttonStyle(.plain)
+        } else {
+            DevelopmentBuildRow(metadata: Self.devBuildMetadata, opensCommit: false)
+        }
+    }
+#endif
 
     private var settingsDivider: some View {
         Divider()
@@ -211,6 +238,50 @@ public struct SettingsView: View {
         }
     }
 }
+
+#if DEBUG
+private struct DevelopmentBuildRow: View {
+    let metadata: DebugBuildMetadata
+    let opensCommit: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsRowIcon(systemName: "hammer")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Development build")
+                    .font(T3Typography.threadBody)
+                    .foregroundStyle(T3Colors.textPrimary)
+                Text(metadata.identityLabel)
+                    .font(T3Typography.supporting.monospaced())
+                    .foregroundStyle(T3Colors.textSecondary)
+                if let distance = metadata.distanceLabel {
+                    Text(distance)
+                        .font(T3Typography.supporting.monospaced())
+                        .foregroundStyle(T3Colors.textTertiary)
+                }
+            }
+            Spacer(minLength: 8)
+            if opensCommit {
+                Image(systemName: "arrow.up.right")
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            opensCommit
+                ? "\(metadata.accessibilityLabel). Opens the commit on GitHub."
+                : metadata.accessibilityLabel
+        )
+        .accessibilityIdentifier("settings-development-build-row")
+    }
+}
+#endif
 
 private struct SettingsSection<Content: View>: View {
     let title: String
