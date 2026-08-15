@@ -174,7 +174,10 @@ private final class DaemonState {
 
     let isBrowser = Self.isBrowser(app)
     let siteNeedles = websites.map { $0.lowercased() }
-    let includeOnly = websiteFilterMode == "includeOnly" && !siteNeedles.isEmpty
+    if websiteFilterMode == "includeOnly" && siteNeedles.isEmpty {
+      return false
+    }
+    let includeOnly = websiteFilterMode == "includeOnly"
 
     // Private-mode markers may live in the title even when AXURL is an ordinary https URL.
     if isBrowser,

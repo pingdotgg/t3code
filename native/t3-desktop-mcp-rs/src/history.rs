@@ -170,9 +170,13 @@ pub fn run(root: PathBuf) -> Result<(), String> {
                     &sample.app_name,
                 ) {
                     sticky_private_windows.insert(session_key.clone());
-                } else {
-                    // A normal tab clears a prior sticky flag (e.g. after leaving
-                    // about:privatebrowsing or a mis-detected new-tab URL).
+                } else if clears_private_sticky(
+                    haystack.as_deref(),
+                    sample.window_title.as_deref(),
+                    &sample.app_name,
+                ) {
+                    // Only clear sticky private after an explicit public http(s) URL
+                    // — marker-free AX samples must not re-enable recording.
                     sticky_private_windows.remove(&session_key);
                 }
                 let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
@@ -320,6 +324,28 @@ fn is_browser_app(app_name: &str) -> bool {
     .any(|needle| app.contains(needle))
 }
 
+fn clears_private_sticky(
+    haystack: Option<&str>,
+    window_title: Option<&str>,
+    app_name: &str,
+) -> bool {
+    if !is_browser_app(app_name) {
+        return true;
+    }
+    let mut parts = Vec::new();
+    if let Some(title) = window_title {
+        parts.push(title.to_lowercase());
+    }
+    if let Some(raw) = haystack {
+        parts.push(raw.to_lowercase());
+    }
+    let combined = parts.join("\n");
+    if combined.is_empty() || !combined.contains("://") {
+        return false;
+    }
+    !is_private_browsing_context(Some(&combined), window_title, app_name)
+}
+
 fn is_private_browsing_context(
     haystack: Option<&str>,
     window_title: Option<&str>,
@@ -354,7 +380,8 @@ fn parse_app_line(line: &str) -> Option<(String, String, u32)> {
     let id_end = line[id_start..].find(']')? + id_start;
     let name = unescape_app_field(line[..marker].trim());
     let id = unescape_app_field(line[id_start..id_end].trim());
-    let pid = line
+    let tail = line[id_end + 1..].trim();
+    let pid = tail
         .split_whitespace()
         .find_map(|token| token.strip_prefix("pid="))
         .and_then(|value| value.parse::<u32>().ok())
@@ -387,21 +414,39 @@ fn window_title_from_outline(outline: &str, app_name: &str) -> Option<String> {
     let urlish = body.iter().find(|line| {
         let lowered = line.to_lowercase();
         lowered.contains("://")
-            || lowered.starts_with("about:")
+            || lowered.contains("about:")
             || lowered.starts_with("chrome:")
             || lowered.starts_with("edge:")
             || lowered.starts_with("brave:")
     });
-    urlish.or(body.first()).map(|line| {
-        // Outline rows are often "  [e12] role  Name" — strip the leading id marker.
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix('[') {
-            if let Some(idx) = rest.find(']') {
-                return rest[idx + 1..].trim().to_string();
-            }
+    urlish.or(body.first()).map(|line| outline_row_label(line))
+}
+
+fn outline_row_label(line: &str) -> String {
+    // Outline rows are often "  [e12] role  Name" — strip the leading id marker.
+    let trimmed = line.trim();
+    let after_marker = if let Some(rest) = trimmed.strip_prefix('[') {
+        if let Some(idx) = rest.find(']') {
+            rest[idx + 1..].trim()
+        } else {
+            trimmed
         }
-        trimmed.to_string()
-    })
+    } else {
+        trimmed
+    };
+    // AT-SPI often prefixes URLs with a role token, e.g. "document  about:…".
+    after_marker
+        .split_whitespace()
+        .find(|token| {
+            let lowered = token.to_lowercase();
+            lowered.contains("://")
+                || lowered.contains("about:")
+                || lowered.starts_with("chrome:")
+                || lowered.starts_with("edge:")
+                || lowered.starts_with("brave:")
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| after_marker.to_string())
 }
 
 fn website_haystack(sample: &Sample) -> Option<String> {
@@ -447,7 +492,10 @@ fn website_allowed(
     app_name: &str,
     control: &Control,
 ) -> bool {
-    let include_only = control.website_filter_mode == "includeOnly" && !control.websites.is_empty();
+    if control.website_filter_mode == "includeOnly" && control.websites.is_empty() {
+        return false;
+    }
+    let include_only = control.website_filter_mode == "includeOnly";
     let mut haystack_parts = Vec::new();
     if let Some(title) = window_title {
         haystack_parts.push(title.to_lowercase());
@@ -710,12 +758,18 @@ fn chrono_lite(secs: u64) -> String {
 
 fn uuid_like() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
     format!(
-        "{:x}-{:x}-{:x}",
+        "{:x}-{:x}-{:x}-{:x}",
         now_secs(),
         std::process::id().wrapping_mul(2654435761),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
+        COUNTER.fetch_add(1, Ordering::Relaxed),
+        nanos ^ (std::process::id() as u32)
     )
 }
 
@@ -744,6 +798,14 @@ mod tests {
     }
 
     #[test]
+    fn ignores_pid_token_inside_app_name() {
+        let (name, _, pid) =
+            parse_app_line("pid=999 App  [com.foo]  pid=42  windows=1").expect("parse");
+        assert_eq!(name, "pid=999 App");
+        assert_eq!(pid, 42);
+    }
+
+    #[test]
     fn window_title_skips_app_header_and_prefers_url() {
         let outline = "Firefox\n[e1] frame  Example - Mozilla Firefox\n[e2] link  https://blocked.example/path";
         let title = window_title_from_outline(outline, "Firefox").expect("title");
@@ -755,5 +817,12 @@ mod tests {
         let outline = "Firefox\n[e1] frame  Example - Mozilla Firefox";
         let title = window_title_from_outline(outline, "Firefox").expect("title");
         assert_eq!(title, "frame  Example - Mozilla Firefox");
+    }
+
+    #[test]
+    fn window_title_extracts_about_url_from_document_row() {
+        let outline = "Firefox\n[e40] document  about:privatebrowsing";
+        let title = window_title_from_outline(outline, "Firefox").expect("title");
+        assert_eq!(title, "about:privatebrowsing");
     }
 }
