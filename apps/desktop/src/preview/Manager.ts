@@ -647,6 +647,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (Option.isSome(next)) yield* emit(tabId, next.value);
   });
 
+  /**
+   * Pushes a tab's zoom factor onto whichever guest it currently owns, reading
+   * both at call time. Anything that applies zoom after an await goes through
+   * here: a snapshot taken before the await can be older than a zoom action that
+   * landed in between, and re-applying it would roll that action back.
+   */
+  const assertTabZoom = Effect.fn("PreviewManager.assertTabZoom")(function* (tabId: string) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab || tab.webContentsId == null) return;
+    const wc = webContents.fromId(tab.webContentsId);
+    if (!wc || wc.isDestroyed()) return;
+    yield* attempt({ operation: "assertTabZoom", tabId, webContentsId: wc.id }, () =>
+      wc.setZoomFactor(tab.zoomFactor),
+    ).pipe(Effect.ignore);
+  });
+
   const requireWebContents = Effect.fn("PreviewManager.requireWebContents")(function* (
     tabId: string,
   ) {
@@ -1714,10 +1730,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     const currentAttachment = attached.get(webContentsId);
     if (tab.webContentsId === webContentsId && currentAttachment?.webContents === wc) {
-      yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
-        wc.setZoomFactor(tab.zoomFactor),
-      );
-      yield* update(tabId, { zoomFactor: tab.zoomFactor });
+      // The guest we already own re-announced itself, so nothing about the tab
+      // changed. Only push its zoom back down — Chromium may have just handed
+      // this guest the app window's zoom level.
+      yield* assertTabZoom(tabId);
       yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
         wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
       );
@@ -1748,13 +1764,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     // Always assert the tab's own zoom rather than reading the guest's: a guest
     // attaching while the app UI is zoomed starts at the embedder's inherited
-    // zoom level, which is not the preview's zoom.
-    const zoomFactor = yield* attempt(
-      { operation: "registerWebview.restoreZoomFactor", tabId, webContentsId },
-      () => {
-        wc.setZoomFactor(currentTab.zoomFactor);
-        return currentTab.zoomFactor;
-      },
+    // zoom level, which is not the preview's zoom. Done before the guest is
+    // published so it never paints a frame at the inherited zoom.
+    yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
+      wc.setZoomFactor(currentTab.zoomFactor),
     );
     yield* attachListeners(tabId, wc);
     const registeredAt = yield* currentIso;
@@ -1779,7 +1792,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
-          zoomFactor,
           updatedAt: registeredAt,
         };
         return [
@@ -1801,6 +1813,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const { state: registered, pendingUrl } = registration.value;
+    // A zoom action that landed while this attach was in flight addressed the
+    // guest this one replaced, so settle the new guest on the committed factor.
+    yield* assertTabZoom(tabId);
     runFork(restoreControlSession(tabId, wc));
     yield* emit(tabId, registered);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
@@ -2101,19 +2116,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
    * window's zoom changes (see DesktopWindow.zoomMain).
    */
   const reapplyZoom = Effect.fn("PreviewManager.reapplyZoom")(function* () {
-    const tabs = yield* SynchronizedRef.get(tabsRef);
-    yield* Effect.forEach(
-      tabs.values(),
-      (tab) => {
-        if (tab.webContentsId === null) return Effect.void;
-        const wc = webContents.fromId(tab.webContentsId);
-        if (!wc || wc.isDestroyed()) return Effect.void;
-        return attempt({ operation: "reapplyZoom", tabId: tab.tabId, webContentsId: wc.id }, () =>
-          wc.setZoomFactor(tab.zoomFactor),
-        ).pipe(Effect.ignore);
-      },
-      { discard: true },
-    );
+    const tabIds = Array.from((yield* SynchronizedRef.get(tabsRef)).keys());
+    yield* Effect.forEach(tabIds, assertTabZoom, { discard: true });
   });
 
   const applyZoom = Effect.fn("PreviewManager.applyZoom")(function* (

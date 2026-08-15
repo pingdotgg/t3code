@@ -1132,6 +1132,58 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // did-attach and dom-ready both re-register the guest that is already
+  // attached, and a guest that just inherited the app window's zoom needs its
+  // own back — without that round trip republishing tab state.
+  effectIt.effect("re-asserts the tab's zoom when the active guest registers again", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setZoomFactor = vi.fn();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+
+        yield* manager.createTab("tab_reregister_zoom");
+        yield* manager.registerWebview("tab_reregister_zoom", 42);
+        yield* manager.zoomIn("tab_reregister_zoom");
+        setZoomFactor.mockClear();
+        const publishedBefore = states.length;
+
+        yield* manager.registerWebview("tab_reregister_zoom", 42);
+
+        expect(setZoomFactor).toHaveBeenCalledWith(1.1);
+        expect(states.length).toBe(publishedBefore);
+        expect(states.at(-1)?.zoomFactor).toBe(1.1);
+      }),
+    ),
+  );
+
   effectIt.effect("emulates prefers-color-scheme and re-applies it across webview swaps", () =>
     withManager((manager) =>
       Effect.gen(function* () {
