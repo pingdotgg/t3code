@@ -12,6 +12,7 @@ import type {
   OrchestrationThreadActivity,
   TurnId,
 } from "@t3tools/contracts";
+import { isOrphanReasoningActivity, mergeOrchestrationThreadActivity } from "@t3tools/contracts";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -561,7 +562,12 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
-      const activity = event.payload.activity;
+      const incomingActivity = event.payload.activity;
+      const previousActivity = thread.activities.find((entry) => entry.id === incomingActivity.id);
+      const activity = mergeOrchestrationThreadActivity(previousActivity, incomingActivity);
+      if (isOrphanReasoningActivity(previousActivity, activity)) {
+        return { kind: "unchanged" };
+      }
       // A resolvable context-window update supersedes earlier resolvable ones
       // for the same turn: consumers only read the latest value (walking the
       // array backwards), and providers stream these updates continuously, so

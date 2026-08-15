@@ -3,6 +3,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { NonNegativeInt } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
@@ -10,6 +11,7 @@ import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 
 import {
   DeleteProjectionThreadActivitiesInput,
+  GetProjectionThreadActivityInput,
   ListProjectionThreadActivitiesInput,
   ProjectionThreadActivity,
   ProjectionThreadActivityRepository,
@@ -97,6 +99,27 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       `,
   });
 
+  const getProjectionThreadActivityRow = SqlSchema.findOneOption({
+    Request: GetProjectionThreadActivityInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ activityId }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE activity_id = ${activityId}
+        LIMIT 1
+      `,
+  });
+
   const deleteProjectionThreadActivityRows = SqlSchema.void({
     Request: DeleteProjectionThreadActivitiesInput,
     execute: ({ threadId }) =>
@@ -113,6 +136,29 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           "ProjectionThreadActivityRepository.upsert:query",
           "ProjectionThreadActivityRepository.upsert:encodeRequest",
         ),
+      ),
+    );
+
+  const getByActivityId: ProjectionThreadActivityRepositoryShape["getByActivityId"] = (input) =>
+    getProjectionThreadActivityRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadActivityRepository.getByActivityId:query",
+          "ProjectionThreadActivityRepository.getByActivityId:decodeRow",
+        ),
+      ),
+      Effect.map(
+        Option.map((row) => ({
+          activityId: row.activityId,
+          threadId: row.threadId,
+          turnId: row.turnId,
+          tone: row.tone,
+          kind: row.kind,
+          summary: row.summary,
+          payload: row.payload,
+          ...(row.sequence !== null ? { sequence: row.sequence } : {}),
+          createdAt: row.createdAt,
+        })),
       ),
     );
 
@@ -148,6 +194,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
 
   return {
     upsert,
+    getByActivityId,
     listByThreadId,
     deleteByThreadId,
   } satisfies ProjectionThreadActivityRepositoryShape;

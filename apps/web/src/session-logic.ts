@@ -79,6 +79,9 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  reasoning?: {
+    readonly streaming: boolean;
+  };
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
   /** Agent role (subagent_type) for labeled timeline rows. */
@@ -165,6 +168,9 @@ export type TimelineEntry =
     };
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
+  if (entry.sourceActivityKind === "reasoning") {
+    return false;
+  }
   if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
     return true;
   }
@@ -275,6 +281,9 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
+  if (entry.sourceActivityKind === "reasoning") {
+    return false;
+  }
   // Spawn CTA rows are never neutral-hidden: mid-run they derive from
   // task.progress (tone "thinking") and the neutral filter was swallowing
   // them exactly while the fleet ran — the one moment they matter most.
@@ -838,7 +847,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || activity.kind === "reasoning"
         ? "thinking"
         : activity.tone === "approval"
           ? "info"
@@ -849,6 +858,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {
     entry.detail = detail;
+  }
+  if (activity.kind === "reasoning") {
+    entry.reasoning = { streaming: payload?.streaming === true };
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;

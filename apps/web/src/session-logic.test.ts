@@ -722,6 +722,30 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("keeps Claude reasoning as a non-tool thinking row", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "reasoning-1",
+        kind: "reasoning",
+        summary: "Thinking",
+        tone: "info",
+        payload: { detail: "Inspecting the source", streaming: true },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      id: "reasoning-1",
+      label: "Thinking",
+      detail: "Inspecting the source",
+      tone: "thinking",
+      sourceActivityKind: "reasoning",
+      reasoning: { streaming: true },
+    });
+    expect(workEntryIndicatesToolNeutralStatus(entry!)).toBe(false);
+    expect(workEntryIndicatesToolSuccess(entry!)).toBe(false);
+    expect(workEntryIndicatesToolFailure(entry!)).toBe(false);
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

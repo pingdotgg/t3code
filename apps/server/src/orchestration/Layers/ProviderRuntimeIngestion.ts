@@ -245,6 +245,12 @@ function assistantSegmentMessageId(baseKey: string, segmentIndex: number): Messa
     segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
   );
 }
+
+function reasoningActivityId(event: ProviderRuntimeEvent): EventId {
+  return EventId.make(
+    `reasoning:${event.threadId}:${event.itemId ?? event.turnId ?? event.eventId}`,
+  );
+}
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
 ): ThreadTokenUsageSnapshot | undefined {
@@ -368,6 +374,30 @@ export function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "content.delta": {
+      // Only the raw reasoning stream feeds the activity. Accepting
+      // reasoning_summary_text too would interleave two streams under one
+      // reasoningActivityId when a provider (codex) emits both for one item.
+      if (event.payload.streamKind !== "reasoning_text" || event.payload.delta.length === 0) {
+        return [];
+      }
+      return [
+        {
+          id: reasoningActivityId(event),
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "reasoning",
+          summary: "Thinking",
+          payload: {
+            delta: event.payload.delta,
+            streaming: true,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];
@@ -809,6 +839,27 @@ export function runtimeEventToActivities(
     }
 
     case "item.completed": {
+      if (event.payload.itemType === "reasoning") {
+        // Settle even without a detail string — a streamed activity must flip
+        // streaming:false or it renders as live Thinking forever; the merge
+        // keeps the accumulated delta text when the completion carries none.
+        const detail = event.payload.detail?.trim();
+        return [
+          {
+            id: reasoningActivityId(event),
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "reasoning",
+            summary: event.payload.title ?? "Thought",
+            payload: {
+              ...(detail ? { detail } : {}),
+              streaming: false,
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
