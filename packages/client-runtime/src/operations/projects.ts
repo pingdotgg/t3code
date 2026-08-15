@@ -233,12 +233,16 @@ export function getCloneDestinationBrowsePath(input: {
   readonly browseDirectoryPath: string;
   readonly selectedDirectoryName: string;
   readonly cloneDirectoryName: string;
+  readonly caseSensitive: boolean;
 }): string {
   const selectedDirectoryPath = appendBrowsePathSegment(
     input.browseDirectoryPath,
     input.selectedDirectoryName,
   );
-  return input.selectedDirectoryName === input.cloneDirectoryName
+  const selectedDirectoryMatches = input.caseSensitive
+    ? input.selectedDirectoryName === input.cloneDirectoryName
+    : input.selectedDirectoryName.toLowerCase() === input.cloneDirectoryName.toLowerCase();
+  return selectedDirectoryMatches
     ? selectedDirectoryPath
     : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
 }

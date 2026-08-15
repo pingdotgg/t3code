@@ -900,9 +900,10 @@ function OpenCommandPaletteDialog(props: {
             browseEntries,
             filterQuery: browsePath.filterQuery,
             pinnedDirectoryName: pinnedCloneDirectoryName,
+            caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
           })
         : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery),
-    [browseEntries, browsePath.filterQuery, pinnedCloneDirectoryName],
+    [browseEntries, browseEnvironmentPlatform, browsePath.filterQuery, pinnedCloneDirectoryName],
   );
 
   const prefetchBrowsePath = useCallback(
@@ -1939,6 +1940,7 @@ function OpenCommandPaletteDialog(props: {
             browseDirectoryPath: browsePath.directoryPath,
             selectedDirectoryName: name,
             cloneDirectoryName: pinnedCloneDirectoryName,
+            caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
           })
         : appendBrowsePathSegment(query, name);
       await browseNavigation.run(
@@ -1952,6 +1954,7 @@ function OpenCommandPaletteDialog(props: {
     },
     [
       browseNavigation,
+      browseEnvironmentPlatform,
       browsePath.directoryPath,
       pinnedCloneDirectoryName,
       prefetchBrowsePath,

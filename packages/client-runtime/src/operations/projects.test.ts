@@ -89,6 +89,7 @@ describe("add project shared logic", () => {
         browseDirectoryPath: "~/Projects/",
         selectedDirectoryName: "work",
         cloneDirectoryName: "repo",
+        caseSensitive: true,
       }),
     ).toBe("~/Projects/work/repo");
     expect(
@@ -96,8 +97,17 @@ describe("add project shared logic", () => {
         browseDirectoryPath: "~/Projects/",
         selectedDirectoryName: "repo",
         cloneDirectoryName: "repo",
+        caseSensitive: true,
       }),
     ).toBe("~/Projects/repo/");
+    expect(
+      getCloneDestinationBrowsePath({
+        browseDirectoryPath: "C:\\Projects\\",
+        selectedDirectoryName: "Repo",
+        cloneDirectoryName: "repo",
+        caseSensitive: false,
+      }),
+    ).toBe("C:\\Projects\\Repo\\");
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {

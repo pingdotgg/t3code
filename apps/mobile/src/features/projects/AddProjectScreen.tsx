@@ -7,6 +7,7 @@ import {
   canCreateProjectInEnvironment,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
   resolveAddProjectPath,
@@ -25,8 +26,8 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
-  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
+  isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
 import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
@@ -244,6 +245,7 @@ function ProjectPathInput(props: {
 function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
+  const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
   const [pathInput, commitPathInput] = useState(() =>
     getCloneDestinationPath(
       getAddProjectInitialQuery(environmentBaseDirectory),
@@ -267,18 +269,33 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     [browseNavigation],
   );
   const navigateToBrowsePath = useCallback(
-    async (path: string) => {
+    async (input: {
+      readonly browseDirectoryPath: string;
+      readonly selectedDirectoryName?: string;
+    }) => {
+      const selectedDirectoryPath = input.selectedDirectoryName
+        ? appendBrowsePathSegment(input.browseDirectoryPath, input.selectedDirectoryName)
+        : input.browseDirectoryPath;
+      const nextPathInput =
+        pinnedDirectoryName && input.selectedDirectoryName
+          ? getCloneDestinationBrowsePath({
+              browseDirectoryPath: input.browseDirectoryPath,
+              selectedDirectoryName: input.selectedDirectoryName,
+              cloneDirectoryName: pinnedDirectoryName,
+              caseSensitive: clonePathCaseSensitive,
+            })
+          : getCloneDestinationPath(selectedDirectoryPath, pinnedDirectoryName);
       setIsBrowseNavigating(true);
       const committed = await browseNavigation.run(
         async () => {
           if (environment && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
             await loadBrowsePath({
               environmentId: environment.environmentId,
-              input: { partialPath: path },
+              input: { partialPath: selectedDirectoryPath },
             });
           }
         },
-        () => commitPathInput(getCloneDestinationPath(path, pinnedDirectoryName)),
+        () => commitPathInput(nextPathInput),
       );
       if (committed) {
         setIsBrowseNavigating(false);
@@ -287,6 +304,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     },
     [
       browseNavigation,
+      clonePathCaseSensitive,
       environment,
       environmentRuntime?.connectionState,
       loadBrowsePath,
@@ -719,7 +737,10 @@ function FolderBrowser(props: {
   readonly environment: EnvironmentOption;
   readonly pathInput: string;
   readonly setPathInput: (path: string) => void;
-  readonly navigateToBrowsePath: (path: string) => Promise<boolean>;
+  readonly navigateToBrowsePath: (input: {
+    readonly browseDirectoryPath: string;
+    readonly selectedDirectoryName?: string;
+  }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
 }) {
   const accentColor = useThemeColor("--color-icon-muted");
@@ -741,8 +762,11 @@ function FolderBrowser(props: {
   );
   // A pinned repository folder does not exist yet, so filtering the listing by
   // it would empty the folder picker. Anything the user typed still filters.
-  const browseFilterQuery =
-    browsePath.filterQuery === (props.pinnedDirectoryName ?? "") ? "" : browsePath.filterQuery;
+  const pinnedDirectoryName = props.pinnedDirectoryName ?? "";
+  const pinnedDirectoryMatches = isWindowsPlatform(props.environment.platform)
+    ? browsePath.filterQuery.toLowerCase() === pinnedDirectoryName.toLowerCase()
+    : browsePath.filterQuery === pinnedDirectoryName;
+  const browseFilterQuery = pinnedDirectoryMatches ? "" : browsePath.filterQuery;
   const { visibleEntries: visibleBrowseEntries } = useMemo(
     () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browseFilterQuery),
     [browseFilterQuery, browseState.data?.entries],
@@ -773,7 +797,9 @@ function FolderBrowser(props: {
             right={null}
             onPress={() => {
               if (browsePath.parentPath) {
-                void props.navigateToBrowsePath(browsePath.parentPath);
+                void props.navigateToBrowsePath({
+                  browseDirectoryPath: browsePath.parentPath,
+                });
               }
             }}
           />
@@ -786,11 +812,10 @@ function FolderBrowser(props: {
             isFirst={index === 0 && !browsePath.canBrowseUp}
             right={null}
             onPress={() => {
-              const nextPath =
-                browsePath.directoryPath.length > 0
-                  ? appendBrowsePathSegment(browsePath.directoryPath, entry.name)
-                  : ensureBrowseDirectoryPath(entry.fullPath);
-              void props.navigateToBrowsePath(nextPath);
+              void props.navigateToBrowsePath({
+                browseDirectoryPath: browsePath.directoryPath,
+                selectedDirectoryName: entry.name,
+              });
             }}
           />
         ))}

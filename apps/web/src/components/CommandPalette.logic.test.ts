@@ -355,7 +355,26 @@ describe("filterPinnedBrowseEntries", () => {
         browseEntries: entries,
         filterQuery: "repo",
         pinnedDirectoryName: "repo",
+        caseSensitive: true,
       }),
     ).toEqual({ visibleEntries: entries, exactEntry: entries[0] });
+  });
+
+  it("matches an existing pinned destination without Windows casing", () => {
+    const windowsEntries = [
+      { name: "Repo", fullPath: "C:\\projects\\Repo" },
+      { name: "work", fullPath: "C:\\projects\\work" },
+    ];
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: windowsEntries,
+        filterQuery: "repo",
+        pinnedDirectoryName: "repo",
+        caseSensitive: false,
+      }),
+    ).toEqual({
+      visibleEntries: windowsEntries,
+      exactEntry: windowsEntries[0],
+    });
   });
 });
