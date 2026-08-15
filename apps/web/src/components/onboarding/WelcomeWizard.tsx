@@ -420,11 +420,12 @@ function PairDirectStep({
           </p>
         </div>
         <div>
-          <p className="text-sm">
+          <label className="block text-sm" htmlFor="onboarding-pairing-url">
             <span className="font-semibold">2.</span>{" "}
             <span className="text-muted-foreground">Paste the URL it prints:</span>
-          </p>
+          </label>
           <Input
+            id="onboarding-pairing-url"
             className="mt-2"
             autoCapitalize="none"
             autoComplete="off"
