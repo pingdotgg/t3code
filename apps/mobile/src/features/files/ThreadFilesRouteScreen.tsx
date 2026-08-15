@@ -24,6 +24,7 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
@@ -259,6 +260,17 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       : null,
   );
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
+  const [isRefreshingEntries, setIsRefreshingEntries] = useState(false);
+  const refreshEntries = useAtomCommand(projectEnvironment.refreshEntries, {
+    reportFailure: false,
+  });
+  const handleRefreshEntries = useCallback(() => {
+    if (environmentId === null || cwd === null || isRefreshingEntries) return;
+    setIsRefreshingEntries(true);
+    void refreshEntries({ environmentId, input: { cwd } }).finally(() => {
+      setIsRefreshingEntries(false);
+    });
+  }, [cwd, environmentId, isRefreshingEntries, refreshEntries]);
   const handleReturnToThread = useCallback(() => {
     if (navigation.canGoBack()) {
       navigation.goBack();
@@ -405,7 +417,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
               {
                 accessibilityLabel: "Refresh files",
                 icon: "arrow.clockwise",
-                onPress: entriesQuery.refresh,
+                onPress: handleRefreshEntries,
               },
             ]}
           />
@@ -448,11 +460,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}
-        isPending={entriesQuery.isPending}
+        isPending={entriesQuery.isPending || isRefreshingEntries}
         searchQuery={searchQuery}
         selectedPath={null}
         onPreviewFile={handlePreviewFile}
-        onRefresh={entriesQuery.refresh}
+        onRefresh={handleRefreshEntries}
         onSelectFile={handleSelectFile}
       />
       <FilesToolbarBottomFade />

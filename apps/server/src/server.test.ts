@@ -4775,6 +4775,67 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("refreshes external workspace creates, moves, and deletes before re-listing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-refresh-" });
+      yield* fs.writeFileString(path.join(workspaceDir, "existing.ts"), "export {}\n");
+      yield* fs.writeFileString(path.join(workspaceDir, "move-before-refresh.ts"), "export {}\n");
+      yield* fs.writeFileString(path.join(workspaceDir, "delete-before-refresh.ts"), "export {}\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir });
+            yield* fs.writeFileString(
+              path.join(workspaceDir, "created-outside-t3.ts"),
+              "export {}\n",
+            );
+            yield* fs.rename(
+              path.join(workspaceDir, "move-before-refresh.ts"),
+              path.join(workspaceDir, "moved-outside-t3.ts"),
+            );
+            yield* fs.remove(path.join(workspaceDir, "delete-before-refresh.ts"));
+            const beforeRefresh = yield* client[WS_METHODS.projectsListEntries]({
+              cwd: workspaceDir,
+            });
+            yield* client[WS_METHODS.projectsRefreshEntries]({ cwd: workspaceDir });
+            const afterRefresh = yield* client[WS_METHODS.projectsListEntries]({
+              cwd: workspaceDir,
+            });
+            return { beforeRefresh, afterRefresh };
+          }),
+        ),
+      );
+
+      assert.isFalse(
+        response.beforeRefresh.entries.some((entry) => entry.path === "created-outside-t3.ts"),
+      );
+      assert.isTrue(
+        response.beforeRefresh.entries.some((entry) => entry.path === "move-before-refresh.ts"),
+      );
+      assert.isTrue(
+        response.beforeRefresh.entries.some((entry) => entry.path === "delete-before-refresh.ts"),
+      );
+      assert.isTrue(
+        response.afterRefresh.entries.some((entry) => entry.path === "created-outside-t3.ts"),
+      );
+      assert.isFalse(
+        response.afterRefresh.entries.some((entry) => entry.path === "move-before-refresh.ts"),
+      );
+      assert.isTrue(
+        response.afterRefresh.entries.some((entry) => entry.path === "moved-outside-t3.ts"),
+      );
+      assert.isFalse(
+        response.afterRefresh.entries.some((entry) => entry.path === "delete-before-refresh.ts"),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
