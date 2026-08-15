@@ -1,6 +1,7 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  ExecutionEnvironmentPlatformOs,
   ModelSelection,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
@@ -46,6 +47,14 @@ import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
+import {
+  composeComposerFileDropThreadError,
+  composerMentionPathFromAbsolute,
+  composerUnresolvedHostFileMessage,
+  hostPathUsableOnPlatform,
+  partitionDroppedComposerFiles,
+  resolveOsDroppedFilePath,
+} from "./composerFileDrop";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -557,6 +566,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  canResolveHostFilePaths: boolean;
+  environmentPlatformOs: ExecutionEnvironmentPlatformOs | null;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -643,6 +654,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    canResolveHostFilePaths,
+    environmentPlatformOs,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -2278,7 +2291,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
-  const addComposerImages = async (files: File[]) => {
+  const addComposerImages = async (
+    files: File[],
+    options?: { fallbackThreadError?: string | null },
+  ) => {
     if (!activeThreadId || files.length === 0) return;
     if (pendingUserInputs.length > 0) {
       toastManager.add({
@@ -2311,7 +2327,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       acceptedFiles.push(file);
       reservedCount += 1;
     }
-    setThreadError(threadId, error);
+    // Mixed drops call this first; its setThreadError(null) would wipe a
+    // mention error, so fold that message in here instead of writing after.
+    setThreadError(
+      threadId,
+      composeComposerFileDropThreadError(error, options?.fallbackThreadError ?? null),
+    );
     if (acceptedFiles.length === 0) return;
 
     pendingImageCompressionsRef.current.set(threadId, pendingCount + acceptedFiles.length);
@@ -2371,13 +2392,44 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: paste / drag
   // ------------------------------------------------------------------
+  const resolveDroppedFileAbsolutePath = useCallback(
+    (file: File): string | null => {
+      if (!canResolveHostFilePaths) return null;
+      const absolutePath = resolveOsDroppedFilePath(file);
+      if (absolutePath === null) return null;
+      return hostPathUsableOnPlatform(absolutePath, environmentPlatformOs) ? absolutePath : null;
+    },
+    [canResolveHostFilePaths, environmentPlatformOs],
+  );
+
+  // Pasted non-image files become mention chips at the cursor (handled inside
+  // the editor's paste command); this resolves the path they are mentioned by.
+  const resolvePastedFilePath = useCallback(
+    (file: File): string | null => {
+      const absolutePath = resolveDroppedFileAbsolutePath(file);
+      if (absolutePath === null) return null;
+      return composerMentionPathFromAbsolute(absolutePath, gitCwd);
+    },
+    [gitCwd, resolveDroppedFileAbsolutePath],
+  );
+
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
     event.preventDefault();
-    void addComposerImages(imageFiles);
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    const firstUnresolved = files.find(
+      (file) => !file.type.startsWith("image/") && resolveDroppedFileAbsolutePath(file) === null,
+    );
+    const mentionError =
+      firstUnresolved !== undefined
+        ? composerUnresolvedHostFileMessage(firstUnresolved.name)
+        : null;
+    if (imageFiles.length > 0) {
+      void addComposerImages(imageFiles, { fallbackThreadError: mentionError });
+    } else if (mentionError !== null && activeThreadId) {
+      setThreadError(activeThreadId, mentionError);
+    }
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2410,8 +2462,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event.preventDefault();
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
-    const files = Array.from(event.dataTransfer.files);
-    void addComposerImages(files);
+    // Images keep the attachment flow; other files become path mentions so
+    // the agent reads them where they already live on disk.
+    const dropped = partitionDroppedComposerFiles(
+      Array.from(event.dataTransfer.files),
+      resolveDroppedFileAbsolutePath,
+      gitCwd,
+    );
+    const firstUnresolved = dropped.unresolvedFileNames[0];
+    const mentionError =
+      firstUnresolved !== undefined ? composerUnresolvedHostFileMessage(firstUnresolved) : null;
+    if (dropped.imageFiles.length > 0) {
+      void addComposerImages(dropped.imageFiles, { fallbackThreadError: mentionError });
+    } else if (mentionError !== null && activeThreadId) {
+      setThreadError(activeThreadId, mentionError);
+    }
+    if (dropped.mentionText !== null) {
+      // No focusComposer() here: the insert path focuses on the next frame,
+      // and focusing synchronously during the drop would sync stale editor
+      // state back over the inserted mention.
+      if (!insertComposerTextAtEnd(dropped.mentionText, { ensureLeadingBoundary: true })) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: "The composer is busy; try again once it is ready.",
+        });
+      }
+      return;
+    }
     focusComposer();
   };
 
@@ -3038,6 +3116,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}
                 onPaste={onComposerPaste}
+                resolvePastedFilePath={resolvePastedFilePath}
                 placeholder={
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")

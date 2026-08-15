@@ -1,3 +1,5 @@
+import { composerFileLinkBasename } from "./composerTrigger.ts";
+
 export type ComposerInlineToken =
   | {
       readonly type: "mention";
@@ -41,6 +43,11 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 
+function windowsFileLinkBasename(path: string): string {
+  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+}
+
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
 
@@ -55,10 +62,15 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     } catch {
       // Preserve malformed source rather than dropping a user-authored token.
     }
-    const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-    const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+    // Accept either separator rule so a POSIX name like `a\b.txt` keeps its
+    // backslash, while older Windows mentions that used `\` as a separator
+    // still parse.
     const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
-    if (!path || hasExternalScheme || label !== basename) {
+    if (
+      !path ||
+      hasExternalScheme ||
+      (label !== composerFileLinkBasename(path) && label !== windowsFileLinkBasename(path))
+    ) {
       continue;
     }
     const start = (match.index ?? 0) + prefix.length;
@@ -92,6 +104,29 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   }
 
   return matches;
+}
+
+/**
+ * Replace serialized file-link mentions ("[app.log](logs/app.log)") with
+ * their basename so prompt-derived text reads like the composer renders it.
+ * Used for thread-title seeds; @-mentions and skill tokens are already short
+ * and stay untouched.
+ */
+export function replaceComposerFileLinksWithBasenames(text: string): string {
+  // Tokens require trailing whitespace; the appended newline lets a mention
+  // at the end of trimmed text match without shifting any token offsets.
+  const tokens = collectComposerInlineTokens(`${text}\n`);
+  let result = "";
+  let cursor = 0;
+  for (const token of tokens) {
+    if (token.type !== "mention" || !token.source.startsWith("[") || token.start < cursor) {
+      continue;
+    }
+    result += text.slice(cursor, token.start);
+    result += composerFileLinkBasename(token.value);
+    cursor = token.end;
+  }
+  return result + text.slice(cursor);
 }
 
 export function collectComposerInlineTokens(

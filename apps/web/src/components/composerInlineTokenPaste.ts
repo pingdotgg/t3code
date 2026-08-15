@@ -14,6 +14,73 @@ import {
 interface ComposerInlineTokenPasteOptions {
   createMentionNode: (path: string) => LexicalNode;
   getExpandedAbsoluteOffsetForPoint: (node: LexicalNode, pointOffset: number) => number;
+  /**
+   * Resolve a pasted OS file to the path it should be mentioned by, or null
+   * when no path is available (browser builds). Non-image pasted files then
+   * become mention chips at the cursor; image files are left for the
+   * attachment paste handler either way.
+   */
+  resolvePastedFilePath?: (file: File) => string | null;
+}
+
+function $insertPastedFileMentions(
+  event: ClipboardEvent,
+  clipboardData: DataTransfer,
+  options: ComposerInlineTokenPasteOptions,
+): boolean {
+  const resolvePastedFilePath = options.resolvePastedFilePath;
+  if (resolvePastedFilePath === undefined) {
+    return false;
+  }
+  const paths: string[] = [];
+  let hasNonImageFile = false;
+  for (const file of Array.from(clipboardData.files)) {
+    if (file.type.startsWith("image/")) {
+      continue;
+    }
+    hasNonImageFile = true;
+    const path = resolvePastedFilePath(file);
+    if (path !== null && path.length > 0) {
+      paths.push(path);
+    }
+  }
+  if (paths.length === 0) {
+    if (!hasNonImageFile) return false;
+    // Consume unresolved file pastes before Lexical's lower-priority text
+    // handler can insert clipboard text. The event still bubbles to the
+    // composer's paste handler, which reports why the file is unavailable.
+    event.preventDefault();
+    return true;
+  }
+  const selection = $getSelection();
+  // The selection is not always a range when the paste lands (a chip can be
+  // node-selected). Bailing here would drop the files entirely: the default
+  // paste cannot turn them into mentions and the composer's paste handler
+  // prevents it anyway, so fall back to inserting at the end of the prompt.
+  const rangeSelection = $isRangeSelection(selection) ? selection : $getRoot().selectEnd();
+  const nodes: LexicalNode[] = [];
+  const startPoint = rangeSelection.isBackward() ? rangeSelection.focus : rangeSelection.anchor;
+  const insertionOffset = options.getExpandedAbsoluteOffsetForPoint(
+    startPoint.getNode(),
+    startPoint.offset,
+  );
+  const precedingChar = $getRoot()
+    .getTextContent()
+    .slice(insertionOffset - 1, insertionOffset);
+  if (precedingChar.length > 0 && !/\s/.test(precedingChar)) {
+    nodes.push($createTextNode(" "));
+  }
+  for (const path of paths) {
+    nodes.push(options.createMentionNode(path));
+    // Mention tokens need trailing whitespace to stay valid in the
+    // serialized prompt.
+    nodes.push($createTextNode(" "));
+  }
+  rangeSelection.insertNodes(nodes);
+  // Stop the editor's text paste; the event still bubbles, so the composer's
+  // paste handler attaches any image files from the same clipboard.
+  event.preventDefault();
+  return true;
 }
 
 export function registerComposerInlineTokenPaste(
@@ -27,7 +94,7 @@ export function registerComposerInlineTokenPaste(
         return false;
       }
       if (event.clipboardData.files.length > 0) {
-        return false;
+        return $insertPastedFileMentions(event, event.clipboardData, options);
       }
       const text = event.clipboardData.getData("text/plain");
       if (text.length === 0) {

@@ -898,6 +898,7 @@ interface ComposerPromptEditorProps {
     event: KeyboardEvent,
   ) => boolean;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
+  resolvePastedFilePath?: (file: File) => string | null;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
 
@@ -1245,16 +1246,20 @@ function ComposerChipSelectionPlugin() {
   return null;
 }
 
-function ComposerInlineTokenPastePlugin() {
+function ComposerInlineTokenPastePlugin(props: {
+  resolvePastedFilePath?: (file: File) => string | null;
+}) {
   const [editor] = useLexicalComposerContext();
+  const { resolvePastedFilePath } = props;
 
   useEffect(
     () =>
       registerComposerInlineTokenPaste(editor, {
         createMentionNode: $createComposerMentionNode,
         getExpandedAbsoluteOffsetForPoint,
+        ...(resolvePastedFilePath ? { resolvePastedFilePath } : {}),
       }),
-    [editor],
+    [editor, resolvePastedFilePath],
   );
 
   return null;
@@ -1538,6 +1543,7 @@ function ComposerPromptEditorInner({
   onChange,
   onCommandKeyDown,
   onPaste,
+  resolvePastedFilePath,
   editorRef,
 }: ComposerPromptEditorProps) {
   const [editor] = useLexicalComposerContext();
@@ -1779,7 +1785,9 @@ function ComposerPromptEditorInner({
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
-        <ComposerInlineTokenPastePlugin />
+        <ComposerInlineTokenPastePlugin
+          {...(resolvePastedFilePath ? { resolvePastedFilePath } : {})}
+        />
         <ComposerChipSelectionPlugin />
         <HistoryPlugin />
       </div>
@@ -1799,6 +1807,7 @@ export function ComposerPromptEditor({
   onChange,
   onCommandKeyDown,
   onPaste,
+  resolvePastedFilePath,
   editorRef,
 }: ComposerPromptEditorProps) {
   const initialValueRef = useRef(value);
@@ -1838,6 +1847,7 @@ export function ComposerPromptEditor({
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(className ? { className } : {})}
+        {...(resolvePastedFilePath ? { resolvePastedFilePath } : {})}
       />
     </LexicalComposer>
   );

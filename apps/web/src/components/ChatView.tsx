@@ -44,6 +44,7 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
+import { replaceComposerFileLinksWithBasenames } from "@t3tools/shared/composerInlineTokens";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -247,6 +248,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { canResolveComposerHostFilePaths } from "./chat/composerFileDrop";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -1246,6 +1248,12 @@ function ChatViewContent(props: ChatViewProps) {
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],
   );
+  const composerHostEnvironment = environmentById.get(environmentId);
+  const canResolveComposerHostPaths = canResolveComposerHostFilePaths(
+    composerHostEnvironment?.entry.target._tag ?? null,
+  );
+  const composerEnvironmentPlatformOs =
+    composerHostEnvironment?.serverConfig?.environment.platform.os ?? null;
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const draftThread = useComposerDraftStore((store) =>
@@ -5163,7 +5171,9 @@ function ChatViewContent(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = trimmed;
+    // Mention markup would read as raw "[name](path)" in the thread list;
+    // seed the title with basenames the way the composer renders them.
+    let titleSeed = replaceComposerFileLinksWithBasenames(trimmed).trim();
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
@@ -6390,6 +6400,8 @@ function ChatViewContent(props: ChatViewProps) {
                             keybindings={keybindings}
                             terminalOpen={Boolean(terminalUiState.terminalOpen)}
                             gitCwd={gitCwd}
+                            canResolveHostFilePaths={canResolveComposerHostPaths}
+                            environmentPlatformOs={composerEnvironmentPlatformOs}
                             promptRef={promptRef}
                             composerImagesRef={composerImagesRef}
                             composerTerminalContextsRef={composerTerminalContextsRef}

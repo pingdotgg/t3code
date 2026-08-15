@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  replaceComposerFileLinksWithBasenames,
+} from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -143,11 +146,80 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
   });
 
+  it("collects a POSIX file link whose name contains a backslash", () => {
+    expect(collectComposerInlineTokens("[a\\\\b.txt](a%5Cb.txt) next")).toEqual([
+      {
+        type: "mention",
+        value: "a\\b.txt",
+        source: "[a\\\\b.txt](a%5Cb.txt)",
+        start: 0,
+        end: 21,
+      },
+    ]);
+  });
+
+  it("still collects older Windows mentions that used a backslash separator", () => {
+    expect(collectComposerInlineTokens("[file.ts](src%5Cfile.ts) next")).toEqual([
+      {
+        type: "mention",
+        value: "src\\file.ts",
+        source: "[file.ts](src%5Cfile.ts)",
+        start: 0,
+        end: 24,
+      },
+    ]);
+  });
+
   it("stays fast on unterminated bracket runs", () => {
     // Unbounded, the label body rescanned the rest of the text from every
     // whitespace: this input took seconds.
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("replaceComposerFileLinksWithBasenames", () => {
+  it("replaces a file link with its basename", () => {
+    expect(replaceComposerFileLinksWithBasenames("Check [app.log](logs/app.log) for errors")).toBe(
+      "Check app.log for errors",
+    );
+  });
+
+  it("replaces absolute-path links from OS file drops", () => {
+    expect(
+      replaceComposerFileLinksWithBasenames(
+        "[Rólegur kúreki.mp3](/Users/kr/R%C3%B3legur%20k%C3%BAreki.mp3)",
+      ),
+    ).toBe("Rólegur kúreki.mp3");
+  });
+
+  it("handles a trimmed prompt that ends with a link", () => {
+    expect(replaceComposerFileLinksWithBasenames("Fix [a.ts](src/a.ts)")).toBe("Fix a.ts");
+  });
+
+  it("replaces multiple links and leaves surrounding text alone", () => {
+    expect(replaceComposerFileLinksWithBasenames("[a.ts](src/a.ts) vs [b.ts](lib/b.ts) diff")).toBe(
+      "a.ts vs b.ts diff",
+    );
+  });
+
+  it("leaves @-mentions, skills, and plain text untouched", () => {
+    expect(replaceComposerFileLinksWithBasenames("Use $ui with @src/Chat.tsx please")).toBe(
+      "Use $ui with @src/Chat.tsx please",
+    );
+    expect(replaceComposerFileLinksWithBasenames("no tokens here")).toBe("no tokens here");
+  });
+
+  it("handles Windows separators in link destinations", () => {
+    expect(replaceComposerFileLinksWithBasenames("[app.log](C:%5Crepo%5Capp.log) tail")).toBe(
+      "app.log tail",
+    );
+  });
+
+  it("keeps a POSIX filename that contains a backslash", () => {
+    expect(replaceComposerFileLinksWithBasenames("[a\\\\b.txt](a%5Cb.txt) notes")).toBe(
+      "a\\b.txt notes",
+    );
   });
 });
