@@ -16,6 +16,7 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  detectCodexDefaultModeRequestUserInput,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
@@ -98,6 +99,7 @@ describe("buildTurnStartParams", () => {
         model: "gpt-5.3-codex",
         effort: "medium",
         interactionMode: "plan",
+        defaultModeRequestUserInputEnabled: true,
       }),
     );
 
@@ -178,6 +180,28 @@ describe("buildTurnStartParams", () => {
       },
     });
   });
+
+  it.effect("uses enabled Default-mode user-input guidance when Codex enables the feature", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Implement it",
+        interactionMode: "default",
+        defaultModeRequestUserInputEnabled: true,
+      });
+
+      const instructions = params.collaborationMode?.settings.developer_instructions;
+      NodeAssert.ok(instructions);
+      NodeAssert.match(instructions, /Use the `request_user_input` tool only when it is listed/);
+      NodeAssert.doesNotMatch(instructions, /unavailable in Default mode/);
+      NodeAssert.doesNotMatch(instructions, /will return an error/);
+      NodeAssert.match(instructions, /plain-text question/);
+      NodeAssert.match(instructions, /Never write a multiple choice question/);
+      NodeAssert.match(instructions, /strongly prefer making reasonable assumptions/);
+      NodeAssert.match(instructions, /preview_status/);
+    }),
+  );
 
   it("reports the same fallback model and effort in settings and instructions", () => {
     const params = Effect.runSync(
@@ -466,6 +490,92 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("detectCodexDefaultModeRequestUserInput", () => {
+  const feature = (
+    name: string,
+    enabled: boolean,
+  ): CodexRpc.ClientRequestResponsesByMethod["experimentalFeature/list"]["data"][number] => ({
+    name,
+    enabled,
+    defaultEnabled: false,
+    stage: "underDevelopment",
+  });
+
+  it.effect("uses loaded-thread feature state across paginated results", () =>
+    Effect.gen(function* () {
+      const calls: Array<CodexRpc.ClientRequestParamsByMethod["experimentalFeature/list"]> = [];
+      const client = {
+        request: (
+          _method: "experimentalFeature/list",
+          payload: CodexRpc.ClientRequestParamsByMethod["experimentalFeature/list"],
+        ) => {
+          calls.push(payload);
+          return Effect.succeed(
+            payload.cursor === "page-2"
+              ? {
+                  data: [feature("default_mode_request_user_input", true)],
+                }
+              : {
+                  data: [feature("other_feature", true)],
+                  nextCursor: "page-2",
+                },
+          );
+        },
+      };
+
+      const enabled = yield* detectCodexDefaultModeRequestUserInput(client, "provider-thread-1");
+
+      NodeAssert.equal(enabled, true);
+      NodeAssert.deepStrictEqual(calls, [
+        { threadId: "provider-thread-1" },
+        { threadId: "provider-thread-1", cursor: "page-2" },
+      ]);
+    }),
+  );
+
+  it.effect("returns false when the effective feature is disabled or absent", () =>
+    Effect.gen(function* () {
+      const disabled = yield* detectCodexDefaultModeRequestUserInput(
+        {
+          request: () =>
+            Effect.succeed({
+              data: [feature("default_mode_request_user_input", false)],
+            }),
+        },
+        "provider-thread-1",
+      );
+      const absent = yield* detectCodexDefaultModeRequestUserInput(
+        {
+          request: () => Effect.succeed({ data: [feature("other_feature", true)] }),
+        },
+        "provider-thread-1",
+      );
+
+      NodeAssert.equal(disabled, false);
+      NodeAssert.equal(absent, false);
+    }),
+  );
+
+  it.effect("fails closed when feature discovery is unsupported", () =>
+    Effect.gen(function* () {
+      const enabled = yield* detectCodexDefaultModeRequestUserInput(
+        {
+          request: () =>
+            Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32601,
+                errorMessage: "Method not found",
+              }),
+            ),
+        },
+        "provider-thread-1",
+      );
+
+      NodeAssert.equal(enabled, false);
     }),
   );
 });

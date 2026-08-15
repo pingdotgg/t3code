@@ -59,6 +59,7 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
+const DEFAULT_MODE_REQUEST_USER_INPUT_FEATURE = "default_mode_request_user_input";
 
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
@@ -339,6 +340,7 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly defaultModeRequestUserInputEnabled?: boolean;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -350,10 +352,16 @@ function buildCodexCollaborationMode(input: {
     settings: {
       model,
       reasoning_effort: reasoningEffort,
-      developer_instructions: buildCodexDeveloperInstructions(input.interactionMode, {
-        model,
-        reasoningEffort,
-      }),
+      developer_instructions: buildCodexDeveloperInstructions(
+        input.interactionMode,
+        {
+          model,
+          reasoningEffort,
+        },
+        {
+          defaultModeRequestUserInputEnabled: input.defaultModeRequestUserInputEnabled === true,
+        },
+      ),
     },
   };
 }
@@ -370,6 +378,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly defaultModeRequestUserInputEnabled?: boolean;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -390,6 +399,9 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.defaultModeRequestUserInputEnabled
+      ? { defaultModeRequestUserInputEnabled: true }
+      : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -453,6 +465,47 @@ interface CodexThreadOpenClient {
     payload: CodexRpc.ClientRequestParamsByMethod[M],
   ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
 }
+
+interface CodexExperimentalFeatureClient {
+  readonly request: (
+    method: "experimentalFeature/list",
+    payload: CodexRpc.ClientRequestParamsByMethod["experimentalFeature/list"],
+  ) => Effect.Effect<
+    CodexRpc.ClientRequestResponsesByMethod["experimentalFeature/list"],
+    CodexErrors.CodexAppServerError
+  >;
+}
+
+export const detectCodexDefaultModeRequestUserInput = Effect.fn(
+  "detectCodexDefaultModeRequestUserInput",
+)(
+  function* (
+    client: CodexExperimentalFeatureClient,
+    providerThreadId: string,
+  ): Effect.fn.Return<boolean, CodexErrors.CodexAppServerError> {
+    let cursor: string | null | undefined;
+    do {
+      const response = yield* client.request("experimentalFeature/list", {
+        threadId: providerThreadId,
+        ...(cursor ? { cursor } : {}),
+      });
+      const feature = response.data.find(
+        (candidate) => candidate.name === DEFAULT_MODE_REQUEST_USER_INPUT_FEATURE,
+      );
+      if (feature) {
+        return feature.enabled;
+      }
+      cursor = response.nextCursor;
+    } while (cursor);
+
+    return false;
+  },
+  Effect.catch((cause) =>
+    Effect.logDebug("Codex default-mode user input feature detection failed; using disabled.", {
+      cause,
+    }).pipe(Effect.as(false)),
+  ),
+);
 
 export const openCodexThread = (input: {
   readonly client: CodexThreadOpenClient;
@@ -857,6 +910,7 @@ export const makeCodexSessionRuntime = (
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
+    const defaultModeRequestUserInputEnabledRef = yield* Ref.make(false);
     const closedRef = yield* Ref.make(false);
 
     // `~` is not shell-expanded when env vars are set via
@@ -1699,6 +1753,10 @@ export const makeCodexSessionRuntime = (
       });
 
       const providerThreadId = opened.thread.id;
+      yield* Ref.set(
+        defaultModeRequestUserInputEnabledRef,
+        yield* detectCodexDefaultModeRequestUserInput(client, providerThreadId),
+      );
       const session = {
         ...(yield* Ref.get(sessionRef)),
         status: "ready",
@@ -1761,6 +1819,9 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const defaultModeRequestUserInputEnabled = yield* Ref.get(
+            defaultModeRequestUserInputEnabledRef,
+          );
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
@@ -1770,6 +1831,9 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(defaultModeRequestUserInputEnabled
+              ? { defaultModeRequestUserInputEnabled: true }
+              : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
