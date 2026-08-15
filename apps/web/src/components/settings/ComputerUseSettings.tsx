@@ -106,6 +106,7 @@ export function ComputerUseSettings() {
     const bridge = window.desktopBridge;
     if (!bridge?.getComputerUsePermissions) {
       setPermState(null);
+      setPermError("Update T3 Code to check Computer Use permissions");
       return;
     }
     try {
@@ -119,6 +120,11 @@ export function ComputerUseSettings() {
 
   useEffect(() => {
     if (!onDesktop) return;
+    const bridgeSupported = window.desktopBridge?.getComputerUsePermissions !== undefined;
+    if (!bridgeSupported) {
+      setPermError("Update T3 Code to check Computer Use permissions");
+      return;
+    }
     void refreshPermissions();
     const onFocus = () => void refreshPermissions();
     window.addEventListener("focus", onFocus);
@@ -242,7 +248,9 @@ export function ComputerUseSettings() {
                 {chromeStatus.detail}
               </ExtensionStatus>
             ) : onDesktop ? (
-              <ExtensionStatus tone="muted">Checking extension…</ExtensionStatus>
+              <ExtensionStatus tone="muted">
+                {permError?.startsWith("Update T3 Code") ? permError : "Checking extension…"}
+              </ExtensionStatus>
             ) : null
           }
           resetAction={
