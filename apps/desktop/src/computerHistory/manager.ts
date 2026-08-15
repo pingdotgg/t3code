@@ -38,12 +38,19 @@ type DaemonState = {
 export class ComputerHistoryOperationError extends Schema.TaggedErrorClass<ComputerHistoryOperationError>()(
   "ComputerHistoryOperationError",
   {
-    operation: Schema.String,
-    reason: Schema.String,
+    operation: Schema.Literals([
+      "ensureDaemon",
+      "stopDaemon",
+      "getStatus",
+      "getTimeline",
+      "clear",
+      "removeMemory",
+    ]),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `${this.operation}: ${this.reason}`;
+    return `Computer History ${this.operation} failed`;
   }
 }
 
@@ -223,7 +230,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "ensureDaemon",
-            reason: cause instanceof Error ? cause.message : String(cause),
+            cause,
           }),
       }).pipe(Effect.orDie),
     stopDaemon: () =>
@@ -232,7 +239,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "stopDaemon",
-            reason: cause instanceof Error ? cause.message : String(cause),
+            cause,
           }),
       }).pipe(Effect.orDie),
     getStatus: (stateDir, settings) =>
@@ -264,7 +271,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "getStatus",
-            reason: cause instanceof Error ? cause.message : String(cause),
+            cause,
           }),
       }).pipe(Effect.orDie),
     getTimeline: (stateDir) =>
@@ -273,7 +280,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "getTimeline",
-            reason: cause instanceof Error ? cause.message : String(cause),
+            cause,
           }),
       }).pipe(Effect.orDie),
     clear: (stateDir, scope, settings) =>
@@ -285,7 +292,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "clear",
-            reason: cause instanceof Error ? cause.message : String(cause),
+            cause,
           }),
       }).pipe(Effect.orDie),
     removeMemory: (stateDir, path, settings) =>
@@ -297,7 +304,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "removeMemory",
-            reason: cause instanceof Error ? cause.message : String(cause),
+            cause,
           }),
       }),
     revealMemory: (path) =>

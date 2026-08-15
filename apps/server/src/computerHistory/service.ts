@@ -26,7 +26,7 @@ export const loadComputerHistoryContext = Effect.fn("computerHistory.loadContext
     return undefined;
   }
   const root = resolveComputerHistoryRoot(config.stateDir);
-  const markdown = yield* Effect.promise(() => loadRecentContextMarkdown(root)).pipe(
+  const markdown = yield* Effect.tryPromise(() => loadRecentContextMarkdown(root)).pipe(
     Effect.orElseSucceed(() => undefined),
   );
   if (!markdown) return undefined;
@@ -39,7 +39,7 @@ export const syncComputerHistoryControl = Effect.fn("computerHistory.syncControl
   const snapshot = yield* settings.getSettings;
   const history = snapshot.computerHistory;
   const root = resolveComputerHistoryRoot(config.stateDir);
-  yield* Effect.promise(() =>
+  yield* Effect.tryPromise(() =>
     writeControlFile(root, {
       enabled: history.enabled,
       paused: history.paused,
@@ -60,7 +60,7 @@ export const runComputerHistorySummarization = Effect.fn("computerHistory.summar
   }
   const root = resolveComputerHistoryRoot(config.stateDir);
   const codexHome = defaultCodexHome();
-  return yield* Effect.promise(() =>
+  return yield* Effect.tryPromise(() =>
     runSummarizationPass(root, {
       mirrorToCodex: snapshot.computerHistory.mirrorToCodex,
       codexHome,
