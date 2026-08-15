@@ -1044,7 +1044,9 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
+              const normalizedCommand = yield* normalizeDispatchCommand(command, {
+                environmentId: yield* serverEnvironment.getEnvironmentId,
+              });
               // Archive and settle both mean "done with this thread", so a
               // live provider session must not keep running background work
               // (PR monitors, dev servers, subagent fleets) after either

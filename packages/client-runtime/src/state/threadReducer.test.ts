@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   CheckpointRef,
   CommandId,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -309,6 +310,14 @@ describe("applyThreadDetailEvent", () => {
 
   describe("thread.message-sent", () => {
     it("appends a new message", () => {
+      const fileMention = {
+        version: 1 as const,
+        environmentId: EnvironmentId.make("environment-1"),
+        path: "/repo/AGENTS.md",
+        kind: "file" as const,
+        start: 0,
+        end: 28,
+      };
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
         sequence: 6,
@@ -320,7 +329,8 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-1"),
           messageId: MessageId.make("msg-1"),
           role: "user",
-          text: "Hello, world!",
+          text: "[AGENTS.md](/repo/AGENTS.md)",
+          fileMentions: [fileMention],
           turnId: null,
           streaming: false,
           createdAt: "2026-04-01T06:00:00.000Z",
@@ -331,7 +341,8 @@ describe("applyThreadDetailEvent", () => {
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.messages).toHaveLength(1);
-        expect(result.thread.messages[0]?.text).toBe("Hello, world!");
+        expect(result.thread.messages[0]?.text).toBe("[AGENTS.md](/repo/AGENTS.md)");
+        expect(result.thread.messages[0]?.fileMentions).toEqual([fileMention]);
       }
     });
 

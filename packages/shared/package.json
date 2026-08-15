@@ -167,6 +167,10 @@
       "types": "./src/composerInlineTokens.ts",
       "import": "./src/composerInlineTokens.ts"
     },
+    "./fileMentions": {
+      "types": "./src/fileMentions.ts",
+      "import": "./src/fileMentions.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"

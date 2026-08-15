@@ -16,6 +16,7 @@ import {
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
 // The composer draft's `modelSelectionByProvider` and
 // `stickyModelSelectionByProvider` maps are keyed by `ProviderInstanceId`
@@ -577,6 +578,305 @@ describe("composerDraftStore terminal contexts", () => {
     expect(mergedState.draftThreadsByThreadKey).toEqual({});
     expect(mergedState.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual({});
   });
+
+  it("drops persisted file mentions whose source range is stale", () => {
+    const prompt = serializeComposerFileLink("/tmp/example.ts");
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt,
+            fileMentions: [
+              {
+                version: 1,
+                environmentId: TEST_ENVIRONMENT_ID,
+                path: "/tmp/other.ts",
+                kind: "file",
+                start: 0,
+                end: prompt.length,
+              },
+            ],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.fileMentions).toEqual([]);
+  });
+
+  it("drops persisted file mentions from a different environment", () => {
+    const prompt = serializeComposerFileLink("/tmp/example.ts");
+    const threadKey = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadKey: {
+          [threadKey]: {
+            prompt,
+            fileMentions: [
+              {
+                version: 1,
+                environmentId: OTHER_TEST_ENVIRONMENT_ID,
+                path: "/tmp/example.ts",
+                kind: "file",
+                start: 0,
+                end: prompt.length,
+              },
+            ],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadKey[threadKey]?.fileMentions).toEqual([]);
+  });
+
+  it("does not infer an environment for ambiguous legacy thread ids", () => {
+    const prompt = serializeComposerFileLink("/tmp/example.ts");
+    const localThreadKey = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    const remoteThreadKey = threadKeyFor(threadId, OTHER_TEST_ENVIRONMENT_ID);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+        migrate: (
+          persistedState: unknown,
+          version: number,
+        ) => {
+          draftsByThreadKey: Record<
+            string,
+            { prompt?: string; fileMentions?: ReadonlyArray<unknown> }
+          >;
+          draftThreadsByThreadKey: Record<string, unknown>;
+          logicalProjectDraftThreadKeyByLogicalProjectKey: Record<string, string>;
+        };
+      };
+    };
+    const hydrate = (threadKeys: ReadonlyArray<string>) =>
+      persistApi.getOptions().merge(
+        {
+          draftsByThreadId: {
+            [threadId]: {
+              prompt,
+              fileMentions: [
+                {
+                  version: 1,
+                  environmentId: OTHER_TEST_ENVIRONMENT_ID,
+                  path: "/tmp/example.ts",
+                  kind: "file",
+                  start: 0,
+                  end: prompt.length,
+                },
+              ],
+            },
+          },
+          draftThreadsByThreadKey: Object.fromEntries(
+            threadKeys.map((threadKey) => {
+              const environmentId =
+                threadKey === localThreadKey ? TEST_ENVIRONMENT_ID : OTHER_TEST_ENVIRONMENT_ID;
+              return [
+                threadKey,
+                {
+                  threadId,
+                  environmentId,
+                  projectId: `project-${environmentId}`,
+                  createdAt: "2026-08-13T12:00:00.000Z",
+                },
+              ];
+            }),
+          ),
+        },
+        useComposerDraftStore.getInitialState(),
+      );
+
+    const localFirst = hydrate([localThreadKey, remoteThreadKey]);
+    const remoteFirst = hydrate([remoteThreadKey, localThreadKey]);
+
+    expect(localFirst.draftsByThreadKey).toEqual(remoteFirst.draftsByThreadKey);
+    expect(localFirst.draftsByThreadKey[threadId]).toMatchObject({
+      prompt,
+      fileMentions: [],
+    });
+    expect(localFirst.draftsByThreadKey[localThreadKey]).toBeUndefined();
+    expect(localFirst.draftsByThreadKey[remoteThreadKey]).toBeUndefined();
+
+    const localProjectKey = scopedProjectKey(
+      scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-local")),
+    );
+    const remoteProjectKey = scopedProjectKey(
+      scopeProjectRef(OTHER_TEST_ENVIRONMENT_ID, ProjectId.make("project-remote")),
+    );
+    const rawDraft = {
+      prompt,
+      fileMentions: [
+        {
+          version: 1,
+          environmentId: TEST_ENVIRONMENT_ID,
+          path: "/tmp/example.ts",
+          kind: "file",
+          start: 0,
+          end: prompt.length,
+        },
+      ],
+    };
+    const mappingCases = [
+      {
+        mappings: [
+          [localProjectKey, threadId],
+          [remoteProjectKey, threadId],
+        ],
+        expectedScopedThreadKeys: [],
+        expectedProjectKeys: [],
+      },
+      {
+        mappings: [
+          [localProjectKey, localThreadKey],
+          [remoteProjectKey, remoteThreadKey],
+        ],
+        expectedScopedThreadKeys: [localThreadKey, remoteThreadKey],
+        expectedProjectKeys: [localProjectKey, remoteProjectKey],
+      },
+      {
+        mappings: [
+          [localProjectKey, localThreadKey],
+          [remoteProjectKey, threadId],
+        ],
+        expectedScopedThreadKeys: [localThreadKey],
+        expectedProjectKeys: [localProjectKey],
+      },
+      {
+        mappings: [
+          [localProjectKey, threadId],
+          [remoteProjectKey, remoteThreadKey],
+        ],
+        expectedScopedThreadKeys: [remoteThreadKey],
+        expectedProjectKeys: [remoteProjectKey],
+      },
+    ];
+
+    for (const { mappings, expectedScopedThreadKeys, expectedProjectKeys } of mappingCases) {
+      const states = [mappings, mappings.toReversed()].map((orderedMappings) => ({
+        draftsByThreadId: { [threadId]: rawDraft },
+        projectDraftThreadIdByProjectKey: Object.fromEntries(orderedMappings),
+      }));
+      const hydrated = states.map((state) =>
+        persistApi.getOptions().merge(state, useComposerDraftStore.getInitialState()),
+      );
+      const migrated = states.map((state) => persistApi.getOptions().migrate(state, 7));
+      const hydratedMigrations = migrated.map((state) =>
+        persistApi.getOptions().merge(state, useComposerDraftStore.getInitialState()),
+      );
+
+      expect(hydrated[0]!.draftsByThreadKey).toEqual(hydrated[1]!.draftsByThreadKey);
+      expect(migrated[0]!.draftsByThreadKey).toEqual(migrated[1]!.draftsByThreadKey);
+      expect(hydratedMigrations[0]!.draftsByThreadKey).toEqual(
+        hydratedMigrations[1]!.draftsByThreadKey,
+      );
+      for (const state of [...hydrated, ...migrated, ...hydratedMigrations]) {
+        expect(state.draftsByThreadKey[threadId]?.prompt).toBe(prompt);
+        expect(state.draftsByThreadKey[threadId]?.fileMentions ?? []).toEqual([]);
+        expect(state.draftsByThreadKey[localThreadKey]).toBeUndefined();
+        expect(state.draftsByThreadKey[remoteThreadKey]).toBeUndefined();
+        expect(Object.keys(state.draftThreadsByThreadKey).sort()).toEqual(
+          [...expectedScopedThreadKeys].sort(),
+        );
+        expect(Object.keys(state.logicalProjectDraftThreadKeyByLogicalProjectKey).sort()).toEqual(
+          [...expectedProjectKeys].sort(),
+        );
+      }
+    }
+
+    const conflictingScopedMappingCases: ReadonlyArray<ReadonlyArray<readonly [string, string]>> = [
+      [[localProjectKey, remoteThreadKey]],
+      [
+        [localProjectKey, remoteThreadKey],
+        [remoteProjectKey, localThreadKey],
+      ],
+    ];
+    for (const conflictingScopedMappings of conflictingScopedMappingCases) {
+      const conflictingStates = [
+        conflictingScopedMappings,
+        conflictingScopedMappings.toReversed(),
+      ].map((orderedMappings) => ({
+        draftsByThreadId: { [threadId]: rawDraft },
+        projectDraftThreadIdByProjectKey: Object.fromEntries(orderedMappings),
+      }));
+      const conflictingHydrated = conflictingStates.map((state) =>
+        persistApi.getOptions().merge(state, useComposerDraftStore.getInitialState()),
+      );
+      const conflictingMigrated = conflictingStates.map((state) =>
+        persistApi.getOptions().migrate(state, 7),
+      );
+      const conflictingHydratedMigrations = conflictingMigrated.map((state) =>
+        persistApi.getOptions().merge(state, useComposerDraftStore.getInitialState()),
+      );
+
+      for (const state of [
+        ...conflictingHydrated,
+        ...conflictingMigrated,
+        ...conflictingHydratedMigrations,
+      ]) {
+        expect(Object.keys(state.draftsByThreadKey)).toEqual([threadId]);
+        expect(state.draftsByThreadKey[threadId]?.prompt).toBe(prompt);
+        expect(state.draftsByThreadKey[threadId]?.fileMentions ?? []).toEqual([]);
+        expect(state.draftThreadsByThreadKey).toEqual({});
+        expect(state.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual({});
+      }
+    }
+
+    const uniquelyMapped = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: { [threadId]: rawDraft },
+        projectDraftThreadIdByProjectKey: {
+          [localProjectKey]: threadId,
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(uniquelyMapped.draftsByThreadKey[threadId]?.fileMentions).toHaveLength(1);
+
+    const consistentlyMapped = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: { [threadId]: rawDraft },
+        projectDraftThreadIdByProjectKey: {
+          [localProjectKey]: threadId,
+          [scopedProjectKey(
+            scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-local-two")),
+          )]: localThreadKey,
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(consistentlyMapped.draftsByThreadKey[threadId]?.fileMentions).toHaveLength(1);
+
+    const explicitlyScoped = persistApi.getOptions().merge(
+      {
+        draftsByThreadKey: { [localThreadKey]: rawDraft },
+        projectDraftThreadIdByProjectKey: Object.fromEntries(mappingCases[0]!.mappings),
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(explicitlyScoped.draftsByThreadKey[localThreadKey]?.fileMentions).toHaveLength(1);
+  });
 });
 
 describe("composerDraftStore element contexts", () => {
@@ -837,6 +1137,68 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
     expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
     expect(draftByKey(draftId)).toBeUndefined();
+  });
+
+  it("persists explicit file mention provenance with its prompt", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const prompt = serializeComposerFileLink("/tmp/example.ts");
+    store.setPrompt(draftId, prompt, [
+      {
+        version: 1,
+        environmentId: TEST_ENVIRONMENT_ID,
+        path: "/tmp/example.ts",
+        kind: "file",
+        start: 0,
+        end: prompt.length,
+      },
+    ]);
+
+    expect(draftByKey(draftId)?.fileMentions).toEqual([
+      expect.objectContaining({ path: "/tmp/example.ts", end: prompt.length }),
+    ]);
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState());
+    const mergedState = persistApi
+      .getOptions()
+      .merge(persistedState, useComposerDraftStore.getInitialState());
+
+    expect(mergedState.draftsByThreadKey[draftId]?.fileMentions).toEqual([
+      expect.objectContaining({ path: "/tmp/example.ts", end: prompt.length }),
+    ]);
+  });
+
+  it("reconciles existing file mentions when setPrompt omits provenance", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const source = serializeComposerFileLink("/tmp/example.ts");
+    const prompt = `Review ${source}`;
+    const start = prompt.indexOf(source);
+    store.setPrompt(draftId, prompt, [
+      {
+        version: 1,
+        environmentId: TEST_ENVIRONMENT_ID,
+        path: "/tmp/example.ts",
+        kind: "file",
+        start,
+        end: start + source.length,
+      },
+    ]);
+
+    store.setPrompt(draftId, `Please ${prompt}`);
+
+    expect(draftByKey(draftId)?.fileMentions).toEqual([
+      expect.objectContaining({ start: start + "Please ".length }),
+    ]);
   });
 
   it("clears project draft mapping by project id", () => {

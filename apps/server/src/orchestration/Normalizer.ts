@@ -4,11 +4,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
   type ClientOrchestrationCommand,
+  type EnvironmentId,
   type IsoDateTime,
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import { validateExplicitFileMentions } from "@t3tools/shared/fileMentions";
 
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -43,7 +45,10 @@ export const canonicalizeClientCommandTimestamps = (
   };
 };
 
-export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
+export const normalizeDispatchCommand = (
+  command: ClientOrchestrationCommand,
+  options: { readonly environmentId?: EnvironmentId } = {},
+) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
@@ -102,6 +107,20 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     if (canonicalCommand.type !== "thread.turn.start") {
       return canonicalCommand as OrchestrationCommand;
+    }
+
+    const fileMentions = canonicalCommand.message.fileMentions ?? [];
+    if (fileMentions.length > 0) {
+      const failure = validateExplicitFileMentions(
+        canonicalCommand.message.text,
+        fileMentions,
+        options.environmentId,
+      );
+      if (failure !== null) {
+        return yield* new OrchestrationDispatchCommandError({
+          message: `Invalid explicit file mention ${failure}.`,
+        });
+      }
     }
 
     const normalizedAttachments = yield* Effect.forEach(

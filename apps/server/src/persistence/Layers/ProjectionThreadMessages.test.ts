@@ -1,4 +1,4 @@
-import { MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -28,6 +28,16 @@ layer("ProjectionThreadMessageRepository", (it) => {
           sizeBytes: 5,
         },
       ];
+      const persistedFileMentions = [
+        {
+          version: 1 as const,
+          environmentId: EnvironmentId.make("environment-1"),
+          path: "/tmp/example.png",
+          kind: "file" as const,
+          start: 0,
+          end: 27,
+        },
+      ];
 
       yield* repository.upsert({
         messageId,
@@ -36,6 +46,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "user",
         text: "initial",
         attachments: persistedAttachments,
+        fileMentions: persistedFileMentions,
         isStreaming: false,
         createdAt,
         updatedAt,
@@ -56,12 +67,14 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.text, "updated");
       assert.deepEqual(rows[0]?.attachments, persistedAttachments);
+      assert.deepEqual(rows[0]?.fileMentions, persistedFileMentions);
 
       const rowById = yield* repository.getByMessageId({ messageId });
       assert.equal(rowById._tag, "Some");
       if (rowById._tag === "Some") {
         assert.equal(rowById.value.text, "updated");
         assert.deepEqual(rowById.value.attachments, persistedAttachments);
+        assert.deepEqual(rowById.value.fileMentions, persistedFileMentions);
       }
     }),
   );

@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  type ExplicitFileMention,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -46,6 +47,7 @@ import {
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
+import { shiftFileMentions } from "@t3tools/shared/fileMentions";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
@@ -207,7 +209,7 @@ import {
   type DraftId,
 } from "../composerDraftStore";
 import {
-  appendTerminalContextsToPrompt,
+  appendTerminalContextsToPromptWithFileMentions,
   formatTerminalContextLabel,
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -4934,6 +4936,7 @@ function ChatViewContent(props: ChatViewProps) {
       elementContexts: composerElementContexts,
       previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
+      fileMentions: composerFileMentions,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -4976,8 +4979,13 @@ function ChatViewContent(props: ChatViewProps) {
         composerReviewComments.length,
     });
     if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
+      const followUpPrompt = appendTerminalContextsToPromptWithFileMentions(
+        promptForSend,
+        [],
+        composerFileMentions,
+      );
       const followUp = resolvePlanFollowUpSubmission({
-        draftText: trimmed,
+        draftText: followUpPrompt.text,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
       promptRef.current = "";
@@ -4986,6 +4994,7 @@ function ChatViewContent(props: ChatViewProps) {
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        fileMentions: followUp.interactionMode === "plan" ? followUpPrompt.fileMentions : [],
       });
       return;
     }
@@ -5072,8 +5081,14 @@ function ChatViewContent(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const composerFileMentionsSnapshot = [...composerFileMentions];
+    const promptWithTerminalContexts = appendTerminalContextsToPromptWithFileMentions(
+      promptForSend,
+      composerTerminalContextsSnapshot,
+      composerFileMentionsSnapshot,
+    );
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      promptWithTerminalContexts.text,
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -5093,6 +5108,11 @@ function ChatViewContent(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
+    const outgoingPromptOffset = outgoingMessageText.lastIndexOf(messageTextForSend);
+    const outgoingFileMentions =
+      messageTextForSend.length > 0 && outgoingPromptOffset >= 0
+        ? shiftFileMentions(promptWithTerminalContexts.fileMentions, outgoingPromptOffset)
+        : [];
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
@@ -5132,6 +5152,7 @@ function ChatViewContent(props: ChatViewProps) {
         role: "user",
         text: outgoingMessageText,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+        fileMentions: outgoingFileMentions,
         turnId: null,
         createdAt: messageCreatedAt,
         updatedAt: messageCreatedAt,
@@ -5260,6 +5281,7 @@ function ChatViewContent(props: ChatViewProps) {
             role: "user",
             text: outgoingMessageText,
             attachments: turnAttachmentsResult.value,
+            fileMentions: outgoingFileMentions,
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
@@ -5301,7 +5323,7 @@ function ChatViewContent(props: ChatViewProps) {
         composerImagesRef.current = retryComposerImages;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
+        setComposerDraftPrompt(composerDraftTarget, promptForSend, composerFileMentionsSnapshot);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
@@ -5511,9 +5533,11 @@ function ChatViewContent(props: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      fileMentions,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      fileMentions: ReadonlyArray<ExplicitFileMention>;
     }) => {
       if (
         !activeThread ||
@@ -5552,6 +5576,9 @@ function ChatViewContent(props: ChatViewProps) {
         effort: ctxSelectedPromptEffort,
         text: trimmed,
       });
+      const outgoingPromptOffset = outgoingMessageText.lastIndexOf(trimmed);
+      const outgoingFileMentions =
+        outgoingPromptOffset >= 0 ? shiftFileMentions(fileMentions, outgoingPromptOffset) : [];
 
       sendInFlightRef.current = true;
       beginLocalDispatch({ preparingWorktree: false });
@@ -5577,6 +5604,7 @@ function ChatViewContent(props: ChatViewProps) {
           id: messageIdForSend,
           role: "user",
           text: outgoingMessageText,
+          fileMentions: outgoingFileMentions,
           turnId: null,
           createdAt: messageCreatedAt,
           updatedAt: messageCreatedAt,
@@ -5614,6 +5642,7 @@ function ChatViewContent(props: ChatViewProps) {
               role: "user",
               text: outgoingMessageText,
               attachments: [],
+              fileMentions: outgoingFileMentions,
             },
             modelSelection: ctxSelectedModelSelection,
             titleSeed: activeThread.title,
@@ -5746,6 +5775,7 @@ function ChatViewContent(props: ChatViewProps) {
             role: "user",
             text: outgoingImplementationPrompt,
             attachments: [],
+            fileMentions: [],
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: nextThreadTitle,

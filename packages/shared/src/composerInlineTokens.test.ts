@@ -1,6 +1,36 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  decodeCanonicalComposerFileLinkPath,
+  isCanonicalComposerFileLink,
+} from "./composerInlineTokens.ts";
+
+describe("isCanonicalComposerFileLink", () => {
+  it.each([
+    ["data", "/custom/mount/data"],
+    ["project", "~/Sites/project"],
+    ["shared", "../shared"],
+    ["file.ts", "C:%5CUsers%5Cme%5Cfile.ts"],
+    ["my file.txt", "/tmp/my%20file.txt"],
+  ])("accepts %s for %s", (label, path) => {
+    expect(isCanonicalComposerFileLink(label, path)).toBe(true);
+  });
+
+  it.each([
+    ["other", "/custom/mount/data"],
+    ["docs", "https://example.com/docs"],
+    ["", ""],
+  ])("rejects %s for %s", (label, path) => {
+    expect(isCanonicalComposerFileLink(label, path)).toBe(false);
+  });
+
+  it("returns the decoded path", () => {
+    expect(decodeCanonicalComposerFileLinkPath("my file.txt", "/tmp/my%20file.txt")).toBe(
+      "/tmp/my file.txt",
+    );
+  });
+});
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {

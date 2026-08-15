@@ -1,4 +1,4 @@
-import { type ThreadId } from "@t3tools/contracts";
+import { type ExplicitFileMention, type ThreadId } from "@t3tools/contracts";
 
 import { extractTrailingElementContexts, type ParsedElementContextEntry } from "./elementContext";
 
@@ -218,6 +218,46 @@ export function appendTerminalContextsToPrompt(
     return trimmedPrompt;
   }
   return trimmedPrompt.length > 0 ? `${trimmedPrompt}\n\n${contextBlock}` : contextBlock;
+}
+
+export function appendTerminalContextsToPromptWithFileMentions(
+  prompt: string,
+  contexts: ReadonlyArray<TerminalContextSelection>,
+  fileMentions: ReadonlyArray<ExplicitFileMention>,
+): { readonly text: string; readonly fileMentions: ExplicitFileMention[] } {
+  const offsets = Array.from<number>({ length: prompt.length + 1 });
+  let nextContextIndex = 0;
+  let materialized = "";
+  for (let index = 0; index < prompt.length; index += 1) {
+    offsets[index] = materialized.length;
+    const char = prompt[index];
+    if (char !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
+      materialized += char;
+      continue;
+    }
+    const context = contexts[nextContextIndex] ?? null;
+    nextContextIndex += 1;
+    if (context) materialized += formatInlineTerminalContextLabel(context);
+  }
+  offsets[prompt.length] = materialized.length;
+
+  const trimmed = materialized.trim();
+  const leadingTrim = materialized.length - materialized.trimStart().length;
+  const mappedMentions = fileMentions.flatMap((mention) => {
+    const start = (offsets[mention.start] ?? 0) - leadingTrim;
+    const end = (offsets[mention.end] ?? 0) - leadingTrim;
+    return start >= 0 && end <= trimmed.length ? [{ ...mention, start, end }] : [];
+  });
+  const contextBlock = buildTerminalContextBlock(contexts);
+  return {
+    text:
+      contextBlock.length === 0
+        ? trimmed
+        : trimmed.length > 0
+          ? `${trimmed}\n\n${contextBlock}`
+          : contextBlock,
+    fileMentions: mappedMentions,
+  };
 }
 
 export function extractTrailingTerminalContexts(prompt: string): ExtractedTerminalContexts {

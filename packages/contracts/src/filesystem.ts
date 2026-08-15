@@ -1,17 +1,26 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const FILESYSTEM_PATH_MAX_LENGTH = 512;
+export const FILESYSTEM_BROWSE_MAX_LIMIT = 200;
+
+export const FilesystemBrowseKind = Schema.Literals(["file", "directory"]);
+export type FilesystemBrowseKind = typeof FilesystemBrowseKind.Type;
 
 export const FilesystemBrowseInput = Schema.Struct({
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
+  kinds: Schema.optionalKey(Schema.Array(FilesystemBrowseKind)),
+  limit: Schema.optionalKey(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(FILESYSTEM_BROWSE_MAX_LIMIT)),
+  ),
 });
 export type FilesystemBrowseInput = typeof FilesystemBrowseInput.Type;
 
 export const FilesystemBrowseEntry = Schema.Struct({
   name: TrimmedNonEmptyString,
   fullPath: TrimmedNonEmptyString,
+  kind: Schema.optionalKey(FilesystemBrowseKind),
 });
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 

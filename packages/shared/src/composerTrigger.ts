@@ -23,7 +23,7 @@ function composerFileLinkBasename(path: string): string {
 }
 
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+  return label.replace(/[\\[\]*_~`<>&|]/g, "\\$&");
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
@@ -32,6 +32,7 @@ function encodeMarkdownLinkDestination(path: string): string {
     .replaceAll(")", "%29")
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
+    .replaceAll("&", "%26")
     .replaceAll("\\", "%5C");
 }
 

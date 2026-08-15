@@ -1,11 +1,108 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  preserveWindowsMarkdownFileHref,
+  resolveExplicitFileMentionMeta,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
+
+describe("resolveExplicitFileMentionMeta", () => {
+  it("recognizes absolute extensionless paths outside conventional roots", () => {
+    expect(resolveExplicitFileMentionMeta("/custom/mount/data")).toMatchObject({
+      filePath: "/custom/mount/data",
+      openTargetPath: "/custom/mount/data",
+      basename: "data",
+    });
+  });
+
+  it("resolves relative canonical paths against the cwd", () => {
+    expect(resolveExplicitFileMentionMeta("../shared", "/repo/app")).toMatchObject({
+      targetPath: "/repo/shared",
+      openTargetPath: "/repo/shared",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("keeps unresolved home paths displayable but inert", () => {
+    expect(resolveExplicitFileMentionMeta("~/project", "/workspace/repo")).toMatchObject({
+      targetPath: "~/project",
+      openTargetPath: null,
+      displayPath: "~/project",
+      basename: "project",
+    });
+  });
+
+  it("resolves home paths for projects under the root user's home", () => {
+    expect(resolveExplicitFileMentionMeta("~/project", "/root/workspace")).toMatchObject({
+      targetPath: "/root/project",
+      openTargetPath: "/root/project",
+    });
+  });
+
+  it("does not interpret numeric filename suffixes as source positions", () => {
+    const meta = resolveExplicitFileMentionMeta("/tmp/report:12");
+    expect(meta).toMatchObject({
+      filePath: "/tmp/report:12",
+      openTargetPath: "/tmp/report:12",
+      basename: "report:12",
+    });
+    expect(meta?.line).toBeUndefined();
+  });
+
+  it("preserves numeric suffixes on relative filenames", () => {
+    const meta = resolveExplicitFileMentionMeta("report:12", "/repo");
+    expect(meta).toMatchObject({
+      filePath: "/repo/report:12",
+      openTargetPath: "/repo/report:12",
+      basename: "report:12",
+    });
+    expect(meta?.line).toBeUndefined();
+  });
+
+  it("resolves a canonical path under a scoped directory against the cwd", () => {
+    expect(resolveExplicitFileMentionMeta("@scope/package.json", "/repo")).toMatchObject({
+      targetPath: "/repo/@scope/package.json",
+      openTargetPath: "/repo/@scope/package.json",
+      basename: "package.json",
+    });
+  });
+
+  it("still resolves an ordinary relative path against the cwd", () => {
+    expect(resolveExplicitFileMentionMeta("src/index.ts", "/repo")).toMatchObject({
+      targetPath: "/repo/src/index.ts",
+      openTargetPath: "/repo/src/index.ts",
+    });
+  });
+
+  it("normalizes absolute paths before workspace containment", () => {
+    expect(resolveExplicitFileMentionMeta("/repo/../outside/page.html", "/repo")).toMatchObject({
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("uses platform-appropriate casing for workspace containment", () => {
+    expect(resolveExplicitFileMentionMeta("/Repo/Page.ts", "/repo")).toMatchObject({
+      workspaceRelativePath: null,
+    });
+    expect(resolveExplicitFileMentionMeta("C:/Repo/Page.ts", "c:/repo")).toMatchObject({
+      workspaceRelativePath: "Page.ts",
+    });
+  });
+});
+
+describe("preserveWindowsMarkdownFileHref", () => {
+  it("preserves only Windows drive path destinations", () => {
+    expect(preserveWindowsMarkdownFileHref("C:%5CUsers%5Cme%5Cfile.ts")).toBe(
+      "C:%5CUsers%5Cme%5Cfile.ts",
+    );
+    expect(preserveWindowsMarkdownFileHref("C:/Users/me/file.ts")).toBe("C:/Users/me/file.ts");
+    expect(preserveWindowsMarkdownFileHref("custom:thing")).toBeNull();
+    expect(preserveWindowsMarkdownFileHref("https://example.com")).toBeNull();
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {

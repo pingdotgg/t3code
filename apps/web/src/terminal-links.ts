@@ -119,6 +119,10 @@ function joinPath(base: string, next: string, separator: "/" | "\\"): string {
 }
 
 function inferHomeFromCwd(cwd: string): string | undefined {
+  if (cwd === "/root" || cwd.startsWith("/root/")) {
+    return "/root";
+  }
+
   const posixUser = cwd.match(/^\/Users\/([^/]+)/);
   if (posixUser?.[1]) {
     return `/Users/${posixUser[1]}`;
@@ -266,8 +270,15 @@ export function isTerminalLinkActivation(
     : event.ctrlKey && !event.metaKey;
 }
 
-export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
-  const { path, line, column } = splitPathAndPosition(rawPath);
+export function resolvePathLinkTarget(
+  rawPath: string,
+  cwd: string,
+  options: { readonly parsePosition?: boolean } = {},
+): string {
+  const { path, line, column } =
+    options.parsePosition === false
+      ? { path: rawPath, line: undefined, column: undefined }
+      : splitPathAndPosition(rawPath);
 
   let resolvedPath = path;
   if (path.startsWith("~/")) {

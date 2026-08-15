@@ -1,6 +1,7 @@
 import {
   COMPOSER_MENTION_DRAG_TYPE,
-  composerMentionFromTreePath,
+  COMPOSER_MENTION_PROVENANCE_DRAG_TYPE,
+  composerMentionProvenanceFromTreePaths,
 } from "~/components/chat/composerMentionDrag";
 
 interface FileTreeDragTransfer {
@@ -73,14 +74,13 @@ export function createFileTreeDragMentionController(
       // Same rule the tree applies to the drag itself: dragging a row that is
       // part of the current selection drags the whole selection.
       const dragged = selection.includes(itemPath) ? selection : [itemPath];
-      const mentions = dragged
-        .map((path) => composerMentionFromTreePath(path))
-        .filter((mention): mention is string => mention !== null);
-      if (mentions.length === 0) {
+      const payload = composerMentionProvenanceFromTreePaths(dragged);
+      if (payload === null) {
         return;
       }
       draggedPaths = dragged;
-      event.dataTransfer.setData(COMPOSER_MENTION_DRAG_TYPE, mentions.join(" "));
+      event.dataTransfer.setData(COMPOSER_MENTION_DRAG_TYPE, payload.text);
+      event.dataTransfer.setData(COMPOSER_MENTION_PROVENANCE_DRAG_TYPE, JSON.stringify(payload));
     },
     handleDragEnd() {
       if (draggedPaths.length === 0) {

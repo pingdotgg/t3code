@@ -1,5 +1,6 @@
 import {
   CheckpointRef,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -2022,10 +2023,15 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     // turn's pending_message_id.
     yield* sql`
       INSERT INTO projection_thread_messages (
-        message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        message_id, thread_id, turn_id, role, text, file_mentions_json, is_streaming,
+        created_at, updated_at
       )
-      VALUES ('user-msg-straggler', 'thread-w', NULL, 'user', 'while you are at it',
-        0, '2026-03-01T00:03:30.000Z', '2026-03-01T00:03:30.000Z')
+      VALUES (
+        'user-msg-straggler', 'thread-w', NULL, 'user',
+        '[AGENTS.md](/repo/AGENTS.md)',
+        '[{"version":1,"environmentId":"environment-1","path":"/repo/AGENTS.md","kind":"file","start":0,"end":28}]',
+        0, '2026-03-01T00:03:30.000Z', '2026-03-01T00:03:30.000Z'
+      )
     `;
     // Turnless activity in the same time range.
     yield* sql`
@@ -2062,6 +2068,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(snapshot.value.thread.messages.length, 9);
         assert.equal(snapshot.value.thread.activities.length, 6);
         assert.equal(snapshot.value.snapshotSequence, 42);
+        assert.deepEqual(
+          snapshot.value.thread.messages.find((message) => message.id === "user-msg-straggler")
+            ?.fileMentions,
+          [
+            {
+              version: 1,
+              environmentId: EnvironmentId.make("environment-1"),
+              path: "/repo/AGENTS.md",
+              kind: "file",
+              start: 0,
+              end: 28,
+            },
+          ],
+        );
       }
     }),
   );

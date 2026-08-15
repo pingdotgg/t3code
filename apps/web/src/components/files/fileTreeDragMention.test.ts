@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
+import {
+  COMPOSER_MENTION_DRAG_TYPE,
+  COMPOSER_MENTION_PROVENANCE_DRAG_TYPE,
+} from "~/components/chat/composerMentionDrag";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention.ts";
 
 const makeTransfer = (plainText = "") => {
@@ -36,6 +39,9 @@ describe("createFileTreeDragMentionController", () => {
       composedPath: () => [rowNode("docs/architecture/")],
     });
     expect(transfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toBe("[architecture](docs/architecture)");
+    expect(JSON.parse(transfer.getData(COMPOSER_MENTION_PROVENANCE_DRAG_TYPE))).toMatchObject({
+      mentions: [{ path: "docs/architecture", kind: "directory" }],
+    });
   });
 
   it("does not tag drags of selected text from the panel chrome", () => {

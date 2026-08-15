@@ -31,6 +31,7 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import {
@@ -116,6 +117,9 @@ const readPersistedSnapshot = (baseDir: string) =>
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
+    yield* Effect.promise(() =>
+      NodeFS.promises.mkdir(NodePath.dirname(config.environmentIdPath), { recursive: true }),
+    );
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
@@ -138,6 +142,12 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         }),
       ),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(
+        ServerEnvironment.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provide(ServerConfig.layer(config)),
+        ),
+      ),
       Layer.provide(ServerConfig.layer(config)),
     );
 

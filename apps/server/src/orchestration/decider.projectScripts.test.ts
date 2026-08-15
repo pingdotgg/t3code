@@ -1,6 +1,7 @@
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -309,6 +310,16 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
             role: "user",
             text: "hello",
             attachments: [],
+            fileMentions: [
+              {
+                version: 1,
+                environmentId: EnvironmentId.make("environment-1"),
+                path: "/tmp/hello",
+                kind: "file",
+                start: 0,
+                end: 5,
+              },
+            ],
           },
           modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
             { id: "reasoningEffort", value: "high" },
@@ -325,6 +336,9 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       const events = Array.isArray(result) ? result : [result];
       expect(events).toHaveLength(2);
       expect(events[0]?.type).toBe("thread.message-sent");
+      expect(events[0]?.payload).toMatchObject({
+        fileMentions: [expect.objectContaining({ path: "/tmp/hello", kind: "file" })],
+      });
       const turnStartEvent = events[1];
       expect(turnStartEvent?.type).toBe("thread.turn-start-requested");
       expect(turnStartEvent?.causationEventId).toBe(events[0]?.eventId ?? null);

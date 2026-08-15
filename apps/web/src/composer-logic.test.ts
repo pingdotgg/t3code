@@ -134,6 +134,34 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("keeps a quoted path trigger active across spaces", () => {
+    const text = 'Please check @"/Users/chris/My Project/src';
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "path",
+      query: "/Users/chris/My Project/src",
+      rangeStart: "Please check ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps escaped quotes in an active quoted path query", () => {
+    const text = String.raw`Please check @"docs/My \"File`;
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "path",
+      query: 'docs/My "File',
+      rangeStart: "Please check ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("ends a quoted path query at a quote preceded by an even backslash run", () => {
+    const text = String.raw`Please check @"docs/My \\"`;
+
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
   it("detects trigger with true cursor even when regex-based mention detection would false-match", () => {
     // MENTION_TOKEN_REGEX can false-match plain text like "@in" as a mention.
     // The fix bypasses it by computing the expanded cursor from the Lexical node tree.

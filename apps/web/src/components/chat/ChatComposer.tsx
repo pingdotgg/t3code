@@ -1,6 +1,7 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  ExplicitFileMention,
   ModelSelection,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
@@ -15,10 +16,15 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_FILE_MENTIONS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  reconcileFileMentionsAfterEdit,
+  replaceTextRangeInFileMentions,
+} from "@t3tools/shared/fileMentions";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
@@ -43,6 +49,7 @@ import {
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 import {
+  type ComposerDraggedMention,
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
@@ -75,6 +82,12 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import {
+  canBrowseComposerFilesystemPath,
+  composerFilesystemSuggestionParentPath,
+  composerFilesystemSuggestionPath,
+  isComposerFilesystemPathQuery,
+} from "../../lib/composerFilesystemBrowse";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -104,6 +117,8 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
+import { useEnvironment } from "../../state/environments";
+import { useComposerFilesystemBrowse } from "../../state/queries";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 
@@ -471,6 +486,7 @@ export interface ChatComposerHandle {
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
     prompt: string;
+    fileMentions: ExplicitFileMention[];
     images: ComposerImageAttachment[];
     terminalContexts: TerminalContextDraft[];
     elementContexts: ElementContextDraft[];
@@ -673,6 +689,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
   const prompt = composerDraft.prompt;
+  const composerFileMentions = composerDraft.fileMentions;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
   const composerElementContexts = composerDraft.elementContexts;
@@ -681,6 +698,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const fileMentionsRef = useRef<ExplicitFileMention[]>(composerFileMentions);
+
+  const setPrompt = useCallback(
+    (nextPrompt: string, nextFileMentions?: ReadonlyArray<ExplicitFileMention>) => {
+      const mentions = nextFileMentions
+        ? [...nextFileMentions]
+        : reconcileFileMentionsAfterEdit(promptRef.current, nextPrompt, fileMentionsRef.current);
+      promptRef.current = nextPrompt;
+      fileMentionsRef.current = mentions;
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt, mentions);
+    },
+    [composerDraftTarget, promptRef, setComposerDraftPrompt],
+  );
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
@@ -1018,15 +1048,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
+  const environment = useEnvironment(environmentId);
+  const environmentPlatform = environment?.serverConfig?.environment.platform.os ?? "";
+  const isFilesystemPathTrigger =
+    isPathTrigger && isComposerFilesystemPathQuery(pathTriggerQuery, environmentPlatform);
+  const canBrowseFilesystemPath =
+    isFilesystemPathTrigger &&
+    canBrowseComposerFilesystemPath(pathTriggerQuery, gitCwd, environmentPlatform);
   const workspaceEntries = useComposerPathSearch({
     environmentId,
-    cwd: isPathTrigger ? gitCwd : null,
-    query: isPathTrigger ? pathTriggerQuery : null,
+    cwd: isPathTrigger && !isFilesystemPathTrigger ? gitCwd : null,
+    query: isPathTrigger && !isFilesystemPathTrigger ? pathTriggerQuery : null,
+  });
+  const filesystemEntries = useComposerFilesystemBrowse({
+    environmentId,
+    cwd: canBrowseFilesystemPath ? gitCwd : null,
+    query: canBrowseFilesystemPath ? pathTriggerQuery : null,
   });
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      if (isFilesystemPathTrigger) {
+        return filesystemEntries.entries.map((entry) => ({
+          id: `filesystem-path:${entry.kind ?? "directory"}:${entry.fullPath}`,
+          type: "path" as const,
+          path: composerFilesystemSuggestionPath(pathTriggerQuery, entry.name),
+          pathKind: entry.kind ?? "directory",
+          label: entry.name,
+          description: composerFilesystemSuggestionParentPath(pathTriggerQuery),
+        }));
+      }
       return workspaceEntries.entries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
         type: "path",
@@ -1099,7 +1151,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   }, [
     composerTrigger,
+    filesystemEntries.entries,
+    isFilesystemPathTrigger,
     planModeUiEnabled,
+    pathTriggerQuery,
     selectedProvider,
     selectedProviderStatus,
     workspaceEntries.entries,
@@ -1167,7 +1222,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const isComposerMenuLoading =
-    composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending;
+    composerTriggerKind === "path" &&
+    pathTriggerQuery.length > 0 &&
+    (isFilesystemPathTrigger ? filesystemEntries.isPending : workspaceEntries.isPending);
   const composerMenuEmptyState = useMemo(() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
@@ -1186,14 +1243,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         scheduleComposerFocus();
         return;
       }
-      promptRef.current = nextPrompt;
-      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      setPrompt(nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
       setComposerCursor(nextCursor);
       setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
       scheduleComposerFocus();
     },
-    [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
+    [promptRef, scheduleComposerFocus, setPrompt],
   );
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
@@ -1247,13 +1303,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Prompt helpers
   // ------------------------------------------------------------------
-  const setPrompt = useCallback(
-    (nextPrompt: string) => {
-      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-    },
-    [composerDraftTarget, setComposerDraftPrompt],
-  );
-
   const addComposerImage = useCallback(
     (image: ComposerImageAttachment) => {
       addComposerDraftImage(composerDraftTarget, image);
@@ -1282,7 +1331,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       if (contextIndex < 0) return;
       const removal = removeInlineTerminalContextPlaceholder(promptRef.current, contextIndex);
-      promptRef.current = removal.prompt;
       setPrompt(removal.prompt);
       removeComposerDraftTerminalContext(composerDraftTarget, contextId);
       const nextCursor = collapseExpandedComposerCursor(removal.prompt, removal.cursor);
@@ -1303,8 +1351,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   useEffect(() => {
     promptRef.current = prompt;
+    fileMentionsRef.current = composerFileMentions;
     setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
-  }, [prompt, promptRef]);
+  }, [composerFileMentions, prompt, promptRef]);
 
   useEffect(() => {
     composerImagesRef.current = composerImages;
@@ -1355,7 +1404,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
+      const wasPending = lastSyncedPendingInputRef.current !== null;
       lastSyncedPendingInputRef.current = null;
+      if (wasPending) {
+        promptRef.current = prompt;
+        fileMentionsRef.current = composerFileMentions;
+        const nextCursor = collapseExpandedComposerCursor(prompt, prompt.length);
+        setComposerCursor(nextCursor);
+        setComposerTrigger(
+          detectComposerTrigger(prompt, expandCollapsedComposerCursor(prompt, nextCursor)),
+        );
+        setComposerHighlightedItemId(null);
+      }
       return;
     }
 
@@ -1389,6 +1449,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
+    composerFileMentions,
+    prompt,
     promptRef,
   ]);
 
@@ -1542,7 +1604,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         return;
       }
-      promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
         setComposerDraftTerminalContexts(
@@ -1575,7 +1636,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       rangeStart: number,
       rangeEnd: number,
       replacement: string,
-      options?: { expectedText?: string; focusEditorAfterReplace?: boolean },
+      options?: {
+        expectedText?: string;
+        focusEditorAfterReplace?: boolean;
+        fileMention?: Pick<ExplicitFileMention, "environmentId" | "path" | "kind">;
+        fileMentions?: ReadonlyArray<ComposerDraggedMention>;
+      },
     ): boolean => {
       const currentText = promptRef.current;
       const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
@@ -1587,9 +1653,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return false;
       }
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
+      const nextFileMentions = replaceTextRangeInFileMentions(
+        fileMentionsRef.current,
+        safeStart,
+        safeEnd,
+        replacement.length,
+      );
+      if (options?.fileMention) {
+        const mentionSource = serializeComposerFileLink(options.fileMention.path);
+        nextFileMentions.push({
+          version: 1,
+          ...options.fileMention,
+          start: safeStart,
+          end: safeStart + mentionSource.length,
+        });
+      }
+      for (const mention of options?.fileMentions ?? []) {
+        if (
+          replacement.slice(mention.start, mention.end) !== serializeComposerFileLink(mention.path)
+        ) {
+          continue;
+        }
+        nextFileMentions.push({
+          version: 1,
+          environmentId,
+          path: mention.path,
+          kind: mention.kind,
+          start: safeStart + mention.start,
+          end: safeStart + mention.end,
+        });
+      }
+      nextFileMentions.sort((left, right) => left.start - right.start);
       const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
       const nextExpandedCursor = expandCollapsedComposerCursor(next.text, nextCursor);
-      promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
         onChangeActivePendingUserInputCustomAnswer(
@@ -1600,7 +1696,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           false,
         );
       } else {
-        setPrompt(next.text);
+        setPrompt(next.text, nextFileMentions);
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(detectComposerTrigger(next.text, nextExpandedCursor));
@@ -1614,6 +1710,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
+      environmentId,
       onChangeActivePendingUserInputCustomAnswer,
       promptRef,
       setPrompt,
@@ -1659,6 +1756,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
       if (item.type === "path") {
+        if (fileMentionsRef.current.length >= PROVIDER_SEND_TURN_MAX_FILE_MENTIONS) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to add file tag",
+            description: `Messages can include up to ${PROVIDER_SEND_TURN_MAX_FILE_MENTIONS} file tags.`,
+          });
+          return;
+        }
         const replacement = `${serializeComposerFileLink(item.path)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
@@ -1669,7 +1774,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           trigger.rangeStart,
           replacementRangeEnd,
           replacement,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            fileMention: {
+              environmentId,
+              path: item.path,
+              kind: item.pathKind,
+            },
+          },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -1960,8 +2072,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : entry.prompt;
       const promptChanged = nextPrompt !== currentPrompt;
       if (promptChanged) {
-        promptRef.current = nextPrompt;
-        setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+        setPrompt(nextPrompt);
         setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
         setComposerTrigger(null);
       }
@@ -2417,7 +2528,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const insertComposerTextAtEnd = (
     text: string,
-    options?: { ensureLeadingBoundary?: boolean },
+    options?: {
+      ensureLeadingBoundary?: boolean;
+      fileMentions?: ReadonlyArray<ComposerDraggedMention>;
+    },
   ): boolean => {
     if (
       text.length === 0 ||
@@ -2431,10 +2545,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const prompt = promptRef.current;
     const needsLeadingSpace =
       (options?.ensureLeadingBoundary ?? false) && prompt.length > 0 && !/\s$/.test(prompt);
+    const leadingText = needsLeadingSpace ? " " : "";
+    const replacementOptions = options?.fileMentions
+      ? {
+          fileMentions: options.fileMentions.map((mention) => ({
+            ...mention,
+            start: mention.start + leadingText.length,
+            end: mention.end + leadingText.length,
+          })),
+        }
+      : undefined;
     return applyPromptReplacement(
       prompt.length,
       prompt.length,
-      needsLeadingSpace ? ` ${text}` : text,
+      `${leadingText}${text}`,
+      replacementOptions,
     );
   };
 
@@ -2442,7 +2567,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // editor never sees the drop; the load-bearing rules (native stop, "move"
   // effect, no eager focus) live in makeComposerMentionDragHandlers.
   const composerMentionDragHandlers = makeComposerMentionDragHandlers({
-    insertMentionAtEnd: (text) => insertComposerTextAtEnd(text, { ensureLeadingBoundary: true }),
+    insertMentionAtEnd: (text, fileMentions) => {
+      if (
+        fileMentionsRef.current.length + fileMentions.length >
+        PROVIDER_SEND_TURN_MAX_FILE_MENTIONS
+      ) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add file tags",
+          description: `Messages can include up to ${PROVIDER_SEND_TURN_MAX_FILE_MENTIONS} file tags.`,
+        });
+        return true;
+      }
+      return insertComposerTextAtEnd(text, { ensureLeadingBoundary: true, fileMentions });
+    },
     setDragActive: setIsDragOverComposer,
     onInsertRejected: () => {
       toastManager.add({
@@ -2594,7 +2732,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           insertion.contextIndex,
         );
         if (!inserted) return;
-        promptRef.current = insertion.prompt;
+        setPrompt(insertion.prompt);
         setComposerCursor(nextCollapsedCursor);
         setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
         window.requestAnimationFrame(() => {
@@ -2603,6 +2741,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       getSendContext: () => ({
         prompt: promptRef.current,
+        fileMentions: [...fileMentionsRef.current],
         images: composerImagesRef.current,
         terminalContexts: composerTerminalContextsRef.current,
         elementContexts: composerElementContextsRef.current,
@@ -2623,6 +2762,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerCursor,
       composerTerminalContexts,
       insertComposerDraftTerminalContext,
+      setPrompt,
       promptRef,
       composerImagesRef,
       composerTerminalContextsRef,

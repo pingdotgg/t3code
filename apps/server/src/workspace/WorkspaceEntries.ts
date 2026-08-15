@@ -10,6 +10,7 @@ import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
 
 import type {
+  FilesystemBrowseEntry,
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   ProjectListEntriesInput,
@@ -192,8 +193,10 @@ export const make = Effect.gen(function* () {
     function* (input) {
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
-      const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
-      const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
+      const isDotPrefix = /(^|[\\/])\.$/.test(input.partialPath);
+      const parentPath =
+        endsWithSeparator || isDotPrefix ? resolvedInputPath : path.dirname(resolvedInputPath);
+      const prefix = isDotPrefix ? "." : endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
       const dirents = yield* Effect.tryPromise({
         try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
@@ -216,23 +219,71 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
-      for (const dirent of dirents) {
-        if (
-          dirent.isDirectory() &&
+      const requestedKinds = new Set(input.kinds ?? ["directory"]);
+      const candidateDirents = dirents.filter(
+        (dirent) =>
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
-        ) {
+          (showHidden || !dirent.name.startsWith(".")),
+      );
+      const symlinkKinds = yield* Effect.promise(async () => {
+        const resolved = await Promise.all(
+          candidateDirents
+            .filter((dirent) => dirent.isSymbolicLink())
+            .map(async (dirent) => {
+              try {
+                const stats = await NodeFSP.stat(path.join(parentPath, dirent.name));
+                const kind = stats.isDirectory() ? "directory" : stats.isFile() ? "file" : null;
+                return [dirent.name, kind] as const;
+              } catch {
+                return [dirent.name, null] as const;
+              }
+            }),
+        );
+        return new Map(resolved);
+      });
+      const entries: FilesystemBrowseEntry[] = [];
+      for (const dirent of candidateDirents) {
+        const kind = dirent.isDirectory()
+          ? "directory"
+          : dirent.isFile()
+            ? "file"
+            : (symlinkKinds.get(dirent.name) ?? null);
+        if (kind !== null && requestedKinds.has(kind)) {
           entries.push({
             name: dirent.name,
             fullPath: path.join(parentPath, dirent.name),
+            kind,
           });
         }
       }
 
+      const byName = (left: FilesystemBrowseEntry, right: FilesystemBrowseEntry) =>
+        left.name.localeCompare(right.name);
+      const byBrowseOrder = (left: FilesystemBrowseEntry, right: FilesystemBrowseEntry) => {
+        if (input.limit !== undefined && prefix.length === 0) {
+          const hiddenOrder =
+            Number(left.name.startsWith(".")) - Number(right.name.startsWith("."));
+          if (hiddenOrder !== 0) return hiddenOrder;
+        }
+        return byName(left, right);
+      };
+      const directories = entries
+        .filter((entry) => entry.kind === "directory")
+        .toSorted(byBrowseOrder);
+      const files = entries.filter((entry) => entry.kind !== "directory").toSorted(byBrowseOrder);
+
+      // Truncating the directories-first order would hide every file behind a
+      // large enough set of directories, so each kind keeps a share of the limit.
+      const limit = input.limit ?? directories.length + files.length;
+      const fileCount = Math.min(files.length, Math.max(0, limit - directories.length));
+      const reservedFileCount =
+        files.length > 0 && limit > 0 ? Math.min(files.length, Math.max(1, limit >> 1)) : 0;
+      const keptFiles = files.slice(0, Math.max(fileCount, reservedFileCount));
+      const keptDirectories = directories.slice(0, limit - keptFiles.length);
+
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: [...keptDirectories, ...keptFiles],
       };
     },
   );

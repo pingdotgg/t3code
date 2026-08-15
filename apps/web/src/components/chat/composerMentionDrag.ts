@@ -6,6 +6,15 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
  * OS file drags and plain text selections.
  */
 export const COMPOSER_MENTION_DRAG_TYPE = "application/x-t3code-composer-mention";
+export const COMPOSER_MENTION_PROVENANCE_DRAG_TYPE =
+  "application/x-t3code-composer-mention-provenance";
+
+export interface ComposerDraggedMention {
+  readonly path: string;
+  readonly kind: "file" | "directory";
+  readonly start: number;
+  readonly end: number;
+}
 
 export function composerMentionFromTreePath(treePath: string): string | null {
   const relativePath = treePath.replace(/\/+$/, "");
@@ -13,6 +22,27 @@ export function composerMentionFromTreePath(treePath: string): string | null {
     return null;
   }
   return serializeComposerFileLink(relativePath);
+}
+
+export function composerMentionProvenanceFromTreePaths(
+  treePaths: ReadonlyArray<string>,
+): { readonly text: string; readonly mentions: ReadonlyArray<ComposerDraggedMention> } | null {
+  const mentions: ComposerDraggedMention[] = [];
+  let text = "";
+  for (const treePath of treePaths) {
+    const source = composerMentionFromTreePath(treePath);
+    if (source === null) continue;
+    if (text.length > 0) text += " ";
+    const start = text.length;
+    text += source;
+    mentions.push({
+      path: treePath.replace(/\/+$/, ""),
+      kind: treePath.endsWith("/") ? "directory" : "file",
+      start,
+      end: text.length,
+    });
+  }
+  return mentions.length > 0 ? { text, mentions } : null;
 }
 
 export function dataTransferHasComposerMention(types: ReadonlyArray<string>): boolean {
@@ -40,7 +70,7 @@ export interface ComposerMentionDragEvent {
  * the next frame, after the editor has caught up.
  */
 export interface ComposerMentionDropHost {
-  insertMentionAtEnd(text: string): boolean;
+  insertMentionAtEnd(text: string, mentions: ReadonlyArray<ComposerDraggedMention>): boolean;
   setDragActive(active: boolean): void;
   onInsertRejected(): void;
 }
@@ -90,7 +120,30 @@ export function makeComposerMentionDragHandlers(
       if (mention.length === 0) {
         return;
       }
-      if (!host.insertMentionAtEnd(`${mention} `)) {
+      let mentions: ReadonlyArray<ComposerDraggedMention> = [];
+      try {
+        const parsed = JSON.parse(
+          event.dataTransfer.getData(COMPOSER_MENTION_PROVENANCE_DRAG_TYPE),
+        ) as { readonly text?: unknown; readonly mentions?: unknown };
+        if (parsed.text === mention && Array.isArray(parsed.mentions)) {
+          mentions = parsed.mentions.filter(
+            (item): item is ComposerDraggedMention =>
+              typeof item === "object" &&
+              item !== null &&
+              "path" in item &&
+              typeof item.path === "string" &&
+              "kind" in item &&
+              (item.kind === "file" || item.kind === "directory") &&
+              "start" in item &&
+              Number.isInteger(item.start) &&
+              "end" in item &&
+              Number.isInteger(item.end),
+          );
+        }
+      } catch {
+        // Older clients carry only the display text; it remains a normal link.
+      }
+      if (!host.insertMentionAtEnd(`${mention} `, mentions)) {
         host.onInsertRejected();
       }
     },

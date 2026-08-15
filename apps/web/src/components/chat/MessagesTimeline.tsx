@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type ExplicitFileMention,
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -1029,6 +1030,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
         <CollapsibleUserMessageBody
           text={elementContextState.promptText}
+          fileMentions={row.message.fileMentions?.filter(
+            (mention) => mention.end <= elementContextState.promptText.length,
+          )}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
@@ -1597,6 +1601,7 @@ function shouldCollapseUserMessage(text: string): boolean {
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
+  fileMentions: ReadonlyArray<ExplicitFileMention> | undefined;
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
@@ -1627,6 +1632,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
         >
           <UserMessageBody
             text={props.text}
+            fileMentions={props.fileMentions}
             terminalContexts={props.terminalContexts}
             skills={props.skills}
             markdownCwd={props.markdownCwd}
@@ -1665,12 +1671,19 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
+  fileMentions: ReadonlyArray<ExplicitFileMention> | undefined;
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
-  const renderInlineMarkdownSegment = (text: string, key: string) => {
+  const fileMentionsForRange = (start: number, end: number) =>
+    props.fileMentions?.flatMap((mention) =>
+      mention.start >= start && mention.end <= end
+        ? [{ ...mention, start: mention.start - start, end: mention.end - start }]
+        : [],
+    );
+  const renderInlineMarkdownSegment = (text: string, key: string, sourceStart: number) => {
     const leadingWhitespace = /^\s+/.exec(text)?.[0] ?? "";
     const textWithoutLeadingWhitespace = text.slice(leadingWhitespace.length);
     const trailingWhitespace = /\s+$/.exec(textWithoutLeadingWhitespace)?.[0] ?? "";
@@ -1686,6 +1699,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           <ChatMarkdown
             text={content}
             cwd={props.markdownCwd}
+            fileMentions={fileMentionsForRange(
+              sourceStart + leadingWhitespace.length,
+              sourceStart + leadingWhitespace.length + content.length,
+            )}
             threadRef={ctx.threadRef ?? undefined}
             skills={props.skills}
             className="text-message-foreground"
@@ -1701,24 +1718,36 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   if (reviewCommentSegments.some((segment) => segment.kind === "review-comment")) {
     return (
       <div className="space-y-3 text-message-foreground text-sm leading-relaxed">
-        {reviewCommentSegments.map((segment) =>
-          segment.kind === "text" ? (
-            segment.text.trim().length > 0 ? (
-              <div key={segment.id} className="wrap-break-word">
-                <ChatMarkdown
-                  text={segment.text.trim()}
-                  cwd={props.markdownCwd}
-                  threadRef={ctx.threadRef ?? undefined}
-                  skills={props.skills}
-                  className="text-message-foreground"
-                  lineBreaks
-                />
-              </div>
-            ) : null
-          ) : (
-            <UserMessageReviewCommentCard key={segment.comment.id} comment={segment.comment} />
-          ),
-        )}
+        {reviewCommentSegments.map((segment) => {
+          if (segment.kind !== "text") {
+            return (
+              <UserMessageReviewCommentCard key={segment.comment.id} comment={segment.comment} />
+            );
+          }
+          const sourceStart = Number(segment.id.slice(segment.id.lastIndexOf(":") + 1));
+          const leadingTrim = segment.text.length - segment.text.trimStart().length;
+          const content = segment.text.trim();
+          return content.length > 0 ? (
+            <div key={segment.id} className="wrap-break-word">
+              <ChatMarkdown
+                text={content}
+                cwd={props.markdownCwd}
+                fileMentions={
+                  !Number.isFinite(sourceStart)
+                    ? []
+                    : fileMentionsForRange(
+                        sourceStart + leadingTrim,
+                        sourceStart + leadingTrim + content.length,
+                      )
+                }
+                threadRef={ctx.threadRef ?? undefined}
+                skills={props.skills}
+                className="text-message-foreground"
+                lineBreaks
+              />
+            </div>
+          ) : null;
+        })}
       </div>
     );
   }
@@ -1746,6 +1775,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             renderInlineMarkdownSegment(
               props.text.slice(cursor, matchIndex),
               `user-terminal-context-inline-before:${context.header}:${cursor}`,
+              cursor,
             ),
           );
         }
@@ -1764,6 +1794,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             renderInlineMarkdownSegment(
               props.text.slice(cursor),
               `user-message-terminal-context-inline-rest:${cursor}`,
+              cursor,
             ),
           );
         }
@@ -1796,6 +1827,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           key="user-message-terminal-context-inline-text"
           text={props.text}
           cwd={props.markdownCwd}
+          fileMentions={props.fileMentions}
           threadRef={ctx.threadRef ?? undefined}
           skills={props.skills}
           className="text-message-foreground"
@@ -1821,6 +1853,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     <ChatMarkdown
       text={props.text}
       cwd={props.markdownCwd}
+      fileMentions={props.fileMentions}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
       className="text-message-foreground"

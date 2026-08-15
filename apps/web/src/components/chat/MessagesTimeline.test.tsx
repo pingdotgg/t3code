@@ -1,4 +1,5 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -226,6 +227,35 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("uses legacy file-link discovery only when provenance is absent", () => {
+    const text = serializeComposerFileLink("src/index.ts");
+    const legacyMessage = buildUserTimelineEntry(text);
+    const explicitBase = buildUserTimelineEntry(text);
+    const explicitMessage = {
+      ...explicitBase,
+      id: "entry-2",
+      message: {
+        ...explicitBase.message,
+        id: MessageId.make("message-2"),
+        fileMentions: [],
+      },
+    };
+
+    const legacyMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} markdownCwd="/repo" timelineEntries={[legacyMessage]} />,
+    );
+    const explicitMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        markdownCwd="/repo"
+        timelineEntries={[explicitMessage]}
+      />,
+    );
+
+    expect(legacyMarkup).toContain("chat-markdown-file-link");
+    expect(explicitMarkup).not.toContain("chat-markdown-file-link");
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
