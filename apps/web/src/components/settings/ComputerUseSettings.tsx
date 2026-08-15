@@ -31,8 +31,17 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 
+/** Shown when the desktop host lacks the Computer Use permissions bridge API. */
+const BRIDGE_UNSUPPORTED_MESSAGE = "Update T3 Code to check Computer Use permissions";
+
 function isDesktopHost(): boolean {
   return typeof window !== "undefined" && window.desktopBridge !== undefined;
+}
+
+function isBridgeSupported(): boolean {
+  return (
+    typeof window !== "undefined" && window.desktopBridge?.getComputerUsePermissions !== undefined
+  );
 }
 
 function RowTitle({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
@@ -106,7 +115,7 @@ export function ComputerUseSettings() {
     const bridge = window.desktopBridge;
     if (!bridge?.getComputerUsePermissions) {
       setPermState(null);
-      setPermError("Update T3 Code to check Computer Use permissions");
+      setPermError(BRIDGE_UNSUPPORTED_MESSAGE);
       return;
     }
     try {
@@ -120,9 +129,9 @@ export function ComputerUseSettings() {
 
   useEffect(() => {
     if (!onDesktop) return;
-    const bridgeSupported = window.desktopBridge?.getComputerUsePermissions !== undefined;
+    const bridgeSupported = isBridgeSupported();
     if (!bridgeSupported) {
-      setPermError("Update T3 Code to check Computer Use permissions");
+      setPermError(BRIDGE_UNSUPPORTED_MESSAGE);
       return;
     }
     void refreshPermissions();
@@ -144,6 +153,7 @@ export function ComputerUseSettings() {
 
   const chromeStatus = permState?.chromeExtension;
   const needsMacPrivacy = permState?.platform === "darwin";
+  const bridgeSupported = onDesktop && isBridgeSupported();
 
   return (
     <SettingsPageContainer>
@@ -249,7 +259,7 @@ export function ComputerUseSettings() {
               </ExtensionStatus>
             ) : onDesktop ? (
               <ExtensionStatus tone="muted">
-                {permError?.startsWith("Update T3 Code") ? permError : "Checking extension…"}
+                {bridgeSupported ? "Checking extension…" : BRIDGE_UNSUPPORTED_MESSAGE}
               </ExtensionStatus>
             ) : null
           }

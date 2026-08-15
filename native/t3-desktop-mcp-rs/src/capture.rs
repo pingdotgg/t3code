@@ -2,6 +2,11 @@
 //!
 //! `xcap` already abstracts Windows' DXGI/GDI path and Linux's X11 path, so the
 //! only platform-aware part left is which window belongs to which pid.
+//!
+//! On Linux hybrid sessions (Wayland + X11), we never mutate `WAYLAND_DISPLAY`:
+//! that is UB with concurrent threads. Window enumeration already goes through
+//! X11/`xcb` when `DISPLAY` is set. Display capture uses `xcap` first; if its
+//! Wayland path fails, we fall back to `grim` without touching the environment.
 
 use image::{ImageEncoder, RgbaImage, codecs::png::PngEncoder, imageops::FilterType};
 use xcap::{Monitor, Window};
@@ -14,7 +19,6 @@ use crate::platform::{DesktopError, Result};
 /// versions. Those are ordinary conditions for us — a headless box, an old
 /// Wayland — so they become tool errors instead of killing the process.
 fn guarded<T>(what: &str, call: impl FnOnce() -> Result<T>) -> Result<T> {
-    let _display = PreferX11::engage();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)) {
         Ok(result) => result,
         Err(_) => Err(DesktopError::new(format!(
@@ -22,40 +26,6 @@ fn guarded<T>(what: &str, call: impl FnOnce() -> Result<T>) -> Result<T> {
              vary by compositor. Use get_app_state to read the UI instead; it does not need a \
              screen capture"
         ))),
-    }
-}
-
-/// Steer `xcap` to X11 for the duration of a capture when both display servers
-/// are reachable.
-///
-/// `xcap` picks Wayland whenever `WAYLAND_DISPLAY` is set, and its Wayland path
-/// panics outright on compositors whose protocol version it does not know —
-/// WSLg among them — while the X11 path works fine there through XWayland.
-/// Restores the variable afterwards so nothing else sees the change.
-/// Public so window enumeration used by activate/raise can share the same X11
-/// preference as screenshots (WSLg / hybrid sessions).
-pub(crate) struct PreferX11(Option<std::ffi::OsString>);
-
-impl PreferX11 {
-    pub(crate) fn engage() -> Option<Self> {
-        if !cfg!(target_os = "linux") {
-            return None;
-        }
-        let wayland = std::env::var_os("WAYLAND_DISPLAY")?;
-        // Without an X server there is nothing to fall back to.
-        std::env::var_os("DISPLAY")?;
-        // SAFETY: capture runs on the single request-dispatch thread, and the
-        // value is restored before the guard is dropped.
-        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
-        Some(Self(Some(wayland)))
-    }
-}
-
-impl Drop for PreferX11 {
-    fn drop(&mut self) {
-        if let Some(value) = self.0.take() {
-            unsafe { std::env::set_var("WAYLAND_DISPLAY", value) };
-        }
     }
 }
 
@@ -119,6 +89,36 @@ fn grim_capture(output: Option<&str>) -> Result<Vec<u8>> {
     Ok(result.stdout)
 }
 
+/// How many displays `grim_capture(None)` may stand in for when xcap fails.
+///
+/// All-outputs grim is a single image — only display index 0 is valid unless
+/// xcap can still enumerate monitors (in which case the index must be in range,
+/// and we only use grim for index 0 to avoid returning the wrong screen).
+fn wayland_grim_index_ok(index: usize) -> Result<()> {
+    let monitor_len = std::panic::catch_unwind(|| Monitor::all().map(|m| m.len()).unwrap_or(0))
+        .unwrap_or(0);
+    if monitor_len == 0 {
+        // Synthetic single Wayland output advertised by `list_displays`.
+        if index != 0 {
+            return Err(DesktopError::new(format!(
+                "display {index} does not exist — call list_displays (1 attached via wlr-screencopy)"
+            )));
+        }
+        return Ok(());
+    }
+    if index >= monitor_len {
+        return Err(DesktopError::new(format!(
+            "display {index} does not exist — call list_displays ({monitor_len} attached)"
+        )));
+    }
+    if index != 0 {
+        return Err(DesktopError::new(format!(
+            "display {index} capture failed on Wayland — grim all-outputs fallback only covers display 0"
+        )));
+    }
+    Ok(())
+}
+
 pub fn list_displays() -> Result<String> {
     match guarded("display enumeration", list_displays_inner) {
         Ok(text) => Ok(text),
@@ -166,6 +166,7 @@ pub fn capture_display(index: usize, max_width: u32) -> Result<Vec<u8>> {
             if error.0.contains("does not exist") {
                 return Err(error);
             }
+            wayland_grim_index_ok(index)?;
             let png = grim_capture(None).map_err(|_| error)?;
             // Re-encode so max_width applies to this path too.
             let image = image::load_from_memory(&png)
