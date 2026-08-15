@@ -933,6 +933,22 @@ func toolActivateApp(_ args: [String: Any]) -> String {
 
 // MARK: - Screen capture
 
+/// Synchronizes capture results so a timed-out waiter never races a late write.
+private final class CaptureBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Data?
+    func set(_ data: Data?) {
+        lock.lock()
+        value = data
+        lock.unlock()
+    }
+    func get() -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 /// Capture a window as PNG. Runs the async ScreenCaptureKit call on a background
 /// executor and blocks the JSON-RPC loop until it lands, with a timeout so a
 /// wedged capture can never hang the server.
