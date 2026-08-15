@@ -485,7 +485,7 @@ export const make = Effect.gen(function* () {
       initialConnections.keys(),
       (connectionId) =>
         acquireConnectionSupervisor(connectionId).pipe(
-          Effect.catchTag("ConnectionNotRegisteredError", () => Effect.void),
+          Effect.catchTags({ ConnectionNotRegisteredError: () => Effect.void }),
         ),
       {
         concurrency: "unbounded",
@@ -853,7 +853,7 @@ export const make = Effect.gen(function* () {
         relayConnectionIds,
         (connectionId) =>
           removeConnection(connectionId).pipe(
-            Effect.catchTag("ConnectionNotRegisteredError", () => Effect.void),
+            Effect.catchTags({ ConnectionNotRegisteredError: () => Effect.void }),
           ),
         {
           concurrency: "unbounded",
@@ -873,7 +873,7 @@ export const make = Effect.gen(function* () {
           if (matching.length === 0) {
             yield* acquireSupervisor(environmentId).pipe(
               Effect.flatMap((supervisor) => supervisor.retryNow),
-              Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+              Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
             );
             return;
           }
@@ -888,7 +888,7 @@ export const make = Effect.gen(function* () {
   const retryConnection = (connectionId: string) =>
     acquireConnectionSupervisor(connectionId).pipe(
       Effect.flatMap((supervisor) => supervisor.retryNow),
-      Effect.catchTag("ConnectionNotRegisteredError", () => Effect.void),
+      Effect.catchTags({ ConnectionNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryConnection"),
     );
   const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {

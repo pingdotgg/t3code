@@ -96,8 +96,8 @@ function CloudEnvironmentRowsContent(
     [controller],
   );
 
-  const handleToggleCloudError = useCallback((environmentId: string) => {
-    setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
+  const handleToggleCloudError = useCallback((rowId: string) => {
+    setExpandedErrorId((current) => (current === rowId ? null : rowId));
   }, []);
 
   const showHeader = props.showHeader ?? true;
@@ -140,8 +140,8 @@ function CloudEnvironmentRowsContent(
               borderTop={index !== 0}
               onConnect={() => props.onReconnectConnection(environment.connectionId)}
               onDisconnect={() => handleDisconnectCloudEnvironment(environment.connectionId)}
-              errorExpanded={expandedErrorId === environment.environmentId}
-              onToggleError={() => handleToggleCloudError(environment.environmentId)}
+              errorExpanded={expandedErrorId === environment.connectionId}
+              onToggleError={() => handleToggleCloudError(environment.connectionId)}
             />
           ))}
           {availableCloudEnvironments.map((environment, index) => (
