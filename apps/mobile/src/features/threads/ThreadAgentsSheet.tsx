@@ -32,10 +32,12 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useThreadDetail } from "../../state/use-thread-detail";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import {
+  buildMobileAgentsListItems,
   deriveMobileAgentDetailModel,
   deriveMobileAgentPanelModel,
   deriveMobileAgentRowModel,
   findMobileAgent,
+  type MobileAgentsListItem,
   type MobileAgentDetailModel,
 } from "./agentPresentation";
 import {
@@ -289,73 +291,6 @@ const AgentsSummary = memo(function AgentsSummary(props: {
   );
 });
 
-type AgentsListItem =
-  | {
-      readonly kind: "workflow-header";
-      readonly key: string;
-      readonly group: AgentPanelWorkflowGroup;
-    }
-  | {
-      readonly kind: "phase-header";
-      readonly key: string;
-      readonly phase: AgentPanelWorkflowGroup["phases"][number];
-    }
-  | { readonly kind: "section-header"; readonly key: string; readonly title: string }
-  | { readonly kind: "agent"; readonly key: string; readonly agent: RuntimeSubagent }
-  | { readonly kind: "spacer"; readonly key: string }
-  | {
-      readonly kind: "summary";
-      readonly key: string;
-      readonly model: ReturnType<typeof deriveMobileAgentPanelModel>;
-    };
-
-function buildAgentsListItems(
-  model: ReturnType<typeof deriveMobileAgentPanelModel>,
-): ReadonlyArray<AgentsListItem> {
-  const items: AgentsListItem[] = [];
-  for (const group of model.workflows) {
-    const workflowId = group.workflow.id;
-    items.push({ kind: "workflow-header", key: `workflow:${workflowId}`, group });
-    for (const phase of group.phases) {
-      items.push({
-        kind: "phase-header",
-        key: `workflow:${workflowId}:phase:${phase.index}`,
-        phase,
-      });
-      for (const member of phase.members) {
-        items.push({ kind: "agent", key: `agent:${member.id}`, agent: member });
-      }
-    }
-    if (group.unphasedMembers.length > 0) {
-      items.push({
-        kind: "section-header",
-        key: `workflow:${workflowId}:other`,
-        title: "Other agents",
-      });
-      for (const member of group.unphasedMembers) {
-        items.push({ kind: "agent", key: `agent:${member.id}`, agent: member });
-      }
-    }
-    if (group.phases.length === 0 && group.unphasedMembers.length === 0) {
-      items.push({
-        kind: "agent",
-        key: `agent:${group.workflow.id}`,
-        agent: group.workflow,
-      });
-    }
-    items.push({ kind: "spacer", key: `workflow:${workflowId}:spacer` });
-  }
-  if (model.directAgents.length > 0) {
-    items.push({ kind: "section-header", key: "direct-header", title: "Direct spawns" });
-    for (const agent of model.directAgents) {
-      items.push({ kind: "agent", key: `agent:${agent.id}`, agent });
-    }
-    items.push({ kind: "spacer", key: "direct-spacer" });
-  }
-  items.push({ kind: "summary", key: "summary", model });
-  return items;
-}
-
 export function ThreadAgentsSheet(props: ThreadAgentsSheetProps) {
   const navigation = useNavigation();
   const canGoBack = navigation.canGoBack();
@@ -385,7 +320,7 @@ export function ThreadAgentsSheet(props: ThreadAgentsSheetProps) {
   const { model, thread, threadState } = useThreadAgents(props.route.params);
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const listItems = useMemo(() => buildAgentsListItems(model), [model]);
+  const listItems = useMemo(() => buildMobileAgentsListItems(model), [model]);
   const nowMs = useAgentElapsedNow(isFocused && model.liveCount > 0);
   const handleOpenAgent = useCallback(
     (agentId: string) => {
@@ -400,7 +335,7 @@ export function ThreadAgentsSheet(props: ThreadAgentsSheetProps) {
   const isLoading =
     thread === null && (threadState.status === "empty" || threadState.status === "synchronizing");
   const renderItem = useCallback(
-    ({ item }: { readonly item: AgentsListItem }) => {
+    ({ item }: { readonly item: MobileAgentsListItem }) => {
       switch (item.kind) {
         case "workflow-header":
           return <WorkflowHeader group={item.group} />;

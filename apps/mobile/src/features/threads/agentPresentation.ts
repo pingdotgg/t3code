@@ -3,6 +3,7 @@ import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
   isActiveSubagentStatus,
+  type AgentPanelWorkflowGroup,
   type AgentPanelModel,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -30,6 +31,63 @@ export function deriveMobileAgentPanelModel(input: {
       sessionLive: input.sessionLive,
     }).agents,
   });
+}
+
+export type MobileAgentsListItem =
+  | {
+      readonly kind: "workflow-header";
+      readonly key: string;
+      readonly group: AgentPanelWorkflowGroup;
+    }
+  | {
+      readonly kind: "phase-header";
+      readonly key: string;
+      readonly phase: AgentPanelWorkflowGroup["phases"][number];
+    }
+  | { readonly kind: "section-header"; readonly key: string; readonly title: string }
+  | { readonly kind: "agent"; readonly key: string; readonly agent: RuntimeSubagent }
+  | { readonly kind: "spacer"; readonly key: string }
+  | { readonly kind: "summary"; readonly key: string; readonly model: AgentPanelModel };
+
+export function buildMobileAgentsListItems(
+  model: AgentPanelModel,
+): ReadonlyArray<MobileAgentsListItem> {
+  const items: MobileAgentsListItem[] = [];
+  for (const group of model.workflows) {
+    const workflowId = group.workflow.id;
+    items.push({ kind: "workflow-header", key: `workflow:${workflowId}`, group });
+    items.push({ kind: "agent", key: `agent:${workflowId}`, agent: group.workflow });
+    for (const phase of group.phases) {
+      items.push({
+        kind: "phase-header",
+        key: `workflow:${workflowId}:phase:${phase.index}`,
+        phase,
+      });
+      for (const member of phase.members) {
+        items.push({ kind: "agent", key: `agent:${member.id}`, agent: member });
+      }
+    }
+    if (group.unphasedMembers.length > 0) {
+      items.push({
+        kind: "section-header",
+        key: `workflow:${workflowId}:other`,
+        title: "Other agents",
+      });
+      for (const member of group.unphasedMembers) {
+        items.push({ kind: "agent", key: `agent:${member.id}`, agent: member });
+      }
+    }
+    items.push({ kind: "spacer", key: `workflow:${workflowId}:spacer` });
+  }
+  if (model.directAgents.length > 0) {
+    items.push({ kind: "section-header", key: "direct-header", title: "Direct spawns" });
+    for (const agent of model.directAgents) {
+      items.push({ kind: "agent", key: `agent:${agent.id}`, agent });
+    }
+    items.push({ kind: "spacer", key: "direct-spacer" });
+  }
+  items.push({ kind: "summary", key: "summary", model });
+  return items;
 }
 
 function formatElapsedSeconds(totalSeconds: number): string {

@@ -419,6 +419,59 @@ describe("thread pagination state", () => {
     );
   });
 
+  it.effect("places sequence-less lifecycle rows after sequenced rows when merging pages", () =>
+    Effect.gen(function* () {
+      const taskActivity = (
+        id: string,
+        kind: "task.started" | "task.completed",
+        sequence?: number,
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "info",
+        kind,
+        summary: kind,
+        payload: {
+          taskId: "mixed-sequence-agent",
+          taskType: "subagent",
+          agentKind: "agent",
+          status: kind === "task.started" ? "running" : "completed",
+        },
+        turnId: TurnId.make("turn-mixed-sequence"),
+        ...(sequence === undefined ? {} : { sequence }),
+        createdAt:
+          kind === "task.started" ? "2026-04-01T00:00:00.000Z" : "2026-04-01T01:00:00.000Z",
+      });
+      const start = taskActivity("sequenced-start", "task.started", 1);
+      const completion = taskActivity("sequence-less-completion", "task.completed");
+      const initial: OrchestrationThreadDetailSnapshot = {
+        ...WINDOWED_SNAPSHOT,
+        thread: { ...BASE_THREAD, activities: [completion] },
+      };
+      const olderPage: OrchestrationThreadDetailSnapshot = {
+        ...OLDER_PAGE,
+        thread: { ...OLDER_PAGE.thread, activities: [start] },
+      };
+      const harness = yield* makeHarness({ initialResponse: Option.some(initial) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+
+      expect(requestOlderThreadTurns(TARGET.environmentId, THREAD_ID)).toBe(true);
+      yield* harness.awaitState((value) =>
+        Option.match(value.page, { onNone: () => false, onSome: (page) => page.loadingOlder }),
+      );
+      yield* harness.resolveNextPage(Option.some(olderPage));
+
+      const state = yield* harness.awaitState(
+        (value) => Option.getOrNull(value.data)?.activities.length === 2,
+      );
+      const activities = Option.getOrThrow(state.data).activities;
+      expect(activities.map((activity) => activity.id)).toEqual([
+        "sequenced-start",
+        "sequence-less-completion",
+      ]);
+      expect(foldSubagentActivities(activities)[0]?.status).toBe("completed");
+    }),
+  );
+
   it.effect("orders same-time sequence-less activities by id after merging an older page", () =>
     Effect.gen(function* () {
       const createdAt = "2026-04-01T00:30:00.000Z";

@@ -112,6 +112,28 @@ describe("backgroundWorkStopConfirmation", () => {
     });
   });
 
+  it("rejects a guarded Stop while the observed session is still starting", () => {
+    const threadId = ThreadId.make("thread-background");
+    const commandId = CommandId.make("stop-command");
+    const session = {
+      threadId,
+      status: "starting" as const,
+      providerName: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: "full-access" as const,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    };
+
+    expect(
+      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, "0.0.33"),
+    ).toBeNull();
+    expect(
+      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, "0.0.32"),
+    ).toEqual({ threadId, commandId });
+  });
+
   it("guards a null-session snapshot on servers with conditional Stop support", () => {
     const threadId = ThreadId.make("thread-background");
     const commandId = CommandId.make("stop-command");

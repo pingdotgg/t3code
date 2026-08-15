@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 
 import {
+  buildMobileAgentsListItems,
   deriveMobileAgentDetailModel,
   deriveMobileAgentPanelModel,
   deriveMobileAgentRowModel,
@@ -27,6 +28,41 @@ function activity(
 }
 
 describe("mobile Agents presentation", () => {
+  it("emits a detail row for a workflow that has members", () => {
+    const model = deriveMobileAgentPanelModel({
+      sessionLive: true,
+      activities: [
+        activity(
+          "workflow-detail-start",
+          "task.started",
+          {
+            taskId: "workflow-detail",
+            taskType: "local_workflow",
+            workflowName: "Detailed workflow",
+          },
+          1,
+        ),
+        activity(
+          "workflow-detail-member",
+          "task.progress",
+          {
+            taskId: "workflow-detail:wf:0",
+            parentAgentId: "workflow-detail",
+            agentIndex: 0,
+            status: "running",
+          },
+          2,
+        ),
+      ],
+    });
+
+    expect(
+      buildMobileAgentsListItems(model)
+        .filter((item) => item.kind === "agent")
+        .map((item) => item.agent.id),
+    ).toEqual(["workflow-detail", "workflow-detail:wf:0"]);
+  });
+
   it("derives workflow phases and compact per-agent metadata from the shared fold", () => {
     const model = deriveMobileAgentPanelModel({
       sessionLive: true,

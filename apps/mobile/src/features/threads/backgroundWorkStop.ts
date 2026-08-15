@@ -88,9 +88,12 @@ export function buildBackgroundWorkInterruptInput(
   commandId: CommandId,
   serverVersion: string | null,
 ) {
-  const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   const supportsGuardedInterrupt =
     serverVersion !== null && satisfiesSemverRange(serverVersion, ">=0.0.33");
+  if (supportsGuardedInterrupt && thread.session?.status === "starting") {
+    return null;
+  }
+  const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   return {
     threadId: thread.id,
     commandId,

@@ -187,6 +187,114 @@ it.layer(RevertLivenessTestLayer)("OrchestrationProjectionPipeline revert livene
       assert.deepEqual([...backgroundLiveness.getThreadLiveAgentIds(threadId)], ["kept-task"]);
     }),
   );
+
+  it.effect("reconciles a reverted task against later lifecycle receipts after bootstrap", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-bootstrap-revert-liveness");
+      const sql = yield* SqlClient.SqlClient;
+      const eventStore = yield* OrchestrationEventStore;
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
+        ) VALUES (
+          'project-bootstrap-revert-liveness', 'Bootstrap revert liveness',
+          '/tmp/project-bootstrap-revert-liveness', '[]',
+          '2026-08-14T13:00:00.000Z', '2026-08-14T13:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          latest_turn_id, pending_approval_count, pending_user_input_count,
+          has_actionable_proposed_plan, created_at, updated_at, deleted_at
+        ) VALUES (
+          ${threadId}, 'project-bootstrap-revert-liveness', 'Bootstrap revert liveness thread',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          'turn-remove', 0, 0, 0,
+          '2026-08-14T13:00:00.000Z', '2026-08-14T13:00:02.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, state, requested_at, started_at, completed_at,
+          checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json
+        ) VALUES
+          (${threadId}, 'turn-keep', 'completed', '2026-08-14T13:00:00.000Z',
+            '2026-08-14T13:00:00.000Z', '2026-08-14T13:00:01.000Z', 1,
+            'refs/t3/checkpoints/thread-bootstrap-revert-liveness/turn/1', 'ready', '[]'),
+          (${threadId}, 'turn-remove', 'completed', '2026-08-14T13:00:01.000Z',
+            '2026-08-14T13:00:01.000Z', '2026-08-14T13:00:02.000Z', 2,
+            'refs/t3/checkpoints/thread-bootstrap-revert-liveness/turn/2', 'ready', '[]')
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) VALUES
+          ('bootstrap-kept-task-start', ${threadId}, 'turn-keep', 'info', 'task.started',
+            'Kept task started',
+            '{"taskId":"bootstrap-kept-task","taskType":"subagent","status":"running"}',
+            0, '2026-08-14T13:00:00.500Z'),
+          ('bootstrap-reverted-task-start', ${threadId}, 'turn-remove', 'info', 'task.started',
+            'Reverted task started',
+            '{"taskId":"bootstrap-reverted-task","taskType":"subagent","status":"running"}',
+            1, '2026-08-14T13:00:01.500Z')
+      `;
+
+      yield* eventStore.append({
+        type: "thread.reverted",
+        eventId: EventId.make("evt-bootstrap-revert-liveness"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-08-14T13:00:03.000Z",
+        commandId: CommandId.make("cmd-bootstrap-revert-liveness"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-bootstrap-revert-liveness"),
+        metadata: {},
+        payload: { threadId, turnCount: 1 },
+      });
+      yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-bootstrap-kept-task-completed"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-08-14T13:00:04.000Z",
+        commandId: CommandId.make("cmd-bootstrap-kept-task-completed"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-bootstrap-kept-task-completed"),
+        metadata: {},
+        payload: {
+          threadId,
+          activity: {
+            id: EventId.make("bootstrap-kept-task-completed"),
+            tone: "info",
+            kind: "task.completed",
+            summary: "Kept task completed",
+            payload: {
+              taskId: "bootstrap-kept-task",
+              taskType: "subagent",
+              status: "completed",
+            },
+            turnId: TurnId.make("turn-keep"),
+            sequence: 2,
+            createdAt: "2026-08-14T13:00:04.000Z",
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const shell = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(
+        shell.threads.find((thread) => thread.id === threadId)?.backgroundLiveness,
+        null,
+      );
+      assert.deepEqual([...backgroundLiveness.getThreadLiveAgentIds(threadId)], []);
+    }),
+  );
 });
 
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {

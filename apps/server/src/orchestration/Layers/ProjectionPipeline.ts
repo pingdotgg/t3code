@@ -107,7 +107,7 @@ interface ProjectionSideEffects {
   readonly deletedThreadIds: Set<string>;
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
   readonly livenessRebuilds: Map<
-    string,
+    ThreadId,
     ReadonlyArray<{ readonly activityId: string; readonly kind: string; readonly payload: unknown }>
   >;
 }
@@ -1703,6 +1703,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
       projector: ProjectorDefinition,
       event: OrchestrationEvent,
+      replayedRevertThreadIds?: Set<ThreadId>,
     ) {
       const sideEffects: ProjectionSideEffects = {
         deletedThreadIds: new Set<string>(),
@@ -1724,6 +1725,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
       for (const [threadId, activities] of sideEffects.livenessRebuilds) {
         threadBackgroundLiveness.rebuildThreadLiveness(threadId, activities);
+        replayedRevertThreadIds?.add(threadId);
       }
 
       yield* runAttachmentSideEffects(sideEffects).pipe(
@@ -1738,7 +1740,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       );
     });
 
-    const bootstrapProjector = (projector: ProjectorDefinition) =>
+    const bootstrapProjector = (
+      projector: ProjectorDefinition,
+      replayedRevertThreadIds: Set<ThreadId>,
+    ) =>
       projectionStateRepository
         .getByProjector({
           projector: projector.name,
@@ -1749,7 +1754,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               eventStore.readFromSequence(
                 Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
               ),
-              (event) => runProjectorForEvent(projector, event),
+              (event) => runProjectorForEvent(projector, event, replayedRevertThreadIds),
             ),
           ),
         );
@@ -1767,11 +1772,32 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         ),
       );
 
-    const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.forEach(
-      projectors,
-      bootstrapProjector,
-      { concurrency: 1 },
-    ).pipe(
+    const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.gen(function* () {
+      const replayedRevertThreadIds = new Set<ThreadId>();
+      yield* Effect.forEach(
+        projectors,
+        (projector) => bootstrapProjector(projector, replayedRevertThreadIds),
+        { concurrency: 1 },
+      );
+      yield* Effect.forEach(
+        replayedRevertThreadIds,
+        Effect.fn("reconcileBootstrapRevertLiveness")(function* (threadId) {
+          const activities = (yield* projectionThreadActivityRepository.listByThreadId({
+            threadId,
+          }))
+            .slice()
+            .sort(
+              (left, right) =>
+                (left.sequence ?? Number.MAX_SAFE_INTEGER) -
+                  (right.sequence ?? Number.MAX_SAFE_INTEGER) ||
+                left.createdAt.localeCompare(right.createdAt) ||
+                left.activityId.localeCompare(right.activityId),
+            );
+          threadBackgroundLiveness.rebuildThreadLiveness(threadId, activities);
+        }),
+        { concurrency: 1 },
+      );
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),

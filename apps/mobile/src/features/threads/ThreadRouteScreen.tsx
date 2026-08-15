@@ -523,14 +523,22 @@ function ThreadRouteContent(
       return;
     }
     const commandId = CommandId.make(uuidv4());
+    const interruptInput = buildBackgroundWorkInterruptInput(
+      selectedThread,
+      commandId,
+      selectedEnvironmentServerConfig?.environment.serverVersion ?? null,
+    );
+    if (interruptInput === null) {
+      Alert.alert(
+        "Turn still starting",
+        "Try Stop again once the turn is running so the latest work can be interrupted safely.",
+      );
+      return;
+    }
     return stopThreadGuard.run(commandId, async (attempt) => {
       const result = await interruptThreadTurn({
         environmentId: selectedThread.environmentId,
-        input: buildBackgroundWorkInterruptInput(
-          selectedThread,
-          commandId,
-          selectedEnvironmentServerConfig?.environment.serverVersion ?? null,
-        ),
+        input: interruptInput,
       });
       if (result._tag === "Failure") {
         attempt.resolve();
