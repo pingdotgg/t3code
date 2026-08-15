@@ -13,6 +13,7 @@ describe("SkillInlineText", () => {
 
     expect(markup).toContain('<button type="button"');
     expect(markup).toContain('aria-label="Open $github:gh-fix-ci"');
+    expect(markup).toContain("focus-visible:ring-1");
     expect(markup).toContain("Fix CI");
   });
 

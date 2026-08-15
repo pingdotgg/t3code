@@ -108,7 +108,7 @@ function SkillChip(props: {
           type="button"
           className={cn(
             CHAT_INLINE_CHIP_CLASS_NAME,
-            "cursor-pointer border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 hover:bg-fuchsia-500/20 dark:text-fuchsia-300",
+            "cursor-pointer border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 hover:bg-fuchsia-500/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:text-fuchsia-300",
           )}
           aria-label={`Open $${props.skill.name}`}
           onClick={() => props.onClick?.(props.skill)}

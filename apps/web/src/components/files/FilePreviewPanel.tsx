@@ -93,6 +93,8 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const FILE_SAVE_DEBOUNCE_MS = 500;
+const FILE_PREVIEW_SUBHEADER_CLASS_NAME =
+  "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
@@ -869,10 +871,7 @@ function WorkspaceFilePreviewPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
-        <div
-          className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
-          data-surface-subheader
-        >
+        <div className={FILE_PREVIEW_SUBHEADER_CLASS_NAME} data-surface-subheader>
           <ScrollArea
             ref={breadcrumbRef}
             hideScrollbars
@@ -1179,17 +1178,12 @@ function SkillTextFilePreviewPanel(
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="surface-subheader gap-2 px-3" data-surface-subheader>
-        <div className="min-w-0 flex-1 py-1.5">
-          <div className="truncate text-xs font-medium text-foreground">
-            {relativePath === "SKILL.md" ? `$${props.skill.name}` : relativePath}
-          </div>
-          <div
-            className="truncate font-mono text-[10px] text-muted-foreground"
-            title={props.skill.path}
-          >
-            {props.skill.path}
-          </div>
+      <div className={FILE_PREVIEW_SUBHEADER_CLASS_NAME} data-surface-subheader>
+        <div
+          className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
+          title={props.skill.path}
+        >
+          {relativePath === "SKILL.md" ? `$${props.skill.name}` : relativePath}
         </div>
         {isMarkdown ? (
           <Tooltip>
@@ -1273,13 +1267,12 @@ function SkillImageFilePreviewPanel(
   });
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="surface-subheader min-w-0 px-3 py-1.5" data-surface-subheader>
-        <div className="truncate text-xs font-medium text-foreground">{relativePath}</div>
+      <div className={FILE_PREVIEW_SUBHEADER_CLASS_NAME} data-surface-subheader>
         <div
-          className="truncate font-mono text-[10px] text-muted-foreground"
+          className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
           title={props.skill.path}
         >
-          {props.skill.path}
+          {relativePath}
         </div>
       </div>
       {asset._tag === "Success" ? (

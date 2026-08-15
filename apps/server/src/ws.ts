@@ -124,6 +124,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import { lookupRecordedSkill } from "./skill/recordedSkillLookup.ts";
 import { readResolvedSkillFile } from "./skill/SkillFileAccess.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
@@ -1896,26 +1897,25 @@ const makeWsRpcLayer = (
                 });
               }
 
-              const recorded = message.resolvedSkills?.find(
-                (candidate) => candidate.name === input.skillName,
-              );
+              const recorded = lookupRecordedSkill(message.resolvedSkills, input.skillName);
               const skill =
-                recorded ??
-                (yield* resolveLegacyInvokedSkill({
-                  threadId: input.threadId,
-                  skillName: input.skillName,
-                  text: message.text,
-                }).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new SkillReadFileError({
-                        skillName: input.skillName,
-                        relativePath: input.relativePath,
-                        failure: "operation_failed",
-                        cause,
-                      }),
-                  ),
-                ));
+                recorded.kind === "recorded"
+                  ? recorded.skill
+                  : yield* resolveLegacyInvokedSkill({
+                      threadId: input.threadId,
+                      skillName: input.skillName,
+                      text: message.text,
+                    }).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new SkillReadFileError({
+                            skillName: input.skillName,
+                            relativePath: input.relativePath,
+                            failure: "operation_failed",
+                            cause,
+                          }),
+                      ),
+                    );
               if (!skill) {
                 return yield* new SkillReadFileError({
                   skillName: input.skillName,
@@ -1987,13 +1987,19 @@ const makeWsRpcLayer = (
                       }),
                   ),
                 );
-                const recordedSkill = message?.resolvedSkills?.find(
-                  (candidate) => candidate.name === skillResource.skillName,
+                if (!message) {
+                  return yield* new AssetWorkspaceContextNotFoundError({
+                    resource: skillResource,
+                  });
+                }
+                const recordedSkill = lookupRecordedSkill(
+                  message.resolvedSkills,
+                  skillResource.skillName,
                 );
                 const skill =
-                  recordedSkill ??
-                  (message
-                    ? yield* resolveLegacyInvokedSkill({
+                  recordedSkill.kind === "recorded"
+                    ? recordedSkill.skill
+                    : yield* resolveLegacyInvokedSkill({
                         threadId: skillResource.threadId,
                         skillName: skillResource.skillName,
                         text: message.text,
@@ -2005,8 +2011,7 @@ const makeWsRpcLayer = (
                               cause,
                             }),
                         ),
-                      )
-                    : undefined);
+                      );
                 if (!skill) {
                   return yield* new AssetWorkspaceContextNotFoundError({
                     resource: skillResource,
