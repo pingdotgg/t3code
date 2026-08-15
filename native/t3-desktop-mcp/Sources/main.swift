@@ -127,12 +127,18 @@ struct ResolvedApp {
 /// Only some of them own windows, so prefer an instance that actually has one;
 /// picking blindly is what makes System Events report "Invalid index".
 func resolveApp(_ query: String) -> ResolvedApp? {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
     let running = NSWorkspace.shared.runningApplications
-    let lowered = query.lowercased()
+    let lowered = trimmed.lowercased()
 
     var matches: [NSRunningApplication]
-    if let pid = Int32(query), running.contains(where: { $0.processIdentifier == pid }) {
+    if let pid = Int32(trimmed), running.contains(where: { $0.processIdentifier == pid }) {
         matches = running.filter { $0.processIdentifier == pid }
+    } else if Int32(trimmed) != nil {
+        // Numeric query that is not a live PID (e.g. app name "2048"): exact name
+        // only — never substring, or short pids like "1" bind unrelated apps.
+        matches = running.filter { ($0.localizedName ?? "").lowercased() == lowered }
     } else {
         matches = running.filter { $0.bundleIdentifier?.lowercased() == lowered }
         if matches.isEmpty {
@@ -1402,8 +1408,9 @@ enum Chrome {
             cachedChromeLaunch = launchInterval(for: app)
             return id
         }
-        clearAgentWindowState()
-        return nil
+        // AX can miss briefly while AppleScript still sees the window — keep it
+        // so Computer Use does not drop ownership and spawn orphans on retry.
+        return id
     }
 
     /// The stored id, or nil if that window (or this Chrome instance) is gone.
@@ -1518,6 +1525,8 @@ enum Chrome {
                         cachedChromeLaunch = nil
                     }
                 } else {
+                    // Close the orphan so the next retry does not create another window.
+                    _ = run("tell application \"Google Chrome\" to close window id \(id)")
                     clearAgentWindowState()
                     return .failure(
                         "created agent window \(id) but could not pair it with accessibility — retry ensureAgentWindow"
