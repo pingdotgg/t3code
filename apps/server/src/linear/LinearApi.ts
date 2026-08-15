@@ -322,7 +322,7 @@ function isNotFoundMessage(message: string | undefined): boolean {
 export class LinearApi extends Context.Service<
   LinearApi,
   {
-    readonly probeAuth: Effect.Effect<LinearAuthStatus, LinearTokenStoreError | LinearRequestError>;
+    readonly probeAuth: Effect.Effect<LinearAuthStatus, LinearTokenStoreError>;
     readonly searchIssues: (input: {
       readonly query: string;
       readonly limit: number;
@@ -346,9 +346,12 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
 
-  const resolveToken = (
+  const resolveAuthMaterial = (
     operation: LinearApiOperation,
-  ): Effect.Effect<Option.Option<string>, LinearTokenStoreError> =>
+  ): Effect.Effect<
+    { readonly token: Option.Option<string>; readonly hasStoredToken: boolean },
+    LinearTokenStoreError
+  > =>
     secrets.get(LINEAR_API_TOKEN_SECRET).pipe(
       Effect.mapError(
         (cause) =>
@@ -358,21 +361,22 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       ),
-      Effect.map(
-        Option.match({
-          onSome: (bytes) => {
-            const token = clean(bytesToString(bytes));
-            return token !== undefined ? Option.some(token) : config.envToken;
-          },
-          onNone: () => config.envToken,
-        }),
-      ),
+      Effect.map((stored) => {
+        const storedToken = Option.flatMap(stored, (bytes) => {
+          const token = clean(bytesToString(bytes));
+          return token === undefined ? Option.none() : Option.some(token);
+        });
+        return {
+          token: Option.orElse(storedToken, () => config.envToken),
+          hasStoredToken: Option.isSome(storedToken),
+        };
+      }),
     );
 
   const requireToken = (operation: LinearApiOperation) =>
-    resolveToken(operation).pipe(
-      Effect.flatMap(
-        Option.match({
+    resolveAuthMaterial(operation).pipe(
+      Effect.flatMap(({ token }) =>
+        Option.match(token, {
           onNone: () =>
             Effect.fail(
               new LinearAuthError({
@@ -457,58 +461,76 @@ export const make = Effect.gen(function* () {
         );
   };
 
-  const probeAuth: LinearApi["Service"]["probeAuth"] = resolveToken("probeAuth").pipe(
-    Effect.flatMap(
-      Option.match({
-        onNone: () =>
-          Effect.succeed<LinearAuthStatus>({
-            status: "unauthenticated",
-            detail: "No Linear API token is configured.",
-          }),
-        onSome: (token) =>
-          runGraphql("probeAuth", token, VIEWER_DOCUMENT, {}, viewerEnvelope).pipe(
-            Effect.flatMap((envelope): Effect.Effect<LinearAuthStatus, LinearRequestError> => {
-              if (envelope.errors !== undefined && envelope.errors.length > 0) {
-                const message = firstGraphQlErrorMessage(envelope.errors);
-                if (isAuthMessage(message)) {
+  const probeAuthWith = (
+    unverifiedDetail: string,
+  ): Effect.Effect<LinearAuthStatus, LinearTokenStoreError> =>
+    resolveAuthMaterial("probeAuth").pipe(
+      Effect.flatMap(({ token, hasStoredToken }) =>
+        Option.match(token, {
+          onNone: () =>
+            Effect.succeed<LinearAuthStatus>({
+              status: "unauthenticated",
+              hasStoredToken,
+              detail: "No Linear API token is configured.",
+            }),
+          onSome: (resolvedToken) =>
+            runGraphql("probeAuth", resolvedToken, VIEWER_DOCUMENT, {}, viewerEnvelope).pipe(
+              Effect.flatMap((envelope): Effect.Effect<LinearAuthStatus, LinearRequestError> => {
+                if (envelope.errors !== undefined && envelope.errors.length > 0) {
+                  const message = firstGraphQlErrorMessage(envelope.errors);
+                  if (isAuthMessage(message)) {
+                    return Effect.succeed<LinearAuthStatus>({
+                      status: "unauthenticated",
+                      hasStoredToken,
+                      detail: "The stored Linear token was rejected.",
+                    });
+                  }
+                  return Effect.fail(
+                    new LinearRequestError({
+                      operation: "probeAuth",
+                      detail: "Linear reported an error for the request.",
+                      ...(message === undefined ? {} : { cause: new Error(message) }),
+                    }),
+                  );
+                }
+                const viewer = envelope.data?.viewer ?? undefined;
+                if (viewer === undefined) {
                   return Effect.succeed<LinearAuthStatus>({
                     status: "unauthenticated",
-                    detail: "The stored Linear token was rejected.",
+                    hasStoredToken,
+                    detail: "Linear did not return an account for this token.",
                   });
                 }
-                return Effect.fail(
-                  new LinearRequestError({
-                    operation: "probeAuth",
-                    detail: "Linear reported an error for the request.",
-                    ...(message === undefined ? {} : { cause: new Error(message) }),
-                  }),
-                );
-              }
-              const viewer = envelope.data?.viewer ?? undefined;
-              if (viewer === undefined) {
                 return Effect.succeed<LinearAuthStatus>({
-                  status: "unauthenticated",
-                  detail: "Linear did not return an account for this token.",
+                  status: "authenticated",
+                  hasStoredToken,
+                  account: {
+                    name: clean(viewer.name) ?? "Linear account",
+                    ...(clean(viewer.email) ? { email: clean(viewer.email) } : {}),
+                  },
                 });
-              }
-              return Effect.succeed<LinearAuthStatus>({
-                status: "authenticated",
-                account: {
-                  name: clean(viewer.name) ?? "Linear account",
-                  ...(clean(viewer.email) ? { email: clean(viewer.email) } : {}),
-                },
-              });
-            }),
-            Effect.catchTags({
-              LinearAuthError: () =>
-                Effect.succeed<LinearAuthStatus>({
-                  status: "unauthenticated",
-                  detail: "The stored Linear token was rejected.",
-                }),
-            }),
-          ),
-      }),
-    ),
+              }),
+              Effect.catchTags({
+                LinearAuthError: () =>
+                  Effect.succeed<LinearAuthStatus>({
+                    status: "unauthenticated",
+                    hasStoredToken,
+                    detail: "The stored Linear token was rejected.",
+                  }),
+                LinearRequestError: () =>
+                  Effect.succeed<LinearAuthStatus>({
+                    status: "unverified",
+                    hasStoredToken,
+                    detail: unverifiedDetail,
+                  }),
+              }),
+            ),
+        }),
+      ),
+    );
+
+  const probeAuth: LinearApi["Service"]["probeAuth"] = probeAuthWith(
+    "Couldn't reach Linear to verify the token.",
   );
 
   const searchIssues: LinearApi["Service"]["searchIssues"] = (input) => {
@@ -609,18 +631,10 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const probeAuthLenient: Effect.Effect<LinearAuthStatus, LinearTokenStoreError> = probeAuth.pipe(
-    Effect.catchTags({
-      LinearRequestError: () =>
-        Effect.succeed<LinearAuthStatus>({
-          status: "unverified",
-          detail: "Saved, but couldn't reach Linear to verify the token.",
-        }),
-    }),
-  );
-
   const setToken: LinearApi["Service"]["setToken"] = (token) =>
-    persistToken("setToken", token.trim()).pipe(Effect.flatMap(() => probeAuthLenient));
+    persistToken("setToken", token.trim()).pipe(
+      Effect.flatMap(() => probeAuthWith("Saved, but couldn't reach Linear to verify the token.")),
+    );
 
   const clearToken: LinearApi["Service"]["clearToken"] = secrets
     .remove(LINEAR_API_TOKEN_SECRET)
@@ -633,7 +647,9 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       ),
-      Effect.flatMap(() => probeAuthLenient),
+      Effect.flatMap(() =>
+        probeAuthWith("The saved token was removed, but Linear could not be reached."),
+      ),
     );
 
   return LinearApi.of({

@@ -21,6 +21,7 @@ export type LinearAccount = typeof LinearAccount.Type;
 
 export const LinearAuthStatus = Schema.Struct({
   status: LinearAuthStatusValue,
+  hasStoredToken: Schema.Boolean,
   account: Schema.optional(LinearAccount),
   detail: Schema.optional(TrimmedNonEmptyString),
 });

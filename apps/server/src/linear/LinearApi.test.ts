@@ -51,6 +51,7 @@ function graphqlResponse(body: unknown, status = 200): Response {
 
 function makeLayer(input: {
   readonly token?: string | null;
+  readonly envToken?: string;
   readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
@@ -72,6 +73,7 @@ function makeLayer(input: {
         ConfigProvider.fromEnv({
           env: {
             T3CODE_LINEAR_API_BASE_URL: "https://api.test.local/graphql",
+            ...(input.envToken === undefined ? {} : { T3CODE_LINEAR_API_TOKEN: input.envToken }),
           },
         }),
       ),
@@ -109,6 +111,7 @@ it.effect("probeAuth reports unauthenticated when no token is configured", () =>
     const linear = yield* LinearApi.LinearApi;
     const status = yield* linear.probeAuth;
     assert.strictEqual(status.status, "unauthenticated");
+    assert.strictEqual(status.hasStoredToken, false);
   }).pipe(Effect.provide(layer));
 });
 
@@ -120,6 +123,7 @@ it.effect("probeAuth requires a viewer before reporting authenticated", () => {
     const linear = yield* LinearApi.LinearApi;
     const status = yield* linear.probeAuth;
     assert.strictEqual(status.status, "unauthenticated");
+    assert.strictEqual(status.hasStoredToken, true);
     assert.strictEqual(status.detail, "Linear did not return an account for this token.");
   }).pipe(Effect.provide(layer));
 });
@@ -133,6 +137,7 @@ it.effect("probeAuth returns the Linear account when viewer is present", () => {
     const status = yield* linear.probeAuth;
     assert.deepStrictEqual(status, {
       status: "authenticated",
+      hasStoredToken: true,
       account: { name: "Ada", email: "ada@example.com" },
     });
   }).pipe(Effect.provide(layer));
@@ -147,6 +152,38 @@ it.effect("setToken reports unverified when Linear cannot be reached after save"
     const linear = yield* LinearApi.LinearApi;
     const status = yield* linear.setToken("lin_api_saved");
     assert.strictEqual(status.status, "unverified");
+    assert.strictEqual(status.hasStoredToken, true);
+    assert.strictEqual(status.detail, "Saved, but couldn't reach Linear to verify the token.");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("probeAuth reports unverified when a stored token cannot reach Linear", () => {
+  const { layer } = makeLayer({
+    response: () => new Response("down", { status: 503 }),
+  });
+  return Effect.gen(function* () {
+    const linear = yield* LinearApi.LinearApi;
+    const status = yield* linear.probeAuth;
+    assert.strictEqual(status.status, "unverified");
+    assert.strictEqual(status.hasStoredToken, true);
+    assert.strictEqual(status.detail, "Couldn't reach Linear to verify the token.");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("clearToken does not claim the token was saved when Linear is down", () => {
+  const { layer } = makeLayer({
+    envToken: "lin_api_env",
+    response: () => new Response("down", { status: 503 }),
+  });
+  return Effect.gen(function* () {
+    const linear = yield* LinearApi.LinearApi;
+    const status = yield* linear.clearToken;
+    assert.strictEqual(status.status, "unverified");
+    assert.strictEqual(status.hasStoredToken, false);
+    assert.strictEqual(
+      status.detail,
+      "The saved token was removed, but Linear could not be reached.",
+    );
   }).pipe(Effect.provide(layer));
 });
 

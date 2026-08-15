@@ -88,18 +88,6 @@ export function LinearImportDialog() {
   );
 
   const issues = searchQuery.data?.issues ?? [];
-  const visibleIds = useMemo(() => new Set(issues.map((issue) => issue.id)), [issues]);
-
-  useEffect(() => {
-    setSelectedIdSet((current) => {
-      if (current.size === 0) return current;
-      const next = new Set<string>();
-      for (const id of current) {
-        if (visibleIds.has(id)) next.add(id);
-      }
-      return next.size === current.size ? current : next;
-    });
-  }, [visibleIds]);
 
   const toggleIssue = useCallback((issueId: string) => {
     setSelectedIdSet((current) => {

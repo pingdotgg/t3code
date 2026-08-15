@@ -28,7 +28,9 @@ export function LinearSettingsPanel() {
   const status = authQuery.data;
   const connected = status?.status === "authenticated";
   const unverified = status?.status === "unverified";
-  const hasStoredAccess = connected || unverified;
+  const hasStoredToken = status?.hasStoredToken === true;
+  const showDisconnect = hasStoredToken || connected || unverified;
+  const showConnectForm = !connected && !unverified;
   const reachabilityError = authQuery.error;
 
   const handleSave = useCallback(async () => {
@@ -135,7 +137,7 @@ export function LinearSettingsPanel() {
           control={
             <div className="flex items-center gap-2">
               {statusBadge}
-              {hasStoredAccess ? (
+              {showDisconnect ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -148,7 +150,7 @@ export function LinearSettingsPanel() {
             </div>
           }
         >
-          {hasStoredAccess ? null : (
+          {showConnectForm ? (
             <div className="flex flex-col gap-2 pt-3 pb-3.5">
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Input
@@ -188,7 +190,7 @@ export function LinearSettingsPanel() {
                 . The key is stored securely on the server and never shown again.
               </p>
             </div>
-          )}
+          ) : null}
         </SettingsRow>
       </SettingsSection>
     </SettingsPageContainer>
