@@ -13,7 +13,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { type ProviderEvent, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
@@ -73,6 +73,125 @@ function buildScript() {
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
+interface MockCollabNotification {
+  readonly method: string;
+  readonly params: unknown;
+}
+
+function mockChildActivity(
+  childThreadId: string,
+  itemId: string,
+  kind: "started" | "interacted" | "interrupted" = "started",
+) {
+  return {
+    method: "item/completed",
+    params: {
+      threadId: ROOT,
+      turnId: "00000000-0000-4000-8000-000000000100",
+      completedAtMs: 1_700_000_000_000,
+      item: {
+        type: "subAgentActivity",
+        id: itemId,
+        kind,
+        agentThreadId: childThreadId,
+        agentPath: "/root/mock_worker",
+      },
+    },
+  };
+}
+
+function mockChildCompletion(
+  childThreadId: string,
+  turnId: string,
+  status: "completed" | "failed" | "interrupted" = "completed",
+) {
+  return {
+    method: "turn/completed",
+    params: {
+      threadId: childThreadId,
+      turn: { id: turnId, status, items: [] },
+    },
+  };
+}
+
+function mockChildThreadRegistration(childThreadId: string) {
+  return {
+    method: "thread/started",
+    params: {
+      thread: {
+        agentNickname: "mock_worker",
+        agentRole: "worker",
+        cliVersion: "0.0.0-test",
+        createdAt: 1_700_000_000,
+        cwd: "/workspace/mock",
+        ephemeral: false,
+        forkedFromId: null,
+        gitInfo: null,
+        id: childThreadId,
+        modelProvider: "mock",
+        name: null,
+        parentThreadId: ROOT,
+        path: "/tmp/mock-rollout.jsonl",
+        preview: "",
+        recencyAt: 1_700_000_000,
+        sessionId: ROOT,
+        source: {
+          subAgent: {
+            thread_spawn: {
+              agent_nickname: "mock_worker",
+              agent_path: "/root/mock_worker",
+              agent_role: "worker",
+              depth: 1,
+              parent_thread_id: ROOT,
+            },
+          },
+        },
+        status: { type: "idle" },
+        threadSource: null,
+        turns: [],
+        updatedAt: 1_700_000_000,
+      },
+    },
+  };
+}
+
+function eventsForChild(events: ReadonlyArray<ProviderEvent>, childThreadId: string) {
+  return events.filter(
+    (event) =>
+      (event.payload as { agentThreadId?: string } | undefined)?.agentThreadId === childThreadId,
+  );
+}
+
+const runMockCollabScript = Effect.fn("CodexCollabRuntimeTest.runMockCollabScript")(function* (
+  runtimeThreadId: string,
+  input: string,
+  notifications: ReadonlyArray<MockCollabNotification>,
+) {
+  const script = { rootThreadId: ROOT, notifications };
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+  yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })));
+
+  const runtime = yield* makeCodexSessionRuntime({
+    threadId: ThreadId.make(runtimeThreadId),
+    binaryPath: peerPath,
+    cwd: "/tmp",
+    runtimeMode: "full-access",
+    environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+  });
+  const eventsFiber = yield* runtime.events.pipe(
+    Stream.takeUntil((event) => event.method === "turn/completed"),
+    Stream.runCollect,
+    Effect.forkScoped,
+  );
+
+  yield* runtime.start();
+  yield* runtime.sendTurn({ input });
+  const events = Array.from(yield* Fiber.join(eventsFiber));
+  yield* runtime.close;
+  return events;
+});
+
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
     Effect.gen(function* () {
@@ -123,6 +242,15 @@ describe("CodexSessionRuntime collab integration", () => {
       );
       assert.isDefined(childClosed, "child B's close becomes an agent event");
 
+      const childAStatuses = eventsForChild(events, CHILD_A)
+        .filter((event) => event.method === "collabAgent/statusChanged")
+        .map((event) => (event.payload as { status?: { type?: string } }).status?.type);
+      assert.deepEqual(
+        childAStatuses,
+        ["active", "idle"],
+        "the child's initial pre-registration idle is not a completed run",
+      );
+
       // Parent-owned resolution passes through — not swallowed, not
       // re-labelled as an agent event.
       assert.include(methods, "serverRequest/resolved");
@@ -144,6 +272,244 @@ describe("CodexSessionRuntime collab integration", () => {
       );
 
       yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("replays child completion received before registration", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000101";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration",
+        "finish before registration",
+        [
+          mockChildCompletion(childThreadId, "00000000-0000-4000-8000-000000000102"),
+          mockChildActivity(childThreadId, "call_fixture_preregistration"),
+        ],
+      );
+      const childMethods = eventsForChild(events, childThreadId).map((event) => event.method);
+      assert.deepEqual(childMethods, ["collabAgent/activity", "collabAgent/turnCompleted"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("replays a terminal child error received before registration", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000801";
+      const childTurnId = "00000000-0000-4000-8000-000000000802";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-error",
+        "fail before registration",
+        [
+          {
+            method: "turn/started",
+            params: {
+              threadId: childThreadId,
+              turn: { id: childTurnId, status: "inProgress", items: [] },
+            },
+          },
+          {
+            method: "error",
+            params: {
+              threadId: childThreadId,
+              turnId: childTurnId,
+              error: { message: "Synthetic terminal child error" },
+              willRetry: false,
+            },
+          },
+          mockChildActivity(childThreadId, "call_fixture_preregistration_error"),
+        ],
+      );
+      const childEvents = eventsForChild(events, childThreadId);
+      assert.deepEqual(
+        childEvents.map((event) => event.method),
+        ["collabAgent/activity", "collabAgent/statusChanged"],
+      );
+      assert.equal(
+        (childEvents.at(-1)?.payload as { status?: { type?: string } } | undefined)?.status?.type,
+        "systemError",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("replays settlement after duplicate child registration signals", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000401";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-duplicate",
+        "register a completed child twice",
+        [
+          mockChildCompletion(childThreadId, "00000000-0000-4000-8000-000000000402"),
+          mockChildThreadRegistration(childThreadId),
+          mockChildActivity(childThreadId, "call_fixture_preregistration_duplicate"),
+        ],
+      );
+      assert.deepEqual(
+        eventsForChild(events, childThreadId).map((event) => event.method),
+        [
+          "collabAgent/started",
+          "collabAgent/turnCompleted",
+          "collabAgent/activity",
+          "collabAgent/turnCompleted",
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not replay an old settlement after a registered child restarts", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000501";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-restarted",
+        "restart between duplicate registrations",
+        [
+          mockChildCompletion(childThreadId, "00000000-0000-4000-8000-000000000502"),
+          mockChildThreadRegistration(childThreadId),
+          {
+            method: "turn/started",
+            params: {
+              threadId: childThreadId,
+              turn: {
+                id: "00000000-0000-4000-8000-000000000503",
+                status: "inProgress",
+                items: [],
+              },
+            },
+          },
+          mockChildActivity(childThreadId, "call_fixture_preregistration_restarted"),
+        ],
+      );
+      assert.deepEqual(
+        eventsForChild(events, childThreadId).map((event) => event.method),
+        [
+          "collabAgent/started",
+          "collabAgent/turnCompleted",
+          "collabAgent/turnStarted",
+          "collabAgent/activity",
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps child interaction liveness-neutral across later registration", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000601";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-interacted",
+        "interact after completion",
+        [
+          mockChildThreadRegistration(childThreadId),
+          mockChildCompletion(childThreadId, "00000000-0000-4000-8000-000000000602"),
+          mockChildActivity(childThreadId, "call_fixture_preregistration_interacted", "interacted"),
+          mockChildThreadRegistration(childThreadId),
+        ],
+      );
+      assert.deepEqual(
+        eventsForChild(events, childThreadId).map((event) => event.method),
+        [
+          "collabAgent/started",
+          "collabAgent/turnCompleted",
+          "collabAgent/activity",
+          "collabAgent/started",
+          "collabAgent/turnCompleted",
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves a newer child interruption across later registration", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000701";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-interrupted",
+        "interrupt before duplicate registration",
+        [
+          mockChildThreadRegistration(childThreadId),
+          mockChildCompletion(childThreadId, "00000000-0000-4000-8000-000000000702"),
+          mockChildActivity(
+            childThreadId,
+            "call_fixture_preregistration_interrupted",
+            "interrupted",
+          ),
+          mockChildThreadRegistration(childThreadId),
+        ],
+      );
+      const childEvents = eventsForChild(events, childThreadId);
+      assert.deepEqual(
+        childEvents.map((event) => event.method),
+        [
+          "collabAgent/started",
+          "collabAgent/turnCompleted",
+          "collabAgent/activity",
+          "collabAgent/started",
+          "collabAgent/turnCompleted",
+        ],
+      );
+      const replayedTurn = childEvents.at(-1)?.payload as
+        | { turn?: { status?: string } }
+        | undefined;
+      assert.equal(replayedTurn?.turn?.status, "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("replays child idle received before registration after running", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000301";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-idle",
+        "become idle before registration",
+        [
+          {
+            method: "thread/status/changed",
+            params: {
+              threadId: childThreadId,
+              status: { type: "active", activeFlags: [] },
+            },
+          },
+          {
+            method: "thread/status/changed",
+            params: {
+              threadId: childThreadId,
+              status: { type: "idle" },
+            },
+          },
+          mockChildActivity(childThreadId, "call_fixture_preregistration_idle"),
+        ],
+      );
+      const childEvents = eventsForChild(events, childThreadId);
+      assert.deepEqual(
+        childEvents.map((event) => event.method),
+        ["collabAgent/activity", "collabAgent/statusChanged"],
+      );
+      assert.equal(
+        (childEvents[1]?.payload as { status?: { type?: string } } | undefined)?.status?.type,
+        "idle",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("drops buffered completion superseded by a newer child turn", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000201";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-order",
+        "restart before registration",
+        [
+          mockChildCompletion(childThreadId, "00000000-0000-4000-8000-000000000202"),
+          {
+            method: "turn/started",
+            params: {
+              threadId: childThreadId,
+              turn: {
+                id: "00000000-0000-4000-8000-000000000203",
+                status: "inProgress",
+                items: [],
+              },
+            },
+          },
+          mockChildActivity(childThreadId, "call_fixture_preregistration_order"),
+        ],
+      );
+      const childMethods = eventsForChild(events, childThreadId).map((event) => event.method);
+      assert.deepEqual(childMethods, ["collabAgent/activity"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
