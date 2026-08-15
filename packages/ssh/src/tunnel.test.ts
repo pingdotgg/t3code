@@ -45,6 +45,16 @@ const makeSuccessfulProcess = (stdout: string) => {
   });
 };
 
+const makeDelayedSuccessfulProcess = (stdout: string, delayMs: number) => {
+  const process = makeSuccessfulProcess(stdout);
+  return {
+    ...process,
+    exitCode: Effect.sleep(Duration.millis(delayMs)).pipe(
+      Effect.as(ChildProcessSpawner.ExitCode(0)),
+    ),
+  };
+};
+
 const makeRunningProcess = (onKill: () => void) => {
   let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
   return ChildProcessSpawner.makeHandle({
@@ -98,6 +108,9 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
     assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
     assert.include(script, "could not install 't3@latest'");
+    assert.include(script, "require_installed_t3_cli npx --yes --package 't3@latest'");
+    assert.include(script, "require_installed_t3_cli npm exec --yes --package 't3@latest'");
+    assert.include(script, "npm produced no t3 executable");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(script, "remote_node_satisfies_engine()");
@@ -130,6 +143,10 @@ describe("ssh tunnel scripts", () => {
 
     assert.include(script, "exec npx --yes 't3@nightly; touch /tmp/t3-owned' \"$@\"");
     assert.include(script, "exec npm exec --yes 't3@nightly; touch /tmp/t3-owned' -- \"$@\"");
+    assert.include(
+      script,
+      "require_installed_t3_cli npx --yes --package 't3@nightly; touch /tmp/t3-owned'",
+    );
     assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
   });
 
@@ -174,6 +191,9 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
     assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
+    assert.include(buildRemoteLaunchScript(), 'wait_ready "60000"');
+    assert.include(buildRemoteLaunchScript(), 'if [ -s "$LOG_FILE" ]; then');
+    assert.include(buildRemoteLaunchScript(), "It wrote nothing to %s");
     assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemotePairingScript(target),
@@ -231,6 +251,29 @@ describe("ssh tunnel scripts", () => {
 
     return Effect.gen(function* () {
       const result = yield* launchOrReuseRemoteServer(target);
+      assert.equal(result.remotePort, 3774);
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("allows cold remote launches to exceed the default SSH command timeout", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 75_000)),
+    );
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer, TestClock.layer());
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(launchOrReuseRemoteServer(target));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(75));
+
+      const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);
     }).pipe(Effect.provide(processLayer));
   });
