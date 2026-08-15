@@ -313,6 +313,37 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("routes a final unterminated message before handling input stream completion", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+      const notification = yield* transport.incomingNotifications.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const encoded = encoder.encode(
+        encodeUnknownJsonString({ method: "thread/started", params: { threadId: "thread-1" } }),
+      );
+
+      yield* Queue.offer(input, encoded.slice(0, 11));
+      yield* Queue.offer(input, encoded.slice(11));
+      yield* Queue.end(input);
+
+      assert.deepEqual(yield* Fiber.join(notification), [
+        { method: "thread/started", params: { threadId: "thread-1" } },
+      ]);
+      assert.instanceOf(
+        yield* Deferred.await(termination),
+        CodexError.CodexAppServerInputStreamEndedError,
+      );
+    }),
+  );
+
   it.effect("surfaces JSON encoding failures as protocol parse errors", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();

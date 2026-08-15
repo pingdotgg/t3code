@@ -32,10 +32,11 @@ it("handles chunk boundaries immediately before, after, and within line endings"
 it("retains a large fragmented line without emitting partial records", () => {
   const framer = makeLineFramer();
   const recordSize = 20 * 1024 * 1024;
-  const record = "x".repeat(recordSize);
+  const record = "0123456789abcdef".repeat(recordSize / 16);
   const chunkSizes = [4_093, 8_191, 16_381];
   let offset = 0;
   let chunkIndex = 0;
+  const startedAt = performance.now();
 
   while (offset < record.length) {
     const nextOffset = Math.min(
@@ -49,8 +50,7 @@ it("retains a large fragmented line without emitting partial records", () => {
 
   const completed = framer.push("\n");
   assert.lengthOf(completed, 1);
-  assert.lengthOf(completed[0]!, recordSize);
-  assert.equal(completed[0]![0], "x");
-  assert.equal(completed[0]!.at(-1), "x");
+  assert.equal(completed[0], record);
   assert.isUndefined(framer.finish());
+  assert.isBelow(performance.now() - startedAt, 2_000);
 });
