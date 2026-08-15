@@ -21,7 +21,7 @@ import * as Option from "effect/Option";
 import * as CatalogStore from "./catalog-store";
 
 function targetPersistenceError(
-  operation: "list-targets" | "register-connection" | "remove-connection",
+  operation: "list-targets" | "register-connection" | "activate-connection" | "remove-connection",
   error: ConnectionTransientError,
 ) {
   return new ConnectionPersistenceError({
@@ -46,13 +46,27 @@ export const connectionStorageLayer = Layer.effectContext(
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
           .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
+      update: (registration, activeTarget) =>
+        catalog
+          .update((document) => {
+            const updated = registerConnectionInCatalog(document, registration);
+            return activeTarget === undefined
+              ? updated
+              : activateConnectionInCatalog(updated, activeTarget);
+          })
+          .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
       activate: (target) =>
         catalog
           .update((document) => activateConnectionInCatalog(document, target))
-          .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
-      remove: (target) =>
+          .pipe(Effect.mapError((error) => targetPersistenceError("activate-connection", error))),
+      remove: (target, nextActiveTarget) =>
         catalog
-          .update((document) => removeConnectionFromCatalog(document, target))
+          .update((document) => {
+            const removed = removeConnectionFromCatalog(document, target);
+            return nextActiveTarget === undefined
+              ? removed
+              : activateConnectionInCatalog(removed, nextActiveTarget);
+          })
           .pipe(Effect.mapError((error) => targetPersistenceError("remove-connection", error))),
     });
     const profileStore = ProfileStore.make({

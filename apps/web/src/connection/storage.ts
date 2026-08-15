@@ -99,6 +99,7 @@ function persistenceError(
   operation:
     | "list-targets"
     | "register-connection"
+    | "activate-connection"
     | "remove-connection"
     | "load-shell"
     | "save-shell"
@@ -383,13 +384,27 @@ export const connectionStorageLayer = Layer.effectContext(
         catalog
           .update((document) => replaceEnvironmentConnectionInCatalog(document, registration))
           .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
+      update: (registration, activeTarget) =>
+        catalog
+          .update((document) => {
+            const updated = replaceEnvironmentConnectionInCatalog(document, registration);
+            return activeTarget === undefined
+              ? updated
+              : activateConnectionInCatalog(updated, activeTarget);
+          })
+          .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
       activate: (target) =>
         catalog
           .update((document) => activateConnectionInCatalog(document, target))
-          .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
-      remove: (target) =>
+          .pipe(Effect.mapError((cause) => persistenceError("activate-connection", cause))),
+      remove: (target, nextActiveTarget) =>
         catalog
-          .update((document) => removeConnectionFromCatalog(document, target))
+          .update((document) => {
+            const removed = removeConnectionFromCatalog(document, target);
+            return nextActiveTarget === undefined
+              ? removed
+              : activateConnectionInCatalog(removed, nextActiveTarget);
+          })
           .pipe(Effect.mapError((cause) => persistenceError("remove-connection", cause))),
     });
     const profileStore = ProfileStore.make({

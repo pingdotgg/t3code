@@ -133,6 +133,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly beforeRegistrationRegister?: (
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly beforeRegistrationActivate?: (
+      target: ConnectionTarget,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly beforeRegistrationRemove?: (
       target: ConnectionTarget,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
@@ -175,50 +178,70 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const targetStore = Persistence.ConnectionTargetStore.of({
     list: Ref.get(storedTargets).pipe(Effect.map((targets) => [...targets.values()])),
   });
+  const persistRegistration = (registration: ConnectionRegistration) =>
+    Effect.gen(function* () {
+      yield* Ref.update(storedTargets, (current) => {
+        const next = new Map(current);
+        next.delete(connectionTargetId(registration.target));
+        next.set(connectionTargetId(registration.target), registration.target);
+        return next;
+      });
+      switch (registration._tag) {
+        case "RelayConnectionRegistration":
+          return;
+        case "BearerConnectionRegistration":
+          yield* Ref.update(storedProfiles, (current) => {
+            const next = new Map(current);
+            next.set(registration.profile.connectionId, registration.profile);
+            return next;
+          });
+          yield* Ref.update(storedCredentials, (current) => {
+            const next = new Map(current);
+            next.set(registration.target.connectionId, registration.credential);
+            return next;
+          });
+          return;
+        case "SshConnectionRegistration":
+          yield* Ref.update(storedProfiles, (current) => {
+            const next = new Map(current);
+            next.set(registration.profile.connectionId, registration.profile);
+            return next;
+          });
+      }
+    });
+  const persistActivation = (target: ConnectionTarget) =>
+    Ref.update(storedTargets, (current) => {
+      const next = new Map(current);
+      next.delete(connectionTargetId(target));
+      next.set(connectionTargetId(target), target);
+      return next;
+    });
   const registrationStore = Persistence.ConnectionRegistrationStore.of({
     retainsSiblingRoutes: true,
     register: (registration) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRegister?.(registration) ?? Effect.void;
-        yield* Ref.update(storedTargets, (current) => {
-          const next = new Map(current);
-          next.delete(connectionTargetId(registration.target));
-          next.set(connectionTargetId(registration.target), registration.target);
-          return next;
-        });
-        switch (registration._tag) {
-          case "RelayConnectionRegistration":
-            return;
-          case "BearerConnectionRegistration":
-            yield* Ref.update(storedProfiles, (current) => {
-              const next = new Map(current);
-              next.set(registration.profile.connectionId, registration.profile);
-              return next;
-            });
-            yield* Ref.update(storedCredentials, (current) => {
-              const next = new Map(current);
-              next.set(registration.target.connectionId, registration.credential);
-              return next;
-            });
-            return;
-          case "SshConnectionRegistration":
-            yield* Ref.update(storedProfiles, (current) => {
-              const next = new Map(current);
-              next.set(registration.profile.connectionId, registration.profile);
-              return next;
-            });
+        yield* persistRegistration(registration);
+      }),
+    update: (registration, activeTarget) =>
+      Effect.gen(function* () {
+        if (activeTarget !== undefined) {
+          yield* options?.beforeRegistrationActivate?.(activeTarget) ?? Effect.void;
         }
+        yield* persistRegistration(registration);
+        if (activeTarget !== undefined) yield* persistActivation(activeTarget);
       }),
     activate: (target) =>
-      Ref.update(storedTargets, (current) => {
-        const next = new Map(current);
-        next.delete(connectionTargetId(target));
-        next.set(connectionTargetId(target), target);
-        return next;
+      Effect.gen(function* () {
+        yield* options?.beforeRegistrationActivate?.(target) ?? Effect.void;
+        yield* persistActivation(target);
       }),
-    remove: (target) =>
+    remove: (target, nextActiveTarget) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRemove?.(target) ?? Effect.void;
+        if (nextActiveTarget !== undefined) {
+          yield* options?.beforeRegistrationActivate?.(nextActiveTarget) ?? Effect.void;
+        }
         yield* Ref.update(storedTargets, (current) => {
           const next = new Map(current);
           next.delete(connectionTargetId(target));
@@ -246,6 +269,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             return next;
           });
         }
+        if (nextActiveTarget !== undefined) yield* persistActivation(nextActiveTarget);
       }),
   });
   const cacheStore = Persistence.EnvironmentCacheStore.of({
@@ -727,6 +751,159 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).has(BEARER_TARGET.environmentId),
         ).toBe(false);
         expect(yield* Ref.get(harness.cacheClears)).toEqual([BEARER_TARGET.environmentId]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("leaves an inactive route unchanged when its durable update fails", () =>
+    Effect.gen(function* () {
+      const secondTarget = new BearerConnectionTarget({
+        environmentId: BEARER_TARGET.environmentId,
+        label: "Office route",
+        connectionId: "bearer-connection-office",
+      });
+      const secondProfile = new BearerConnectionProfile({
+        connectionId: secondTarget.connectionId,
+        environmentId: secondTarget.environmentId,
+        label: secondTarget.label,
+        httpBaseUrl: "http://192.168.50.10:3773",
+        wsBaseUrl: "ws://192.168.50.10:3773",
+      });
+      const officeCredential = new BearerConnectionCredential({ token: "office-token" });
+      const persistenceError = new Persistence.ConnectionPersistenceError({
+        operation: "register-connection",
+        message: "Could not preserve the active route.",
+      });
+      const harness = yield* makeHarness(
+        [secondTarget, BEARER_TARGET],
+        [secondProfile, BEARER_PROFILE],
+        [
+          [secondTarget.connectionId, officeCredential],
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+        ],
+        { beforeRegistrationActivate: () => Effect.fail(persistenceError) },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const updatedTarget = new BearerConnectionTarget({
+          ...secondTarget,
+          label: "Renamed office route",
+        });
+        const error = yield* registry
+          .update(
+            new BearerConnectionRegistration({
+              target: updatedTarget,
+              profile: new BearerConnectionProfile({
+                ...secondProfile,
+                label: updatedTarget.label,
+              }),
+              credential: new BearerConnectionCredential({ token: "updated-office-token" }),
+            }),
+          )
+          .pipe(Effect.flip);
+
+        expect(error).toEqual(persistenceError);
+        expect((yield* Ref.get(harness.storedTargets)).get(secondTarget.connectionId)).toEqual(
+          secondTarget,
+        );
+        expect((yield* Ref.get(harness.storedProfiles)).get(secondTarget.connectionId)).toEqual(
+          secondProfile,
+        );
+        expect((yield* Ref.get(harness.storedCredentials)).get(secondTarget.connectionId)).toEqual(
+          officeCredential,
+        );
+        expect(
+          (yield* SubscriptionRef.get(registry.connections)).get(secondTarget.connectionId)?.target,
+        ).toEqual(secondTarget);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toEqual(BEARER_TARGET);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("leaves an active route installed when durable failover removal fails", () =>
+    Effect.gen(function* () {
+      const secondTarget = new BearerConnectionTarget({
+        environmentId: BEARER_TARGET.environmentId,
+        label: "Office route",
+        connectionId: "bearer-connection-office",
+      });
+      const secondProfile = new BearerConnectionProfile({
+        connectionId: secondTarget.connectionId,
+        environmentId: secondTarget.environmentId,
+        label: secondTarget.label,
+        httpBaseUrl: "http://192.168.50.10:3773",
+        wsBaseUrl: "ws://192.168.50.10:3773",
+      });
+      const persistenceError = new Persistence.ConnectionPersistenceError({
+        operation: "register-connection",
+        message: "Could not persist the replacement route.",
+      });
+      const harness = yield* makeHarness(
+        [secondTarget, BEARER_TARGET],
+        [secondProfile, BEARER_PROFILE],
+        [
+          [secondTarget.connectionId, new BearerConnectionCredential({ token: "office-token" })],
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+        ],
+        { beforeRegistrationActivate: () => Effect.fail(persistenceError) },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const error = yield* registry
+          .removeConnection(BEARER_TARGET.connectionId)
+          .pipe(Effect.flip);
+
+        expect(error).toEqual(persistenceError);
+        expect([...(yield* Ref.get(harness.storedTargets)).values()]).toEqual([
+          secondTarget,
+          BEARER_TARGET,
+        ]);
+        expect([...(yield* SubscriptionRef.get(registry.connections)).keys()]).toEqual([
+          secondTarget.connectionId,
+          BEARER_TARGET.connectionId,
+        ]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toEqual(BEARER_TARGET);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("deduplicates concurrent bearer registrations for the same address", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([]);
+      const registrations = ["first", "second"].map((suffix) => {
+        const target = new BearerConnectionTarget({
+          environmentId: BEARER_TARGET.environmentId,
+          label: `Bearer route ${suffix}`,
+          connectionId: `bearer-connection-${suffix}`,
+        });
+        return new BearerConnectionRegistration({
+          target,
+          profile: new BearerConnectionProfile({
+            connectionId: target.connectionId,
+            environmentId: target.environmentId,
+            label: target.label,
+            httpBaseUrl: BEARER_PROFILE.httpBaseUrl,
+            wsBaseUrl: BEARER_PROFILE.wsBaseUrl,
+          }),
+          credential: new BearerConnectionCredential({ token: `${suffix}-token` }),
+        });
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* Effect.forEach(registrations, registry.register, {
+          concurrency: "unbounded",
+          discard: true,
+        });
+
+        expect(yield* SubscriptionRef.get(registry.connections)).toHaveLength(1);
+        expect(yield* Ref.get(harness.storedTargets)).toHaveLength(1);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

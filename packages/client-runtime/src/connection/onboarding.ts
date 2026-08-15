@@ -21,6 +21,7 @@ import {
   type ConnectionCredential,
   SshConnectionProfile,
   SshConnectionRegistration,
+  reuseSavedBearerRoute,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { mapRemoteEnvironmentError } from "./errors.ts";
@@ -121,47 +122,15 @@ export const preparePairingRegistration = Effect.fn(
   });
 });
 
-export function reuseSavedPairingRoute(
-  registration: BearerConnectionRegistration,
-  connections: ReadonlyMap<string, ConnectionCatalogEntry>,
-): BearerConnectionRegistration {
-  const existing = [...connections.values()].find(
-    (entry) =>
-      entry.target._tag === "BearerConnectionTarget" &&
-      entry.target.environmentId === registration.target.environmentId &&
-      Option.isSome(entry.profile) &&
-      entry.profile.value._tag === "BearerConnectionProfile" &&
-      entry.profile.value.httpBaseUrl === registration.profile.httpBaseUrl,
-  );
-  if (existing?.target._tag !== "BearerConnectionTarget") return registration;
-  return new BearerConnectionRegistration({
-    target: new BearerConnectionTarget({
-      environmentId: registration.target.environmentId,
-      label: registration.target.label,
-      connectionId: existing.target.connectionId,
-    }),
-    profile: new BearerConnectionProfile({
-      connectionId: existing.target.connectionId,
-      environmentId: registration.profile.environmentId,
-      label: registration.profile.label,
-      httpBaseUrl: registration.profile.httpBaseUrl,
-      wsBaseUrl: registration.profile.wsBaseUrl,
-    }),
-    credential: registration.credential,
-  });
-}
+export const reuseSavedPairingRoute = reuseSavedBearerRoute;
 
 export const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  const resolved = reuseSavedPairingRoute(
-    registration,
-    yield* SubscriptionRef.get(registry.connections),
-  );
-  yield* registry.register(resolved);
-  return resolved.target.environmentId;
+  yield* registry.register(registration);
+  return registration.target.environmentId;
 });
 
 const isBearerCredential = Schema.is(BearerConnectionCredential);

@@ -128,3 +128,33 @@ export function connectionRegistrationCatalogEntry(
       };
   }
 }
+
+export function reuseSavedBearerRoute(
+  registration: BearerConnectionRegistration,
+  connections: ReadonlyMap<string, ConnectionCatalogEntry>,
+): BearerConnectionRegistration {
+  const existing = [...connections.values()].find(
+    (entry) =>
+      entry.target._tag === "BearerConnectionTarget" &&
+      entry.target.environmentId === registration.target.environmentId &&
+      Option.isSome(entry.profile) &&
+      entry.profile.value._tag === "BearerConnectionProfile" &&
+      entry.profile.value.httpBaseUrl === registration.profile.httpBaseUrl,
+  );
+  if (existing?.target._tag !== "BearerConnectionTarget") return registration;
+  return new BearerConnectionRegistration({
+    target: new BearerConnectionTarget({
+      environmentId: registration.target.environmentId,
+      label: registration.target.label,
+      connectionId: existing.target.connectionId,
+    }),
+    profile: new BearerConnectionProfile({
+      connectionId: existing.target.connectionId,
+      environmentId: registration.profile.environmentId,
+      label: registration.profile.label,
+      httpBaseUrl: registration.profile.httpBaseUrl,
+      wsBaseUrl: registration.profile.wsBaseUrl,
+    }),
+    credential: registration.credential,
+  });
+}

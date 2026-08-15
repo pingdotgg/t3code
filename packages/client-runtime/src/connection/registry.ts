@@ -20,6 +20,7 @@ import {
   type PrimaryConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
+  reuseSavedBearerRoute,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -442,15 +443,19 @@ export const make = Effect.gen(function* () {
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
   ) {
-    const entry = connectionRegistrationCatalogEntry(registration);
-    const environmentId = entry.target.environmentId;
+    const environmentId = registration.target.environmentId;
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return;
         }
-        yield* registrations.register(registration);
+        const resolved =
+          registrations.retainsSiblingRoutes && registration._tag === "BearerConnectionRegistration"
+            ? reuseSavedBearerRoute(registration, yield* SubscriptionRef.get(connections))
+            : registration;
+        const entry = connectionRegistrationCatalogEntry(resolved);
+        yield* registrations.register(resolved);
         yield* SubscriptionRef.update(connections, (current) =>
           installSavedConnection(current, entry, registrations.retainsSiblingRoutes),
         );
@@ -470,13 +475,14 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
         const active = (yield* SubscriptionRef.get(entries)).get(environmentId);
-        yield* registrations.register(registration);
+        const activeTarget =
+          active !== undefined && connectionTargetId(active.target) !== connectionId
+            ? active.target
+            : undefined;
+        yield* registrations.update(registration, activeTarget);
         yield* SubscriptionRef.update(connections, (current) =>
           updateSavedConnection(current, entry),
         );
-        if (active !== undefined && connectionTargetId(active.target) !== connectionId) {
-          yield* registrations.activate(active.target);
-        }
         if (active !== undefined && connectionTargetId(active.target) === connectionId) {
           yield* installEntryLocked(entry);
         }
@@ -678,9 +684,8 @@ export const make = Effect.gen(function* () {
   ) {
     const target = entry.target;
     if (target._tag !== "SshConnectionTarget") return;
-    const profile = yield* profiles.get(target.connectionId);
-    if (Option.isNone(profile) || !isSshConnectionProfile(profile.value)) return;
-    yield* ssh.disconnect(profile.value.target).pipe(
+    if (Option.isNone(entry.profile) || !isSshConnectionProfile(entry.profile.value)) return;
+    yield* ssh.disconnect(entry.profile.value.target).pipe(
       Effect.tapError((error) =>
         Effect.logWarning("Could not disconnect the managed SSH environment.", {
           environmentId: target.environmentId,
@@ -697,21 +702,25 @@ export const make = Effect.gen(function* () {
   ) {
     const environmentId = entry.target.environmentId;
     const active = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    const isActive = active !== undefined && connectionTargetId(active.target) === connectionId;
+    const remaining = isActive
+      ? [...(yield* SubscriptionRef.get(connections)).values()].findLast(
+          (candidate) =>
+            candidate.target.environmentId === environmentId &&
+            connectionTargetId(candidate.target) !== connectionId,
+        )
+      : undefined;
+    yield* registrations.remove(entry.target, remaining?.target);
     yield* disconnectSsh(entry);
-    yield* registrations.remove(entry.target);
     yield* SubscriptionRef.update(connections, (current) => {
       const next = new Map(current);
       next.delete(connectionId);
       return next;
     });
 
-    if (active === undefined || connectionTargetId(active.target) !== connectionId) return;
+    if (!isActive) return;
     yield* closeServiceScope(environmentId);
-    const remaining = [...(yield* SubscriptionRef.get(connections)).values()].findLast(
-      (candidate) => candidate.target.environmentId === environmentId,
-    );
     if (remaining !== undefined) {
-      yield* registrations.activate(remaining.target);
       yield* installEntryLocked(remaining);
       return;
     }
