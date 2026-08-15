@@ -48,6 +48,11 @@ static HWND_PTR: AtomicIsize = AtomicIsize::new(0);
 static CURSOR: OnceLock<AgentCursor> = OnceLock::new();
 static LAST_POINT: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 static TASK_HIDE_GEN: AtomicU64 = AtomicU64::new(0);
+/// Generation that should trigger hide when `FADE_DEADLINE_MS` elapses.
+static FADE_TARGET_GEN: AtomicU64 = AtomicU64::new(0);
+/// Deadline (ms since unix epoch) for the single fade watcher thread.
+static FADE_DEADLINE_MS: AtomicU64 = AtomicU64::new(0);
+static FADE_WATCHER_STARTED: AtomicBool = AtomicBool::new(false);
 
 pub struct AgentCursor;
 
@@ -123,15 +128,54 @@ impl AgentCursor {
         }
         let generation = TASK_HIDE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
         let delay = task_fade_grace();
-        let _ = thread::Builder::new()
-            .name("t3-agent-cursor-fade".into())
-            .spawn(move || {
-                thread::sleep(delay);
-                if TASK_HIDE_GEN.load(Ordering::Relaxed) == generation {
+        FADE_TARGET_GEN.store(generation, Ordering::Relaxed);
+        FADE_DEADLINE_MS.store(
+            now_unix_ms().saturating_add(delay.as_millis() as u64),
+            Ordering::Relaxed,
+        );
+        ensure_fade_watcher();
+    }
+}
+
+fn now_unix_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// One long-lived watcher thread — avoids spawning a sleeper per tools/call.
+fn ensure_fade_watcher() {
+    if FADE_WATCHER_STARTED
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let _ = thread::Builder::new()
+        .name("t3-agent-cursor-fade".into())
+        .spawn(|| {
+            loop {
+                thread::sleep(Duration::from_millis(50));
+                let deadline = FADE_DEADLINE_MS.load(Ordering::Relaxed);
+                if deadline == 0 || now_unix_ms() < deadline {
+                    continue;
+                }
+                let target = FADE_TARGET_GEN.load(Ordering::Relaxed);
+                // Clear only if this deadline is still armed (a newer finish
+                // may have replaced it while we slept).
+                if FADE_DEADLINE_MS
+                    .compare_exchange(deadline, 0, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_err()
+                {
+                    continue;
+                }
+                if TASK_HIDE_GEN.load(Ordering::Relaxed) == target {
                     AgentCursor::shared().hide();
                 }
-            });
-    }
+            }
+        });
 }
 
 fn task_fade_grace() -> Duration {

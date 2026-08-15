@@ -140,6 +140,7 @@ final class AgentCursor {
     }
 
     private func moveAndWait(to point: CGPoint, press: Bool) {
+        guard Self.isRepresentableScreenPoint(point) else { return }
         let wait: useconds_t
         var needsStartupSlack = false
         lock.lock()
@@ -162,6 +163,7 @@ final class AgentCursor {
     }
 
     private func moveNoWait(to point: CGPoint) {
+        guard Self.isRepresentableScreenPoint(point) else { return }
         lock.lock()
         ensureRunning()
         if connection != nil || listenerFD >= 0 {
@@ -169,6 +171,17 @@ final class AgentCursor {
             lastPoint = point
         }
         lock.unlock()
+    }
+
+    /// Overlay messages use `Int` coordinates — reject non-finite / out-of-range
+    /// values so `Int(point.x)` cannot trap the MCP process.
+    private static func isRepresentableScreenPoint(_ point: CGPoint) -> Bool {
+        let x = Double(point.x)
+        let y = Double(point.y)
+        guard x.isFinite, y.isFinite else { return false }
+        let max = Double(Int.max)
+        let min = Double(Int.min)
+        return x >= min && x <= max && y >= min && y <= max
     }
 
     /// Approximate flight time matching OverlayController's cubic path.
