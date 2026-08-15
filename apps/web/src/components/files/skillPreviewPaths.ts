@@ -31,7 +31,7 @@ export function relativePathWithinRoot(rootPath: string, targetPath: string): st
   const root = collapseDotSegments(rootPath).replace(/\/+$/, "");
   if (!root) return null;
   const target = collapseDotSegments(targetPath);
-  const caseInsensitive = /^[A-Za-z]:\//.test(root);
+  const caseInsensitive = /^[A-Za-z]:(?:\/|$)/.test(root);
   const comparableRoot = caseInsensitive ? root.toLowerCase() : root;
   const comparableTarget = caseInsensitive ? target.toLowerCase() : target;
   if (!comparableTarget.startsWith(`${comparableRoot}/`)) return null;

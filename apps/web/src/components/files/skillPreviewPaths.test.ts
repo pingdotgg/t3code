@@ -40,4 +40,8 @@ describe("relativePathWithinRoot", () => {
   it("does not treat every absolute path as in-workspace when the root is empty", () => {
     expect(relativePathWithinRoot("", "/tmp/secret.ts")).toBeNull();
   });
+
+  it("treats a Windows drive root as case-insensitive", () => {
+    expect(relativePathWithinRoot("C:\\", "c:\\foo.md")).toBe("foo.md");
+  });
 });

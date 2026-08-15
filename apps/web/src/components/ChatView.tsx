@@ -6159,7 +6159,7 @@ function ChatViewContent(props: ChatViewProps) {
         <FilePreviewPanel
           key={`${activeProject?.environmentId ?? activeThreadRef.environmentId}:${activeWorkspaceRoot ?? "skill"}`}
           environmentId={activeProject?.environmentId ?? activeThreadRef.environmentId}
-          cwd={activeWorkspaceRoot ?? ""}
+          cwd={activeProject ? (activeWorkspaceRoot ?? "") : ""}
           projectName={activeProject?.title ?? ""}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
