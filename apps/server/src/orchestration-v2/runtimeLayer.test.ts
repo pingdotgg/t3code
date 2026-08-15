@@ -655,16 +655,28 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         archivedShell.archivedThreads.map((thread) => thread.id),
         threadId,
       );
+      const activeOnlyShell = yield* orchestrator.getShellSnapshot({ location: "active" });
+      assert.notInclude(
+        activeOnlyShell.threads.map((thread) => thread.id),
+        threadId,
+      );
+      assert.lengthOf(activeOnlyShell.archivedThreads, 0);
+      const archiveOnlyShell = yield* orchestrator.getShellSnapshot({ location: "archive" });
+      assert.lengthOf(archiveOnlyShell.threads, 0);
+      assert.include(
+        archiveOnlyShell.archivedThreads.map((thread) => thread.id),
+        threadId,
+      );
       assert.deepEqual(
         shellStreamItemFromThreadShell({
           stored: archive.storedEvents[0]!,
           shell: yield* orchestrator.getThreadShell(threadId),
         }),
         {
-          kind: "thread.updated",
+          kind: "thread.removed",
           sequence: archive.sequence,
-          location: "archive",
-          thread: archivedShell.archivedThreads[0]!,
+          location: "active",
+          threadId,
         },
       );
 
@@ -690,7 +702,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         {
           kind: "thread.removed",
           sequence: remove.sequence,
-          location: "archive",
+          location: "active",
           threadId,
         },
       );
