@@ -258,8 +258,8 @@ describe("theme files", () => {
       colors: { accent: "oklch(0.5 1e303 0)" },
     });
 
-    expect(theme.colors.accent).toBe("oklch(0.5 1e+303 0)");
-    expect(themeColorToHex(theme.colors.accent)).toBe("#b5005e");
+    expect(theme.modes.light!.colors.accent).toBe("oklch(0.5 1e+303 0)");
+    expect(themeColorToHex(theme.modes.light!.colors.accent)).toBe("#b5005e");
   });
 
   it("rejects unknown roles and invalid color values", () => {
