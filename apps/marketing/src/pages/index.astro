@@ -391,6 +391,7 @@ const mobileEndorsementRows = [
 
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../lib/releases";
+  import { macArchFromGpuRenderer } from "../lib/macArch";
 
   type Platform = { os: "mac" | "win" | "linux"; label: string; arch?: string };
 
@@ -404,14 +405,12 @@ const mobileEndorsementRows = [
       const debugInfo = gl?.getExtension("WEBGL_debug_renderer_info");
       if (gl && debugInfo) {
         const renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) ?? "");
-        if (/apple/i.test(renderer)) return "arm64";
-        if (/intel|amd|radeon|nvidia|geforce/i.test(renderer)) return "x64";
+        return macArchFromGpuRenderer(renderer);
       }
     } catch {
       // fall through to the default below
     }
-    // Most current Macs are Apple Silicon; default there when detection is inconclusive.
-    return "arm64";
+    return macArchFromGpuRenderer("");
   }
 
   function detectPlatform(): Platform | null {
