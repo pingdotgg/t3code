@@ -20,6 +20,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { ScrollArea } from "../ui/scroll-area";
+import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
@@ -106,7 +107,7 @@ export function UsagePage() {
         {!isElectron && (
           <header
             className={cn(
-              "workspace-topbar px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
+              "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
@@ -156,14 +157,14 @@ export function UsagePage() {
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
+                <Button
+                  size="icon"
+                  variant="outline"
                   onClick={refreshWindow}
                   aria-label="Refresh usage"
-                  className="cursor-pointer rounded-md border border-border p-2 text-muted-foreground hover:text-foreground"
                 >
                   <RefreshCwIcon className="size-3.5" />
-                </button>
+                </Button>
               </div>
             </div>
 
