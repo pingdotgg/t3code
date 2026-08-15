@@ -16,6 +16,18 @@ type EditorDefinition = {
    * and forks that ship the Remote-SSH machinery.
    */
   readonly remoteScheme?: string;
+  /**
+   * macOS application bundle name, without the `.app` suffix. Editors that
+   * set this are also discovered through the Applications folders, and
+   * launch through `open -a` when their CLI command is not on PATH.
+   */
+  readonly macAppName?: string;
+  /**
+   * Marks editors whose CLI command name is also shipped by a standalone
+   * non-IDE tool. On macOS a PATH hit alone is not proof the IDE is
+   * installed, so discovery requires the app bundle instead.
+   */
+  readonly macRequiresAppBundle?: boolean;
 };
 
 export const EDITORS = [
@@ -49,8 +61,21 @@ export const EDITORS = [
     launchStyle: "goto",
     remoteScheme: "vscodium",
   },
-  { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
-  { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
+  {
+    id: "zed",
+    label: "Zed",
+    commands: ["zed", "zeditor"],
+    launchStyle: "direct-path",
+    macAppName: "Zed",
+  },
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    commands: ["agy"],
+    launchStyle: "goto",
+    macAppName: "Antigravity",
+    macRequiresAppBundle: true,
+  },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
   { id: "clion", label: "CLion", commands: ["clion"], launchStyle: "line-column" },
