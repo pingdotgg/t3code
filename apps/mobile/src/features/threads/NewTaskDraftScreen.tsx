@@ -47,6 +47,7 @@ import {
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   clearComposerDraftContent,
@@ -127,6 +128,7 @@ export function NewTaskDraftScreen(props: {
     reserveShare,
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
+  const { effectiveColorScheme } = useAppearancePreferences();
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
@@ -935,7 +937,7 @@ export function NewTaskDraftScreen(props: {
   }
 
   const isAndroid = Platform.OS === "android";
-  const isDarkMode = colorScheme === "dark";
+  const isDarkMode = effectiveColorScheme === "dark";
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
