@@ -15,6 +15,11 @@ interface OptimisticPreferences {
   readonly versions: Partial<Record<keyof Preferences, number>>;
 }
 
+export interface ReconciledPreferencesPatch {
+  readonly expectedUpdatedAt: string;
+  readonly patch: Partial<Preferences>;
+}
+
 /**
  * Owns the device preference blob for the lifetime of the app registry.
  * Optimistic patches are kept separately so writes made while persistence is
@@ -114,7 +119,21 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
     )
     .pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:update"));
 
-  return { preferencesAtom, updatePreferencesAtom } as const;
+  const persistReconciledPreferencesAtom = runtime
+    .fn((input: ReconciledPreferencesPatch, get) => {
+      const current = get(preferencesAtom);
+      if (
+        !AsyncResult.isSuccess(current) ||
+        current.value.syncedClientPreferencesUpdatedAt !== input.expectedUpdatedAt
+      ) {
+        return Effect.void;
+      }
+      get.set(updatePreferencesAtom, input.patch);
+      return Effect.void;
+    })
+    .pipe(Atom.withLabel("mobile:preferences:persist-reconciled"));
+
+  return { preferencesAtom, updatePreferencesAtom, persistReconciledPreferencesAtom } as const;
 }
 
 const mobilePreferencesRuntime = Atom.runtime(Runtime.runtimeContextLayer);
@@ -122,3 +141,5 @@ export const mobilePreferencesState = createMobilePreferencesState(mobilePrefere
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;
+export const persistReconciledMobilePreferencesAtom =
+  mobilePreferencesState.persistReconciledPreferencesAtom;

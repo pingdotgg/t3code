@@ -510,6 +510,88 @@ describe("synced plan mode", () => {
     }
   });
 
+  it.each([
+    { switchPrimary: true, expectedPersisted: [] },
+    { switchPrimary: false, expectedPersisted: [true] },
+  ])(
+    "persists a successful patch only while its environment remains active ($switchPrimary)",
+    async ({ switchPrimary, expectedPersisted }) => {
+      const previousPrimaryEnvironmentId = EnvironmentId.make("previous-primary");
+      const nextPrimaryEnvironmentId = EnvironmentId.make("next-primary");
+      const controller = createSyncedPlanModeHydrationController();
+      let resolvePatch!: (
+        result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>,
+      ) => void;
+      const patch = vi.fn<SyncedPlanModeHydrationInput<never>["patch"]>(
+        () =>
+          new Promise((resolve) => {
+            resolvePatch = resolve;
+          }),
+      );
+      const persisted: boolean[] = [];
+      const persist = (value: boolean) => persisted.push(value);
+      const HydrationHook = ({ input }: { input: SyncedPlanModeHydrationInput<never> }) => {
+        useSyncedPlanModeHydrationEffect(controller, input);
+        return null;
+      };
+      const root = createHookTestRoot();
+
+      try {
+        const input = {
+          environmentId: previousPrimaryEnvironmentId,
+          primaryEnvironmentId: previousPrimaryEnvironmentId,
+          clientHydrated: true,
+          clientValue: true,
+          live: true,
+          serverPreferences: undefined,
+          canPatch: true,
+          now: "2026-08-14T12:00:00.000Z",
+          patch,
+          persist,
+        } satisfies SyncedPlanModeHydrationInput<never>;
+
+        await act(async () => {
+          root.render(createElement(HydrationHook, { input }));
+        });
+        expect(patch).toHaveBeenCalledOnce();
+
+        if (switchPrimary) {
+          await act(async () => {
+            root.render(
+              createElement(HydrationHook, {
+                input: {
+                  ...input,
+                  environmentId: nextPrimaryEnvironmentId,
+                  primaryEnvironmentId: nextPrimaryEnvironmentId,
+                  clientValue: false,
+                  serverPreferences: {
+                    planModeEnabled: false,
+                    updatedAt: "2026-08-14T12:01:00.000Z",
+                  },
+                },
+              }),
+            );
+          });
+        }
+
+        await act(async () => {
+          resolvePatch(
+            AsyncResult.success({
+              planModeEnabled: true,
+              updatedAt: "2026-08-14T12:00:00.000Z",
+            }),
+          );
+          await Promise.resolve();
+        });
+
+        expect(persisted).toEqual(expectedPersisted);
+      } finally {
+        await act(async () => root.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it("keeps the latest rapid toggle when responses settle out of order", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const controller = createSyncedPlanModeHydrationController();

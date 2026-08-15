@@ -4,7 +4,11 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo } from "react";
 
 import { environmentShell } from "./shell";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
+import {
+  mobilePreferencesAtom,
+  persistReconciledMobilePreferencesAtom,
+  updateMobilePreferencesAtom,
+} from "./preferences";
 import { serverEnvironment } from "./server";
 import { environmentSession } from "./session";
 import { useAtomCommand } from "./use-atom-command";
@@ -54,6 +58,7 @@ function useConnectedEnvironmentPreferenceStates() {
 export function useSyncedClientPreferences(): void {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const persistReconciledPreferences = useAtomSet(persistReconciledMobilePreferencesAtom);
   const { states } = useConnectedEnvironmentPreferenceStates();
   const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
     label: "synced client preferences reconciliation",
@@ -95,10 +100,21 @@ export function useSyncedClientPreferences(): void {
       reconciliationController.reconcile({
         target,
         patch: patchPreferences,
-        persist: savePreferences,
+        persist: (patch) =>
+          persistReconciledPreferences({
+            expectedUpdatedAt: target.input.updatedAt,
+            patch,
+          }),
       });
     }
-  }, [patchPreferences, preferencesResult, reconciliationController, savePreferences, states]);
+  }, [
+    patchPreferences,
+    persistReconciledPreferences,
+    preferencesResult,
+    reconciliationController,
+    savePreferences,
+    states,
+  ]);
 }
 
 export function useUpdatePlanModePreference() {

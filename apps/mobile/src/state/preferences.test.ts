@@ -124,6 +124,59 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("discards a reconciliation response after a newer local preference write", () =>
+    Effect.gen(function* () {
+      const savePatch = vi.fn((patch: Partial<Preferences>) => Effect.succeed(patch));
+      const state = makePreferencesState({
+        load: Effect.succeed({
+          planModeEnabled: false,
+          syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00.000Z",
+        }),
+        savePatch,
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      const unmountReconciliation = registry.mount(state.persistReconciledPreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAt: "2026-08-14T12:01:00.000Z",
+      });
+      registry.set(state.updatePreferencesAtom, {
+        planModeEnabled: false,
+        syncedClientPreferencesUpdatedAt: "2026-08-14T12:02:00.000Z",
+      });
+      registry.set(state.persistReconciledPreferencesAtom, {
+        expectedUpdatedAt: "2026-08-14T12:01:00.000Z",
+        patch: {
+          planModeEnabled: true,
+          syncedClientPreferencesUpdatedAt: "2026-08-14T12:01:00.000Z",
+        },
+      });
+
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom))),
+      ).toMatchObject({
+        planModeEnabled: false,
+        syncedClientPreferencesUpdatedAt: "2026-08-14T12:02:00.000Z",
+      });
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(savePatch).toHaveBeenCalledTimes(2);
+        }),
+      );
+
+      unmountReconciliation();
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
   it.effect("falls back to empty preferences when secure storage cannot be read", () =>
     Effect.gen(function* () {
       const state = makePreferencesState({

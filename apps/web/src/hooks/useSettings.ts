@@ -446,6 +446,7 @@ export function createSyncedPlanModeHydrationController(
 
     cancelRetry(input.environmentId);
     if (matchingWrite) writePendingByEnvironment.delete(input.environmentId);
+    if (getSynchronizeAgain(input.environmentId) === undefined) return;
     markAdopted(input.environmentId, input.result.value.updatedAt);
     if (input.result.value.planModeEnabled !== undefined) {
       input.persist(input.result.value.planModeEnabled);
