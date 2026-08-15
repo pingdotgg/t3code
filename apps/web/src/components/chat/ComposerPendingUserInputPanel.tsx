@@ -1,5 +1,5 @@
 import { type ApprovalRequestId } from "@t3tools/contracts";
-import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -70,6 +70,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     onAdvanceRef.current = onAdvance;
   }, [onAdvance]);
 
+  const clearAutoAdvanceTimer = useCallback(() => {
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!activeQuestion || activeQuestion.multiSelect || !optimisticSingleSelect) {
       return;
@@ -91,30 +98,28 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     progress.selectedOptionLabels,
   ]);
 
-  // Clear auto-advance timer on unmount
+  // A scheduled single-select advance only belongs to the question that created it.
   useEffect(() => {
-    return () => {
-      if (autoAdvanceTimerRef.current !== null) {
-        window.clearTimeout(autoAdvanceTimerRef.current);
-      }
-    };
-  }, []);
+    return clearAutoAdvanceTimer;
+  }, [activeQuestion?.id, clearAutoAdvanceTimer]);
 
-  const handleOptionSelection = useEffectEvent((questionId: string, optionLabel: string) => {
-    if (activeQuestion?.multiSelect) {
+  const handleOptionSelection = useCallback(
+    (questionId: string, optionLabel: string, multiSelect: boolean | undefined) => {
+      if (multiSelect) {
+        clearAutoAdvanceTimer();
+        onToggleOption(questionId, optionLabel);
+        return;
+      }
+      setOptimisticSingleSelect({ questionId, optionLabel });
       onToggleOption(questionId, optionLabel);
-      return;
-    }
-    setOptimisticSingleSelect({ questionId, optionLabel });
-    onToggleOption(questionId, optionLabel);
-    if (autoAdvanceTimerRef.current !== null) {
-      window.clearTimeout(autoAdvanceTimerRef.current);
-    }
-    autoAdvanceTimerRef.current = window.setTimeout(() => {
-      autoAdvanceTimerRef.current = null;
-      onAdvanceRef.current();
-    }, 200);
-  });
+      clearAutoAdvanceTimer();
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        autoAdvanceTimerRef.current = null;
+        onAdvanceRef.current();
+      }, 200);
+    },
+    [clearAutoAdvanceTimer, onToggleOption],
+  );
 
   // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
   // outside editable fields. Multi-select prompts toggle options in place; single-
@@ -140,11 +145,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
-      handleOptionSelection(activeQuestion.id, option.label);
+      handleOptionSelection(activeQuestion.id, option.label, activeQuestion.multiSelect);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, isResponding]);
+  }, [activeQuestion, handleOptionSelection, isResponding]);
 
   if (!activeQuestion) {
     return null;
@@ -213,7 +218,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               type="button"
               disabled={isResponding}
               onClick={() => {
-                handleOptionSelection(activeQuestion.id, option.label);
+                handleOptionSelection(activeQuestion.id, option.label, activeQuestion.multiSelect);
               }}
               className={className}
             >
