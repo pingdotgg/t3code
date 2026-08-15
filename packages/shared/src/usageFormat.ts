@@ -179,13 +179,25 @@ export function makeWindow(
   now = new Date(),
   resolution: UsageResolution = "day",
 ): UsageSummaryInput {
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const format = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    // An unknown zone should degrade to UTC rather than crash the page.
+    timeZone = "UTC";
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
   const untilDay = format.format(now);
   if (resolution === "hour") {
     // Minute-aligned bounds keep labels readable while still representing an
