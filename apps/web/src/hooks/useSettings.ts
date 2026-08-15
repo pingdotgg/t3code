@@ -521,6 +521,7 @@ export function createSyncedPlanModeHydrationController(
       now: input.now,
     });
     if (action.type === "adopt") {
+      if (!input.canPatch) return deactivateSynchronization;
       markAdopted(state, action.updatedAt);
       if (input.clientValue !== action.value) input.persist(action.value);
       return deactivateSynchronization;

@@ -157,6 +157,38 @@ describe("synced client preferences", () => {
     ).toBeNull();
   });
 
+  it("settles a multi-environment toggle from only the first response", () => {
+    const controller = createPlanModePreferenceWriteController();
+    const write = controller.create({
+      value: true,
+      connectedEnvironmentIds: [environmentId("environment-1"), environmentId("environment-2")],
+      currentUpdatedAts: [],
+      now: "2026-08-14T12:00:00.000Z",
+    });
+
+    expect(
+      controller.settle({
+        target: write.environmentPatches[1]!,
+        result: AsyncResult.success({
+          planModeEnabled: true,
+          updatedAt: "2026-08-14T12:01:00.000Z",
+        }),
+      }),
+    ).toEqual({
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAt: "2026-08-14T12:01:00.000Z",
+    });
+    expect(
+      controller.settle({
+        target: write.environmentPatches[0]!,
+        result: AsyncResult.success({
+          planModeEnabled: false,
+          updatedAt: "2026-08-14T11:59:00.000Z",
+        }),
+      }),
+    ).toBeNull();
+  });
+
   it("keeps offline toggles device-local", () => {
     expect(
       createPlanModePreferenceWrite({

@@ -336,6 +336,32 @@ describe("synced plan mode", () => {
     expect(patch).not.toHaveBeenCalled();
   });
 
+  it("keeps the local fallback when server preferences are read-only", () => {
+    const primaryEnvironmentId = EnvironmentId.make("read-only");
+    const controller = createSyncedPlanModeHydrationController();
+    const persist = vi.fn();
+    const patch = vi.fn();
+
+    controller.synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: true,
+      serverPreferences: {
+        planModeEnabled: true,
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
+      canPatch: false,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist,
+    });
+
+    expect(persist).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
   it("uploads an offline write when patch access becomes available", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const controller = createSyncedPlanModeHydrationController();

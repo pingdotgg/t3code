@@ -208,6 +208,7 @@ export function createPlanModePreferenceWrite(input: {
 
 export function createPlanModePreferenceWriteController() {
   let latestRequestedUpdatedAt: string | undefined;
+  let settledRequestedUpdatedAt: string | undefined;
 
   return {
     create(input: Parameters<typeof createPlanModePreferenceWrite>[0]) {
@@ -219,16 +220,22 @@ export function createPlanModePreferenceWriteController() {
         ],
       });
       latestRequestedUpdatedAt = write.localPatch.syncedClientPreferencesUpdatedAt;
+      settledRequestedUpdatedAt = undefined;
       return write;
     },
     settle<E>(input: {
       readonly target: PlanModePreferencePatchTarget;
       readonly result: AtomCommandResult<SyncedClientPreferences, E>;
     }): Partial<Preferences> | null {
-      if (input.target.input.updatedAt !== latestRequestedUpdatedAt) return null;
-      return input.result._tag === "Success"
-        ? canonicalPlanModePreferencePatch(input.result.value)
-        : null;
+      if (
+        input.target.input.updatedAt !== latestRequestedUpdatedAt ||
+        input.target.input.updatedAt === settledRequestedUpdatedAt ||
+        input.result._tag === "Failure"
+      ) {
+        return null;
+      }
+      settledRequestedUpdatedAt = input.target.input.updatedAt;
+      return canonicalPlanModePreferencePatch(input.result.value);
     },
   };
 }
