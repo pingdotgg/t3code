@@ -242,6 +242,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
+  const [includeIgnored, setIncludeIgnored] = useState(false);
   const colorScheme = useColorScheme();
   const isAndroid = Platform.OS === "android";
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
@@ -254,7 +255,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
           environmentId,
-          input: { cwd },
+          input: { cwd, includeIgnored },
         })
       : null,
   );
@@ -403,6 +404,12 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
             onBack={handleReturnToThread}
             actions={[
               {
+                accessibilityLabel: "Show ignored files",
+                icon: includeIgnored ? "eye" : "eye.slash",
+                onPress: () => setIncludeIgnored((current) => !current),
+                selected: includeIgnored,
+              },
+              {
                 accessibilityLabel: "Refresh files",
                 icon: "arrow.clockwise",
                 onPress: entriesQuery.refresh,
@@ -424,6 +431,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         </>
       ) : (
         <>
+          <NativeHeaderToolbar placement="right">
+            <NativeHeaderToolbar.Button
+              accessibilityLabel="Show ignored files"
+              icon={includeIgnored ? "eye" : "eye.slash"}
+              onPress={() => setIncludeIgnored((current) => !current)}
+              selected={includeIgnored}
+            />
+          </NativeHeaderToolbar>
           {layout.usesSplitView ? (
             <NativeHeaderToolbar placement="left">
               <NativeHeaderToolbar.Button

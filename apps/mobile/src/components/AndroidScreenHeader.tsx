@@ -12,6 +12,7 @@ export interface AndroidHeaderAction {
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
+  readonly selected?: boolean;
 }
 
 export function AndroidHeaderIconButton(props: {
@@ -19,6 +20,7 @@ export function AndroidHeaderIconButton(props: {
   readonly icon: AppSymbolName;
   readonly onPress?: () => void;
   readonly disabled?: boolean;
+  readonly selected?: boolean;
 }) {
   const foregroundColor = useThemeColor("--color-foreground");
   const disabledColor = useThemeColor("--color-icon-subtle");
@@ -27,11 +29,13 @@ export function AndroidHeaderIconButton(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
+      accessibilityState={{ selected: props.selected }}
       disabled={props.disabled}
       hitSlop={8}
       onPress={props.onPress}
       className={cn(
-        "size-11 items-center justify-center rounded-full bg-subtle",
+        "size-11 items-center justify-center rounded-full",
+        props.selected ? "bg-subtle-strong" : "bg-subtle",
         props.disabled && "opacity-55",
       )}
     >
@@ -102,6 +106,7 @@ export function AndroidScreenHeader(props: {
             disabled={action.disabled}
             icon={action.icon}
             onPress={action.onPress}
+            selected={action.selected}
           />
         ))}
         {props.trailing}

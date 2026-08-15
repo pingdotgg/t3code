@@ -6,6 +6,7 @@ import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  retainProjectEntriesWhilePending,
   resolveProjectFileQueryData,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
@@ -47,5 +48,26 @@ describe("project files queries", () => {
     expect(
       confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}'),
     ).toBe(true);
+  });
+
+  it("keeps the settled file tree visible only while a replacement query is pending", () => {
+    const settled = {
+      entries: [{ path: "src/index.ts", kind: "file" as const }],
+      truncated: false,
+    };
+    const replacement = {
+      entries: [...settled.entries, { path: "cache/data.json", kind: "file" as const }],
+      truncated: false,
+    };
+
+    const normalSnapshot = { data: settled, includeIgnored: false };
+    const ignoredSnapshot = { data: replacement, includeIgnored: true };
+
+    expect(retainProjectEntriesWhilePending(null, normalSnapshot, true, true)).toBe(settled);
+    expect(retainProjectEntriesWhilePending(replacement, normalSnapshot, true, true)).toBe(
+      replacement,
+    );
+    expect(retainProjectEntriesWhilePending(null, ignoredSnapshot, true, false)).toBeNull();
+    expect(retainProjectEntriesWhilePending(null, normalSnapshot, false, true)).toBeNull();
   });
 });

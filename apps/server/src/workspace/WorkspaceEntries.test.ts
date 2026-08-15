@@ -12,6 +12,7 @@ import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -24,6 +25,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
+  Layer.provideMerge(VcsDriverRegistry.layer),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provide(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -119,6 +121,100 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         );
         expect(result.entries.some((entry) => entry.path.startsWith("node_modules"))).toBe(false);
         expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("includes ignored files on request without exposing repository metadata", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "ignored/\nignored.txt\n");
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* writeTextFile(cwd, "ignored/cache.json", "{}");
+        yield* writeTextFile(cwd, "ignored.txt", "ignored");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const hidden = yield* workspaceEntries.list({ cwd });
+        const visible = yield* workspaceEntries.list({ cwd, includeIgnored: true });
+
+        expect(hidden.entries.some((entry) => entry.path === "ignored.txt")).toBe(false);
+        expect(visible.entries).toEqual(
+          expect.arrayContaining([
+            { path: "ignored", kind: "directory", ignored: true },
+            { path: "ignored/cache.json", kind: "file", ignored: true },
+            { path: "ignored.txt", kind: "file", ignored: true },
+            { path: "src/index.ts", kind: "file" },
+          ]),
+        );
+        expect(visible.entries.some((entry) => entry.path === ".git")).toBe(false);
+        expect(visible.entries.some((entry) => entry.path.startsWith(".git/"))).toBe(false);
+        expect(visible.truncated).toBe(false);
+      }),
+    );
+
+    it.effect(
+      "does not label ordinary paths as ignored when the workspace index is truncated",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir({ git: true });
+          yield* writeTextFile(cwd, ".gitignore", "ignored.txt\n");
+          yield* writeTextFile(cwd, "indexed.ts");
+          yield* writeTextFile(cwd, "ordinary.ts");
+          yield* writeTextFile(cwd, "ignored.txt");
+
+          vi.spyOn(FileFinder.prototype, "mixedSearch").mockReturnValueOnce({
+            ok: true,
+            value: {
+              items: [
+                {
+                  type: "file",
+                  item: {
+                    relativePath: "indexed.ts",
+                    fileName: "indexed.ts",
+                    size: 0,
+                    modified: 0,
+                    accessFrecencyScore: 0,
+                    modificationFrecencyScore: 0,
+                    totalFrecencyScore: 0,
+                    gitStatus: "unmodified",
+                  },
+                },
+              ],
+              scores: [],
+              totalMatched: Number.MAX_SAFE_INTEGER,
+              totalFiles: Number.MAX_SAFE_INTEGER,
+              totalDirs: 0,
+            },
+          });
+
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const result = yield* workspaceEntries.list({ cwd, includeIgnored: true });
+
+          expect(result.entries).toContainEqual({ path: "indexed.ts", kind: "file" });
+          expect(result.entries).toContainEqual({
+            path: "ignored.txt",
+            kind: "file",
+            ignored: true,
+          });
+          expect(result.entries.some((entry) => entry.path === "ordinary.ts")).toBe(false);
+          expect(result.truncated).toBe(true);
+        }),
+    );
+
+    it.effect("reports the directory that failed during ignored-entry discovery", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        const cause = new Error("read failed");
+        vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(cause);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const error = yield* workspaceEntries.list({ cwd, includeIgnored: true }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "WorkspaceEntriesIgnoredDirectoryReadError",
+          cwd,
+          directoryPath: cwd,
+          cause,
+        });
       }),
     );
   });

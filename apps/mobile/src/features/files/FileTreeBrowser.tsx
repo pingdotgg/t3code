@@ -56,7 +56,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={node.path}
+      accessibilityLabel={node.ignored ? `${node.path}, ignored` : node.path}
       onPressIn={() => {
         if (node.kind === "file") {
           props.onPreviewFile?.(node.path);
@@ -85,13 +85,18 @@ const FileTreeRow = memo(function FileTreeRow(props: {
       ) : (
         <View className="w-3" />
       )}
-      <PierreEntryIcon path={node.path} kind={node.kind} size={17} />
+      <View className={cn(node.ignored && "opacity-50")}>
+        <PierreEntryIcon path={node.path} kind={node.kind} size={17} />
+      </View>
       <Text
         className={cn(
           "min-w-0 flex-1 text-sm leading-normal",
-          props.selected
-            ? "font-t3-bold text-foreground"
-            : "font-t3-medium text-foreground-secondary",
+          props.selected ? "font-t3-bold" : "font-t3-medium",
+          node.ignored
+            ? "text-foreground-tertiary"
+            : props.selected
+              ? "text-foreground"
+              : "text-foreground-secondary",
         )}
         numberOfLines={1}
       >

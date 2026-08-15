@@ -106,4 +106,17 @@ describe("mobile file tree helpers", () => {
 
     expect([...defaultExpandedTreePaths(tree)]).toEqual(["src"]);
   });
+
+  it("marks explicit ignored entries without muting their inferred ancestors", () => {
+    const tree = buildFileTree([
+      { kind: "directory", path: "cache", ignored: true },
+      { kind: "file", path: "cache/data.json", ignored: true },
+      { kind: "file", path: "src/index.ts" },
+    ]);
+
+    const cache = tree.find((node) => node.path === "cache");
+    expect(cache?.ignored).toBe(true);
+    expect(cache?.children[0]).toMatchObject({ path: "cache/data.json", ignored: true });
+    expect(tree.find((node) => node.path === "src")?.ignored).toBe(false);
+  });
 });

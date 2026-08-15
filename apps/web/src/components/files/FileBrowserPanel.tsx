@@ -1,17 +1,19 @@
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
+  GitStatusEntry,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { RotateCw } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { Eye, EyeOff, RotateCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Toggle } from "~/components/ui/toggle";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
@@ -39,6 +41,7 @@ const TREE_UNSAFE_CSS = `
     --trees-selected-bg-override: color-mix(in srgb, currentColor 12%, transparent);
     --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
     --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
+    --trees-git-ignored-color-override: var(--muted-foreground);
     --trees-font-family-override: var(--font-sans);
     --trees-font-size-override: 12px;
   }
@@ -108,7 +111,8 @@ export default function FileBrowserPanel({
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
-  const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
+  const [includeIgnored, setIncludeIgnored] = useState(false);
+  const entriesQuery = useProjectEntriesQuery(environmentId, cwd, includeIgnored);
   const entries = entriesQuery.data?.entries ?? [];
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
@@ -263,6 +267,14 @@ export default function FileBrowserPanel({
   }, [entryKinds, model, treePaths]);
 
   useEffect(() => {
+    const statuses: GitStatusEntry[] = [];
+    for (const entry of entries) {
+      if (entry.ignored) statuses.push({ path: treePath(entry), status: "ignored" });
+    }
+    model.setGitStatus(statuses);
+  }, [entries, model]);
+
+  useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
       return;
@@ -362,6 +374,23 @@ export default function FileBrowserPanel({
           onValueChange={handleSearchValueChange}
           onClose={search.close}
         />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={includeIgnored}
+                onPressedChange={setIncludeIgnored}
+                aria-label="Show ignored files"
+                variant="ghost"
+                size="xs"
+              >
+                {includeIgnored ? <Eye /> : <EyeOff />}
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">Show ignored files</TooltipPopup>
+        </Tooltip>
       </div>
       {entriesQuery.error && entriesQuery.data === null ? (
         <div className="p-4 text-xs leading-relaxed text-destructive">{entriesQuery.error}</div>

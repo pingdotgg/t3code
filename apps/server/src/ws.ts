@@ -200,6 +200,23 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         normalizedCwd: error.cwd,
         detail: error.reason,
       };
+    case "WorkspaceEntriesIgnoredDirectoryReadError":
+      return {
+        failure: "ignored_entries_read_failed",
+        normalizedCwd: error.cwd,
+        detail: error.directoryPath,
+      };
+    case "WorkspaceEntriesIgnoreClassificationError":
+      return {
+        failure: "ignored_entries_classification_failed",
+        normalizedCwd: error.cwd,
+        detail: String(error.pathCount),
+      };
+    case "WorkspaceEntriesVcsDetectionError":
+      return {
+        failure: "vcs_detection_failed",
+        normalizedCwd: error.cwd,
+      };
     default:
       return unexpectedCompatibilityError(error);
   }

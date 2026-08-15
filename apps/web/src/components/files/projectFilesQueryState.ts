@@ -7,7 +7,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
@@ -29,8 +29,15 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
-  return projectEnvironment.listEntries({ environmentId, input: { cwd } });
+export function getProjectEntriesQueryAtom(
+  environmentId: EnvironmentId,
+  cwd: string,
+  includeIgnored = false,
+) {
+  return projectEnvironment.listEntries({
+    environmentId,
+    input: { cwd, includeIgnored },
+  });
 }
 
 export function getProjectFileQueryAtom(
@@ -121,16 +128,51 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
   return cause instanceof Error ? cause.message : "Workspace query failed.";
 }
 
+export function retainProjectEntriesWhilePending(
+  current: ProjectListEntriesResult | null,
+  settled: {
+    readonly includeIgnored: boolean;
+    readonly data: ProjectListEntriesResult;
+  } | null,
+  isPending: boolean,
+  includeIgnored: boolean,
+): ProjectListEntriesResult | null {
+  const canRetainSettled =
+    settled !== null && (includeIgnored || settled.includeIgnored === includeIgnored);
+  return current ?? (isPending && canRetainSettled ? settled.data : null);
+}
+
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
+  includeIgnored = false,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd);
+  const atom = getProjectEntriesQueryAtom(environmentId, cwd, includeIgnored);
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
+  const currentData = Option.getOrNull(AsyncResult.value(result));
+  const settledRef = useRef<{
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string;
+    readonly includeIgnored: boolean;
+    readonly data: ProjectListEntriesResult;
+  } | null>(null);
+  useEffect(() => {
+    if (currentData !== null) {
+      settledRef.current = { environmentId, cwd, includeIgnored, data: currentData };
+    }
+  }, [currentData, cwd, environmentId, includeIgnored]);
+  const settled = settledRef.current;
+  const settledData =
+    settled?.environmentId === environmentId && settled.cwd === cwd ? settled : null;
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
+    data: retainProjectEntriesWhilePending(
+      currentData,
+      settledData,
+      result.waiting,
+      includeIgnored,
+    ),
     error: errorMessage(result),
     isPending: result.waiting,
     refresh,
