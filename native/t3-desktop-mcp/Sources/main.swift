@@ -2102,6 +2102,15 @@ while let line = readLine(strippingNewline: true) {
                 break
             }
 
+            // list_displays / browser_* do not need Accessibility — Screen
+            // Recording / Chrome bridge only. Keep them ahead of the AX gate so
+            // the Screen Recording-only flow can still recover (Bot finding).
+            if name == "list_displays" || name.hasPrefix("browser_") {
+                let out = dispatch(name, args)
+                respond(id: id, result: textResult(out, isError: out.hasPrefix("error:")))
+                break
+            }
+
             if !AXIsProcessTrusted() {
                 respond(id: id, result: textResult(
                     "Accessibility permission is not granted to the host app. Enable it in "

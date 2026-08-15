@@ -295,6 +295,8 @@ export function ComputerUseSettings() {
               type="button"
               variant="outline"
               size="sm"
+              aria-expanded={moreBrowsersOpen}
+              aria-controls="more-browsers-panel"
               onClick={() => setMoreBrowsersOpen((open) => !open)}
             >
               {moreBrowsersOpen ? "Hide" : "Show"}
@@ -302,7 +304,10 @@ export function ComputerUseSettings() {
           }
         >
           {moreBrowsersOpen ? (
-            <div className="mt-2 space-y-3 rounded-xl bg-muted/20 px-3 py-3">
+            <div
+              id="more-browsers-panel"
+              className="mt-2 space-y-3 rounded-xl bg-muted/20 px-3 py-3"
+            >
               <div className="flex items-center gap-3">
                 <EdgeIcon className="size-6" />
                 <div className="min-w-0">
