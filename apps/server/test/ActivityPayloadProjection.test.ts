@@ -117,9 +117,9 @@ const fixtures = [
       server: "repository",
       tool: "search",
       arguments: { query: "activity projection" },
-      aggregatedOutput: "mcp payload remains available",
+      aggregatedOutput: "mcp bulk is dropped",
     },
-    ignored: "MCP data is rendered verbatim",
+    ignored: "top-level bulk",
   }),
   makeActivity("search", "web_search", {
     rawOutput: {
@@ -184,13 +184,37 @@ describe("projectActivityPayload", () => {
     });
   });
 
-  it("passes MCP tool data through unchanged", () => {
-    expect(projectActivityPayload(fixtures[4]!)).toBe(fixtures[4]);
+  it("slims MCP tool data to the fields the expanded row renders", () => {
+    expect(projectActivityPayload(fixtures[4]!).payload).toEqual({
+      itemType: "mcp_tool_call",
+      title: "mcp_tool_call",
+      detail: "mcp_tool_call detail",
+      status: "completed",
+      requestKind: "command",
+      data: {
+        item: {
+          server: "repository",
+          tool: "search",
+          arguments: { query: "activity projection" },
+        },
+      },
+    });
   });
 
   it("keeps current web and mobile derived output identical for every tool item type", () => {
     for (const activity of fixtures) {
       const projected = projectActivityPayload(activity);
+      if (activity === fixtures[4]) {
+        // MCP is the one deliberate difference: the expanded row's toolData
+        // loses result bulk but keeps the rendered identity fields.
+        const [entry] = deriveWorkLogEntries([projected]);
+        expect(entry?.toolData).toEqual({
+          server: "repository",
+          tool: "search",
+          arguments: { query: "activity projection" },
+        });
+        continue;
+      }
       expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([activity]));
       expect(comparableThreadFeed([projected])).toEqual(comparableThreadFeed([activity]));
     }
@@ -230,6 +254,179 @@ describe("projectActivityPayload", () => {
         : undefined,
     ).toEqual(projectActivityPayload(activity));
     expect(event.payload.activity).toBe(activity);
+  });
+});
+
+describe("superseded tool.updated snapshot dedup", () => {
+  function makeToolLifecycleActivity(
+    id: string,
+    kind: "tool.updated" | "tool.completed",
+    options: {
+      readonly turn?: string;
+      readonly title?: string;
+      readonly detail?: string;
+      readonly toolCallId?: string;
+    } = {},
+  ): OrchestrationThreadActivity {
+    const { turn = "turn-a", title = "File change", detail, toolCallId } = options;
+    return {
+      id: EventId.make(id),
+      tone: "tool",
+      kind,
+      summary: title,
+      payload: {
+        itemType: "file_change",
+        title,
+        ...(detail ? { detail } : {}),
+        data: {
+          ...(toolCallId ? { toolCallId } : {}),
+          toolName: "Edit",
+          input: { file_path: "src/app.ts" },
+        },
+      },
+      turnId: TurnId.make(turn),
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+  }
+
+  function projectedIds(activities: ReadonlyArray<OrchestrationThreadActivity>) {
+    return projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread(activities),
+    }).thread.activities.map((activity) => activity.id);
+  }
+
+  it("drops updates a later completion supersedes in the same turn", () => {
+    const update1 = makeToolLifecycleActivity("upd-1", "tool.updated");
+    const update2 = makeToolLifecycleActivity("upd-2", "tool.updated");
+    const completed = makeToolLifecycleActivity("done-1", "tool.completed");
+
+    expect(projectedIds([update1, update2, completed])).toEqual([completed.id]);
+  });
+
+  it("matches on toolCallId when the adapter emits one", () => {
+    const otherCall = makeToolLifecycleActivity("upd-other", "tool.updated", {
+      toolCallId: "call-b",
+    });
+    const update = makeToolLifecycleActivity("upd-a", "tool.updated", { toolCallId: "call-a" });
+    const completed = makeToolLifecycleActivity("done-a", "tool.completed", {
+      toolCallId: "call-a",
+    });
+
+    // Same itemType/title, different call: only call-a's update is superseded.
+    expect(projectedIds([otherCall, update, completed])).toEqual([otherCall.id, completed.id]);
+  });
+
+  it("keeps updates with no matching completion", () => {
+    const inFlight = makeToolLifecycleActivity("upd-live", "tool.updated", { title: "Running" });
+    const other = makeToolLifecycleActivity("upd-other", "tool.updated", { title: "Reading" });
+    const completed = makeToolLifecycleActivity("done-other", "tool.completed", {
+      title: "Reading",
+    });
+
+    expect(projectedIds([inFlight, other, completed])).toEqual([inFlight.id, completed.id]);
+  });
+
+  it("drops interleaved superseded updates even when a parallel call separates them", () => {
+    // Deliberate divergence from the clients' adjacency-based collapse: a
+    // superseded update separated from its completion by an interleaved
+    // parallel call renders as its own in-flight row on full history, and the
+    // snapshot omits it. Its final state still shows via the retained
+    // completion (1.5% of dropped rows on real data; see the projection's doc
+    // comment).
+    const updateA = makeToolLifecycleActivity("upd-a", "tool.updated", { toolCallId: "call-a" });
+    const updateB = makeToolLifecycleActivity("upd-b", "tool.updated", { toolCallId: "call-b" });
+    const completedA = makeToolLifecycleActivity("done-a", "tool.completed", {
+      toolCallId: "call-a",
+    });
+    const completedB = makeToolLifecycleActivity("done-b", "tool.completed", {
+      toolCallId: "call-b",
+    });
+
+    expect(projectedIds([updateA, updateB, completedA, completedB])).toEqual([
+      completedA.id,
+      completedB.id,
+    ]);
+  });
+
+  it("keeps an update whose completion lives in another turn", () => {
+    // A live thread.reverted can discard the completing turn while keeping
+    // the updating one, which would leave the call unrepresented.
+    const update = makeToolLifecycleActivity("upd-kept", "tool.updated", { turn: "turn-kept" });
+    const completed = makeToolLifecycleActivity("done-later", "tool.completed", {
+      turn: "turn-reverted",
+    });
+
+    expect(projectedIds([update, completed])).toEqual([update.id, completed.id]);
+  });
+
+  it("keeps an update that follows its completion", () => {
+    // A later update under the same identity is the next call, still in flight.
+    const completed = makeToolLifecycleActivity("done-first", "tool.completed");
+    const nextCall = makeToolLifecycleActivity("upd-next", "tool.updated");
+
+    expect(projectedIds([completed, nextCall])).toEqual([completed.id, nextCall.id]);
+  });
+
+  it("keeps identity-less rows the clients never collapse", () => {
+    const anonymous: OrchestrationThreadActivity = {
+      id: EventId.make("upd-anon"),
+      tone: "tool",
+      kind: "tool.updated",
+      summary: " ",
+      payload: { data: { toolName: "Edit" } },
+      turnId: TurnId.make("turn-a"),
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+    const completed: OrchestrationThreadActivity = {
+      ...anonymous,
+      id: EventId.make("done-anon"),
+      kind: "tool.completed",
+    };
+
+    expect(projectedIds([anonymous, completed])).toEqual([anonymous.id, completed.id]);
+  });
+
+  it("does not filter live activity-appended events", () => {
+    const update = makeToolLifecycleActivity("upd-live-event", "tool.updated");
+    const event = {
+      sequence: 11,
+      eventId: EventId.make("event-tool-updated"),
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-projection"),
+      occurredAt: "2026-07-27T00:00:03.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "thread.activity-appended",
+      payload: {
+        threadId: ThreadId.make("thread-projection"),
+        activity: update,
+      },
+    } satisfies Extract<OrchestrationEvent, { type: "thread.activity-appended" }>;
+
+    const projected = projectActivityEvent(event);
+    expect(
+      projected.type === "thread.activity-appended" ? projected.payload.activity.id : undefined,
+    ).toEqual(update.id);
+  });
+
+  it("leaves the collapsed work log identical to the full history", () => {
+    const activities = [
+      makeToolLifecycleActivity("upd-1", "tool.updated", { detail: "writing" }),
+      makeToolLifecycleActivity("upd-2", "tool.updated", { detail: "writing" }),
+      makeToolLifecycleActivity("done-1", "tool.completed", { detail: "writing" }),
+    ];
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread(activities),
+    });
+
+    const before = deriveWorkLogEntries(activities);
+    const after = deriveWorkLogEntries(projected.thread.activities);
+    expect(after).toHaveLength(before.length);
+    expect(after.map((entry) => entry.label)).toEqual(before.map((entry) => entry.label));
   });
 });
 
@@ -328,12 +525,12 @@ describe("context-window snapshot dedup", () => {
     );
   });
 
-  it("leaves snapshots without context-window activities untouched", () => {
+  it("applies only payload slimming when there are no context-window activities", () => {
     const projected = projectThreadDetailSnapshot({
       snapshotSequence: 7,
       thread: makeThread([fixtures[4]!]),
     });
-    expect(projected.thread.activities).toEqual([fixtures[4]]);
+    expect(projected.thread.activities).toEqual([projectActivityPayload(fixtures[4]!)]);
   });
 
   it("does not filter live activity-appended events", () => {

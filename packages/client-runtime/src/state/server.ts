@@ -3,6 +3,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerLifecycleStreamReadyEvent,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   WS_METHODS,
@@ -95,6 +96,86 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass
   override get message(): string {
     return `The t3@${this.targetVersion} update ended before the server accepted the restart.`;
   }
+}
+
+export class ServerUpdateTerminalError extends Schema.TaggedErrorClass<ServerUpdateTerminalError>()(
+  "ServerUpdateTerminalError",
+  {
+    targetVersion: Schema.String,
+    status: Schema.Literals(["committed", "rolled-back", "failed"]),
+    reason: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return this.reason ?? `The t3@${this.targetVersion} update ${this.status}.`;
+  }
+}
+
+// Covers the 120-second trial deadline and a final restart of the previous
+// version when the trial rolls back.
+const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(4);
+
+export function matchesServerUpdateReadyEvent(
+  result: ServerSelfUpdateResult,
+  event: ServerLifecycleStreamReadyEvent,
+): boolean {
+  return result.updateId === undefined
+    ? event.payload.environment.serverVersion === result.targetVersion
+    : event.payload.updateOutcome?.id === result.updateId;
+}
+
+export function validateServerUpdateReadyEvent(
+  result: ServerSelfUpdateResult,
+  event: ServerLifecycleStreamReadyEvent,
+): Effect.Effect<void, ServerUpdateTerminalError> {
+  if (result.updateId === undefined) return Effect.void;
+  const outcome = event.payload.updateOutcome;
+  if (
+    outcome?.id === result.updateId &&
+    outcome.status === "committed" &&
+    outcome.targetVersion === result.targetVersion &&
+    event.payload.environment.serverVersion === result.targetVersion
+  ) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    new ServerUpdateTerminalError({
+      targetVersion: result.targetVersion,
+      status: outcome?.status ?? "failed",
+      reason:
+        outcome?.reason ??
+        "The service launcher resumed without committing the requested server version.",
+    }),
+  );
+}
+
+/**
+ * Keeps reconnect attempts ~1s apart for the whole update restart.
+ *
+ * A restart takes the server down for ~15 seconds, but the supervisor's normal
+ * backoff ladder (1/2/4/8/16s) assumes an unexpected failure and lands attempts
+ * at ~3, 5, 9, 17 and 33 seconds — so a 15-second restart is observed as a
+ * 33-second "Resuming". Nudging on every backoff entry (not just the first)
+ * holds the retry cadence flat until the server answers again. The sleep before
+ * each nudge is the pacer: a connection that fails instantly re-enters backoff
+ * immediately and would otherwise spin a tight retry loop.
+ *
+ * Callers fork this as a child of the update command so it is interrupted as
+ * soon as the update settles, whether it succeeds, fails, or times out.
+ */
+export function nudgeReconnectDuringUpdateRestart(input: {
+  readonly stateChanges: Stream.Stream<{ readonly phase: string }, unknown>;
+  readonly retryNow: Effect.Effect<void>;
+  readonly interval?: Duration.Duration;
+}): Effect.Effect<void> {
+  return input.stateChanges.pipe(
+    Stream.filter((state) => state.phase === "backoff"),
+    Stream.runForEach(() =>
+      Effect.sleep(input.interval ?? Duration.seconds(1)).pipe(Effect.andThen(input.retryNow)),
+    ),
+    Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
+    Effect.ignore,
+  );
 }
 
 export function serverUpdateStateForProgressEvent(
@@ -537,28 +618,23 @@ export function createServerEnvironmentAtoms<R, E>(
           }),
         );
 
-        // The update restart is intentional. As soon as the supervisor sees
-        // that first failed connection, discard any prior backoff debt and
-        // retry immediately instead of carrying an old 16-second delay.
-        yield* environmentRegistry.stateChanges(target.environmentId).pipe(
-          Stream.filter((state) => state.phase === "backoff"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.andThen(environmentRegistry.retryNow(target.environmentId)),
-          Effect.timeoutOption(Duration.seconds(30)),
-          Effect.ignore,
-          Effect.forkChild,
-        );
+        // The update restart is intentional and the server stays unreachable
+        // for the whole restart, so hold the retry cadence flat instead of
+        // letting the supervisor climb its backoff ladder.
+        yield* nudgeReconnectDuringUpdateRestart({
+          stateChanges: environmentRegistry.stateChanges(target.environmentId),
+          retryNow: environmentRegistry.retryNow(target.environmentId),
+        }).pipe(Effect.forkChild);
 
         const resumed = yield* environmentRegistry
           .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
           .pipe(
             Stream.filter(
-              (event) =>
-                event.type === "ready" && event.payload.environment.serverVersion === targetVersion,
+              (event): event is ServerLifecycleStreamReadyEvent =>
+                event.type === "ready" && matchesServerUpdateReadyEvent(result, event),
             ),
             Stream.runHead,
-            Effect.timeoutOption(Duration.seconds(120)),
+            Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
             Effect.map(Option.flatten),
           );
         if (Option.isNone(resumed)) {
@@ -567,6 +643,7 @@ export function createServerEnvironmentAtoms<R, E>(
             targetVersion,
           });
         }
+        yield* validateServerUpdateReadyEvent(result, resumed.value);
 
         atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
         return result;
@@ -629,6 +706,13 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
+    }),
+    // A cold transcript scan is measured in seconds, so keep the result around
+    // long enough that switching windows or re-rendering does not rescan.
+    usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-summary",
+      tag: WS_METHODS.serverGetUsageSummary,
+      staleTimeMs: 60_000,
     }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {

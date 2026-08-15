@@ -23,6 +23,19 @@ it("creates stable keys regardless of environment order", () => {
   );
 });
 
+it("creates keys without array methods unavailable in Hermes", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+  Reflect.deleteProperty(Array.prototype, "toSorted");
+
+  try {
+    expect(makeThreadSearchKey([envB, envA], "needle")).toBe('[["env-a","env-b"],"needle"]');
+  } finally {
+    if (descriptor !== undefined) {
+      Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
+    }
+  }
+});
+
 it("encodes scoped thread keys without delimiter collisions", () => {
   const first = threadSearchMatchKey({
     environmentId: EnvironmentId.make("env\u0000thread"),

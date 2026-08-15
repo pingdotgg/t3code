@@ -6,10 +6,11 @@ import { useMemo, useState } from "react";
 import {
   ProviderInstanceId,
   ProviderDriverKind,
+  type EnvironmentId,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
@@ -115,13 +116,20 @@ function validateInstanceId(id: string, existing: ReadonlySet<string>): string |
 }
 
 interface AddProviderInstanceDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  readonly open: boolean;
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly onOpenChange: (open: boolean) => void;
 }
 
-export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+export function AddProviderInstanceDialog({
+  open,
+  environmentId,
+  environmentLabel,
+  onOpenChange,
+}: AddProviderInstanceDialogProps) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
@@ -227,8 +235,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
           <DialogHeader>
             <DialogTitle>Add provider instance</DialogTitle>
             <DialogDescription>
-              Configure an additional provider instance — for example, a second Codex install
-              pointed at a different workspace.
+              Configure an additional provider instance on {environmentLabel} — for example, a
+              second Codex install pointed at a different workspace.
             </DialogDescription>
             <AddProviderInstanceWizardSteps
               currentStep={wizardStep}

@@ -10,20 +10,45 @@ type EditorDefinition = {
   readonly commands: readonly [string, ...string[]] | null;
   readonly baseArgs?: readonly string[];
   readonly launchStyle: EditorLaunchStyle;
+  /**
+   * URL scheme for editors that support VS Code's remote deep links
+   * (`<scheme>://vscode-remote/ssh-remote+<host><path>`). Only set for VS Code
+   * and forks that ship the Remote-SSH machinery.
+   */
+  readonly remoteScheme?: string;
 };
 
 export const EDITORS = [
-  { id: "cursor", label: "Cursor", commands: ["cursor"], launchStyle: "goto" },
+  {
+    id: "cursor",
+    label: "Cursor",
+    commands: ["cursor"],
+    launchStyle: "goto",
+    remoteScheme: "cursor",
+  },
   { id: "trae", label: "Trae", commands: ["trae"], launchStyle: "goto" },
   { id: "kiro", label: "Kiro", commands: ["kiro"], baseArgs: ["ide"], launchStyle: "goto" },
-  { id: "vscode", label: "VS Code", commands: ["code"], launchStyle: "goto" },
+  {
+    id: "vscode",
+    label: "VS Code",
+    commands: ["code"],
+    launchStyle: "goto",
+    remoteScheme: "vscode",
+  },
   {
     id: "vscode-insiders",
     label: "VS Code Insiders",
     commands: ["code-insiders"],
     launchStyle: "goto",
+    remoteScheme: "vscode-insiders",
   },
-  { id: "vscodium", label: "VSCodium", commands: ["codium"], launchStyle: "goto" },
+  {
+    id: "vscodium",
+    label: "VSCodium",
+    commands: ["codium"],
+    launchStyle: "goto",
+    remoteScheme: "vscodium",
+  },
   { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
@@ -49,6 +74,54 @@ export const LaunchEditorInput = Schema.Struct({
   editor: EditorId,
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
+
+const remoteSchemeOf = (editor: EditorDefinition): string | undefined => editor.remoteScheme;
+
+/** Editors that can open a remote workspace via `vscode-remote` deep links. */
+export const REMOTE_CAPABLE_EDITOR_IDS: ReadonlyArray<EditorId> = EDITORS.flatMap((editor) =>
+  remoteSchemeOf(editor) !== undefined ? [editor.id] : [],
+);
+
+export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
+  const editor = EDITORS.find((candidate) => candidate.id === id);
+  return editor === undefined ? undefined : remoteSchemeOf(editor);
+};
+
+/**
+ * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link that
+ * opens `absolutePath` on `host` in the local editor over SSH. Returns
+ * undefined for editors without remote deep-link support.
+ */
+export const buildRemoteOpenUrl = (input: {
+  readonly editor: EditorId;
+  readonly host: string;
+  readonly absolutePath: string;
+}): string | undefined => {
+  const scheme = remoteSchemeForEditor(input.editor);
+  if (scheme === undefined) {
+    return undefined;
+  }
+  // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
+  const posixPath = input.absolutePath.replaceAll("\\", "/");
+  const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
+  const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
+  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(input.host)}${encodedPath}`;
+};
+
+/**
+ * SSH hostnames an environment advertises for remote open links. Reachability
+ * is client-side; the server only advertises names that resolve to itself and
+ * gates them on a local sshd listen check. Ordered most-reachable first
+ * (tailnet MagicDNS name, then mDNS `<hostname>.local`).
+ */
+export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
+export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
+
+export const RemoteOpenTarget = Schema.Struct({
+  kind: RemoteOpenTargetKind,
+  host: TrimmedNonEmptyString,
+});
+export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;
 
 export class ExternalLauncherUnknownEditorError extends Schema.TaggedErrorClass<ExternalLauncherUnknownEditorError>()(
   "ExternalLauncherUnknownEditorError",

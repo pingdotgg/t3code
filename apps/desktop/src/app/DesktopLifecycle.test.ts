@@ -35,6 +35,7 @@ describe("DesktopLifecycle", () => {
         setDesktopName: () => Effect.void,
         setDockIcon: () => Effect.void,
         appendCommandLineSwitch: () => Effect.void,
+        removeCommandLineSwitch: () => Effect.void,
         onBeforeQuitForUpdate: (listener) =>
           Effect.acquireRelease(
             Effect.sync(() => {
@@ -77,6 +78,7 @@ describe("DesktopLifecycle", () => {
         handleBackendNotReady: Effect.void,
         flushMainWindowBounds: Effect.void,
         dispatchMenuAction: () => Effect.void,
+        zoomMain: () => Effect.void,
         syncAppearance: Effect.void,
       });
 

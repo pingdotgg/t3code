@@ -104,20 +104,24 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 
 describe("resolveThreadListV2Enabled", () => {
   it("defaults on when the device has never chosen", () => {
-    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: true })).toBe(
-      true,
-    );
+    expect(
+      resolveThreadListV2Enabled({ legacyPreference: undefined, preferencesLoaded: true }),
+    ).toBe(true);
   });
 
-  it("honors an explicit device opt-out", () => {
-    expect(resolveThreadListV2Enabled({ preference: false, preferencesLoaded: true })).toBe(false);
-    expect(resolveThreadListV2Enabled({ preference: true, preferencesLoaded: true })).toBe(true);
+  it("honors an explicit legacy opt-in", () => {
+    expect(resolveThreadListV2Enabled({ legacyPreference: true, preferencesLoaded: true })).toBe(
+      false,
+    );
+    expect(resolveThreadListV2Enabled({ legacyPreference: false, preferencesLoaded: true })).toBe(
+      true,
+    );
   });
 
   it("holds the default while preferences are still loading so the list does not remount", () => {
-    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: false })).toBe(
-      true,
-    );
+    expect(
+      resolveThreadListV2Enabled({ legacyPreference: undefined, preferencesLoaded: false }),
+    ).toBe(true);
   });
 });
 
@@ -259,6 +263,21 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("keeps a merged thread active when auto-settle on merge is off", () => {
+    const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
+    const layout = buildThreadListV2Items({
+      threads: [merged],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey: new Map([[`${environmentId}:${merged.id}`, "merged"]]),
+      autoSettleOnMerge: false,
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["merged"]);
+    expect(layout.settledCount).toBe(0);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [
@@ -286,6 +305,57 @@ describe("buildThreadListV2Items", () => {
     // thread is BACK in the card block and the snoozed one is gone.
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
     expect(layout.snoozedCount).toBe(1);
+  });
+
+  it("renders pinned threads first and exempts them from auto-settle — parity with web", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("pinned-settled"),
+          title: "Pinned while settled",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+          // Stale settled state (the decider clears it on pin): the pin wins.
+          settledOverride: "settled",
+          settledAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["pinned-settled", "active"]);
+    expect(layout.items.map((item) => item.pinned)).toEqual([true, false]);
+    expect(layout.settledCount).toBe(0);
+  });
+
+  it("snooze hides a pinned thread and wake restores it to the pinned block", () => {
+    const snoozedInput = {
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("pinned-snoozed"),
+          title: "Pinned and snoozed",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T11:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+    };
+
+    // Before the wake time: the snooze wins; the pin holds underneath.
+    const whileSnoozed = buildThreadListV2Items({ ...snoozedInput, now: NOW });
+    expect(whileSnoozed.items.map((item) => item.thread.id)).toEqual(["active"]);
+    expect(whileSnoozed.snoozedCount).toBe(1);
+
+    // After the wake time: the thread returns pinned, back on top.
+    const afterWake = buildThreadListV2Items({ ...snoozedInput, now: "2026-06-03T10:00:00.000Z" });
+    expect(afterWake.items.map((item) => item.thread.id)).toEqual(["pinned-snoozed", "active"]);
+    expect(afterWake.items[0]?.pinned).toBe(true);
+    expect(afterWake.snoozedCount).toBe(0);
   });
 
   it("classifies snooze with the second-precise clock and reports the next wake", () => {
@@ -425,8 +495,8 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(0);
   });
 
-  it("partitions settled threads into a slim tail with one divider", () => {
-    const { items } = buildThreadListV2Items({
+  it("partitions settled threads into a slim shelf", () => {
+    const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
         makeThread({
@@ -447,13 +517,64 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(items.map((item) => [item.thread.id, item.variant])).toEqual([
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
       ["active", "card"],
       ["settled", "slim"],
       ["settled-2", "slim"],
     ]);
-    expect(items.map((item) => item.showSettledDivider)).toEqual([false, true, false]);
-    expect(items.map((item) => item.isLast)).toEqual([false, false, true]);
+    expect(layout.items.map((item) => item.isLast)).toEqual([false, false, true]);
+    expect(layout.settledCount).toBe(2);
+    expect(layout.settledShelfHeaderIndex).toBe(1);
+  });
+
+  it("collapses settled threads to a counted shelf header", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("settled"),
+          title: "Settled",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      settledShelfExpanded: false,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active"]);
+    expect(layout.settledCount).toBe(1);
+    expect(layout.settledShelfHeaderIndex).toBe(1);
+  });
+
+  it("keeps the selected settled thread visible when its shelf is collapsed", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("selected"),
+          title: "Selected",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+        makeThread({
+          id: ThreadId.make("other"),
+          title: "Other",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      settledShelfExpanded: false,
+      selectedThreadKey: `${environmentId}:selected`,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["selected"]);
+    expect(layout.settledCount).toBe(2);
+    expect(layout.settledShelfHeaderIndex).toBe(0);
   });
 
   it("keeps cards in creation order while settled sorts by recency", () => {
@@ -658,6 +779,8 @@ describe("buildThreadListV2ListItems", () => {
     const items = buildThreadListV2ListItems({
       items: layout.items,
       pendingTasks: [makePendingTask("queued-1"), makePendingTask("queued-2")],
+      settledCount: layout.settledCount,
+      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
     });
 
     expect(
@@ -666,9 +789,11 @@ describe("buildThreadListV2ListItems", () => {
           ? item.pendingTask.title
           : item.type === "v2-thread"
             ? item.item.thread.id
-            : "snoozed-shelf",
+            : item.type === "v2-snoozed-shelf"
+              ? "snoozed-shelf"
+              : "settled-shelf",
       ),
-    ).toEqual(["active", "queued-1", "queued-2", "settled"]);
+    ).toEqual(["active", "queued-1", "queued-2", "settled-shelf", "settled"]);
     // Only the leading queued row labels the section, exactly like Settled.
     expect(
       items.filter((item) => item.type === "v2-pending" && item.showPendingDivider),
@@ -690,11 +815,17 @@ describe("buildThreadListV2ListItems", () => {
     expect(items.map((item) => item.type)).toEqual(["v2-thread", "v2-pending"]);
   });
 
-  it("leaves the thread order untouched when nothing is queued", () => {
-    const items = buildThreadListV2ListItems({ items: layout.items, pendingTasks: [] });
+  it("keeps the settled shelf between active and settled rows when nothing is queued", () => {
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      settledCount: layout.settledCount,
+      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
+    });
 
     expect(items.map((item) => item.key)).toEqual([
       `v2-thread:${environmentId}:active`,
+      "v2-settled-shelf",
       `v2-thread:${environmentId}:settled`,
     ]);
   });
@@ -726,12 +857,15 @@ describe("buildThreadListV2ListItems", () => {
       snoozedCount: snoozedLayout.snoozedCount,
       snoozedShelfExpanded: false,
       snoozedShelfHeaderIndex: snoozedLayout.snoozedShelfHeaderIndex,
+      settledCount: snoozedLayout.settledCount,
+      settledShelfHeaderIndex: snoozedLayout.settledShelfHeaderIndex,
     });
 
     expect(items.map((item) => item.type)).toEqual([
       "v2-thread",
       "v2-pending",
       "v2-snoozed-shelf",
+      "v2-settled-shelf",
       "v2-thread",
     ]);
   });

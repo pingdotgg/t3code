@@ -56,12 +56,13 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   return (
     <div
-      className="mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
+      className="@container/changed-files mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
       data-changed-files-state={
         expanded ? "expanded" : compactPreviewVisible ? "preview" : "collapsed"
       }
     >
       <div
+        data-changed-files-header=""
         className={cn(
           "flex items-center justify-between gap-2 rounded-xl px-1",
           expanded &&
@@ -72,7 +73,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           type="button"
           aria-expanded={expanded}
           data-scroll-anchor-ignore
-          className="group flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => onExpandedChange(!expanded)}
         >
           <ChevronRightIcon
@@ -82,7 +83,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               expanded && "rotate-90",
             )}
           />
-          <span className="flex min-w-0 items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
             <span>
               {files.length} changed file{files.length === 1 ? "" : "s"}
             </span>
@@ -95,11 +96,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               />
             )}
           </span>
-          <span className="ml-1 hidden truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 sm:inline">
+          <span className="ml-1 hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 @[24rem]/changed-files:inline">
             {expanded ? "Hide files" : "Show files"}
           </span>
         </button>
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           {expanded ? (
             <Tooltip>
               <TooltipTrigger
@@ -141,7 +142,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden sm:inline">Open diff</span>
+              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
             </TooltipTrigger>
             <TooltipPopup side="top">Open the full diff</TooltipPopup>
           </Tooltip>

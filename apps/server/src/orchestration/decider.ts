@@ -250,6 +250,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           title: command.title,
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
+          faviconPath: null,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -287,6 +288,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.defaultModelSelection !== undefined
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
+          ...(command.defaultThreadEnvMode !== undefined
+            ? { defaultThreadEnvMode: command.defaultThreadEnvMode }
+            : {}),
+          ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },
@@ -487,14 +492,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // settledAt: the engine rejects zero-event commands, and bulk-settle /
       // double-click must stay silent no-ops rather than surface errors.
       const alreadySettled = thread.settledOverride === "settled" && thread.settledAt !== null;
-      return {
+      const settledEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt,
           commandId: command.commandId,
         })),
-        type: "thread.settled",
+        type: "thread.settled" as const,
         payload: {
           threadId: command.threadId,
           settledAt: alreadySettled ? thread.settledAt : occurredAt,
@@ -504,6 +509,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: alreadySettled ? thread.updatedAt : occurredAt,
         },
       };
+      // Settling is "I'm done with this": it clears a pin the same way it
+      // parks the thread. Without this, settling a pinned thread would only
+      // stamp invisible state — the pin would hold the card in place until
+      // a separate unpin.
+      if (thread.pinnedAt == null) {
+        return settledEvent;
+      }
+      return [
+        settledEvent,
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unpinned" as const,
+          payload: {
+            threadId: command.threadId,
+            updatedAt: occurredAt,
+          },
+        },
+      ];
     }
 
     case "thread.unsettle": {
@@ -626,6 +654,141 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           reason: command.reason,
           updatedAt: alreadyAwake ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.pin": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Re-pinning an already-pinned thread is a duplicate (double-click,
+      // raced clients): re-emit with the original timestamps so the
+      // projection is a no-op. Pinning has no lifecycle invariants — a pin
+      // only ever promotes visibility, so it can never hide pending work.
+      const existingPinnedAt = thread.pinnedAt ?? null;
+      const pinnedEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.pinned" as const,
+        payload: {
+          threadId: command.threadId,
+          pinnedAt: existingPinnedAt ?? occurredAt,
+          // A fresh pin takes the client's slot in the arranged order; on a
+          // re-pin the existing key wins so raced duplicates cannot move a
+          // thread the user already placed.
+          ...(existingPinnedAt === null && command.orderKey !== undefined
+            ? { pinOrderKey: command.orderKey }
+            : {}),
+          updatedAt: existingPinnedAt !== null ? thread.updatedAt : occurredAt,
+        },
+      };
+      // Pinning is a promotion: it clears the parked states rather than
+      // silently outranking them. An explicit settle un-settles (reason
+      // "user", same override the un-settle button stamps), and a snooze's
+      // return ticket is spent — the thread is on top NOW, not on Tuesday.
+      const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (thread.settledOverride === "settled") {
+        promotionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "user",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      if (thread.snoozedUntil != null) {
+        promotionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "user",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      return promotionEvents.length > 0 ? [pinnedEvent, ...promotionEvents] : pinnedEvent;
+    }
+
+    case "thread.unpin": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Idempotent by re-emission (see thread.settle): unpinning a thread
+      // that is not pinned lands on the same null state without churning
+      // updatedAt.
+      const alreadyUnpinned = thread.pinnedAt == null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unpinned",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: alreadyUnpinned ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.pin.reorder": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Only pinned threads have a slot in the arranged order. Rejecting
+      // (rather than silently pinning) keeps a raced reorder-after-unpin
+      // from resurrecting a pin the user just cleared.
+      if (thread.pinnedAt == null) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is not pinned and cannot be reordered`,
+          }),
+        );
+      }
+      // Idempotent by re-emission (see thread.settle): a duplicate drop on
+      // the same slot keeps the existing updatedAt so it projects as a no-op.
+      const keyUnchanged = thread.pinOrderKey === command.orderKey;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.pin-reordered",
+        payload: {
+          threadId: command.threadId,
+          orderKey: command.orderKey,
+          updatedAt: keyUnchanged ? thread.updatedAt : occurredAt,
         },
       };
     }
@@ -958,11 +1121,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.stop": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      // Settle-cleanup stops are conditional: between the settle landing and
+      // this command, another client may have re-engaged the thread (a turn
+      // start unsettles it and brings the session alive). Commands are
+      // decided serially against this read model, so checking here — not in
+      // the dispatcher's pre-settle snapshot — closes that race.
+      if (command.onlyIfSettled === true) {
+        const sessionComingAlive =
+          thread.session?.status === "starting" || thread.session?.status === "running";
+        if (
+          thread.settledOverride !== "settled" ||
+          sessionComingAlive ||
+          threadHasQueuedTurnStart(thread, command.createdAt)
+        ) {
+          return yield* Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `thread ${command.threadId} was re-engaged after settle; skipping session stop`,
+            }),
+          );
+        }
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",

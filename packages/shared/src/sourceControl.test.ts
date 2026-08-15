@@ -57,6 +57,22 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("bitbucket");
   });
 
+  it("detects Azure DevOps SSH remotes", () => {
+    // The default Azure DevOps SSH clone URL uses the ssh.dev.azure.com host.
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@ssh.dev.azure.com:v3/org/project/repo")?.kind,
+    ).toBe("azure-devops");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/org/project/repo")
+        ?.kind,
+    ).toBe("azure-devops");
+    // Legacy visualstudio.com SSH host stays classified too.
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@vs-ssh.visualstudio.com:v3/org/project/repo")
+        ?.kind,
+    ).toBe("azure-devops");
+  });
+
   it("preserves ports while classifying by hostname", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("https://gitlab.com:8443/group/repo.git"),
@@ -74,5 +90,34 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       name: "self-hosted.example.test:8443",
       baseUrl: "https://self-hosted.example.test:8443",
     });
+  });
+
+  it("matches self-hosted providers by complete DNS labels", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://github.example.com/owner/repo.git")?.kind,
+    ).toBe("github");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitlab.example.com/group/repo.git")?.kind,
+    ).toBe("gitlab");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://bitbucket.example.com/workspace/repo.git")
+        ?.kind,
+    ).toBe("bitbucket");
+  });
+
+  it("does not match provider names embedded in unrelated DNS labels", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://notgithub.example.com/owner/repo.git")
+        ?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://notgitlab.example.com/group/repo.git")
+        ?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl(
+        "https://notbitbucket.example.com/workspace/repo.git",
+      )?.kind,
+    ).toBe("unknown");
   });
 });

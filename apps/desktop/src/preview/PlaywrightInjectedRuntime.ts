@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 const require = NodeModule.createRequire(import.meta.url);
-const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
+const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const PLAYWRIGHT_PACKAGE_SPECIFIER = "playwright-core/package.json";
 const PLAYWRIGHT_SOURCE_MARKER = "source3 = ";
 const PLAYWRIGHT_SOURCE_TERMINATOR = ";\n  }\n});";

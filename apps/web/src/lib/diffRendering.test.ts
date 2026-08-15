@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildPatchCacheKey, getDiffLineStat, getRenderablePatch } from "./diffRendering";
+import {
+  buildFileDiffRenderKey,
+  buildPatchCacheKey,
+  getDiffLineStat,
+  getRenderablePatch,
+} from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
   it("returns a stable cache key for identical content", () => {
@@ -80,6 +85,30 @@ describe("getRenderablePatch", () => {
     expect(parsed?.kind).toBe("files");
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
+  });
+});
+
+describe("buildFileDiffRenderKey", () => {
+  it("keeps file identity stable when Pierre hydrates a partial diff", () => {
+    const patch = [
+      "diff --git a/example.ts b/example.ts",
+      "--- a/example.ts",
+      "+++ b/example.ts",
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+    ].join("\n");
+    const parsed = getRenderablePatch(patch, "hydrated-key");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+
+    const file = parsed.files[0];
+    expect(file).toBeDefined();
+    if (!file) return;
+    const key = buildFileDiffRenderKey(file);
+    file.cacheKey = `${file.cacheKey}:hydrated`;
+
+    expect(buildFileDiffRenderKey(file)).toBe(key);
   });
 });
 

@@ -24,6 +24,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -953,6 +954,125 @@ it.layer(
     }),
   );
 
+  it.effect("derives subprocess activity for every terminal from one shared process snapshot", () =>
+    Effect.gen(function* () {
+      const runCalls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      // FakePtyAdapter assigns pids starting at 9000, so the two terminals
+      // opened below run as pids 9000 and 9001.
+      const psStdout = ["  100  9000 vim", "  101   100 git", "  200  9001 /usr/bin/python3"].join(
+        "\n",
+      );
+      const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+        run: (input) =>
+          Effect.sync(() => {
+            runCalls.push({ command: input.command, args: input.args });
+            return {
+              stdout: psStdout,
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      };
+
+      const { manager, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 20,
+      }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provide(withHostPlatform("linux")),
+      );
+
+      yield* manager.open(openInput());
+      yield* manager.open(openInput({ threadId: "thread-2" }));
+
+      yield* waitFor(
+        Effect.map(
+          getEvents,
+          (events) =>
+            events.some(
+              (event) =>
+                event.type === "activity" &&
+                event.hasRunningSubprocess === true &&
+                event.label === "vim",
+            ) &&
+            events.some(
+              (event) =>
+                event.type === "activity" &&
+                event.hasRunningSubprocess === true &&
+                event.label === "python3",
+            ),
+        ),
+        "1200 millis",
+      );
+      yield* waitFor(
+        Effect.sync(() => runCalls.length >= 3),
+        "1200 millis",
+      );
+
+      // Every spawn is the shared table snapshot — no per-terminal `pgrep`
+      // or per-child `ps -p` invocations.
+      expect(runCalls.every((call) => call.args.join(" ") === "-eo pid=,ppid=,comm=")).toBe(true);
+    }),
+  );
+
+  it.effect("keeps last known subprocess state when the process snapshot fails", () =>
+    Effect.gen(function* () {
+      let failSnapshots = false;
+      let failedCalls = 0;
+      const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+        run: () =>
+          Effect.sync(() => {
+            if (failSnapshots) failedCalls += 1;
+            return {
+              stdout: failSnapshots ? "" : "  100  9000 vim",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(failSnapshots ? 1 : 0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      };
+
+      const { manager, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 20,
+      }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provide(withHostPlatform("linux")),
+      );
+
+      yield* manager.open(openInput());
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) =>
+              event.type === "activity" &&
+              event.hasRunningSubprocess === true &&
+              event.label === "vim",
+          ),
+        ),
+        "1200 millis",
+      );
+
+      failSnapshots = true;
+      yield* waitFor(
+        Effect.sync(() => failedCalls >= 3),
+        "1200 millis",
+      );
+
+      // A failed snapshot is not authoritative: no terminal flips to idle.
+      const activityEvents = (yield* getEvents).filter((event) => event.type === "activity");
+      expect(activityEvents.length).toBeGreaterThan(0);
+      expect(activityEvents.every((event) => event.hasRunningSubprocess === true)).toBe(true);
+    }),
+  );
+
   it.effect("caps persisted history to configured line limit", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(3);
@@ -988,6 +1108,61 @@ it.layer(
 
       const reopened = yield* manager.open(openInput());
       assert.equal(reopened.history, "prompt \u001b[32mok\u001b[0m done\n");
+    }),
+  );
+
+  it.effect("strips replayable CSI and DCS traffic while preserving setters", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("prompt ");
+      // DECRQM/DECRPM, XTVERSION, and kitty-keyboard CSI query/reply traffic.
+      process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
+      // DECRQSS and XTGETTCAP query/reply traffic in 7-bit DCS form.
+      process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
+      process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
+      // The same DCS traffic in 8-bit form.
+      process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
+      process.emitData("\u0090+q544e\u009c\u00901+r544e=1b\u009c");
+      // Setters and cursor movement share final bytes with query families but
+      // have visible terminal-state value and must survive replay.
+      process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("done\n");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, 'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n');
+    }),
+  );
+
+  it.effect("handles CSI and DCS query sequences split across output chunks", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("before ");
+      process.emitData("\u001b[?2026$");
+      process.emitData("pafter ");
+      process.emitData("\u001bP$q ");
+      process.emitData("m\u001b");
+      process.emitData("\\after ");
+      process.emitData("\u009b?3");
+      process.emitData("1uafter ");
+      process.emitData("\u0090+q544e");
+      process.emitData("\u009cafter\n");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "before after after after after\n");
     }),
   );
 
@@ -1345,6 +1520,8 @@ it.layer(
           OWD: "/home/user/project",
           PATH: `${appDir}/usr/bin:${appDir}:/usr/local/bin:/usr/bin:/bin`,
           LD_LIBRARY_PATH: `${appDir}/usr/lib:/home/user/.local/lib`,
+          XDG_DATA_DIRS: `${appDir}/usr/share:/usr/local/share:/usr/share`,
+          GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
           TEST_TERMINAL_KEEP: "keep-me",
         },
       });
@@ -1364,6 +1541,11 @@ it.layer(
       // mount segments that the runtime prepended.
       expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
       expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
+      // XDG_DATA_DIRS keeps the host entries but drops the AppImage share dir.
+      expect(spawnInput.env.XDG_DATA_DIRS).toBe("/usr/local/share:/usr/share");
+      // GSETTINGS_SCHEMA_DIR pointed only at the mount, so it is removed and
+      // gsettings falls back to the host schema location.
+      expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
       // Unrelated host vars still pass through untouched.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
     }),

@@ -38,6 +38,8 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { forkParked, ServerActivation } from "../../serverActivation.ts";
+import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -90,44 +92,63 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const DEFAULT_THREAD_TITLE = "New thread";
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
+const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
 
-function formatThreadTitleContext(
-  messages: ReadonlyArray<{
-    readonly role: "user" | "assistant" | "system";
-    readonly text: string;
-    readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  }>,
+type ThreadTitleMessage = {
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+};
+
+function formatThreadTitleSection(message: ThreadTitleMessage): string | undefined {
+  if (message.role === "system") {
+    return undefined;
+  }
+  const text = message.text.trim();
+  const attachmentSummary = (message.attachments ?? [])
+    .map((attachment) => attachment.name)
+    .join(", ");
+  const contents = [
+    ...(text.length > 0 ? [text] : []),
+    ...(attachmentSummary.length > 0 ? [`[Attachments: ${attachmentSummary}]`] : []),
+  ].join("\n");
+  return contents.length > 0 ? `${message.role.toUpperCase()}:\n${contents}` : undefined;
+}
+
+function limitFirstUserSection(section: string): string {
+  if (section.length <= MAX_FIRST_USER_TITLE_CONTEXT_CHARS) {
+    return section;
+  }
+  return `${section.slice(
+    0,
+    MAX_FIRST_USER_TITLE_CONTEXT_CHARS - FIRST_USER_CONTEXT_TRUNCATION_MARKER.length,
+  )}${FIRST_USER_CONTEXT_TRUNCATION_MARKER}`;
+}
+
+function collectRecentThreadTitleContext(
+  messages: ReadonlyArray<ThreadTitleMessage>,
+  maxChars: number,
 ): {
-  readonly message: string;
+  readonly context: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly truncated: boolean;
 } {
   let context = "";
   let truncated = false;
   const retainedAttachments: Array<ChatAttachment> = [];
 
   for (const message of messages.toReversed()) {
-    if (message.role === "system") {
-      continue;
-    }
-    const text = message.text.trim();
-    const attachmentSummary = (message.attachments ?? [])
-      .map((attachment) => attachment.name)
-      .join(", ");
-    const contents = [
-      ...(text.length > 0 ? [text] : []),
-      ...(attachmentSummary.length > 0 ? [`[Attachments: ${attachmentSummary}]`] : []),
-    ].join("\n");
-    if (contents.length === 0) {
+    const section = formatThreadTitleSection(message);
+    if (section === undefined) {
       continue;
     }
 
-    const section = `${message.role.toUpperCase()}:\n${contents}`;
     const separator = context.length > 0 ? "\n\n" : "";
-    const available = MAX_THREAD_TITLE_CONTEXT_CHARS - context.length - separator.length;
+    const available = maxChars - context.length - separator.length;
     if (section.length > available) {
       if (available > 0) {
         context = `${section.slice(-available)}${separator}${context}`;
@@ -140,9 +161,54 @@ function formatThreadTitleContext(
     retainedAttachments.unshift(...(message.attachments ?? []));
   }
 
+  return { context, attachments: retainedAttachments, truncated };
+}
+
+function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): {
+  readonly message: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+} {
+  const recent = collectRecentThreadTitleContext(messages, MAX_THREAD_TITLE_CONTEXT_CHARS);
+  if (!recent.truncated) {
+    return {
+      message: recent.context,
+      attachments: recent.attachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    };
+  }
+
+  const firstUserMessage = messages.find(
+    (message) => message.role === "user" && formatThreadTitleSection(message),
+  );
+  const firstUserSection = firstUserMessage
+    ? formatThreadTitleSection(firstUserMessage)
+    : undefined;
+  if (!firstUserMessage || !firstUserSection) {
+    return {
+      message: `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${recent.context}`,
+      attachments: recent.attachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    };
+  }
+
+  const pinnedSection = limitFirstUserSection(firstUserSection);
+  const recentContextBudget =
+    MAX_THREAD_TITLE_CONTEXT_CHARS -
+    pinnedSection.length -
+    "\n\n".length -
+    THREAD_TITLE_CONTEXT_TRUNCATION_MARKER.length;
+  const retainedRecent = collectRecentThreadTitleContext(messages, recentContextBudget);
+  const pinnedAttachment = firstUserMessage.attachments?.[0];
+  const recentAttachments = retainedRecent.attachments.filter(
+    (attachment) => attachment.id !== pinnedAttachment?.id,
+  );
+
   return {
-    message: truncated ? `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${context}` : context,
-    attachments: retainedAttachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    message: `${pinnedSection}\n\n${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${retainedRecent.context}`,
+    attachments: [
+      ...(pinnedAttachment ? [pinnedAttachment] : []),
+      ...recentAttachments.slice(
+        -(MAX_REGENERATION_ATTACHMENTS - (pinnedAttachment === undefined ? 0 : 1)),
+      ),
+    ],
   };
 }
 
@@ -159,18 +225,6 @@ export function providerErrorLabelFromInstanceHint(input: {
   return providerErrorLabel(
     input.instanceId ?? input.modelSelectionInstanceId ?? input.sessionProvider,
   );
-}
-
-function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
-  const trimmedCurrentTitle = currentTitle.trim();
-  if (trimmedCurrentTitle === DEFAULT_THREAD_TITLE) {
-    return true;
-  }
-
-  const trimmedTitleSeed = titleSeed?.trim();
-  return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
-    ? trimmedCurrentTitle === trimmedTitleSeed
-    : false;
 }
 
 function findProviderAdapterRequestError(
@@ -560,6 +614,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(thread.title ? { title: thread.title } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
@@ -899,19 +954,25 @@ const make = Effect.gen(function* () {
       ...(input.title !== undefined ? { title: input.title } : {}),
     });
   });
-  const clearInterruptedThreadTitleRegenerations = Effect.fn(
-    "clearInterruptedThreadTitleRegenerations",
+  const findInterruptedThreadTitleRegenerations = Effect.fn(
+    "findInterruptedThreadTitleRegenerations",
   )(function* () {
     const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
+    return readModel.threads.flatMap((thread) => {
+      const requestId = thread.titleRegeneration?.requestId;
+      return requestId === undefined ? [] : [{ threadId: thread.id, requestId }];
+    });
+  });
+  const clearInterruptedThreadTitleRegenerations = Effect.fn(
+    "clearInterruptedThreadTitleRegenerations",
+  )(function* (
+    interrupted: ReadonlyArray<{ readonly threadId: ThreadId; readonly requestId: CommandId }>,
+  ) {
     yield* Effect.forEach(
-      readModel.threads,
-      (thread) => {
-        const requestId = thread.titleRegeneration?.requestId;
-        if (requestId === undefined) {
-          return Effect.void;
-        }
+      interrupted,
+      ({ threadId, requestId }) => {
         return dispatchThreadTitleRegenerationCompletion({
-          threadId: thread.id,
+          threadId,
           requestId,
         }).pipe(
           Effect.catchCause((cause) => {
@@ -921,7 +982,7 @@ const make = Effect.gen(function* () {
             return Effect.logWarning(
               "provider command reactor failed to clear interrupted title regeneration",
               {
-                threadId: thread.id,
+                threadId,
                 cause: Cause.pretty(cause),
               },
             );
@@ -1304,7 +1365,7 @@ const make = Effect.gen(function* () {
     processDomainEvent(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
+          return Effect.interrupt;
         }
         return Effect.logWarning("provider command reactor failed to process event", {
           eventType: event.type,
@@ -1316,6 +1377,17 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
+    const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to find interrupted title regenerations",
+          { cause: Cause.pretty(cause) },
+        ).pipe(Effect.as([]));
+      }),
+    );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
@@ -1330,14 +1402,14 @@ const make = Effect.gen(function* () {
       }
     });
 
-    yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
-    );
+    yield* forkParked(Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent));
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
     // captured here, leaving any newer request untouched.
-    yield* clearInterruptedThreadTitleRegenerations().pipe(
+    const clearInterrupted = clearInterruptedThreadTitleRegenerations(
+      interruptedTitleRegenerations,
+    ).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
@@ -1350,6 +1422,12 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+    const activation = yield* ServerActivation;
+    if (activation === undefined) {
+      yield* clearInterrupted;
+    } else {
+      yield* forkParked(clearInterrupted);
+    }
   });
 
   return {

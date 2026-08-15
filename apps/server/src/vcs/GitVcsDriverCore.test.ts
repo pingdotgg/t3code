@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError } from "@t3tools/contracts";
+import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -77,6 +77,20 @@ const writeTextFile = (
     yield* fileSystem.makeDirectory(pathService.dirname(filePath), { recursive: true });
     yield* fileSystem.writeFileString(filePath, contents);
   });
+
+const makeReviewDiffFileContentsInput = (
+  cwd: string,
+  overrides: Partial<Omit<ReviewDiffFileContentsInput, "cwd">> = {},
+): ReviewDiffFileContentsInput => ({
+  cwd,
+  sourceKind: "working-tree",
+  changeType: "change",
+  baseRef: "HEAD",
+  headRef: null,
+  oldPath: "README.md",
+  newPath: "README.md",
+  ...overrides,
+});
 
 const git = (
   cwd: string,
@@ -803,6 +817,107 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
       }),
     );
+
+    it.effect("loads full file contents for working-tree diff expansion", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "nested/.keep", "");
+        yield* writeTextFile(cwd, "README.md", "# changed\nunchanged context\n");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(pathService.join(cwd, "nested")),
+        );
+
+        assert.strictEqual(contents.oldContents, "# test\n");
+        assert.strictEqual(contents.newContents, "# changed\nunchanged context\n");
+      }),
+    );
+
+    it.effect("attributes working-tree filesystem failures to the failing operation", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, {
+              changeType: "new",
+              oldPath: "missing.ts",
+              newPath: "missing.ts",
+            }),
+          )
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.realPath",
+          command: "fs.realPath",
+          cwd,
+          detail: "Could not resolve diff file 'missing.ts'.",
+        });
+      }),
+    );
+
+    it.effect("loads new and deleted files without reading their missing side", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "added.ts", "export const added = true;\n");
+        yield* fileSystem.remove(pathService.join(cwd, "README.md"));
+
+        const [added, deleted] = yield* Effect.all([
+          driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, {
+              changeType: "new",
+              oldPath: "added.ts",
+              newPath: "added.ts",
+            }),
+          ),
+          driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, { changeType: "deleted" }),
+          ),
+        ]);
+
+        assert.deepStrictEqual(added, {
+          oldContents: "",
+          newContents: "export const added = true;\n",
+        });
+        assert.deepStrictEqual(deleted, {
+          oldContents: "# test\n",
+          newContents: "",
+        });
+      }),
+    );
+
+    it.effect("loads merge-base and head contents for branch diff expansion", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/context"]);
+        yield* writeTextFile(cwd, "README.md", "# branch change\nunchanged context\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "change readme"]);
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "branch-range",
+            baseRef: initialBranch,
+            headRef: "feature/context",
+          }),
+        );
+
+        assert.strictEqual(contents.oldContents, "# test\n");
+        assert.strictEqual(contents.newContents, "# branch change\nunchanged context\n");
+      }),
+    );
   });
 
   describe("repository status", () => {
@@ -832,6 +947,27 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           status.workingTree.files.map((file) => file.path),
           "feature.ts",
         );
+      }),
+    );
+
+    it.effect("reports changes to a file named HEAD", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "HEAD", "first line\n");
+        yield* git(cwd, ["add", "HEAD"]);
+        yield* git(cwd, ["commit", "-m", "add HEAD file"]);
+        yield* writeTextFile(cwd, "HEAD", "first line\nsecond line\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.hasWorkingTreeChanges, true);
+        assert.deepInclude(status.workingTree.files, {
+          path: "HEAD",
+          insertions: 1,
+          deletions: 0,
+        });
       }),
     );
 
@@ -883,6 +1019,23 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadOfDefaultCount, 1);
         assert.notProperty(status, "workingTree");
         assert.notProperty(status, "hasWorkingTreeChanges");
+      }),
+    );
+
+    it.effect("reports remote status on unborn HEAD without failing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        const initialBranch = yield* git(cwd, ["symbolic-ref", "--short", "HEAD"]);
+
+        const status = yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.branch, initialBranch);
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
       }),
     );
 
