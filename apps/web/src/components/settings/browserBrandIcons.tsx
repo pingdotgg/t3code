@@ -23,24 +23,24 @@ function BrandImg({ src, alt = "", className, ...props }: BrandIconProps & { src
   );
 }
 
-export function ChromeIcon({ alt = "Google Chrome", ...props }: BrandIconProps) {
+export function ChromeIcon({ alt = "", ...props }: BrandIconProps) {
   return <BrandImg src={chromeUrl} alt={alt} {...props} />;
 }
 
-export function EdgeIcon({ alt = "Microsoft Edge", ...props }: BrandIconProps) {
+export function EdgeIcon({ alt = "", ...props }: BrandIconProps) {
   return <BrandImg src={edgeUrl} alt={alt} {...props} />;
 }
 
-export function BraveIcon({ alt = "Brave", ...props }: BrandIconProps) {
+export function BraveIcon({ alt = "", ...props }: BrandIconProps) {
   return <BrandImg src={braveUrl} alt={alt} {...props} />;
 }
 
-export function FirefoxIcon({ alt = "Firefox", ...props }: BrandIconProps) {
+export function FirefoxIcon({ alt = "", ...props }: BrandIconProps) {
   return <BrandImg src={firefoxUrl} alt={alt} {...props} />;
 }
 
 /** Custom T3 agent pointer from the desktop overlay / Chrome extension. */
-export function AgentCursorIcon({ alt = "Agent cursor", className, ...props }: BrandIconProps) {
+export function AgentCursorIcon({ alt = "", className, ...props }: BrandIconProps) {
   return (
     <BrandImg src={agentCursorUrl} alt={alt} className={cn("rounded-md", className)} {...props} />
   );
