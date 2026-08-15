@@ -474,6 +474,70 @@ describe("synced plan mode", () => {
     controller.reset();
   });
 
+  it("resets an exhausted retry budget only for a new write", async () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const scheduledRetries: Array<() => void> = [];
+    const controller = createSyncedPlanModeHydrationController((retry) => {
+      scheduledRetries.push(retry);
+      return vi.fn();
+    });
+    const previous = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
+    const hydrationInput = {
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: true,
+      live: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist: vi.fn(),
+    } satisfies SyncedPlanModeHydrationInput<string>;
+
+    controller.synchronize(hydrationInput);
+    controller.write({
+      environmentId: primaryEnvironmentId,
+      value: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: hydrationInput.now,
+      patch,
+      persist: hydrationInput.persist,
+    });
+    await Promise.resolve();
+    scheduledRetries[0]?.();
+    await Promise.resolve();
+    scheduledRetries[1]?.();
+    await Promise.resolve();
+
+    controller.synchronize({
+      ...hydrationInput,
+      now: "2026-08-14T12:02:00.000Z",
+    });
+    await Promise.resolve();
+
+    expect(patch).toHaveBeenCalledTimes(3);
+
+    controller.write({
+      environmentId: primaryEnvironmentId,
+      value: false,
+      serverPreferences: previous,
+      canPatch: true,
+      now: "2026-08-14T12:03:00.000Z",
+      patch,
+      persist: hydrationInput.persist,
+    });
+    await Promise.resolve();
+
+    expect(patch).toHaveBeenCalledTimes(4);
+    controller.reset();
+  });
+
   it("does not retry or persist a failed patch after changing primaries", async () => {
     const previousPrimaryEnvironmentId = EnvironmentId.make("previous-primary");
     const nextPrimaryEnvironmentId = EnvironmentId.make("next-primary");

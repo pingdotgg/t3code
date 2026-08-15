@@ -451,7 +451,9 @@ export function reconcileSyncedClientPreferences(input: {
       hasPatchableEnvironment &&
       localUpdatedAt !== undefined &&
       latestObservedEnvironmentUpdatedAt !== undefined &&
-      localUpdatedAt > latestObservedEnvironmentUpdatedAt
+      localUpdatedAt > latestObservedEnvironmentUpdatedAt &&
+      Date.parse(localUpdatedAt) >
+        Date.parse(input.now) + SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS
         ? nextMobileSyncedPreferencesUpdatedAt([], latestObservedEnvironmentUpdatedAt, [
             latestObservedEnvironmentUpdatedAt,
           ])

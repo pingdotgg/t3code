@@ -822,7 +822,68 @@ describe("synced client preferences", () => {
     ]);
   });
 
-  it("bounds a fast device clock just after the newest observed environment stamp", () => {
+  it("preserves a newer local stamp when a later environment has an intermediate stamp", () => {
+    const localUpdatedAt = "2026-08-14T12:02:00.000Z";
+    const first = reconcilePlanModePreferences({
+      localPlanModeEnabled: true,
+      localUpdatedAt,
+      environments: [
+        {
+          environmentId: environmentId("observed"),
+          preferences: {
+            planModeEnabled: false,
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
+        },
+      ],
+      now: "2026-08-14T12:03:00.000Z",
+    });
+    const second = reconcilePlanModePreferences({
+      localPlanModeEnabled: first.localPatch?.planModeEnabled ?? true,
+      localUpdatedAt:
+        first.localPatch?.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
+        localUpdatedAt,
+      environments: [
+        {
+          environmentId: environmentId("later"),
+          preferences: {
+            planModeEnabled: false,
+            updatedAt: "2026-08-14T12:01:00.000Z",
+          },
+        },
+      ],
+      now: "2026-08-14T12:03:00.000Z",
+    });
+
+    expect([first, second]).toEqual([
+      {
+        localPatch: null,
+        environmentPatches: [
+          {
+            environmentId: environmentId("observed"),
+            input: {
+              patch: { planModeEnabled: true },
+              updatedAt: localUpdatedAt,
+            },
+          },
+        ],
+      },
+      {
+        localPatch: null,
+        environmentPatches: [
+          {
+            environmentId: environmentId("later"),
+            input: {
+              patch: { planModeEnabled: true },
+              updatedAt: localUpdatedAt,
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("bounds a future-skewed local stamp just after the newest observed environment stamp", () => {
     const reconciliation = reconcilePlanModePreferences({
       localPlanModeEnabled: true,
       localUpdatedAt: "2099-01-01T00:00:00.000Z",
@@ -836,7 +897,7 @@ describe("synced client preferences", () => {
           },
         },
       ],
-      now: "2099-01-01T00:00:01.000Z",
+      now: "2026-08-14T12:01:00.000Z",
     });
 
     expect(reconciliation.localPatch).toEqual({

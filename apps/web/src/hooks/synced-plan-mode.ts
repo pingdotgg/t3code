@@ -299,15 +299,9 @@ export function createSyncedPlanModeHydrationController(
     }
     const activePendingWrite = state.writePending;
     if (
-      state.patchAttempt >= SYNCED_PLAN_MODE_MAX_ATTEMPTS &&
-      state.cancelRetry === undefined &&
-      state.writeInFlightUpdatedAt === undefined
-    ) {
-      state.patchAttempt = 0;
-    }
-    if (
       input.canPatch &&
       activePendingWrite !== undefined &&
+      state.patchAttempt < SYNCED_PLAN_MODE_MAX_ATTEMPTS &&
       (serverUpdatedAt === undefined || serverUpdatedAt < activePendingWrite.updatedAt) &&
       state.writeInFlightUpdatedAt !== activePendingWrite.updatedAt &&
       state.cancelRetry === undefined
