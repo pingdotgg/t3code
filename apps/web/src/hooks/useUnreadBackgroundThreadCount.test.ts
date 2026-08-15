@@ -45,8 +45,6 @@ function createMockThread(
 }
 
 describe("isThreadUnreadBackground", () => {
-  const sessionStart = Date.parse("2026-08-14T20:00:00.000Z");
-
   it("returns false for archived threads", () => {
     const thread = createMockThread("thread-1", {
       archivedAt: "2026-08-14T20:10:00.000Z",
@@ -59,7 +57,7 @@ describe("isThreadUnreadBackground", () => {
         assistantMessageId: null,
       },
     });
-    expect(isThreadUnreadBackground(thread, undefined, null, sessionStart)).toBe(false);
+    expect(isThreadUnreadBackground(thread, undefined, null)).toBe(false);
   });
 
   it("returns false for the currently open route thread", () => {
@@ -74,9 +72,7 @@ describe("isThreadUnreadBackground", () => {
       },
     });
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    expect(
-      isThreadUnreadBackground(thread, "2026-08-14T20:00:00.000Z", threadKey, sessionStart),
-    ).toBe(false);
+    expect(isThreadUnreadBackground(thread, "2026-08-14T20:00:00.000Z", threadKey)).toBe(false);
   });
 
   it("returns true when turn completed after last visited timestamp", () => {
@@ -90,9 +86,7 @@ describe("isThreadUnreadBackground", () => {
         assistantMessageId: null,
       },
     });
-    expect(
-      isThreadUnreadBackground(thread, "2026-08-14T20:05:00.000Z", "other-thread", sessionStart),
-    ).toBe(true);
+    expect(isThreadUnreadBackground(thread, "2026-08-14T20:05:00.000Z", "other-thread")).toBe(true);
   });
 
   it("returns false when last visited timestamp is newer than turn completion", () => {
@@ -106,12 +100,12 @@ describe("isThreadUnreadBackground", () => {
         assistantMessageId: null,
       },
     });
-    expect(
-      isThreadUnreadBackground(thread, "2026-08-14T20:07:00.000Z", "other-thread", sessionStart),
-    ).toBe(false);
+    expect(isThreadUnreadBackground(thread, "2026-08-14T20:07:00.000Z", "other-thread")).toBe(
+      false,
+    );
   });
 
-  it("returns true when turn completed in current session and thread was never visited", () => {
+  it("returns false when thread was never visited", () => {
     const thread = createMockThread("thread-1", {
       latestTurn: {
         turnId: TurnId.make("turn-1"),
@@ -122,27 +116,11 @@ describe("isThreadUnreadBackground", () => {
         assistantMessageId: null,
       },
     });
-    expect(isThreadUnreadBackground(thread, undefined, "other-thread", sessionStart)).toBe(true);
-  });
-
-  it("returns false for historical turn completion before session started when unvisited", () => {
-    const thread = createMockThread("thread-1", {
-      latestTurn: {
-        turnId: TurnId.make("turn-1"),
-        state: "completed",
-        requestedAt: "2026-08-14T19:05:00.000Z",
-        startedAt: "2026-08-14T19:05:01.000Z",
-        completedAt: "2026-08-14T19:06:00.000Z",
-        assistantMessageId: null,
-      },
-    });
-    expect(isThreadUnreadBackground(thread, undefined, "other-thread", sessionStart)).toBe(false);
+    expect(isThreadUnreadBackground(thread, undefined, "other-thread")).toBe(false);
   });
 });
 
 describe("countUnreadBackgroundThreads", () => {
-  const sessionStart = Date.parse("2026-08-14T20:00:00.000Z");
-
   it("counts only unread background threads", () => {
     const thread1 = createMockThread("thread-1", {
       latestTurn: {
@@ -174,16 +152,9 @@ describe("countUnreadBackgroundThreads", () => {
       [key2]: "2026-08-14T20:15:00.000Z",
     };
 
-    expect(
-      countUnreadBackgroundThreads(
-        [thread1, thread2, thread3],
-        visits,
-        "active-thread",
-        sessionStart,
-      ),
-    ).toBe(1);
-    expect(
-      countUnreadBackgroundThreads([thread1, thread2, thread3], visits, key1, sessionStart),
-    ).toBe(0);
+    expect(countUnreadBackgroundThreads([thread1, thread2, thread3], visits, "active-thread")).toBe(
+      1,
+    );
+    expect(countUnreadBackgroundThreads([thread1, thread2, thread3], visits, key1)).toBe(0);
   });
 });
