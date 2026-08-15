@@ -89,6 +89,15 @@ describe("parseMobileThemeFile", () => {
   });
 
   it.each([
+    { input: "hsl(none 0% 50%)", expected: "#808080" },
+    { input: "hsl(120 none none)", expected: "#000000" },
+  ])("matches web missing HSL component semantics for $input", ({ input, expected }) => {
+    const parsed = parseMobileThemeFile({ ...themeFile(), colors: { canvas: input } });
+
+    expect(parsed.colors.canvas).toBe(expected);
+  });
+
+  it.each([
     { format: "hwb typical", input: "hwb(45 10% 20%)", expected: "#cc9f1a" },
     { format: "hwb with alpha", input: "hwb(200 10% 20% / 40%)", expected: "#1991cc66" },
     { format: "hwb normalized edge", input: "hwb(30 80% 70%)", expected: "#888888" },

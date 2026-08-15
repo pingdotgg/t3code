@@ -741,6 +741,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               items={composerMenuItems}
               triggerKind={composerTrigger.kind}
               isLoading={pathSearch.isPending}
+              isDarkMode={isDarkMode}
               onSelect={handleCommandSelect}
             />
           </View>

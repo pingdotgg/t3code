@@ -957,6 +957,7 @@ export function NewTaskDraftScreen(props: {
         items={composerMenuItems}
         triggerKind={composerTrigger.kind}
         isLoading={false}
+        isDarkMode={isDarkMode}
         onSelect={handleCommandSelect}
       />
     ) : null;

@@ -425,9 +425,9 @@ function parsePercentage(value: string): number | null {
 function parseHslColor(body: string): string | null {
   const parsed = splitFunctionalColor(body);
   if (!parsed || parsed.channels.length !== 3) return null;
-  const hue = parseAngle(parsed.channels[0]);
-  const saturation = parsePercentage(parsed.channels[1]);
-  const lightness = parsePercentage(parsed.channels[2]);
+  const hue = parsed.channels[0].trim() === "none" ? 0 : parseAngle(parsed.channels[0]);
+  const saturation = parsed.channels[1].trim() === "none" ? 0 : parsePercentage(parsed.channels[1]);
+  const lightness = parsed.channels[2].trim() === "none" ? 0 : parsePercentage(parsed.channels[2]);
   const alpha = parseClampedAlpha(parsed.alpha);
   if (hue === null || saturation === null || lightness === null || alpha === null) return null;
   const [red, green, blue] = hslToRgb(hue, saturation, lightness);

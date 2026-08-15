@@ -2,7 +2,7 @@ import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
-import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
+import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { GlassSurface } from "../../components/GlassSurface";
@@ -42,6 +42,7 @@ interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
+  readonly isDarkMode: boolean;
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
@@ -150,11 +151,10 @@ const CommandRow = memo(function CommandRow(props: {
 export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
-  const isDarkMode = useColorScheme() === "dark";
   const label = groupLabel(props.triggerKind);
 
   return (
-    <PopoverSurface isDarkMode={isDarkMode}>
+    <PopoverSurface isDarkMode={props.isDarkMode}>
       {label ? (
         <View className="px-3.5 pt-2.5 pb-1">
           <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
