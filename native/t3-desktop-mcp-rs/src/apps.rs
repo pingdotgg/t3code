@@ -121,13 +121,6 @@ fn pick_from_matches(query: &str, matches: &[&AppInfo]) -> Result<u32> {
             "no running app matches '{query}' — call list_apps to see what is open"
         ))),
         several => {
-            // Prefer an unambiguous winner when one instance owns every window;
-            // Chrome and friends routinely appear several times.
-            let mut sorted: Vec<&&AppInfo> = several.iter().collect();
-            sorted.sort_by_key(|app| std::cmp::Reverse(app.windows));
-            if sorted[0].windows > sorted[1].windows {
-                return Ok(sorted[0].pid);
-            }
             let names: Vec<String> = several
                 .iter()
                 .map(|app| format!("{} (pid {})", app.name, app.pid))
