@@ -461,14 +461,30 @@ DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 mkdir -p "$STATE_DIR"
+umask 077
+LAUNCHED_PID=""
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
 }
+abort_remote_launch() {
+  if [ -n "$LAUNCHED_PID" ] && kill -0 "$LAUNCHED_PID" 2>/dev/null; then
+    kill "$LAUNCHED_PID" 2>/dev/null || true
+    ABORT_WAIT_COUNT=0
+    while kill -0 "$LAUNCHED_PID" 2>/dev/null && [ "$ABORT_WAIT_COUNT" -lt 20 ]; do
+      ABORT_WAIT_COUNT=$((ABORT_WAIT_COUNT + 1))
+      sleep 0.1
+    done
+  fi
+  rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
+  exit 1
+}
 trap cleanup_runner_next EXIT
+trap abort_remote_launch HUP INT TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
@@ -500,6 +516,87 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
+discover_running_runtime() {
+  rm -f "$BASE_DIR_FILE"
+  SERVICE_PID=""
+  if command -v systemctl >/dev/null 2>&1; then
+    SERVICE_PID="$(systemctl --user show t3code.service --property=MainPID --value 2>/dev/null || true)"
+  fi
+  node - "$DEFAULT_SERVER_HOME" "$BASE_DIR_FILE" "$SERVICE_PID" "\${T3CODE_HOME:-}" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const defaultBaseDir = process.argv[2] ?? "";
+const baseDirOutputPath = process.argv[3] ?? "";
+const servicePid = Number.parseInt(process.argv[4] ?? "", 10);
+const environmentBaseDir = process.argv[5] ?? "";
+const candidates = [];
+const seen = new Set();
+const addBaseDir = (value) => {
+  const baseDir = value.trim();
+  if (baseDir.length === 0 || seen.has(baseDir)) return;
+  seen.add(baseDir);
+  candidates.push(baseDir);
+};
+const addBaseDirFromPid = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try {
+    const environment = fs.readFileSync(\`/proc/\${pid}/environ\`, "utf8").split("\\0");
+    const value = environment.find((entry) => entry.startsWith("T3CODE_HOME="));
+    if (value) addBaseDir(value.slice("T3CODE_HOME=".length));
+  } catch {}
+};
+
+addBaseDirFromPid(servicePid);
+addBaseDir(environmentBaseDir);
+try {
+  for (const entry of fs.readdirSync("/proc")) {
+    if (/^[1-9][0-9]*$/u.test(entry)) addBaseDirFromPid(Number(entry));
+  }
+} catch {}
+addBaseDir(defaultBaseDir);
+
+const isAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error && typeof error === "object" && error.code === "EPERM";
+  }
+};
+
+(async () => {
+  for (const baseDir of candidates) {
+    for (const variant of ["userdata", "dev"]) {
+      try {
+        const runtime = JSON.parse(
+          fs.readFileSync(path.join(baseDir, variant, "server-runtime.json"), "utf8"),
+        );
+        const pid = Number(runtime.pid);
+        const port = Number(runtime.port);
+        if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port) || !isAlive(pid)) {
+          continue;
+        }
+        const response = await fetch(
+          \`http://127.0.0.1:\${port}/.well-known/t3/environment\`,
+          {
+            signal: AbortSignal.timeout(2500),
+          },
+        );
+        if (!response.ok) continue;
+        const descriptor = await response.json();
+        if (!descriptor || typeof descriptor.environmentId !== "string") continue;
+        fs.writeFileSync(baseDirOutputPath, \`\${baseDir}\\n\`, { mode: 0o600 });
+        process.stdout.write(String(port));
+        return;
+      } catch {}
+    }
+  }
+  process.exitCode = 1;
+})().catch(() => {
+  process.exitCode = 1;
+});
+NODE
+}
 resolve_default_runtime_port() {
   node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
 const fs = require("node:fs");
@@ -525,17 +622,23 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+RUNNER_RUNTIME_PORT="$(discover_running_runtime 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
-if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
+if [ -n "$RUNNER_RUNTIME_PORT" ]; then
+  DEFAULT_REMOTE_PORT="$RUNNER_RUNTIME_PORT"
+elif [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+  PREVIOUS_REMOTE_PORT="$REMOTE_PORT"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if [ "$REMOTE_MANAGED" = "managed" ]; then
+    if [ "$REMOTE_MANAGED" = "managed" ] && [ "$PREVIOUS_REMOTE_PORT" = "$DEFAULT_REMOTE_PORT" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    elif [ "$REMOTE_MANAGED" = "managed" ]; then
       PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
       if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
         kill "$PID_TO_STOP" 2>/dev/null || true
@@ -590,8 +693,10 @@ if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
+  LAUNCHED_PID="$REMOTE_PID"
+  printf '%s\\n' "\${T3CODE_HOME:-$DEFAULT_SERVER_HOME}" >"$BASE_DIR_FILE"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
@@ -604,24 +709,49 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    LAUNCHED_PID=""
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
     exit 1
   fi
+  LAUNCHED_PID=""
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
 export const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
+PAIR_OUTPUT_FILE="$STATE_DIR/pair-output.$$"
 mkdir -p "$STATE_DIR"
+umask 077
+cleanup_pair_output() {
+  rm -f "$PAIR_OUTPUT_FILE"
+}
+trap cleanup_pair_output EXIT
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
 chmod 700 "$RUNNER_FILE"
-PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
-"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+PAIRING_BASE_DIR="$(cat "$BASE_DIR_FILE" 2>/dev/null || true)"
+if [ -n "$PAIRING_BASE_DIR" ]; then
+  "$RUNNER_FILE" pair --base-dir "$PAIRING_BASE_DIR" >"$PAIR_OUTPUT_FILE"
+else
+  "$RUNNER_FILE" pair >"$PAIR_OUTPUT_FILE"
+fi
+node - "$PAIR_OUTPUT_FILE" <<'NODE'
+const fs = require("node:fs");
+const outputPath = process.argv[2] ?? "";
+try {
+  const output = fs.readFileSync(outputPath, "utf8");
+  const tokenLine = output.split(/\\r?\\n/u).findLast((line) => line.startsWith("Token: "));
+  const credential = tokenLine?.slice("Token: ".length).trim() ?? "";
+  if (credential.length === 0) process.exit(1);
+  process.stdout.write(JSON.stringify({ credential }) + "\\n");
+} catch {
+  process.exit(1);
+}
+NODE
 `;
 
 export const REMOTE_STOP_SCRIPT = `set -eu
@@ -629,6 +759,7 @@ STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
@@ -639,7 +770,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     sleep 0.1
   done
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
 printf '{"stopped":true}\\n'
 `;
 

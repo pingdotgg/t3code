@@ -35,6 +35,14 @@ scope when it changed. `createServiceScope` builds an `EnvironmentSupervisor`
 bound to a closeable scope and connects it; `run` and `runStream` execute caller
 effects with that supervisor provided.
 
+Persisted environments may have multiple routes but exactly one selected target
+per client. `EnvironmentRegistry.routes` publishes the retained route entries.
+`selectRoute` first calls `ConnectionDriver.prepare` while the selected
+supervisor remains live, so authentication and stable environment identity are
+verified before persistence changes. It then swaps the selected entry and
+supervisor. Selection never falls back automatically; a failed preparation
+leaves the existing session and persisted selection untouched.
+
 `EnvironmentSupervisor` owns desired state, retry scheduling, and the active
 session scope. React components do not create connections, transports, retry
 loops, or RPC clients.

@@ -136,9 +136,26 @@ After setup, the renderer connects to a local forwarded HTTP/WebSocket endpoint.
 
 SSH launch is a desktop feature because it needs local process and SSH access. Once the environment is paired and saved, it uses the same environment list and connection model as direct LAN, Tailscale, HTTPS, or future tunnel-backed environments.
 
+If the same server is already saved through T3 Connect, adding it through SSH does not create a
+second environment. The desktop keeps both access methods under the server's stable environment
+identity. Choose **T3 Connect** or **SSH** from the environment's connection-method menu. The choice
+is manual and applies only to that desktop; T3 Code does not silently fall back to the other method.
+Before switching, the desktop prepares the selected route and verifies that it reaches the same
+environment, then hands the active session over. If preparation fails, the current connection stays
+active.
+
+All clients still talk to the same T3 server, regardless of their route. A thread created by the
+desktop over SSH is therefore available to mobile over T3 Connect, and server events continue to fan
+out to every connected client.
+
 #### SSH Launch Troubleshooting
 
 The desktop SSH launcher connects with a non-interactive `sh` session, writes a small launcher script under `~/.t3/ssh-launch/<host-key>/`, starts or reuses a remote T3 server, and forwards the remote loopback port back to your desktop.
+
+Before starting another server, the launcher inspects the remote T3 service and running-process
+metadata, then validates the recorded server through its environment descriptor. This lets SSH reuse
+a server started by T3 Connect even when that service uses a private `T3CODE_HOME` that the SSH login
+shell does not inherit; the forwarded remote port is the port reported by that server.
 
 The remote host must have a compatible Node.js runtime. T3 Code uses the server package's `engines.node` requirement:
 
@@ -165,7 +182,10 @@ nvm alias default 24
 
 With mise, asdf, fnm, or nodenv, make sure the tool's shim directory is installed and resolves to a Node version satisfying the range above without an interactive shell.
 
-If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
+If reconnecting after an app update fails, use **Connect** to retry. The launcher compares its
+generated runner script, clears stale launcher state, and starts a fresh server only when it cannot
+discover or reuse a live one. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3`
+processes manually.
 
 ## Updating a Remote Server
 

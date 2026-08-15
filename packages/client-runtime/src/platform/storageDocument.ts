@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -5,7 +6,11 @@ import {
   ConnectionCredential,
   ConnectionProfile,
 } from "../connection/catalog.ts";
-import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import {
+  type ConnectionTarget,
+  PersistedConnectionTarget,
+  connectionRouteId,
+} from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
@@ -17,6 +22,9 @@ export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 export const ConnectionCatalogDocument = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   targets: Schema.Array(PersistedConnectionTarget),
+  routes: Schema.Array(PersistedConnectionTarget).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
   profiles: Schema.Array(ConnectionProfile),
   credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
@@ -26,6 +34,7 @@ export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 export const EMPTY_CONNECTION_CATALOG_DOCUMENT: ConnectionCatalogDocument = Object.freeze({
   schemaVersion: 1,
   targets: [],
+  routes: [],
   profiles: [],
   credentials: [],
   remoteDpopTokens: [],
@@ -59,19 +68,21 @@ function connectionIdOf(target: ConnectionTarget): string | null {
   }
 }
 
-function removeConnectionMetadata(
+export function connectionRoutes(
+  document: ConnectionCatalogDocument,
+): ReadonlyArray<ConnectionCatalogDocument["routes"][number]> {
+  return document.routes.length === 0 && document.targets.length > 0
+    ? document.targets
+    : document.routes;
+}
+
+function removeRouteMetadata(
   document: ConnectionCatalogDocument,
   target: ConnectionTarget,
-  removeRemoteToken: boolean,
 ): ConnectionCatalogDocument {
   const connectionId = connectionIdOf(target);
   return {
     ...document,
-    targets: removeCatalogValue(
-      document.targets,
-      (value) => value.environmentId,
-      target.environmentId,
-    ),
     profiles:
       connectionId === null
         ? document.profiles
@@ -80,13 +91,6 @@ function removeConnectionMetadata(
       connectionId === null
         ? document.credentials
         : removeCatalogValue(document.credentials, (value) => value.connectionId, connectionId),
-    remoteDpopTokens: removeRemoteToken
-      ? removeCatalogValue(
-          document.remoteDpopTokens,
-          (value) => value.environmentId,
-          target.environmentId,
-        )
-      : document.remoteDpopTokens,
   };
 }
 
@@ -95,14 +99,15 @@ export function registerConnectionInCatalog(
   registration: ConnectionRegistration,
 ): ConnectionCatalogDocument {
   const target = registration.target;
-  const previous = document.targets.find(
-    (candidate) => candidate.environmentId === target.environmentId,
+  const routes = connectionRoutes(document);
+  const previous = routes.find(
+    (candidate) => connectionRouteId(candidate) === connectionRouteId(target),
   );
-  const cleaned =
-    previous === undefined ? document : removeConnectionMetadata(document, previous, false);
+  const cleaned = previous === undefined ? document : removeRouteMetadata(document, previous);
   const next: ConnectionCatalogDocument = {
     ...cleaned,
     targets: replaceCatalogValue(cleaned.targets, (value) => value.environmentId, target),
+    routes: replaceCatalogValue(routes, connectionRouteId, target),
   };
 
   switch (registration._tag) {
@@ -137,5 +142,43 @@ export function removeConnectionFromCatalog(
   document: ConnectionCatalogDocument,
   target: ConnectionTarget,
 ): ConnectionCatalogDocument {
-  return removeConnectionMetadata(document, target, true);
+  const environmentRoutes = connectionRoutes(document).filter(
+    (candidate) => candidate.environmentId === target.environmentId,
+  );
+  const connectionIds = new Set(
+    environmentRoutes
+      .map(connectionIdOf)
+      .filter((connectionId): connectionId is string => connectionId !== null),
+  );
+  return {
+    ...document,
+    targets: removeCatalogValue(
+      document.targets,
+      (value) => value.environmentId,
+      target.environmentId,
+    ),
+    routes: connectionRoutes(document).filter(
+      (candidate) => candidate.environmentId !== target.environmentId,
+    ),
+    profiles: document.profiles.filter((profile) => !connectionIds.has(profile.connectionId)),
+    credentials: document.credentials.filter(
+      (credential) => !connectionIds.has(credential.connectionId),
+    ),
+    remoteDpopTokens: removeCatalogValue(
+      document.remoteDpopTokens,
+      (value) => value.environmentId,
+      target.environmentId,
+    ),
+  };
+}
+
+export function selectConnectionRouteInCatalog(
+  document: ConnectionCatalogDocument,
+  target: ConnectionCatalogDocument["routes"][number],
+): ConnectionCatalogDocument {
+  return {
+    ...document,
+    targets: replaceCatalogValue(document.targets, (value) => value.environmentId, target),
+    routes: connectionRoutes(document),
+  };
 }

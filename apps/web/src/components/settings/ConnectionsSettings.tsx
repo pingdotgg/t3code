@@ -28,7 +28,12 @@ import {
   type DesktopWslState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import {
+  type ConnectionCatalogEntry,
+  connectionRouteId,
+  connectionStatusText,
+} from "@t3tools/client-runtime/connection";
+import type { Discovery } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1350,16 +1355,39 @@ function NetworkAccessDescription({
 
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
+  routes: ReadonlyArray<ConnectionCatalogEntry>;
+  relayEnvironment: Discovery.RelayDiscoveredEnvironment | null;
   removingEnvironmentId: EnvironmentId | null;
+  switchingRouteEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
+  onSelectRoute: (environmentId: EnvironmentId, routeId: string) => void;
 };
+
+function connectionRouteLabel(entry: ConnectionCatalogEntry): string {
+  switch (entry.target._tag) {
+    case "RelayConnectionTarget":
+      return "T3 Connect";
+    case "SshConnectionTarget":
+      return Option.isSome(entry.profile) && entry.profile.value._tag === "SshConnectionProfile"
+        ? `SSH ${formatDesktopSshTarget(entry.profile.value.target)}`
+        : "SSH";
+    case "BearerConnectionTarget":
+      return "Direct";
+    case "PrimaryConnectionTarget":
+      return "Local";
+  }
+}
 
 function SavedBackendListRow({
   environment,
+  routes,
+  relayEnvironment,
   removingEnvironmentId,
+  switchingRouteEnvironmentId,
   onConnect,
   onRemove,
+  onSelectRoute,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
   const connectionState = environment.connection.phase;
@@ -1478,6 +1506,39 @@ function SavedBackendListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {routes.length > 1 ? (
+            <Select
+              value={connectionRouteId(environment.entry.target)}
+              onValueChange={(value) => {
+                if (typeof value === "string") {
+                  onSelectRoute(environmentId, value);
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-48"
+                aria-label={`Connection method for ${environment.label}`}
+                disabled={
+                  switchingRouteEnvironmentId === environmentId ||
+                  removingEnvironmentId === environmentId
+                }
+              >
+                <SelectValue>{connectionRouteLabel(environment.entry)}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {routes.map((route) => (
+                  <SelectItem
+                    hideIndicator
+                    key={connectionRouteId(route.target)}
+                    value={connectionRouteId(route.target)}
+                  >
+                    {connectionRouteLabel(route)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          ) : null}
           {versionMismatch &&
           (serverUpdateState.status === "idle" || serverUpdateState.status === "failed") ? (
             <ServerUpdateAction
@@ -1753,6 +1814,10 @@ export function ConnectionsSettings() {
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const selectEnvironmentRoute = useAtomCommand(environmentCatalog.selectRoute, {
+    reportFailure: false,
+  });
+  const environmentRoutes = useAtomValue(environmentCatalog.routesValueAtom);
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -1804,6 +1869,8 @@ export function ConnectionsSettings() {
     return keys;
   }, [savedEnvironments]);
   const [sshConnectionError, setSshConnectionError] = useState<string | null>(null);
+  const [switchingRouteEnvironmentId, setSwitchingRouteEnvironmentId] =
+    useState<EnvironmentId | null>(null);
   const [connectingSshHostAlias, setConnectingSshHostAlias] = useState<string | null>(null);
 
   const [desktopServerExposureMutationError, setDesktopServerExposureMutationError] = useState<
@@ -2263,6 +2330,29 @@ export function ConnectionsSettings() {
       }
     },
     [retryEnvironment],
+  );
+
+  const handleSelectSavedBackendRoute = useCallback(
+    async (environmentId: EnvironmentId, routeId: string) => {
+      setSwitchingRouteEnvironmentId(environmentId);
+      setSavedBackendError(null);
+      const result = await selectEnvironmentRoute({ environmentId, routeId });
+      setSwitchingRouteEnvironmentId(null);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        const message =
+          error instanceof Error ? error.message : "Failed to switch connection method.";
+        setSavedBackendError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not switch connection method",
+            description: message,
+          }),
+        );
+      }
+    },
+    [selectEnvironmentRoute],
   );
 
   const handleRemoveSavedBackend = useCallback(
@@ -3448,9 +3538,15 @@ export function ConnectionsSettings() {
           <SavedBackendListRow
             key={environment.environmentId}
             environment={environment}
+            routes={desktopBridge ? (environmentRoutes.get(environment.environmentId) ?? []) : []}
+            relayEnvironment={
+              relayEnvironmentDiscoveryState.environments.get(environment.environmentId) ?? null
+            }
             removingEnvironmentId={removingSavedEnvironmentId}
+            switchingRouteEnvironmentId={switchingRouteEnvironmentId}
             onConnect={handleConnectSavedBackend}
             onRemove={handleRemoveSavedBackend}
+            onSelectRoute={handleSelectSavedBackendRoute}
           />
         ))}
         <CloudRemoteEnvironmentRows
