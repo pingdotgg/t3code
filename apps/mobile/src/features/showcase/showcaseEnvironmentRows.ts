@@ -40,7 +40,6 @@ const pocketPiEndpoint = {
 export const SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS: ReadonlyArray<ConnectedEnvironmentSummary> = [
   {
     connectionId: "relay:showcase-aurora-gpu",
-    isActive: true,
     environmentId: EnvironmentId.make("showcase-aurora-gpu"),
     environmentLabel: "Aurora GPU Pod",
     displayUrl: "https://aurora-gpu.t3.sh",

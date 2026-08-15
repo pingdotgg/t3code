@@ -20,6 +20,7 @@ import { useEnvironmentConnections } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
+import { connectedRelayEnvironmentIds } from "./environmentSections";
 
 export interface RelayEnvironmentView {
   readonly environment: RelayClientEnvironmentRecord;
@@ -37,7 +38,6 @@ export function useConnectionController() {
   });
   const updateBearer = useAtomCommand(updateBearerConnection, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, "environment register");
-  const removeEnvironmentMutation = useAtomCommand(environmentCatalog.remove, "environment remove");
   const removeConnectionMutation = useAtomCommand(
     environmentCatalog.removeConnection,
     "connection remove",
@@ -56,19 +56,18 @@ export function useConnectionController() {
     () =>
       environments.map((environment) => ({
         connectionId: environment.connectionId,
-        isActive: environment.isActive,
         environmentId: environment.environmentId,
         environmentLabel: environment.label,
         displayUrl: environment.displayUrl ?? "",
         isRelayManaged: environment.relayManaged,
-        connectionState: environment.isActive ? environment.connection.phase : "available",
-        connectionError: environment.isActive ? environment.connection.error : null,
-        connectionErrorTraceId: environment.isActive ? environment.connection.traceId : null,
+        connectionState: environment.connection.phase,
+        connectionError: environment.connection.error,
+        connectionErrorTraceId: environment.connection.traceId,
       })),
     [environments],
   );
   const registeredIds = useMemo(
-    () => new Set(connectedEnvironments.map((environment) => environment.environmentId)),
+    () => connectedRelayEnvironmentIds(connectedEnvironments),
     [connectedEnvironments],
   );
   const relayEnvironments = useMemo<ReadonlyArray<RelayEnvironmentView>>(
@@ -102,10 +101,6 @@ export function useConnectionController() {
         }),
       ),
     [registerEnvironment],
-  );
-  const removeEnvironment = useCallback(
-    (environmentId: EnvironmentId) => removeEnvironmentMutation(environmentId),
-    [removeEnvironmentMutation],
   );
   const removeConnection = useCallback(
     (connectionId: string) => removeConnectionMutation(connectionId),
@@ -141,7 +136,6 @@ export function useConnectionController() {
     },
     connectPairingUrl,
     connectRelayEnvironment,
-    removeEnvironment,
     removeConnection,
     retryEnvironment,
     retryConnection,

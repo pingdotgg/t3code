@@ -10,7 +10,6 @@ export interface EnvironmentRuntimeState {
 
 export interface ConnectedEnvironmentSummary {
   readonly connectionId: string;
-  readonly isActive: boolean;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly displayUrl: string;

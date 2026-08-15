@@ -27,7 +27,6 @@ export function SettingsEnvironmentsRouteScreen() {
   const {
     connectedEnvironments,
     onReconnectConnection,
-    onReconnectEnvironment,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
@@ -168,7 +167,7 @@ export function SettingsEnvironmentsRouteScreen() {
             user is signed out — the component gates discovery itself. */}
         <CloudEnvironmentRows
           connectedCloudEnvironments={connectedCloudEnvironments}
-          onReconnectEnvironment={onReconnectEnvironment}
+          onReconnectConnection={onReconnectConnection}
           {...(SHOWCASE_ENABLED
             ? {
                 showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,

@@ -68,7 +68,12 @@ export class ConnectionOnboarding extends Context.Service<
     >;
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
-    ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
+    ) => Effect.Effect<
+      void,
+      | ConnectionAttemptError
+      | Persistence.ConnectionPersistenceError
+      | EnvironmentRegistry.ConnectionNotRegisteredError
+    >;
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
 

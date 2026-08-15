@@ -81,9 +81,6 @@ export class EnvironmentRegistry extends Context.Service<
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly update: (
       registration: ConnectionRegistration,
-    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
-    readonly activate: (
-      connectionId: string,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError | ConnectionNotRegisteredError>;
     readonly removeConnection: (
       connectionId: string,
@@ -106,17 +103,22 @@ export class EnvironmentRegistry extends Context.Service<
     >;
     readonly removeRelayEnvironments: () => Effect.Effect<
       void,
-      | Persistence.ConnectionPersistenceError
-      | ConnectionAttemptError
-      | PlatformEnvironmentRemovalError
+      Persistence.ConnectionPersistenceError | ConnectionAttemptError
     >;
     readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly retryConnection: (connectionId: string) => Effect.Effect<void>;
     readonly state: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<SupervisorConnectionState, EnvironmentNotRegisteredError>;
     readonly stateChanges: (
       environmentId: EnvironmentId,
     ) => Stream.Stream<SupervisorConnectionState, EnvironmentNotRegisteredError>;
+    readonly connectionState: (
+      connectionId: string,
+    ) => Effect.Effect<SupervisorConnectionState, ConnectionNotRegisteredError>;
+    readonly connectionStateChanges: (
+      connectionId: string,
+    ) => Stream.Stream<SupervisorConnectionState, ConnectionNotRegisteredError>;
     readonly run: <A, E, R>(
       environmentId: EnvironmentId,
       effect: Effect.Effect<A, E, R>,
@@ -156,10 +158,7 @@ function installSavedConnection(
   for (const [candidateId, candidate] of next) {
     if (
       candidateId === connectionId ||
-      (candidate.target.environmentId === entry.target.environmentId &&
-        (!retainsSiblingRoutes ||
-          candidate.target._tag === "RelayConnectionTarget" ||
-          entry.target._tag === "RelayConnectionTarget"))
+      (candidate.target.environmentId === entry.target.environmentId && !retainsSiblingRoutes)
     ) {
       next.delete(candidateId);
     }
@@ -203,8 +202,9 @@ export const make = Effect.gen(function* () {
   const initialConnections = new Map(
     persistedEntries.map((entry) => [connectionTargetId(entry.target), entry]),
   );
-  // Catalog order records the preferred route. Map replacement means the last
-  // saved route for an environment becomes its active runtime entry.
+  // Environment-owned data remains keyed by EnvironmentId, so bootstrap it with
+  // one representative entry. Runtime reconciliation moves it to a connected
+  // sibling without changing the independently supervised saved connections.
   const initialEntries = new Map(
     persistedEntries.map((entry) => [entry.target.environmentId, entry]),
   );
@@ -213,9 +213,9 @@ export const make = Effect.gen(function* () {
   const connections =
     yield* SubscriptionRef.make<ReadonlyMap<string, ConnectionCatalogEntry>>(initialConnections);
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);
-  const serviceScopes = yield* SubscriptionRef.make<
-    ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
-  >(new Map());
+  const serviceScopes = yield* SubscriptionRef.make<ReadonlyMap<string, EnvironmentServiceScope>>(
+    new Map(),
+  );
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
   interface LeaseLock {
     readonly semaphore: Semaphore.Semaphore;
@@ -285,24 +285,74 @@ export const make = Effect.gen(function* () {
   });
 
   const closeServiceScope = Effect.fn("EnvironmentRegistry.closeServiceScope")(function* (
-    environmentId: EnvironmentId,
+    connectionId: string,
   ) {
     const current = yield* SubscriptionRef.get(serviceScopes);
-    const lease = current.get(environmentId);
+    const lease = current.get(connectionId);
     if (lease === undefined) {
       return;
     }
-    const next = new Map(current);
-    next.delete(environmentId);
-    yield* SubscriptionRef.set(serviceScopes, next);
+    yield* SubscriptionRef.update(serviceScopes, (latest) => {
+      const next = new Map(latest);
+      next.delete(connectionId);
+      return next;
+    });
     yield* Scope.close(lease.scope, Exit.void);
   });
+
+  const reconcileEnvironmentEntryLocked = Effect.fn(
+    "EnvironmentRegistry.reconcileEnvironmentEntryLocked",
+  )(function* (environmentId: EnvironmentId) {
+    const currentEntry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    const currentConnectionId =
+      currentEntry === undefined ? undefined : connectionTargetId(currentEntry.target);
+    const savedConnections = yield* SubscriptionRef.get(connections);
+    const scopes = [...(yield* SubscriptionRef.get(serviceScopes)).entries()].filter(
+      ([, lease]) => lease.entry.target.environmentId === environmentId,
+    );
+    const currentScope =
+      currentConnectionId === undefined
+        ? undefined
+        : scopes.find(([connectionId]) => connectionId === currentConnectionId)?.[1];
+    if (
+      currentConnectionId !== undefined &&
+      savedConnections.has(currentConnectionId) &&
+      currentScope !== undefined
+    ) {
+      const currentState = yield* SubscriptionRef.get(currentScope.supervisor.state);
+      if (currentState.phase === "connected" && Equal.equals(currentEntry, currentScope.entry)) {
+        return;
+      }
+    }
+    const connected = yield* Effect.findFirst(scopes, ([, lease]) =>
+      SubscriptionRef.get(lease.supervisor.state).pipe(
+        Effect.map((state) => state.phase === "connected"),
+      ),
+    );
+    const replacement = Option.match(connected, {
+      onNone: () =>
+        scopes[0]?.[1].entry ??
+        [...savedConnections.values()].find(
+          (entry) => entry.target.environmentId === environmentId,
+        ),
+      onSome: ([, lease]) => lease.entry,
+    });
+    if (replacement === undefined || Equal.equals(currentEntry, replacement)) return;
+    yield* SubscriptionRef.update(entries, (current) => {
+      const next = new Map(current);
+      next.set(environmentId, replacement);
+      return next;
+    });
+  });
+
+  const reconcileEnvironmentEntry = (environmentId: EnvironmentId) =>
+    withLeaseLock(environmentId, reconcileEnvironmentEntryLocked(environmentId));
 
   const createServiceScope = Effect.fn("EnvironmentRegistry.createServiceScope")(
     (entry: ConnectionCatalogEntry) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
-          const environmentId = entry.target.environmentId;
+          const connectionId = connectionTargetId(entry.target);
           const scope = yield* Scope.make();
           const supervisor = yield* EnvironmentSupervisor.make(entry, {
             initiallyDesired: false,
@@ -313,15 +363,52 @@ export const make = Effect.gen(function* () {
             Scope.provide(scope),
             Effect.onError(() => Scope.close(scope, Exit.void)),
           );
-          yield* supervisor.connect;
           yield* SubscriptionRef.update(serviceScopes, (current) => {
             const next = new Map(current);
-            next.set(environmentId, { entry, supervisor, scope });
+            next.set(connectionId, { entry, supervisor, scope });
             return next;
           });
+          yield* SubscriptionRef.changes(supervisor.state).pipe(
+            Stream.runForEach(() => reconcileEnvironmentEntry(entry.target.environmentId)),
+            Effect.forkIn(scope, { startImmediately: true, uninterruptible: false }),
+          );
+          yield* supervisor.connect;
           return supervisor;
         }),
       ),
+  );
+
+  const acquireEntrySupervisorLocked = Effect.fn(
+    "EnvironmentRegistry.acquireEntrySupervisorLocked",
+  )(function* (entry: ConnectionCatalogEntry) {
+    const connectionId = connectionTargetId(entry.target);
+    const existing = (yield* SubscriptionRef.get(serviceScopes)).get(connectionId);
+    if (existing !== undefined) {
+      if (Equal.equals(existing.entry, entry)) {
+        return existing.supervisor;
+      }
+      yield* closeServiceScope(connectionId);
+    }
+    return yield* createServiceScope(entry);
+  });
+
+  const acquireConnectionSupervisor = Effect.fn("EnvironmentRegistry.acquireConnectionSupervisor")(
+    function* (connectionId: string) {
+      const candidate = (yield* SubscriptionRef.get(connections)).get(connectionId);
+      if (candidate === undefined) {
+        return yield* new ConnectionNotRegisteredError({ connectionId });
+      }
+      return yield* withLeaseLock(
+        candidate.target.environmentId,
+        Effect.gen(function* () {
+          const entry = (yield* SubscriptionRef.get(connections)).get(connectionId);
+          if (entry === undefined) {
+            return yield* new ConnectionNotRegisteredError({ connectionId });
+          }
+          return yield* acquireEntrySupervisorLocked(entry);
+        }),
+      );
+    },
   );
 
   const acquireSupervisor = Effect.fn("EnvironmentRegistry.acquireSupervisor")(function* (
@@ -331,14 +418,7 @@ export const make = Effect.gen(function* () {
       environmentId,
       Effect.gen(function* () {
         const entry = yield* getEntry(environmentId);
-        const existing = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
-        if (existing !== undefined) {
-          if (Equal.equals(existing.entry, entry)) {
-            return existing.supervisor;
-          }
-          yield* closeServiceScope(environmentId);
-        }
-        return yield* createServiceScope(entry);
+        return yield* acquireEntrySupervisorLocked(entry);
       }),
     );
   });
@@ -402,10 +482,10 @@ export const make = Effect.gen(function* () {
       return;
     }
     yield* Effect.forEach(
-      initialEntries.keys(),
-      (environmentId) =>
-        acquireSupervisor(environmentId).pipe(
-          Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+      initialConnections.keys(),
+      (connectionId) =>
+        acquireConnectionSupervisor(connectionId).pipe(
+          Effect.catchTag("ConnectionNotRegisteredError", () => Effect.void),
         ),
       {
         concurrency: "unbounded",
@@ -419,8 +499,9 @@ export const make = Effect.gen(function* () {
     options?: { readonly retainEquivalentRuntime?: boolean },
   ) {
     const target = entry.target;
+    const connectionId = connectionTargetId(target);
     const previous = (yield* SubscriptionRef.get(entries)).get(target.environmentId);
-    const existingScope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
+    const existingScope = (yield* SubscriptionRef.get(serviceScopes)).get(connectionId);
     if (
       options?.retainEquivalentRuntime === true &&
       previous !== undefined &&
@@ -431,13 +512,12 @@ export const make = Effect.gen(function* () {
       return;
     }
 
-    yield* closeServiceScope(target.environmentId);
     yield* SubscriptionRef.update(entries, (current) => {
       const next = new Map(current);
       next.set(target.environmentId, entry);
       return next;
     });
-    yield* createServiceScope(entry);
+    yield* acquireEntrySupervisorLocked(entry);
   });
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
@@ -456,10 +536,27 @@ export const make = Effect.gen(function* () {
             : registration;
         const entry = connectionRegistrationCatalogEntry(resolved);
         yield* registrations.register(resolved);
-        yield* SubscriptionRef.update(connections, (current) =>
-          installSavedConnection(current, entry, registrations.retainsSiblingRoutes),
+        const { previousConnections, nextConnections } = yield* SubscriptionRef.modify(
+          connections,
+          (current) => {
+            const next = installSavedConnection(current, entry, registrations.retainsSiblingRoutes);
+            return [{ previousConnections: current, nextConnections: next }, next];
+          },
         );
-        yield* installEntryLocked(entry);
+        yield* Effect.forEach(
+          previousConnections.keys(),
+          (connectionId) =>
+            nextConnections.has(connectionId) ? Effect.void : closeServiceScope(connectionId),
+          { discard: true },
+        );
+        const selected = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        const selectedWasReplaced =
+          selected !== undefined && !nextConnections.has(connectionTargetId(selected.target));
+        if (selected !== undefined && !selectedWasReplaced) {
+          yield* acquireEntrySupervisorLocked(entry);
+        } else {
+          yield* installEntryLocked(entry);
+        }
       }),
     );
   });
@@ -474,45 +571,23 @@ export const make = Effect.gen(function* () {
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
-        const active = (yield* SubscriptionRef.get(entries)).get(environmentId);
-        const activeTarget =
-          active !== undefined && connectionTargetId(active.target) !== connectionId
-            ? active.target
-            : undefined;
-        yield* registrations.update(registration, activeTarget);
+        const saved = (yield* SubscriptionRef.get(connections)).get(connectionId);
+        if (saved === undefined || saved.target.environmentId !== environmentId) {
+          return yield* new ConnectionNotRegisteredError({ connectionId });
+        }
+        const selected = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        yield* registrations.update(registration);
         yield* SubscriptionRef.update(connections, (current) =>
           updateSavedConnection(current, entry),
         );
-        if (active !== undefined && connectionTargetId(active.target) === connectionId) {
-          yield* installEntryLocked(entry);
+        if (selected !== undefined && connectionTargetId(selected.target) === connectionId) {
+          yield* SubscriptionRef.update(entries, (current) => {
+            const next = new Map(current);
+            next.set(environmentId, entry);
+            return next;
+          });
         }
-      }),
-    );
-  });
-
-  const activate = Effect.fn("EnvironmentRegistry.activate")(function* (connectionId: string) {
-    const candidate = (yield* SubscriptionRef.get(connections)).get(connectionId);
-    if (candidate === undefined) {
-      return yield* new ConnectionNotRegisteredError({ connectionId });
-    }
-    const environmentId = candidate.target.environmentId;
-    yield* withLeaseLock(
-      environmentId,
-      Effect.gen(function* () {
-        const entry = (yield* SubscriptionRef.get(connections)).get(connectionId);
-        if (entry === undefined || entry.target.environmentId !== environmentId) {
-          return yield* new ConnectionNotRegisteredError({ connectionId });
-        }
-        yield* registrations.activate(entry.target);
-        yield* SubscriptionRef.update(connections, (current) => {
-          const next = new Map(current);
-          next.delete(connectionId);
-          next.set(connectionId, entry);
-          return next;
-        });
-        if (!(yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
-          yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
-        }
+        yield* acquireEntrySupervisorLocked(entry);
       }),
     );
   });
@@ -559,7 +634,7 @@ export const make = Effect.gen(function* () {
                     const next = new Map(current);
                     next.delete(connectionId);
                     return next;
-                  }),
+                  }).pipe(Effect.andThen(closeServiceScope(connectionId))),
                 ),
                 Effect.catch((error) =>
                   Effect.logWarning(
@@ -591,7 +666,9 @@ export const make = Effect.gen(function* () {
             next.delete(environmentId);
             return next;
           });
-          yield* closeServiceScope(environmentId);
+          if (entry !== undefined) {
+            yield* closeServiceScope(connectionTargetId(entry.target));
+          }
           yield* SubscriptionRef.update(entries, (current) => {
             const next = new Map(current);
             next.delete(environmentId);
@@ -613,11 +690,6 @@ export const make = Effect.gen(function* () {
           if (saved !== undefined) {
             yield* installEntryLocked(saved);
           } else {
-            yield* SubscriptionRef.update(entries, (current) => {
-              const next = new Map(current);
-              next.delete(environmentId);
-              return next;
-            });
             yield* Effect.all(
               [
                 cache.clear(environmentId).pipe(
@@ -701,16 +773,15 @@ export const make = Effect.gen(function* () {
     entry: ConnectionCatalogEntry,
   ) {
     const environmentId = entry.target.environmentId;
-    const active = (yield* SubscriptionRef.get(entries)).get(environmentId);
-    const isActive = active !== undefined && connectionTargetId(active.target) === connectionId;
-    const remaining = isActive
-      ? [...(yield* SubscriptionRef.get(connections)).values()].findLast(
-          (candidate) =>
-            candidate.target.environmentId === environmentId &&
-            connectionTargetId(candidate.target) !== connectionId,
-        )
-      : undefined;
-    yield* registrations.remove(entry.target, remaining?.target);
+    const selected = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    const isSelected =
+      selected !== undefined && connectionTargetId(selected.target) === connectionId;
+    const remaining = [...(yield* SubscriptionRef.get(connections)).values()].filter(
+      (candidate) =>
+        candidate.target.environmentId === environmentId &&
+        connectionTargetId(candidate.target) !== connectionId,
+    );
+    yield* registrations.remove(entry.target);
     yield* disconnectSsh(entry);
     yield* SubscriptionRef.update(connections, (current) => {
       const next = new Map(current);
@@ -718,10 +789,10 @@ export const make = Effect.gen(function* () {
       return next;
     });
 
-    if (!isActive) return;
-    yield* closeServiceScope(environmentId);
-    if (remaining !== undefined) {
-      yield* installEntryLocked(remaining);
+    yield* closeServiceScope(connectionId);
+    if (!isSelected) return;
+    if (remaining.length > 0) {
+      yield* reconcileEnvironmentEntryLocked(environmentId);
       return;
     }
     yield* SubscriptionRef.update(entries, (current) => {
@@ -763,19 +834,8 @@ export const make = Effect.gen(function* () {
         if (saved.length === 0) {
           return yield* new EnvironmentNotRegisteredError({ environmentId });
         }
-        const activeConnectionId = Option.fromUndefinedOr(
-          (yield* SubscriptionRef.get(entries)).get(environmentId),
-        ).pipe(
-          Option.map((entry) => connectionTargetId(entry.target)),
-          Option.getOrNull,
-        );
-        // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
-        const removalOrder = [...saved].sort(
-          ([leftId], [rightId]) =>
-            Number(leftId === activeConnectionId) - Number(rightId === activeConnectionId),
-        );
         yield* Effect.forEach(
-          removalOrder,
+          saved,
           ([connectionId, entry]) => removeConnectionLocked(connectionId, entry),
           { discard: true },
         );
@@ -785,15 +845,15 @@ export const make = Effect.gen(function* () {
 
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
     function* () {
-      const relayEnvironmentIds = [...(yield* SubscriptionRef.get(entries)).values()]
-        .filter((entry) => entry.target._tag === "RelayConnectionTarget")
-        .map((entry) => entry.target.environmentId);
+      const relayConnectionIds = [...(yield* SubscriptionRef.get(connections)).entries()]
+        .filter(([, entry]) => entry.target._tag === "RelayConnectionTarget")
+        .map(([connectionId]) => connectionId);
 
       yield* Effect.forEach(
-        relayEnvironmentIds,
-        (environmentId) =>
-          remove(environmentId).pipe(
-            Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+        relayConnectionIds,
+        (connectionId) =>
+          removeConnection(connectionId).pipe(
+            Effect.catchTag("ConnectionNotRegisteredError", () => Effect.void),
           ),
         {
           concurrency: "unbounded",
@@ -804,10 +864,32 @@ export const make = Effect.gen(function* () {
   );
 
   const retryNow = (environmentId: EnvironmentId) =>
-    acquireSupervisor(environmentId).pipe(
-      Effect.flatMap((supervisor) => supervisor.retryNow),
-      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+    SubscriptionRef.get(serviceScopes).pipe(
+      Effect.flatMap((current) =>
+        Effect.gen(function* () {
+          const matching = [...current.values()].filter(
+            (lease) => lease.entry.target.environmentId === environmentId,
+          );
+          if (matching.length === 0) {
+            yield* acquireSupervisor(environmentId).pipe(
+              Effect.flatMap((supervisor) => supervisor.retryNow),
+              Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+            );
+            return;
+          }
+          yield* Effect.forEach(matching, (lease) => lease.supervisor.retryNow, {
+            concurrency: "unbounded",
+            discard: true,
+          });
+        }),
+      ),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
+    );
+  const retryConnection = (connectionId: string) =>
+    acquireConnectionSupervisor(connectionId).pipe(
+      Effect.flatMap((supervisor) => supervisor.retryNow),
+      Effect.catchTag("ConnectionNotRegisteredError", () => Effect.void),
+      Effect.withSpan("EnvironmentRegistry.retryConnection"),
     );
   const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {
     const supervisor = yield* acquireSupervisor(environmentId);
@@ -822,7 +904,34 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-
+  const connectionState = Effect.fn("EnvironmentRegistry.connectionState")(function* (
+    connectionId: string,
+  ) {
+    const supervisor = yield* acquireConnectionSupervisor(connectionId);
+    return yield* SubscriptionRef.get(supervisor.state);
+  });
+  const connectionStateChanges = (connectionId: string) =>
+    Stream.concat(
+      Stream.fromEffect(SubscriptionRef.get(connections)),
+      SubscriptionRef.changes(connections),
+    ).pipe(
+      Stream.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
+      Stream.changes,
+      Stream.switchMap(
+        Option.match({
+          onNone: () => Stream.empty,
+          onSome: () =>
+            Stream.unwrap(
+              acquireConnectionSupervisor(connectionId).pipe(
+                Effect.match({
+                  onFailure: () => Stream.empty,
+                  onSuccess: (supervisor) => SubscriptionRef.changes(supervisor.state),
+                }),
+              ),
+            ),
+        }),
+      ),
+    );
   yield* Effect.addFinalizer(() =>
     SubscriptionRef.get(serviceScopes).pipe(
       Effect.flatMap((current) =>
@@ -845,15 +954,17 @@ export const make = Effect.gen(function* () {
     start,
     register,
     update,
-    activate,
     removeConnection,
     registerPlatform,
     reconcilePlatform,
     remove,
     removeRelayEnvironments,
     retryNow,
+    retryConnection,
     state,
     stateChanges,
+    connectionState,
+    connectionStateChanges,
     run,
     runStream,
     followStream,

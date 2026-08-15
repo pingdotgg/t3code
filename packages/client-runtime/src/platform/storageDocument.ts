@@ -89,7 +89,7 @@ function removeConnectionMetadata(
         ? document.credentials
         : removeCatalogValue(document.credentials, (value) => value.connectionId, connectionId),
     remoteDpopTokens:
-      removeRemoteToken && !hasSiblingRoute
+      removeRemoteToken && (target._tag === "RelayConnectionTarget" || !hasSiblingRoute)
         ? removeCatalogValue(
             document.remoteDpopTokens,
             (value) => value.environmentId,
@@ -105,10 +105,7 @@ export function registerConnectionInCatalog(
 ): ConnectionCatalogDocument {
   const target = registration.target;
   const replaced = document.targets.filter(
-    (candidate) =>
-      connectionTargetId(candidate) === connectionTargetId(target) ||
-      (candidate.environmentId === target.environmentId &&
-        (candidate._tag === "RelayConnectionTarget" || target._tag === "RelayConnectionTarget")),
+    (candidate) => connectionTargetId(candidate) === connectionTargetId(target),
   );
   const cleaned = replaced.reduce(
     (current, previous) => removeConnectionMetadata(current, previous, false),
@@ -159,24 +156,6 @@ export function replaceEnvironmentConnectionInCatalog(
     .filter((target) => target.environmentId === registration.target.environmentId)
     .reduce((current, target) => removeConnectionMetadata(current, target, false), document);
   return registerConnectionInCatalog(cleaned, registration);
-}
-
-export function activateConnectionInCatalog(
-  document: ConnectionCatalogDocument,
-  target: ConnectionTarget,
-): ConnectionCatalogDocument {
-  const targetId = connectionTargetId(target);
-  const saved = document.targets.find((candidate) => connectionTargetId(candidate) === targetId);
-  if (saved === undefined) {
-    return document;
-  }
-  return {
-    ...document,
-    targets: [
-      ...document.targets.filter((candidate) => connectionTargetId(candidate) !== targetId),
-      saved,
-    ],
-  };
 }
 
 export function removeConnectionFromCatalog(

@@ -15,7 +15,6 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
-  if (!environment.isActive) return "Saved route";
   return connectionStatusText({
     phase: environment.connectionState,
     error: environment.connectionError,

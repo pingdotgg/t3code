@@ -14,7 +14,6 @@ function environment(
 ): ConnectedEnvironmentSummary {
   return {
     connectionId: `bearer:${environmentId}`,
-    isActive: true,
     environmentId: EnvironmentId.make(environmentId),
     environmentLabel,
     displayUrl,

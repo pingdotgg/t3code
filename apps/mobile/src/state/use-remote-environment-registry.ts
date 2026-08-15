@@ -134,7 +134,6 @@ export function useRemoteConnectionStatus() {
     () =>
       workspace.environments.map((environment) => ({
         connectionId: `environment:${environment.environmentId}`,
-        isActive: true,
         environmentId: environment.environmentId,
         environmentLabel: environment.environmentLabel,
         displayUrl: environment.displayUrl,
