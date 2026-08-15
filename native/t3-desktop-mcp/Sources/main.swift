@@ -996,7 +996,12 @@ func captureWindowPNG(pid: pid_t, maxWidth: Int) -> Data? {
             guard let window = candidates.first else { return }
 
             let config = SCStreamConfiguration()
-            let scale = min(1.0, Double(maxWidth) / max(1.0, Double(window.frame.width)))
+            let scale: Double
+            if maxWidth > 0 {
+                scale = min(1.0, Double(maxWidth) / max(1.0, Double(window.frame.width)))
+            } else {
+                scale = 1.0
+            }
             config.width = Int(window.frame.width * scale)
             config.height = Int(window.frame.height * scale)
             config.showsCursor = false
@@ -1035,7 +1040,12 @@ func captureDisplayPNG(index: Int, maxWidth: Int) -> (data: Data, width: Int, he
             guard index >= 0, index < displays.count else { return }
             let display = displays[index]
             let config = SCStreamConfiguration()
-            let scale = min(1.0, Double(maxWidth) / max(1.0, Double(display.width)))
+            let scale: Double
+            if maxWidth > 0 {
+                scale = min(1.0, Double(maxWidth) / max(1.0, Double(display.width)))
+            } else {
+                scale = 1.0
+            }
             config.width = Int(Double(display.width) * scale)
             config.height = Int(Double(display.height) * scale)
             config.showsCursor = false
@@ -1324,67 +1334,81 @@ enum Chrome {
 
     static var agentWindowID: Int? {
         get {
-            loadState()
-            return cachedWindowID
+            withStateLock {
+                loadState()
+                return cachedWindowID
+            }
         }
         set {
-            didLoadState = true
-            cachedWindowID = newValue
-            if let id = newValue {
-                // Prefer the Chrome process that owns this window, not the first
-                // com.google.Chrome in the process list (multi-instance safe).
-                if let frame = boundsOf(id), let match = axWindow(matching: frame) {
-                    cachedChromePid = match.pid
+            withStateLock {
+                didLoadState = true
+                cachedWindowID = newValue
+                if let id = newValue {
+                    // Prefer the Chrome process that owns this window, not the first
+                    // com.google.Chrome in the process list (multi-instance safe).
+                    if let frame = boundsOf(id), let match = axWindow(matching: frame) {
+                        cachedChromePid = match.pid
+                        if let app = chromeApp(pid: match.pid) {
+                            cachedChromeLaunch = launchInterval(for: app)
+                        } else {
+                            cachedChromeLaunch = nil
+                        }
+                    } else {
+                        cachedChromePid = nil
+                        cachedChromeLaunch = nil
+                    }
                 } else {
-                    cachedChromePid = chromePid()
-                }
-                if let pid = cachedChromePid, let app = chromeApp(pid: pid) {
-                    cachedChromeLaunch = launchInterval(for: app)
-                } else {
+                    cachedChromePid = nil
                     cachedChromeLaunch = nil
                 }
-            } else {
-                cachedChromePid = nil
-                cachedChromeLaunch = nil
+                persistState()
             }
-            persistState()
         }
+    }
+
+    private static func clearAgentWindowState() {
+        cachedWindowID = nil
+        cachedChromePid = nil
+        cachedChromeLaunch = nil
+        try? FileManager.default.removeItem(at: stateURL)
     }
 
     /// The stored id, or nil if that window (or this Chrome instance) is gone.
     static func liveAgentWindowID() -> Int? {
-        loadState()
-        guard let id = cachedWindowID else { return nil }
-        // Window ids are only valid within a single Chrome process lifetime.
-        // After a restart Chrome can reuse the numeric id for an ordinary user
-        // window; refuse to reclaim unless the pid still matches *and* the
-        // process launch time matches (PIDs are reusable).
-        guard let expectedPid = cachedChromePid, let app = chromeApp(pid: expectedPid) else {
-            agentWindowID = nil
-            return nil
-        }
-        if let expectedLaunch = cachedChromeLaunch,
-           let liveLaunch = launchInterval(for: app),
-           abs(expectedLaunch - liveLaunch) > 0.5
-        {
-            agentWindowID = nil
-            return nil
-        }
-        guard windowExists(id) else {
-            agentWindowID = nil
-            return nil
-        }
-        // Prefer AX confirmation when available, but do not drop a still-valid
-        // scripting window when AX is unavailable or briefly skewed — that would
-        // force ensureAgentWindow to open a new Chrome window every call.
-        if let frame = boundsOf(id),
-           let match = axWindow(matching: frame, pid: expectedPid)
-        {
-            cachedChromePid = match.pid
-            cachedChromeLaunch = launchInterval(for: app)
+        withStateLock {
+            loadState()
+            guard let id = cachedWindowID else { return nil }
+            // Window ids are only valid within a single Chrome process lifetime.
+            // After a restart Chrome can reuse the numeric id for an ordinary user
+            // window; refuse to reclaim unless the pid still matches *and* the
+            // process launch time matches (PIDs are reusable).
+            guard let expectedPid = cachedChromePid, let app = chromeApp(pid: expectedPid) else {
+                clearAgentWindowState()
+                return nil
+            }
+            guard let expectedLaunch = cachedChromeLaunch,
+                  let liveLaunch = launchInterval(for: app),
+                  abs(expectedLaunch - liveLaunch) <= 0.5
+            else {
+                clearAgentWindowState()
+                return nil
+            }
+            guard windowExists(id) else {
+                clearAgentWindowState()
+                return nil
+            }
+            // Prefer AX confirmation when available, but do not drop a still-valid
+            // scripting window when AX is unavailable or briefly skewed — that would
+            // force ensureAgentWindow to open a new Chrome window every call.
+            if let frame = boundsOf(id),
+               let match = axWindow(matching: frame, pid: expectedPid)
+            {
+                cachedChromePid = match.pid
+                cachedChromeLaunch = launchInterval(for: app)
+                return id
+            }
             return id
         }
-        return id
     }
 
     /// NSAppleScript is not thread-safe and the JSON-RPC loop runs off-main.
