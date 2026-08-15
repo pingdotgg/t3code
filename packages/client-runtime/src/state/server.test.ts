@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -36,12 +37,30 @@ import {
   matchesServerUpdateReadyEvent,
   nudgeReconnectDuringUpdateRestart,
   projectServerWelcome,
+  providerQuotaResetSingleFlightKey,
   resolveServerConfigValue,
   resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
 } from "./server.ts";
+
+describe("provider quota reset command identity", () => {
+  it("does not coalesce distinct idempotency attempts for the same provider", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const instanceId = ProviderInstanceId.make("codex");
+    const first = providerQuotaResetSingleFlightKey({
+      environmentId,
+      input: { instanceId, creditId: null, idempotencyKey: "attempt-1" },
+    });
+    const second = providerQuotaResetSingleFlightKey({
+      environmentId,
+      input: { instanceId, creditId: null, idempotencyKey: "attempt-2" },
+    });
+
+    expect(first).not.toBe(second);
+  });
+});
 
 const CONFIG = {
   availableEditors: [],

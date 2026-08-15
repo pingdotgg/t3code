@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -512,6 +513,69 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect(
+    "calls the sparse rate-limit callback once for validated input and ignores malformed input",
+    () =>
+      Effect.gen(function* () {
+        const runtimeFactory = makeRuntimeFactory();
+        const updates: Array<EffectCodexSchema.V2AccountRateLimitsUpdatedNotification> = [];
+        const adapter = yield* makeCodexAdapter(decodeCodexSettings({}), {
+          makeRuntime: runtimeFactory.factory,
+          onRateLimitsUpdated: (update) =>
+            Effect.sync(() => {
+              updates.push(update);
+            }),
+        });
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-rate-limits"),
+          runtimeMode: "full-access",
+        });
+        const runtime = runtimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+
+        yield* runtime.emit({
+          id: asEventId("evt-rate-limits-malformed"),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-rate-limits"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: "account/rateLimits/updated",
+          payload: { rateLimits: { primary: { usedPercent: "bad" } } },
+        } satisfies ProviderEvent);
+
+        const nextEvent = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+        const validUpdate = {
+          rateLimits: {
+            planType: "plus",
+            primary: { usedPercent: 42, windowDurationMins: 300 },
+          },
+        } satisfies EffectCodexSchema.V2AccountRateLimitsUpdatedNotification;
+        yield* runtime.emit({
+          id: asEventId("evt-rate-limits-valid"),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-rate-limits"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          method: "account/rateLimits/updated",
+          payload: validUpdate,
+        } satisfies ProviderEvent);
+
+        const event = yield* Fiber.join(nextEvent);
+        NodeAssert.equal(event._tag, "Some");
+        NodeAssert.deepStrictEqual(updates, [validUpdate]);
+        if (event._tag === "Some") {
+          NodeAssert.equal(event.value.type, "account.rate-limits.updated");
+        }
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), process.cwd()).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

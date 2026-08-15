@@ -1,9 +1,21 @@
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  defaultInstanceIdForDriver,
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderInstanceConfig,
+} from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
+import { buildProviderUsageStripItems } from "../sidebar/ProviderUsageStrip.logic";
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
+  deriveOrderedProviderSettingsRows,
+  deriveVisibleProviderDriverOrder,
+  deriveVisibleOrderedProviderSettingsRows,
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
@@ -18,6 +30,201 @@ const environments = [
   { environmentId: relayId, label: "Alpha Relay" },
   { environmentId: primaryId, label: "This device" },
 ] as const;
+
+const codex = ProviderDriverKind.make("codex");
+const claude = ProviderDriverKind.make("claudeAgent");
+const cursor = ProviderDriverKind.make("cursor");
+const unknown = ProviderDriverKind.make("future-driver");
+
+const instance = (driver: ProviderDriverKind, enabled?: boolean): ProviderInstanceConfig => ({
+  driver,
+  ...(enabled === undefined ? {} : { enabled }),
+});
+
+const rowsFor = (input: {
+  readonly providerInstances?: Readonly<Record<string, ProviderInstanceConfig>>;
+  readonly driverOrder: ReadonlyArray<ProviderDriverKind>;
+  readonly providers?: typeof DEFAULT_UNIFIED_SETTINGS.providers;
+}) =>
+  deriveOrderedProviderSettingsRows({
+    settings: {
+      providerInstances: (input.providerInstances ?? {}) as Readonly<
+        Record<ProviderInstanceId, ProviderInstanceConfig>
+      >,
+      providers: input.providers ?? DEFAULT_UNIFIED_SETTINGS.providers,
+    },
+    driverOrder: input.driverOrder,
+  });
+
+describe("provider settings row ordering", () => {
+  it("excludes Cursor from the canonical driver order until its default instance is visible", () => {
+    const absentOrder = deriveVisibleProviderDriverOrder({
+      driverOrder: [codex, cursor, claude],
+      serverProviders: [],
+    });
+    const presentOrder = deriveVisibleProviderDriverOrder({
+      driverOrder: [codex, cursor, claude],
+      serverProviders: [{ instanceId: ProviderInstanceId.make("cursor") }],
+    });
+
+    expect(absentOrder).toEqual([codex, claude]);
+    expect(presentOrder).toEqual([codex, cursor, claude]);
+    expect(rowsFor({ driverOrder: absentOrder }).map((row) => row.instanceId)).toEqual([
+      "codex",
+      "claudeAgent",
+    ]);
+    expect(rowsFor({ driverOrder: presentOrder }).map((row) => row.instanceId)).toEqual([
+      "codex",
+      "cursor",
+      "claudeAgent",
+    ]);
+  });
+
+  it("excludes every instance of a hidden driver from visible rows", () => {
+    const rows = deriveVisibleOrderedProviderSettingsRows({
+      settings: {
+        providerInstances: {
+          cursor: instance(cursor),
+          cursor_work: instance(cursor),
+        } as Readonly<Record<ProviderInstanceId, ProviderInstanceConfig>>,
+        providers: DEFAULT_UNIFIED_SETTINGS.providers,
+      },
+      driverOrder: [codex, cursor, claude],
+      serverProviders: [],
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "claudeAgent"]);
+  });
+
+  it("gives Settings and strip input identical legacy, default, and custom row order", () => {
+    const settings = {
+      providerInstances: {
+        codex: instance(codex),
+        codex_work: instance(codex),
+        cursor_work: instance(cursor),
+      } as Readonly<Record<ProviderInstanceId, ProviderInstanceConfig>>,
+      providers: DEFAULT_UNIFIED_SETTINGS.providers,
+    };
+    const serverProviders = [{ instanceId: ProviderInstanceId.make("cursor") }];
+    const settingsRows = deriveVisibleOrderedProviderSettingsRows({
+      settings,
+      driverOrder: [codex, cursor, claude],
+      serverProviders,
+    });
+    const stripItems = buildProviderUsageStripItems({ rows: settingsRows, summary: null });
+
+    expect(settingsRows.map((row) => row.instanceId)).toEqual([
+      "codex",
+      "codex_work",
+      "cursor",
+      "cursor_work",
+      "claudeAgent",
+    ]);
+    expect(stripItems.map((item) => item.instanceId)).toEqual(
+      settingsRows.filter((row) => row.instance.enabled !== false).map((row) => row.instanceId),
+    );
+  });
+
+  it("uses the supplied known-driver order", () => {
+    const rows = rowsFor({
+      driverOrder: [claude, codex],
+      providerInstances: {
+        [defaultInstanceIdForDriver(codex)]: instance(codex),
+        [defaultInstanceIdForDriver(claude)]: instance(claude),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["claudeAgent", "codex"]);
+  });
+
+  it("places a default before custom instances of the same driver", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        codex_work: instance(codex),
+        codex: instance(codex),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "codex_work"]);
+  });
+
+  it("retains settings-author order for custom instances", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        codex_second: instance(codex),
+        codex_first: instance(codex),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "codex_second", "codex_first"]);
+  });
+
+  it("appends unknown-driver instances in settings-author order", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        future_second: instance(unknown),
+        codex: instance(codex),
+        future_first: instance(unknown),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "future_second", "future_first"]);
+  });
+
+  it("recognizes the canonical default instance of a discovered future driver", () => {
+    const futureDefaultId = defaultInstanceIdForDriver(unknown);
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        [futureDefaultId]: instance(unknown),
+      },
+    });
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({ instanceId: futureDefaultId, driver: unknown, isDefault: true }),
+    );
+  });
+
+  it("retains disabled provider rows", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        codex_disabled: instance(codex, false),
+      },
+    });
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        instanceId: "codex_disabled",
+        instance: { driver: codex, enabled: false },
+      }),
+    );
+  });
+
+  it("synthesizes a default row from legacy provider settings", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {},
+      providers: structuredClone(DEFAULT_UNIFIED_SETTINGS.providers),
+    });
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        instanceId: "codex",
+        driver: codex,
+        isDefault: true,
+        isDirty: false,
+        instance: expect.objectContaining({
+          driver: codex,
+          config: DEFAULT_UNIFIED_SETTINGS.providers.codex,
+        }),
+      }),
+    );
+  });
+});
 
 describe("provider environment selection", () => {
   it("sorts the primary environment first and the rest by label", () => {

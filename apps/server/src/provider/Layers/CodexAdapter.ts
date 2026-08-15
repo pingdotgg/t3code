@@ -85,6 +85,9 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly onRateLimitsUpdated?: (
+    update: EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+  ) => Effect.Effect<void>;
 }
 
 interface CodexAdapterSessionContext {
@@ -1718,6 +1721,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
+            if (event.method === "account/rateLimits/updated" && options?.onRateLimitsUpdated) {
+              const update = readPayload(
+                EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+                event.payload,
+              );
+              if (update) {
+                yield* options.onRateLimitsUpdated(update);
+              }
+            }
             const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {

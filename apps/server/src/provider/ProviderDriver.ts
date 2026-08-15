@@ -32,6 +32,7 @@ import type * as Scope from "effect/Scope";
 
 import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
+import type { ProviderQuotaCapability } from "./ProviderQuota.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
@@ -71,6 +72,8 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /** Optional because not every provider exposes a normalized quota API. */
+  readonly quota?: ProviderQuotaCapability;
 }
 
 export interface ProviderContinuationIdentity {

@@ -27,6 +27,8 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderQuotaConsumeResetInput,
+  type ProviderQuotaSummary,
   ResolvedKeybindingRule,
   ThreadId,
   WS_METHODS,
@@ -114,6 +116,7 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderQuotaService from "./provider/Services/ProviderQuotaService.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -386,6 +389,7 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
+    providerQuotaService?: Partial<ProviderQuotaService.ProviderQuotaService["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -833,6 +837,7 @@ const buildAppUnderTest = (options?: {
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(UsageService.layerTest),
+      Layer.provide(ProviderQuotaService.layerTest(options?.layers?.providerQuotaService)),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,
@@ -3402,6 +3407,89 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
       if (rpcError._tag === "EnvironmentAuthorizationError") {
         assert.equal(rpcError.requiredScope, "orchestration:read");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reads provider quota through the websocket RPC", () =>
+    Effect.gen(function* () {
+      const expected = {
+        readAt: "2026-08-11T08:00:00.000Z",
+        instances: [],
+      } satisfies ProviderQuotaSummary;
+      yield* buildAppUnderTest({
+        layers: { providerQuotaService: { readSummary: Effect.succeed(expected) } },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetProviderQuota]({})),
+      );
+
+      assert.deepEqual(result, expected);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("consumes a provider quota reset through the websocket RPC", () =>
+    Effect.gen(function* () {
+      const input: ProviderQuotaConsumeResetInput = {
+        instanceId: ProviderInstanceId.make("codex-main"),
+        creditId: "credit-1",
+        idempotencyKey: "reset-request-1",
+      };
+      let received: typeof input | undefined;
+      yield* buildAppUnderTest({
+        layers: {
+          providerQuotaService: {
+            consumeBankedReset: (next) =>
+              Effect.sync(() => {
+                received = next;
+                return "reset" as const;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverConsumeProviderQuotaReset](input),
+        ),
+      );
+
+      assert.equal(result, "reset");
+      assert.deepEqual(received, input);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires operate scope to consume a provider quota reset", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const { response, body } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.equal(response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${body.access_token ?? ""}` },
+      });
+      const ticketBody = (yield* ticketResponse.json) as { readonly ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticketBody.ticket)}`;
+
+      const rpcError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverConsumeProviderQuotaReset]({
+              instanceId: ProviderInstanceId.make("codex-main"),
+              creditId: null,
+              idempotencyKey: "reset-request-1",
+            }),
+          ),
+        ),
+      );
+
+      assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
+      if (rpcError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(rpcError.requiredScope, "orchestration:operate");
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

@@ -1,13 +1,19 @@
-import { describe, expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { installReactHookTestDom, mountReactHookTestComponent } from "../test/reactDomHookHarness";
 import {
   LIVE_REFRESH_IDLE_AFTER_MS,
   LIVE_REFRESH_INTERVAL_MS,
   LIVE_REFRESH_MIN_INTERVAL_MS,
+  resolveLiveRefreshCadence,
   shouldLiveRefresh,
   shouldRefreshOnArrival,
   shouldRefreshOnInterval,
+  useLiveRefresh,
 } from "./useLiveRefresh";
+
+afterEach(() => vi.useRealTimers());
 
 describe("shouldLiveRefresh", () => {
   const at = (now: number, lastRefreshedAt: number, visible = true) =>
@@ -52,6 +58,129 @@ describe("shouldLiveRefresh", () => {
     tick(hour, true);
 
     expect(reads).toBe(1);
+  });
+});
+
+describe("resolveLiveRefreshCadence", () => {
+  it("keeps existing callers on the 60-second interval and 10-second minimum", () => {
+    expect(resolveLiveRefreshCadence()).toEqual({
+      intervalMs: LIVE_REFRESH_INTERVAL_MS,
+      minimumIntervalMs: LIVE_REFRESH_MIN_INTERVAL_MS,
+    });
+  });
+
+  it("uses the quota cadence without reading hidden or idle windows", () => {
+    const cadence = resolveLiveRefreshCadence({
+      intervalMs: 30_000,
+      minimumIntervalMs: 10_000,
+    });
+
+    expect(cadence).toEqual({ intervalMs: 30_000, minimumIntervalMs: 10_000 });
+    expect(
+      shouldRefreshOnInterval({
+        visible: true,
+        now: cadence.intervalMs,
+        lastRefreshedAt: 0,
+        lastInteractedAt: cadence.intervalMs - 1,
+        minimumIntervalMs: cadence.minimumIntervalMs,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshOnInterval({
+        visible: false,
+        now: cadence.intervalMs,
+        lastRefreshedAt: 0,
+        lastInteractedAt: cadence.intervalMs - 1,
+        minimumIntervalMs: cadence.minimumIntervalMs,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshOnInterval({
+        visible: true,
+        now: LIVE_REFRESH_IDLE_AFTER_MS + cadence.intervalMs,
+        lastRefreshedAt: 0,
+        lastInteractedAt: 0,
+        minimumIntervalMs: cadence.minimumIntervalMs,
+      }),
+    ).toBe(false);
+  });
+
+  it("clamps explicit zero and negative cadences to a safe positive interval", () => {
+    expect(resolveLiveRefreshCadence({ intervalMs: 0, minimumIntervalMs: -1 })).toEqual({
+      intervalMs: 1_000,
+      minimumIntervalMs: 1_000,
+    });
+  });
+});
+
+describe("useLiveRefresh", () => {
+  it("uses the quota's 30-second timer without duplicate, hidden, or idle reads", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const dom = installReactHookTestDom();
+    const refresh = vi.fn();
+    const mounted = await mountReactHookTestComponent(
+      createElement(() => {
+        useLiveRefresh(refresh, {
+          key: "quota-hook-cadence",
+          intervalMs: 30_000,
+          minimumIntervalMs: 10_000,
+        });
+        return null;
+      }),
+      dom.document,
+    );
+
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    dom.setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_IDLE_AFTER_MS);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    dom.setVisibility("visible");
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    await mounted.unmount();
+    dom.cleanup();
+  });
+
+  it("shares one keyed timer and transfers ownership when the first consumer unmounts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const dom = installReactHookTestDom();
+    const firstRefresh = vi.fn();
+    const secondRefresh = vi.fn();
+    const mount = (refresh: () => void) =>
+      mountReactHookTestComponent(
+        createElement(() => {
+          useLiveRefresh(refresh, {
+            key: "shared-quota-cadence",
+            intervalMs: 30_000,
+            minimumIntervalMs: 10_000,
+          });
+          return null;
+        }),
+        dom.document,
+      );
+    const first = await mount(firstRefresh);
+    const second = await mount(secondRefresh);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(firstRefresh).toHaveBeenCalledTimes(1);
+    expect(secondRefresh).not.toHaveBeenCalled();
+
+    await first.unmount();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(secondRefresh).toHaveBeenCalledTimes(1);
+
+    await second.unmount();
+    dom.cleanup();
   });
 });
 

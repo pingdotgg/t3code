@@ -75,6 +75,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { ClaudeRateLimitEvent } from "../Drivers/ClaudeProviderQuota.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -268,6 +269,7 @@ export interface ClaudeAdapterLiveOptions {
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly onRateLimitEvent?: (event: ClaudeRateLimitEvent) => Effect.Effect<void>;
 }
 
 function isUuid(value: string): boolean {
@@ -3472,6 +3474,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      if (options?.onRateLimitEvent) {
+        yield* options.onRateLimitEvent(message);
+      }
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
