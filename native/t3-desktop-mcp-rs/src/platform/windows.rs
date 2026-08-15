@@ -314,6 +314,11 @@ impl WindowsDesktop {
         if let Some(row) = self.describe(element, depth, next_id) {
             lines.push(row);
         }
+        // At max_depth we still describe this node, but skip child enumeration —
+        // walking siblings would only waste UIA work with no lines added.
+        if depth == max_depth {
+            return;
+        }
 
         let walker = match self.automation.create_tree_walker() {
             Ok(walker) => walker,

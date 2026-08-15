@@ -28,10 +28,6 @@ import * as Schema from "effect/Schema";
 
 import { resolveDesktopMcpBinaryPathSync } from "./resolveBinary.ts";
 
-export function computerHistoryRootForStateDir(stateDir: string): string {
-  return resolveComputerHistoryRoot(stateDir);
-}
-
 type DaemonState = {
   child: ChildProcess | null;
   generation: number;
