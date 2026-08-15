@@ -1454,6 +1454,49 @@ const makeWsRpcLayer = (
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverListProviderWorkspaceCapabilities]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverListProviderWorkspaceCapabilities,
+            Effect.gen(function* () {
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(input.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to read the project for provider workspace capabilities",
+                        cause,
+                      }),
+                  ),
+                );
+              const projectRoot = Option.isSome(project) ? project.value.workspaceRoot : null;
+
+              let cwd = projectRoot;
+              if (input.threadId !== undefined) {
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadShellById(input.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: "Failed to read the thread for provider workspace capabilities",
+                          cause,
+                        }),
+                    ),
+                  );
+                cwd =
+                  Option.isSome(thread) && thread.value.projectId === input.projectId
+                    ? (thread.value.worktreePath ?? projectRoot)
+                    : projectRoot;
+              }
+
+              return yield* providerRegistry.listWorkspaceCapabilities({
+                instanceId: input.instanceId,
+                cwd,
+              });
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,

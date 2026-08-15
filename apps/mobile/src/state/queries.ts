@@ -2,6 +2,8 @@ import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   OrchestrationThread,
+  ProjectId,
+  ProviderInstanceId,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -21,6 +23,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 import {
@@ -134,6 +137,35 @@ export function useBranches(input: {
         })
       : null,
   );
+}
+
+export function useProviderWorkspaceCapabilities(target: {
+  readonly environmentId: EnvironmentId | null;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly projectId: ProjectId | null;
+  readonly threadId: ThreadId | null;
+  readonly enabled: boolean;
+}) {
+  const result = useEnvironmentQuery(
+    target.enabled &&
+      target.environmentId !== null &&
+      target.instanceId !== null &&
+      target.projectId !== null
+      ? serverEnvironment.providerWorkspaceCapabilities({
+          environmentId: target.environmentId,
+          input: {
+            instanceId: target.instanceId,
+            projectId: target.projectId,
+            ...(target.threadId !== null ? { threadId: target.threadId } : {}),
+          },
+        })
+      : null,
+  );
+
+  return {
+    slashCommands: result.data?.slashCommands ?? null,
+    skills: result.data?.skills ?? null,
+  };
 }
 
 export function usePaginatedBranches(target: VcsRefTarget) {

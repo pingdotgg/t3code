@@ -893,6 +893,147 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("asks the instance for workspace capabilities, or falls back to its snapshot", () =>
+        Effect.gen(function* () {
+          const claudeDriver = ProviderDriverKind.make("claudeAgent");
+          const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const makeSnapshot = (
+            instanceId: ProviderInstanceId,
+            driver: ProviderDriverKind,
+            commandName: string,
+          ) =>
+            ({
+              instanceId,
+              driver,
+              status: "ready",
+              enabled: true,
+              installed: true,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-06-10T00:00:00.000Z",
+              version: "1.0.0",
+              models: [],
+              slashCommands: [{ name: commandName }],
+              skills: [],
+            }) as const satisfies ServerProvider;
+          const claudeSnapshot = makeSnapshot(claudeInstanceId, claudeDriver, "server-cwd-command");
+          const codexSnapshot = makeSnapshot(codexInstanceId, codexDriver, "codex-command");
+          const probedCwd = yield* Ref.make<string | null>(null);
+          const makeInstance = (
+            instanceId: ProviderInstanceId,
+            driverKind: ProviderDriverKind,
+            snapshot: ServerProvider,
+            listWorkspaceCapabilities?: ProviderInstance["listWorkspaceCapabilities"],
+          ) =>
+            ({
+              instanceId,
+              driverKind,
+              continuationIdentity: { driverKind, continuationKey: `${driverKind}:${instanceId}` },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driverKind,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(snapshot),
+                refresh: Effect.succeed(snapshot),
+                streamChanges: Stream.empty,
+              },
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+              ...(listWorkspaceCapabilities ? { listWorkspaceCapabilities } : {}),
+            }) satisfies ProviderInstance;
+          const claudeInstance = makeInstance(
+            claudeInstanceId,
+            claudeDriver,
+            claudeSnapshot,
+            (cwd) =>
+              Ref.set(probedCwd, cwd).pipe(
+                Effect.as({
+                  slashCommands: [{ name: "project-command" }],
+                  skills: [
+                    {
+                      name: "project-skill",
+                      path: `${cwd}/.claude/skills/project-skill/SKILL.md`,
+                      enabled: true,
+                      scope: "project",
+                    },
+                  ],
+                }),
+              ),
+          );
+          const codexInstance = makeInstance(codexInstanceId, codexDriver, codexSnapshot);
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(
+                  instanceId === claudeInstanceId
+                    ? claudeInstance
+                    : instanceId === codexInstanceId
+                      ? codexInstance
+                      : undefined,
+                ),
+              listInstances: Effect.succeed([claudeInstance, codexInstance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-workspace-capabilities-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+
+            const workspace = yield* registry.listWorkspaceCapabilities({
+              instanceId: claudeInstanceId,
+              cwd: "/workspaces/my-project",
+            });
+            assert.strictEqual(yield* Ref.get(probedCwd), "/workspaces/my-project");
+            assert.deepStrictEqual(
+              workspace.slashCommands.map((command) => command.name),
+              ["project-command"],
+            );
+            assert.deepStrictEqual(
+              workspace.skills.map((skill) => skill.name),
+              ["project-skill"],
+            );
+
+            const fallback = yield* registry.listWorkspaceCapabilities({
+              instanceId: codexInstanceId,
+              cwd: "/workspaces/my-project",
+            });
+            assert.deepStrictEqual(
+              fallback.slashCommands.map((command) => command.name),
+              ["codex-command"],
+            );
+
+            const withoutWorkspace = yield* registry.listWorkspaceCapabilities({
+              instanceId: claudeInstanceId,
+              cwd: null,
+            });
+            assert.deepStrictEqual(
+              withoutWorkspace.slashCommands.map((command) => command.name),
+              ["server-cwd-command"],
+            );
+            assert.strictEqual(yield* Ref.get(probedCwd), "/workspaces/my-project");
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it("persists merged provider snapshots for the providers that were refreshed", () => {
         const previousProviders = [
           {

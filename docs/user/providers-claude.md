@@ -41,6 +41,10 @@ T3 Code looks for Claude skills in the Claude config directory's `skills` folder
 
 If the same skill name exists in more than one folder, the later folder wins.
 
+The workspace is the folder the thread runs in: its worktree when it has one, and the
+project folder when it does not. The `/` and `$` menus list the commands and the skills
+of that workspace, so two projects show different entries.
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.

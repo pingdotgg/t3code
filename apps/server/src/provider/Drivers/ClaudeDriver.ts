@@ -55,6 +55,7 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -163,6 +164,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
+      const workspaceCapabilitiesCache = yield* Cache.make({
+        capacity: 8,
+        timeToLive: CAPABILITIES_PROBE_TTL,
+        lookup: (workspaceCwd: string) =>
+          Effect.all(
+            {
+              probe: probeClaudeCapabilities(effectiveConfig, processEnv, workspaceCwd),
+              skills: discoverClaudeSkills(effectiveConfig, workspaceCwd, processEnv),
+            },
+            { concurrency: 2 },
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+      });
+
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
@@ -203,6 +220,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         ),
       );
 
+      const listWorkspaceCapabilities = (workspaceCwd: string) =>
+        Effect.gen(function* () {
+          const { probe, skills } = yield* Cache.get(workspaceCapabilitiesCache, workspaceCwd);
+          if (!probe) {
+            yield* Cache.invalidate(workspaceCapabilitiesCache, workspaceCwd);
+            const currentSnapshot = yield* snapshot.getSnapshot;
+            return { slashCommands: currentSnapshot.slashCommands, skills };
+          }
+          return { slashCommands: probe.slashCommands, skills };
+        });
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -216,6 +244,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        listWorkspaceCapabilities,
       } satisfies ProviderInstance;
     }),
 };

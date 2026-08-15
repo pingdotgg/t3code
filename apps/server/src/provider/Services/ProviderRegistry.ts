@@ -11,6 +11,7 @@ import type {
   ProviderDriverKind,
   ServerProvider,
   ServerProviderUpdateState,
+  ServerProviderWorkspaceCapabilities,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -56,6 +57,11 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
   ) => Effect.Effect<ProviderMaintenanceCapabilities>;
+
+  readonly listWorkspaceCapabilities: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly cwd: string | null;
+  }) => Effect.Effect<ServerProviderWorkspaceCapabilities>;
 
   /**
    * Apply volatile maintenance-action state to one configured instance.

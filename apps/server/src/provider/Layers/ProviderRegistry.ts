@@ -508,6 +508,25 @@ export const ProviderRegistryLive = Layer.effect(
       );
     });
 
+    const listWorkspaceCapabilities = Effect.fn("listWorkspaceCapabilities")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string | null;
+    }) {
+      const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (input.cwd !== null && instance?.listWorkspaceCapabilities) {
+        return yield* instance.listWorkspaceCapabilities(input.cwd);
+      }
+      const snapshot = (yield* Ref.get(providersRef)).find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      return {
+        slashCommands: snapshot?.slashCommands ?? [],
+        skills: snapshot?.skills ?? [],
+      };
+    });
+
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -711,6 +730,7 @@ export const ProviderRegistryLive = Layer.effect(
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
+      listWorkspaceCapabilities,
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
