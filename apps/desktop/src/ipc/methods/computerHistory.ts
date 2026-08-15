@@ -32,10 +32,12 @@ export const getComputerHistoryStatus = DesktopIpc.makeIpcMethod({
   payload: Schema.Undefined,
   result: ComputerHistoryStatusSchema,
   handler: Effect.fn("desktop.ipc.computerHistory.getStatus")(function* () {
+    // Status is observational — do not ensureDaemon here. A poll that captured
+    // enabled:true must not respawn the recorder after the user disables it.
+    // Lifecycle belongs to bootstrap + patchComputerHistorySettings.
     const settings = yield* readHistorySettings();
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
-    yield* manager.ensureDaemon(environment.stateDir, settings);
     return yield* manager.getStatus(environment.stateDir, settings);
   }),
 });
@@ -65,30 +67,17 @@ export const patchComputerHistorySettings = DesktopIpc.makeIpcMethod({
   result: ComputerHistoryStatusSchema,
   handler: Effect.fn("desktop.ipc.computerHistory.patchSettings")(function* (patch) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const fileSystem = yield* FileSystem.FileSystem;
     const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
-    const exists = yield* fileSystem.exists(environment.serverSettingsPath);
-    const current = exists
-      ? yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
-          Effect.flatMap((raw) =>
-            Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))(raw),
-          ),
-          // Malformed/partial settings must fail the patch — never replace the
-          // whole document with defaults and erase unrelated server config.
-        )
-      : DEFAULT_SERVER_SETTINGS;
-    const next = {
+    // Persistence is owned by the server settings RPC (`updateSettings` in the
+    // renderer). This IPC only reconciles the recorder daemon — never rewrite
+    // the full settings document (that races the server's atomic writer).
+    const current = yield* readHistorySettings();
+    const settings = {
       ...current,
-      computerHistory: {
-        ...current.computerHistory,
-        ...patch,
-        ...(patch.apps === undefined ? {} : { apps: [...patch.apps] }),
-        ...(patch.websites === undefined ? {} : { websites: [...patch.websites] }),
-      },
+      ...patch,
+      ...(patch.apps === undefined ? {} : { apps: [...patch.apps] }),
+      ...(patch.websites === undefined ? {} : { websites: [...patch.websites] }),
     };
-    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ServerSettings))(next);
-    yield* fileSystem.writeFileString(environment.serverSettingsPath, `${encoded}\n`);
-    const settings = next.computerHistory;
     yield* manager.ensureDaemon(environment.stateDir, settings);
     return yield* manager.getStatus(environment.stateDir, settings);
   }),
@@ -111,8 +100,9 @@ export const revealComputerHistoryMemory = DesktopIpc.makeIpcMethod({
   payload: Schema.String,
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.computerHistory.reveal")(function* (path) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
-    return yield* manager.revealMemory(path);
+    return yield* manager.revealMemory(environment.stateDir, path);
   }),
 });
 
