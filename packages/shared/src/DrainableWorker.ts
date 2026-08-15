@@ -10,6 +10,7 @@
  */
 import * as Scope from "effect/Scope";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as TxQueue from "effect/TxQueue";
 import * as TxRef from "effect/TxRef";
 
@@ -36,8 +37,14 @@ export const makeKeyedDrainableWorker = <A, K, E, R>(
   Effect.gen(function* () {
     const context = yield* Effect.context<R>();
     const scope = yield* Scope.Scope;
-    type Entry = { readonly worker: DrainableWorker<A>; version: number };
+    type Entry = {
+      readonly worker: DrainableWorker<A>;
+      readonly scope: Scope.Closeable;
+      version: number;
+    };
     const entries = new Map<K, Entry>();
+    const processInParentScope = (item: A) =>
+      process(item).pipe(Effect.provide(context), Scope.provide(scope));
 
     const removeWhenIdle = (key: K, entry: Entry) =>
       Effect.gen(function* () {
@@ -46,6 +53,7 @@ export const makeKeyedDrainableWorker = <A, K, E, R>(
           yield* entry.worker.drain;
           if (entry.version === observedVersion && entries.get(key) === entry) {
             entries.delete(key);
+            yield* Scope.close(entry.scope, Exit.void);
             return;
           }
         }
@@ -60,11 +68,11 @@ export const makeKeyedDrainableWorker = <A, K, E, R>(
           yield* existing.worker.enqueue(item);
           return;
         }
-        const worker = yield* makeDrainableWorker(process).pipe(
-          Effect.provide(context),
-          Scope.provide(scope),
+        const laneScope = yield* Scope.fork(scope, "sequential");
+        const worker = yield* makeDrainableWorker(processInParentScope).pipe(
+          Scope.provide(laneScope),
         );
-        const entry: Entry = { worker, version: 1 };
+        const entry: Entry = { worker, scope: laneScope, version: 1 };
         entries.set(key, entry);
         yield* worker.enqueue(item);
         yield* removeWhenIdle(key, entry).pipe(Effect.forkIn(scope));
