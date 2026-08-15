@@ -15,6 +15,33 @@ export interface SettingsSearchItem {
 }
 
 /**
+ * Sections built entirely on settings that persist to the primary
+ * environment's `settings.json`. The hosted static web app never owns a
+ * primary connection target, so these render nothing but their own empty
+ * state there and are not worth offering.
+ */
+const PRIMARY_ONLY_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>([
+  "/settings/source-control",
+]);
+
+/**
+ * Whether a settings section is worth listing in the current app mode. Drives
+ * the sidebar nav and the search index together, so a hidden section cannot be
+ * reached from inside settings by either route.
+ *
+ * Deliberately keyed off the build/origin-derived hosted flag rather than the
+ * live environment catalog: the catalog hydrates asynchronously, so a
+ * catalog-derived answer reports "hidden" for the first frame on every
+ * platform and makes sections flicker in after load.
+ */
+export function isSettingsPathListed(
+  to: SettingsPath,
+  input: { readonly hostedStaticApp: boolean },
+): boolean {
+  return !input.hostedStaticApp || !PRIMARY_ONLY_SETTINGS_PATHS.has(to);
+}
+
+/**
  * Section labels in sidebar order. The sidebar nav and the search-result
  * subtitles both render from this record, so each label exists once.
  */
@@ -150,11 +177,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
-    id: "text-generation-model",
-    title: "Text generation model",
-    to: "/settings/general",
-  },
-  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",
@@ -182,6 +204,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "providers",
     title: "Providers",
+    to: "/settings/providers",
+  },
+  {
+    // Per-device: each environment carries its own selection in its
+    // `settings.json`, so the row renders inside the selected device's panel.
+    id: "text-generation-model",
+    title: "Text generation model",
     to: "/settings/providers",
   },
   {

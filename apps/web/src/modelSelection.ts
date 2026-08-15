@@ -22,7 +22,11 @@ import {
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
-import { type ProviderInstanceEntry, deriveProviderInstanceEntries } from "./providerInstances";
+import {
+  type ProviderInstanceEntry,
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+} from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -285,7 +289,12 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const entries = deriveProviderInstanceEntries(providers);
+  // Overlay settings before testing `enabled`. Provider probes keep their
+  // previous `enabled` value for a moment after a settings write, and every
+  // model picker feeding this resolver builds its selectable list from the
+  // overlaid entries. Reading the raw snapshot here would reject an instance
+  // the picker just offered and silently persist a fallback instead.
+  const entries = applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings);
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
   );

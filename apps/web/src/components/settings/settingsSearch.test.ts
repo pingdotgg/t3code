@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isSettingsPathListed,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
@@ -68,6 +69,25 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+  });
+
+  it("routes the text generation model to the per-device providers section", () => {
+    expect(searchSettings("text generation")[0]).toMatchObject({
+      id: "text-generation-model",
+      to: "/settings/providers",
+    });
+  });
+
+  it("lists every section outside the hosted static app", () => {
+    for (const item of SETTINGS_SEARCH_ITEMS) {
+      expect(isSettingsPathListed(item.to, { hostedStaticApp: false })).toBe(true);
+    }
+  });
+
+  it("stops listing primary-only sections in the hosted static app", () => {
+    expect(isSettingsPathListed("/settings/source-control", { hostedStaticApp: true })).toBe(false);
+    expect(isSettingsPathListed("/settings/providers", { hostedStaticApp: true })).toBe(true);
+    expect(isSettingsPathListed("/settings/general", { hostedStaticApp: true })).toBe(true);
   });
 
   it("routes appearance settings to their current section", () => {
