@@ -15,5 +15,8 @@ export function resolveClerkSignInProps(href: string, isElectron: boolean): Cler
       signUpForceRedirectUrl: redirectUrl.toString(),
     };
   }
-  return { forceRedirectUrl: href };
+  // Sign-up completes on its own redirect, so it needs the same target as
+  // sign-in. Without it Clerk falls back to its dashboard default and lands on
+  // a route this app does not serve.
+  return { forceRedirectUrl: href, signUpForceRedirectUrl: href };
 }
