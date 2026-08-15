@@ -118,6 +118,24 @@ describe("mobile Agents presentation", () => {
     );
   });
 
+  it("freezes idle-agent elapsed time at its last activity", () => {
+    const model = deriveMobileAgentPanelModel({
+      sessionLive: true,
+      activities: [
+        activity("idle-start", "task.started", { taskId: "idle-agent" }, 1),
+        activity("idle-update", "task.updated", { taskId: "idle-agent", status: "idle" }, 7),
+      ],
+    });
+    const agent = model.directAgents[0]!;
+
+    expect(deriveMobileAgentRowModel(agent, Date.parse("2026-08-14T12:01:00.000Z")).elapsed).toBe(
+      "6s",
+    );
+    expect(deriveMobileAgentRowModel(agent, Date.parse("2026-08-15T12:01:00.000Z")).elapsed).toBe(
+      "6s",
+    );
+  });
+
   it("keeps a 150-member workflow roster, counts, and detail lookup consistent", () => {
     const workflowId = "large-workflow";
     const model = deriveMobileAgentPanelModel({

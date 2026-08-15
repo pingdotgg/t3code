@@ -1218,17 +1218,18 @@ const make = Effect.gen(function* () {
       event.payload.expectedTurnId !== undefined ||
       event.payload.expectedSessionUpdatedAt !== undefined;
     const thread = yield* resolveThread(event.payload.threadId);
-    if (!thread) {
-      return;
-    }
     const decidedGuard = event.payload.guardDecision;
     const actualTurnId =
-      thread.session !== null ? thread.session.activeTurnId : (decidedGuard?.actualTurnId ?? null);
+      thread === undefined
+        ? null
+        : thread.session !== null
+          ? thread.session.activeTurnId
+          : (decidedGuard?.actualTurnId ?? null);
     const publishOutcome = (
       outcome: "interrupted" | "work-changed" | "no-session" | "interrupt-failed",
     ) =>
       Effect.gen(function* () {
-        if (event.commandId !== null) {
+        if (event.commandId !== null && thread !== undefined) {
           yield* appendProviderInterruptResolutionActivity({
             threadId: event.payload.threadId,
             requestId: event.commandId,
@@ -1249,6 +1250,12 @@ const make = Effect.gen(function* () {
           createdAt: event.payload.createdAt,
         });
       });
+    if (!thread) {
+      if (hasGuard) {
+        return yield* publishOutcome("no-session");
+      }
+      return;
+    }
     const turnChanged =
       event.payload.expectedTurnId !== undefined && event.payload.expectedTurnId !== actualTurnId;
     const sessionChanged =

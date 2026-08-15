@@ -96,10 +96,12 @@ export function buildBackgroundWorkInterruptInput(
     threadId: thread.id,
     commandId,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
-    ...(supportsGuardedInterrupt && thread.session !== null
+    ...(supportsGuardedInterrupt
       ? {
-          expectedTurnId: thread.session.activeTurnId,
-          expectedSessionUpdatedAt: thread.session.updatedAt,
+          expectedTurnId: thread.session?.activeTurnId ?? null,
+          ...(thread.session !== null
+            ? { expectedSessionUpdatedAt: thread.session.updatedAt }
+            : {}),
         }
       : {}),
   };

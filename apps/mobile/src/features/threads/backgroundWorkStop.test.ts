@@ -112,6 +112,19 @@ describe("backgroundWorkStopConfirmation", () => {
     });
   });
 
+  it("guards a null-session snapshot on servers with conditional Stop support", () => {
+    const threadId = ThreadId.make("thread-background");
+    const commandId = CommandId.make("stop-command");
+
+    expect(
+      buildBackgroundWorkInterruptInput({ id: threadId, session: null }, commandId, "0.0.33"),
+    ).toEqual({
+      threadId,
+      commandId,
+      expectedTurnId: null,
+    });
+  });
+
   it("surfaces only the correlated reactor outcome", () => {
     const commandId = CommandId.make("stop-command");
     const activity = (

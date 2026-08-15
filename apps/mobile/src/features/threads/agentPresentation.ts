@@ -93,7 +93,11 @@ export function deriveMobileAgentRowModel(
     statusLabel: STATUS_LABELS[agent.status],
     elapsed: elapsedBetween(
       agent.startedAt,
-      isActiveSubagentStatus(agent.status) ? null : agent.completedAt,
+      agent.status === "idle"
+        ? agent.updatedAt
+        : isActiveSubagentStatus(agent.status)
+          ? null
+          : agent.completedAt,
       nowMs,
     ),
     activity: agentActivityText(agent),

@@ -2577,6 +2577,131 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("rejects a null-turn guard when work starts before the command is decided", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-after-null-snapshot"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-new"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-null-snapshot"),
+        threadId: ThreadId.make("thread-1"),
+        expectedTurnId: null,
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-null-snapshot",
+      outcome: "work-changed",
+      expectedTurnId: null,
+      actualTurnId: "turn-new",
+      createdAt: now,
+    });
+  });
+
+  it("resolves a guarded interrupt when its thread is deleted before queued handling", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    let markStopStarted: () => void = () => {};
+    const stopStarted = new Promise<void>((resolve) => {
+      markStopStarted = resolve;
+    });
+    let releaseStop: () => void = () => {};
+    const stopRelease = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    harness.stopSession.mockImplementationOnce(() =>
+      Effect.promise(async () => {
+        markStopStarted();
+        await stopRelease;
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-delete"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-block-reactor-before-delete"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+    await stopStarted;
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-before-delete"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        expectedSessionUpdatedAt: now,
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-delete-before-queued-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+      }),
+    );
+    expect((await harness.readModel()).threads[0]?.deletedAt).not.toBeNull();
+
+    releaseStop();
+    await harness.drain();
+
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-before-delete",
+      outcome: "no-session",
+      expectedTurnId: "turn-1",
+      actualTurnId: null,
+      createdAt: now,
+    });
+  });
+
   it("revalidates a matched guard after session state changes while the reactor is queued", async () => {
     const harness = await createHarness();
     const initialUpdatedAt = "2026-01-01T00:00:00.000Z";

@@ -108,7 +108,10 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   }
   return (
     <span ref={textRef} className="tabular-nums">
-      {elapsedBetween(startedAt, live ? null : agent.completedAt)}
+      {elapsedBetween(
+        startedAt,
+        live ? null : agent.status === "idle" ? agent.updatedAt : agent.completedAt,
+      )}
     </span>
   );
 }
