@@ -32,7 +32,11 @@ vi.mock("../../terminal/terminalUiState", () => ({
   cacheTerminalFontSize: vi.fn(),
 }));
 
-import { applyAppearanceModeToRuntimes } from "./AppearancePreferencesProvider";
+import { parseMobileThemeFile } from "../../../lib/mobileThemeFile";
+import {
+  applyAppearanceModeToRuntimes,
+  applyImportedThemeRemovalAtConfirmation,
+} from "./AppearancePreferencesProvider";
 
 describe("applyAppearanceModeToRuntimes", () => {
   beforeEach(() => {
@@ -49,5 +53,36 @@ describe("applyAppearanceModeToRuntimes", () => {
 
     expect(setTheme).toHaveBeenCalledWith(runtimeTheme);
     expect(setColorScheme).toHaveBeenCalledWith(nativeScheme);
+  });
+});
+
+describe("applyImportedThemeRemovalAtConfirmation", () => {
+  it("removes the alert target without replacing a newer theme selection", () => {
+    const removalTarget = parseMobileThemeFile({
+      version: 1,
+      id: "removal-target",
+      name: "Removal Target",
+      appearance: "light",
+      colors: { canvas: "#ffffff" },
+    });
+    const newerSelection = parseMobileThemeFile({
+      version: 1,
+      id: "newer-selection",
+      name: "Newer Selection",
+      appearance: "dark",
+      colors: { canvas: "#000000" },
+    });
+    const saveImportedThemes = vi.fn();
+    const publishThemeId = vi.fn();
+
+    applyImportedThemeRemovalAtConfirmation(removalTarget.id, {
+      importedThemes: [removalTarget, newerSelection],
+      selectedThemeId: newerSelection.id,
+      saveImportedThemes,
+      publishThemeId,
+    });
+
+    expect(saveImportedThemes).toHaveBeenCalledWith([newerSelection]);
+    expect(publishThemeId).not.toHaveBeenCalled();
   });
 });

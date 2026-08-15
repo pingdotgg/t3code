@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -66,6 +67,27 @@ interface AppearancePreferencesContextValue {
 }
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
+
+interface ImportedThemeRemovalConfirmationState {
+  readonly importedThemes: ReadonlyArray<ImportedMobileTheme>;
+  readonly selectedThemeId: MobileThemeId;
+  readonly saveImportedThemes: (themes: ReadonlyArray<ImportedMobileTheme>) => void;
+  readonly publishThemeId: (themeId: MobileThemeId) => void;
+}
+
+export function applyImportedThemeRemovalAtConfirmation(
+  removedThemeId: string,
+  current: ImportedThemeRemovalConfirmationState,
+) {
+  const patch = removeImportedMobileTheme(
+    current.importedThemes,
+    removedThemeId,
+    current.selectedThemeId,
+  );
+  if (!patch) return;
+  current.saveImportedThemes(patch.importedThemes);
+  if (patch.themeId !== undefined) current.publishThemeId(patch.themeId);
+}
 
 /** Updates the active stylesheet last so it settles correctly. */
 function updateCSSVariables(
@@ -132,6 +154,18 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       ),
     [effectiveColorScheme, importedThemes, themePreferences.themeId],
   );
+  const importedThemeRemovalState = useRef<ImportedThemeRemovalConfirmationState>({
+    importedThemes,
+    selectedThemeId: themePreferences.themeId,
+    saveImportedThemes: (themes) => savePreferences({ importedThemes: themes }),
+    publishThemeId: updateThemePreference,
+  });
+  importedThemeRemovalState.current = {
+    importedThemes,
+    selectedThemeId: themePreferences.themeId,
+    saveImportedThemes: (themes) => savePreferences({ importedThemes: themes }),
+    publishThemeId: updateThemePreference,
+  };
 
   useEffect(() => {
     applyThemeVariables(themePreferences.themeId, importedThemes);
@@ -202,19 +236,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [importedThemes, savePreferences, updateThemePreference],
   );
 
-  const removeImportedTheme = useCallback(
-    (removedThemeId: string) => {
-      const patch = removeImportedMobileTheme(
-        importedThemes,
-        removedThemeId,
-        themePreferences.themeId,
-      );
-      if (!patch) return;
-      savePreferences({ importedThemes: patch.importedThemes });
-      if (patch.themeId !== undefined) updateThemePreference(patch.themeId);
-    },
-    [importedThemes, savePreferences, themePreferences.themeId, updateThemePreference],
-  );
+  const removeImportedTheme = useCallback((removedThemeId: string) => {
+    applyImportedThemeRemovalAtConfirmation(removedThemeId, importedThemeRemovalState.current);
+  }, []);
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
