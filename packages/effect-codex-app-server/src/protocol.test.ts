@@ -317,9 +317,17 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
       const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const lifecycle: Array<"notification" | "termination"> = [];
       const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
         stdio,
-        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+        onNotification: () =>
+          Effect.sync(() => {
+            lifecycle.push("notification");
+          }),
+        onTermination: (error) =>
+          Effect.sync(() => {
+            lifecycle.push("termination");
+          }).pipe(Effect.andThen(Deferred.succeed(termination, error)), Effect.asVoid),
       });
       const notification = yield* transport.incomingNotifications.pipe(
         Stream.take(1),
@@ -341,6 +349,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         yield* Deferred.await(termination),
         CodexError.CodexAppServerInputStreamEndedError,
       );
+      assert.deepEqual(lifecycle, ["notification", "termination"]);
     }),
   );
 
