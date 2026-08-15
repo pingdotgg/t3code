@@ -584,11 +584,17 @@ export function NewTaskDraftScreen(props: {
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
     )?.environmentLabel ?? "Environment";
-  const currentBranchName =
+  const availableCurrentBranchName =
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
     null;
-  const selectedBranchName = flow.selectedBranchName ?? currentBranchName;
+  const selectedBranchName = resolveProjectThreadCreationBranch({
+    workspaceMode: flow.workspaceMode,
+    selectedBranch:
+      flow.selectedBranchName ??
+      (flow.workspaceMode === "worktree" ? availableCurrentBranchName : null),
+    currentCheckoutBranch: flow.currentCheckoutBranchName,
+  });
   const selectedBranchLabel = resolveNewTaskBranchLabel({
     branchName: selectedBranchName,
     startFromOrigin: flow.startFromOrigin,

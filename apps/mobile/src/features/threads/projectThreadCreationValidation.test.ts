@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 describe("resolveProjectThreadCreationBranch", () => {
-  it("records the current checkout for an untouched local draft", () => {
+  it("uses the live checkout for an untouched local draft label and recorded branch", () => {
     expect(
       resolveProjectThreadCreationBranch({
         workspaceMode: "local",
