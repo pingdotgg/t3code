@@ -83,8 +83,9 @@ export interface MobileThemePickerOption {
 type MobileThemeVariants = Readonly<
   Record<MobileThemeAppearance, Readonly<Partial<MobileCoreThemeColors>>>
 >;
+type StoredMobileThemeValue = string | null | undefined;
 
-const T3_CODE_COLORS: Readonly<Record<MobileThemeAppearance, MobileCoreThemeColors>> = {
+const T3_CODE_COLORS = {
   light: {
     canvas: "#f2f2f7",
     surface: "#ffffff",
@@ -141,10 +142,11 @@ const T3_CODE_COLORS: Readonly<Record<MobileThemeAppearance, MobileCoreThemeColo
     sidebarMutedForeground: "#a3a3a3",
     sidebarControlSurface: "rgba(118, 118, 128, 0.24)",
   },
-};
+} satisfies Readonly<Record<MobileThemeAppearance, MobileCoreThemeColors>>;
 
 function normalizeMobileThemeColors(colors: MobileCoreThemeColors): MobileCoreThemeColors {
   const normalizedColors = { ...colors };
+  // SAFETY: MobileCoreThemeColors is closed, so Object.keys returns only its declared roles.
   for (const role of Object.keys(normalizedColors) as Array<keyof MobileCoreThemeColors>) {
     const color = normalizeMobileThemeColorLiteral(normalizedColors[role]);
     if (!color) throw new Error(`Invalid T3 Code fallback color for "${role}": ${colors[role]}`);
@@ -153,12 +155,12 @@ function normalizeMobileThemeColors(colors: MobileCoreThemeColors): MobileCoreTh
   return normalizedColors;
 }
 
-const NORMALIZED_T3_CODE_COLORS: Readonly<Record<MobileThemeAppearance, MobileCoreThemeColors>> = {
+const NORMALIZED_T3_CODE_COLORS = {
   light: normalizeMobileThemeColors(T3_CODE_COLORS.light),
   dark: normalizeMobileThemeColors(T3_CODE_COLORS.dark),
-};
+} satisfies Readonly<Record<MobileThemeAppearance, MobileCoreThemeColors>>;
 
-const T3_CHAT_COLORS: MobileThemeVariants = {
+const T3_CHAT_COLORS = {
   light: {
     canvas: "#fdf7fd",
     surface: "#faf3fb",
@@ -215,7 +217,7 @@ const T3_CHAT_COLORS: MobileThemeVariants = {
     sidebarMutedForeground: "#e7d0dd",
     sidebarControlSurface: "#261922",
   },
-};
+} satisfies MobileThemeVariants;
 
 const MANAGED_LIGHT_COLORS = {
   text: "#241523",
@@ -242,16 +244,14 @@ const MANAGED_DARK_COLORS = {
 function managedTheme(
   light: Readonly<Partial<MobileCoreThemeColors>>,
   dark: Readonly<Partial<MobileCoreThemeColors>>,
-): MobileThemeVariants {
+) {
   return {
     light: { ...MANAGED_LIGHT_COLORS, ...light },
     dark: { ...MANAGED_DARK_COLORS, ...dark },
-  };
+  } satisfies MobileThemeVariants;
 }
 
-const THEME_VARIANTS: Readonly<
-  Record<Exclude<MobileBuiltInThemeId, "t3-code">, MobileThemeVariants>
-> = {
+const THEME_VARIANTS = {
   "t3-chat": T3_CHAT_COLORS,
   grove: managedTheme(
     {
@@ -421,28 +421,35 @@ const THEME_VARIANTS: Readonly<
       sidebarControlSurface: "#494459",
     },
   ),
-};
+} satisfies Readonly<Record<Exclude<MobileBuiltInThemeId, "t3-code">, MobileThemeVariants>>;
 
-export function isMobileAppearanceMode(value: unknown): value is MobileAppearanceMode {
+export function isMobileAppearanceMode(
+  value: StoredMobileThemeValue,
+): value is MobileAppearanceMode {
   return MOBILE_APPEARANCE_OPTIONS.some((option) => option.id === value);
 }
 
-export function isMobileBuiltInThemeId(value: unknown): value is MobileBuiltInThemeId {
+export function isMobileBuiltInThemeId(
+  value: StoredMobileThemeValue,
+): value is MobileBuiltInThemeId {
   return MOBILE_THEME_OPTIONS.some((theme) => theme.id === value);
 }
 
 export function isMobileThemeId(
-  value: unknown,
+  value: StoredMobileThemeValue,
   importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
 ): value is MobileThemeId {
-  return (
-    isMobileBuiltInThemeId(value) ||
-    (typeof value === "string" && importedThemes.some((theme) => theme.id === value))
-  );
+  return isMobileBuiltInThemeId(value) || importedThemes.some((theme) => theme.id === value);
 }
 
 export function resolveMobileThemePreferences(
-  stored: { readonly appearanceMode?: unknown; readonly themeId?: unknown } | null | undefined,
+  stored:
+    | {
+        readonly appearanceMode?: StoredMobileThemeValue;
+        readonly themeId?: StoredMobileThemeValue;
+      }
+    | null
+    | undefined,
   importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
 ): MobileThemePreferences {
   return {
@@ -465,10 +472,10 @@ export function removeImportedMobileTheme(
 }> | null {
   const next = importedThemes.filter((theme) => theme.id !== removedThemeId);
   if (next.length === importedThemes.length) return null;
-  return {
-    importedThemes: next,
-    ...(selectedThemeId === removedThemeId ? { themeId: DEFAULT_MOBILE_THEME_ID } : {}),
-  };
+  if (selectedThemeId === removedThemeId) {
+    return { importedThemes: next, themeId: DEFAULT_MOBILE_THEME_ID };
+  }
+  return { importedThemes: next };
 }
 
 export function resolveColorSchemeOverride(
@@ -483,10 +490,9 @@ export function resolveMobileThemeColors(
   importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
 ): MobileCoreThemeColors {
   const fallback = T3_CODE_COLORS[appearance];
-  if (themeId === "t3-code") return fallback;
   if (isMobileBuiltInThemeId(themeId)) {
-    const alternateThemeId = themeId as Exclude<MobileBuiltInThemeId, "t3-code">;
-    return { ...fallback, ...THEME_VARIANTS[alternateThemeId][appearance] };
+    if (themeId === "t3-code") return fallback;
+    return { ...fallback, ...THEME_VARIANTS[themeId][appearance] };
   }
 
   const theme = importedThemes.find((candidate) => candidate.id === themeId);
@@ -530,6 +536,7 @@ function pickMobileCoreThemeColors(
   colors: PortableThemeColorOverrides,
 ): Readonly<Partial<MobileCoreThemeColors>> {
   const overrides: { -readonly [Role in keyof MobileCoreThemeColors]?: string } = {};
+  // SAFETY: T3_CODE_COLORS.light is a closed MobileCoreThemeColors object.
   for (const role of Object.keys(T3_CODE_COLORS.light) as Array<keyof MobileCoreThemeColors>) {
     const color = colors[role];
     if (color) overrides[role] = color;
@@ -730,7 +737,7 @@ export function resolveMobileThemeVariables(
   themeId: string,
   appearance: MobileThemeAppearance,
   importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
-): Readonly<Record<string, string>> {
+) {
   if (!isMobileThemeId(themeId, importedThemes) || themeId === "t3-code") {
     return T3_CODE_VARIABLES[appearance];
   }

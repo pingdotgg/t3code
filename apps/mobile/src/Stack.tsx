@@ -86,14 +86,15 @@ type AppNavigationTheme = ReactNavigation.Theme & {
 };
 
 function themedFormSheetContentStyle(theme: ReactNavigation.Theme) {
+  // SAFETY: App's NavigationContainer always provides the AppNavigationTheme built in App.tsx.
   return {
     backgroundColor: (theme as AppNavigationTheme).formSheetBackground,
   };
 }
 
 function themedOpaqueHeaderStyle(theme: ReactNavigation.Theme) {
-  // native-stack types this as `string`, but the native side accepts any
-  // ColorValue including DynamicColorIOS.
+  // SAFETY: native-stack types this as `string`, but the native side accepts
+  // every ColorValue, including DynamicColorIOS.
   return themedFormSheetContentStyle(theme) as { readonly backgroundColor: string };
 }
 

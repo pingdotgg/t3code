@@ -115,16 +115,11 @@ export function useSyncedClientPreferences(): void {
     reportFailure: false,
   });
   const reconciliationControllers = useMemo(
-    () =>
-      Object.fromEntries(
-        SYNCED_CLIENT_PREFERENCE_FIELDS.map((field) => [
-          field,
-          createSyncedClientPreferenceReconciliationController(field),
-        ]),
-      ) as Record<
-        SyncedClientPreferenceField,
-        ReturnType<typeof createSyncedClientPreferenceReconciliationController>
-      >,
+    () => ({
+      planModeEnabled: createSyncedClientPreferenceReconciliationController("planModeEnabled"),
+      appearanceMode: createSyncedClientPreferenceReconciliationController("appearanceMode"),
+      themeId: createSyncedClientPreferenceReconciliationController("themeId"),
+    }),
     [],
   );
 
@@ -204,11 +199,12 @@ export function useSyncedClientPreferences(): void {
       normalizeThemeId,
     });
     if (reconciliation.localPatch !== null) {
+      const localValues = { ...reconciliation.localPatch.values };
+      if (localValues.themeId !== undefined) {
+        localValues.themeId = normalizeThemeId(localValues.themeId);
+      }
       savePreferences({
-        ...reconciliation.localPatch.values,
-        ...(reconciliation.localPatch.values.themeId === undefined
-          ? {}
-          : { themeId: normalizeThemeId(reconciliation.localPatch.values.themeId) }),
+        ...localValues,
         syncedClientPreferencesUpdatedAtByField: reconciliation.localPatch.updatedAtByField,
       });
     }

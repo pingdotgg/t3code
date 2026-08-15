@@ -36,6 +36,7 @@ import {
 import {
   addImportedMobileTheme,
   parseMobileThemeFileJson,
+  sanitizeImportedMobileThemes,
   type ImportedMobileTheme,
 } from "../../../lib/mobileThemeFile";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
@@ -130,7 +131,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     AsyncResult.isSuccess(preferencesResult) ? (preferencesResult.value.importedThemes ?? []) : [],
   );
   const importedThemes = useMemo(
-    () => JSON.parse(importedThemesJson) as ReadonlyArray<ImportedMobileTheme>,
+    () => sanitizeImportedMobileThemes(JSON.parse(importedThemesJson)),
     [importedThemesJson],
   );
   const themePreferences = useMemo(

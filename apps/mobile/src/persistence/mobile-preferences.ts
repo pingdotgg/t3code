@@ -14,7 +14,7 @@ import {
 
 import {
   isMobileAppearanceMode,
-  isMobileBuiltInThemeId,
+  isMobileThemeId,
   type MobileAppearanceMode,
 } from "../lib/mobileTheme";
 import { sanitizeImportedMobileThemes, type ImportedMobileTheme } from "../lib/mobileThemeFile";
@@ -123,11 +123,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   const importedThemes = sanitizeImportedMobileThemes(parsed.importedThemes);
   if (importedThemes.length > 0) preferences.importedThemes = importedThemes;
-  if (
-    isMobileBuiltInThemeId(parsed.themeId) ||
-    (typeof parsed.themeId === "string" &&
-      importedThemes.some((theme) => theme.id === parsed.themeId))
-  ) {
+  if (isMobileThemeId(parsed.themeId, importedThemes)) {
     preferences.themeId = parsed.themeId;
   }
   if (typeof parsed.liveActivitiesEnabled === "boolean") {

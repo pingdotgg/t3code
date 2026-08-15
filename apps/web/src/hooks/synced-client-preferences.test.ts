@@ -28,8 +28,8 @@ function createHookTestRoot() {
     removeEventListener: noop,
     defaultView: globalThis,
     activeElement: null,
-    body: null as unknown,
-    documentElement: null as unknown,
+    body: null,
+    documentElement: null,
   };
   const container = {
     nodeType: 1,
@@ -44,14 +44,14 @@ function createHookTestRoot() {
     parentNode: null,
     textContent: "",
   };
-  document.body = container;
-  document.documentElement = container;
+  Object.assign(document, { body: container, documentElement: container });
   vi.stubGlobal("window", globalThis);
   vi.stubGlobal("document", document);
   vi.stubGlobal("HTMLElement", TestHTMLElement);
   vi.stubGlobal("HTMLIFrameElement", TestHtmlIFrameElement);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  return createRoot(container as unknown as Element);
+  // SAFETY: this hook-only fake supplies every Element field ReactDOM reads in these tests.
+  return createRoot(container as Element & typeof container);
 }
 
 describe("synced client preferences", () => {

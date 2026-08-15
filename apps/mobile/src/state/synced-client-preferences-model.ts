@@ -18,6 +18,7 @@ import type { Preferences } from "../persistence/mobile-preferences";
 
 const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
 const SYNCED_CLIENT_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS = 3;
+const isString = Schema.is(Schema.String);
 
 type SyncedClientPreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
@@ -508,9 +509,7 @@ export function reconcileSyncedClientPreferences(input: {
     field: SyncedClientPreferenceField,
     value: SyncedClientPreferencesPatch[SyncedClientPreferenceField] | undefined,
   ) =>
-    field === "themeId" && typeof value === "string"
-      ? (input.normalizeThemeId?.(value) ?? value)
-      : value;
+    field === "themeId" && isString(value) ? (input.normalizeThemeId?.(value) ?? value) : value;
 
   for (const field of input.fields ?? SYNCED_CLIENT_PREFERENCE_FIELDS) {
     const localValue = normalizePreferenceValue(field, input.local.values[field]);

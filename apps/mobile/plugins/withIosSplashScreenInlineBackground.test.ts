@@ -29,9 +29,11 @@ type StoryboardModResults = {
 };
 
 const require = NodeModule.createRequire(import.meta.url);
-const { inlineSplashScreenBackground } = require("./withIosSplashScreenInlineBackground.cjs") as {
+const {
+  inlineSplashScreenBackground,
+}: {
   inlineSplashScreenBackground: (modResults: StoryboardModResults) => StoryboardModResults;
-};
+} = require("./withIosSplashScreenInlineBackground.cjs");
 
 describe("iOS splash screen inline background", () => {
   it("transforms Expo's real storyboard modResults shape", () => {

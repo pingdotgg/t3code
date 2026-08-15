@@ -26,15 +26,30 @@ export function createSyncedClientPreferencesSliceAtom(
 }
 
 type SyncedClientPreferenceValue<Field extends SyncedClientPreferenceField> = Exclude<
-  SyncedClientPreferencesPatch[Field],
+  SyncedClientPreferences[Field],
   undefined
 >;
+
+type MutableSyncedClientPreferencesPatch = {
+  -readonly [Field in SyncedClientPreferenceField]?: SyncedClientPreferencesPatch[Field];
+};
 
 function syncedClientPreferencePatch<Field extends SyncedClientPreferenceField>(
   field: Field,
   value: SyncedClientPreferenceValue<Field>,
 ): SyncedClientPreferencesPatch {
-  return { [field]: value } as SyncedClientPreferencesPatch;
+  const patch: MutableSyncedClientPreferencesPatch = {};
+  patch[field] = value;
+  return patch;
+}
+
+function syncedClientPreferenceValue<Field extends SyncedClientPreferenceField>(
+  preferences: SyncedClientPreferences | undefined,
+  field: Field,
+): SyncedClientPreferenceValue<Field> | undefined {
+  if (preferences === undefined) return undefined;
+  // SAFETY: SyncedClientPreferenceField names the same value-bearing keys in both owner contracts.
+  return preferences[field] as SyncedClientPreferenceValue<Field> | undefined;
 }
 
 export function createSyncedClientPreferenceWrite<
@@ -122,9 +137,7 @@ export function resolveSyncedClientPreferenceHydrationAction<
     return { type: "none" };
   }
   const serverPreferences = input.serverPreferences;
-  const serverValue = serverPreferences?.[input.field] as
-    | SyncedClientPreferenceValue<Field>
-    | undefined;
+  const serverValue = syncedClientPreferenceValue(serverPreferences, input.field);
   if (serverValue !== undefined) {
     return input.adoptedUpdatedAt !== undefined &&
       serverUpdatedAt !== undefined &&
@@ -263,7 +276,7 @@ export function createSyncedClientPreferenceHydrationController<
     state.patchAttempt = 0;
     if (matchingWrite) delete state.writePending;
     const resultUpdatedAt = getSyncedClientPreferenceUpdatedAt(input.result.value, field);
-    const resultValue = input.result.value[field] as SyncedClientPreferenceValue<Field> | undefined;
+    const resultValue = syncedClientPreferenceValue(input.result.value, field);
     if (resultUpdatedAt !== undefined && resultValue !== undefined) {
       state.pendingAdoption = { value: resultValue, updatedAt: resultUpdatedAt };
     }

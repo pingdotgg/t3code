@@ -1,3 +1,5 @@
+import * as Schema from "effect/Schema";
+
 export const MOBILE_THEME_FILE_VERSION = 1 as const;
 export const MAX_MOBILE_THEME_FILE_BYTES = 64 * 1024;
 export const MAX_IMPORTED_MOBILE_THEMES = 20;
@@ -78,6 +80,39 @@ export interface ImportedMobileTheme {
   readonly managed?: true;
 }
 
+interface UnparsedMobileThemeRecord {
+  readonly [key: string]: UnparsedMobileThemeValue;
+}
+
+type UnparsedMobileThemeValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ReadonlyArray<UnparsedMobileThemeValue>
+  | UnparsedMobileThemeRecord;
+
+const UnparsedMobileThemeValueSchema: Schema.Codec<UnparsedMobileThemeValue> = Schema.Union([
+  Schema.String,
+  Schema.Number,
+  Schema.Boolean,
+  Schema.Null,
+  Schema.Undefined,
+  Schema.Array(
+    Schema.suspend((): Schema.Codec<UnparsedMobileThemeValue> => UnparsedMobileThemeValueSchema),
+  ),
+  Schema.Record(
+    Schema.String,
+    Schema.suspend((): Schema.Codec<UnparsedMobileThemeValue> => UnparsedMobileThemeValueSchema),
+  ),
+]);
+const decodeUnparsedMobileThemeValue = Schema.decodeUnknownSync(UnparsedMobileThemeValueSchema);
+const isUnparsedMobileThemeRecord = Schema.is(
+  Schema.Record(Schema.String, UnparsedMobileThemeValueSchema),
+);
+const isString = Schema.is(Schema.String);
+
 const PORTABLE_THEME_COLOR_ROLE_SET: ReadonlySet<string> = new Set(PORTABLE_THEME_COLOR_ROLES);
 const RESERVED_THEME_IDS = new Set([
   "system",
@@ -96,7 +131,7 @@ const RESERVED_THEME_IDS = new Set([
   "t3-iris",
 ]);
 
-const NAMED_COLORS: Readonly<Record<string, string>> = {
+const NAMED_COLORS = {
   aliceblue: "#f0f8ff",
   antiquewhite: "#faebd7",
   aqua: "#00ffff",
@@ -246,22 +281,19 @@ const NAMED_COLORS: Readonly<Record<string, string>> = {
   whitesmoke: "#f5f5f5",
   yellow: "#ffff00",
   yellowgreen: "#9acd32",
-};
+} as const;
+const NAMED_COLOR_BY_NAME = new Map(Object.entries(NAMED_COLORS));
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isThemeAppearance(value: unknown): value is MobileThemeAppearance {
+function isThemeAppearance(value: UnparsedMobileThemeValue): value is MobileThemeAppearance {
   return value === "light" || value === "dark";
 }
 
-function isThemeId(value: unknown): value is string {
-  return typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
+function isThemeId(value: UnparsedMobileThemeValue): value is string {
+  return isString(value) && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
 }
 
-function isThemeLabel(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
+function isThemeLabel(value: UnparsedMobileThemeValue): value is string {
+  return isString(value) && value.trim().length > 0 && value.trim().length <= 48;
 }
 
 function themeIdFromName(name: string): string {
@@ -274,9 +306,11 @@ function themeIdFromName(name: string): string {
   return normalized || "custom-theme";
 }
 
-function parseThemeCollection(value: unknown): Readonly<{ id: string; label: string }> | undefined {
-  return isRecord(value) &&
-    typeof value.id === "string" &&
+function parseThemeCollection(
+  value: UnparsedMobileThemeValue,
+): Readonly<{ id: string; label: string }> | undefined {
+  return isUnparsedMobileThemeRecord(value) &&
+    isString(value.id) &&
     /^[a-z0-9][a-z0-9.:-]{0,127}$/i.test(value.id) &&
     isThemeLabel(value.label)
     ? { id: value.id, label: value.label.trim() }
@@ -703,12 +737,10 @@ function parseOklchColor(body: string): string | null {
   );
 }
 
-export function normalizeMobileThemeColorLiteral(value: unknown): string | null {
-  if (typeof value !== "string") return null;
+export function normalizeMobileThemeColorLiteral(value: UnparsedMobileThemeValue): string | null {
+  if (!isString(value)) return null;
   const input = value.trim().toLowerCase();
-  const named = Object.prototype.hasOwnProperty.call(NAMED_COLORS, input)
-    ? NAMED_COLORS[input]
-    : undefined;
+  const named = NAMED_COLOR_BY_NAME.get(input);
   if (named) return named;
 
   const hex = input.match(/^#([\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i)?.[1];
@@ -732,12 +764,16 @@ export function normalizeMobileThemeColorLiteral(value: unknown): string | null 
   return null;
 }
 
-function parseThemeColorOverrides(value: unknown): PortableThemeColorOverrides {
-  if (!isRecord(value)) throw new Error("Theme colors must be objects.");
+function isPortableThemeColorRole(value: string): value is PortableThemeColorRole {
+  return PORTABLE_THEME_COLOR_ROLE_SET.has(value);
+}
+
+function parseThemeColorOverrides(value: UnparsedMobileThemeValue) {
+  if (!isUnparsedMobileThemeRecord(value)) throw new Error("Theme colors must be objects.");
 
   const overrides: Partial<Record<PortableThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
-    if (!PORTABLE_THEME_COLOR_ROLE_SET.has(role)) {
+    if (!isPortableThemeColorRole(role)) {
       throw new Error(`"${role}" is not a supported theme color role.`);
     }
     const normalized = normalizeMobileThemeColorLiteral(color);
@@ -746,7 +782,7 @@ function parseThemeColorOverrides(value: unknown): PortableThemeColorOverrides {
         `The color "${String(color)}" for "${role}" is not supported. Mobile supports hex, named colors, rgb()/rgba(), hsl()/hsla(), hwb(), lab(), lch(), oklab(), oklch(), and color(display-p3 ...)/color(srgb ...).`,
       );
     }
-    overrides[role as PortableThemeColorRole] = normalized;
+    overrides[role] = normalized;
   }
   if (Object.keys(overrides).length === 0) {
     throw new Error("Add at least one color role to the theme file.");
@@ -754,8 +790,12 @@ function parseThemeColorOverrides(value: unknown): PortableThemeColorOverrides {
   return overrides;
 }
 
-export function parseMobileThemeFile(value: unknown): ImportedMobileTheme {
-  if (!isRecord(value)) throw new Error("Theme files must contain a JSON object.");
+export function parseMobileThemeFile(
+  value: UnparsedMobileThemeValue | ImportedMobileTheme,
+): ImportedMobileTheme {
+  if (!isUnparsedMobileThemeRecord(value)) {
+    throw new Error("Theme files must contain a JSON object.");
+  }
   if (value.version !== MOBILE_THEME_FILE_VERSION) {
     throw new Error(
       `This theme file uses an unsupported version. Expected ${MOBILE_THEME_FILE_VERSION}.`,
@@ -768,7 +808,9 @@ export function parseMobileThemeFile(value: unknown): ImportedMobileTheme {
   if (!isThemeAppearance(appearance)) {
     throw new Error('Theme files need an appearance of "light" or "dark".');
   }
-  if (!isRecord(value.colors)) throw new Error("Theme files need a colors object.");
+  if (!isUnparsedMobileThemeRecord(value.colors)) {
+    throw new Error("Theme files need a colors object.");
+  }
 
   const derivedId = value.id === undefined ? themeIdFromName(name) : null;
   const id =
@@ -783,7 +825,9 @@ export function parseMobileThemeFile(value: unknown): ImportedMobileTheme {
   const colors = parseThemeColorOverrides(value.colors);
   const variants: Partial<Record<MobileThemeAppearance, PortableThemeColorOverrides>> = {};
   if (value.variants !== undefined) {
-    if (!isRecord(value.variants)) throw new Error("Theme variants must be an object.");
+    if (!isUnparsedMobileThemeRecord(value.variants)) {
+      throw new Error("Theme variants must be an object.");
+    }
     for (const [variantAppearance, variantColors] of Object.entries(value.variants)) {
       if (!isThemeAppearance(variantAppearance)) {
         throw new Error('Theme variants may only be named "light" or "dark".');
@@ -800,25 +844,26 @@ export function parseMobileThemeFile(value: unknown): ImportedMobileTheme {
     throw new Error("Theme collections need a valid id and label.");
   }
 
-  return {
+  const theme = {
     version: MOBILE_THEME_FILE_VERSION,
     id,
     name: name.trim(),
     appearance,
     colors,
-    ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    ...(collection ? { collection } : {}),
-    ...(value.managed === true ? { managed: true } : {}),
   };
+  if (Object.keys(variants).length > 0) Object.assign(theme, { variants });
+  if (collection) Object.assign(theme, { collection });
+  if (value.managed === true) Object.assign(theme, { managed: true });
+  return theme;
 }
 
 export function parseMobileThemeFileJson(value: string): ImportedMobileTheme {
   if (utf8ByteLength(value) > MAX_MOBILE_THEME_FILE_BYTES) {
     throw new Error("Theme files must be 64 KB or smaller.");
   }
-  let parsed: unknown;
+  let parsed: UnparsedMobileThemeValue;
   try {
-    parsed = JSON.parse(value);
+    parsed = decodeUnparsedMobileThemeValue(JSON.parse(value));
   } catch {
     throw new Error("Theme files must contain valid JSON.");
   }
@@ -842,7 +887,9 @@ export function addImportedMobileTheme(
   return next;
 }
 
-export function sanitizeImportedMobileThemes(value: unknown): ReadonlyArray<ImportedMobileTheme> {
+export function sanitizeImportedMobileThemes(
+  value: UnparsedMobileThemeValue | ReadonlyArray<ImportedMobileTheme>,
+): ReadonlyArray<ImportedMobileTheme> {
   if (!Array.isArray(value)) return [];
   const themes: ImportedMobileTheme[] = [];
   let libraryBytes = 2;
