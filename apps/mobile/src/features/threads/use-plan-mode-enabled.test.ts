@@ -1,10 +1,10 @@
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const testState = vi.hoisted(() => ({
-  preferences: null as unknown,
-  reconciliationReady: false,
-}));
+const testState = vi.hoisted<{
+  preferences: AsyncResult.AsyncResult<{ readonly planModeEnabled?: boolean }, never> | null;
+  reconciliationReady: boolean;
+}>(() => ({ preferences: null, reconciliationReady: false }));
 
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => testState.preferences,

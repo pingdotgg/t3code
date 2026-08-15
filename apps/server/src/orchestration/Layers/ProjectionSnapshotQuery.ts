@@ -225,21 +225,38 @@ function mapSyncedClientPreferences(
 ): SyncedClientPreferences | undefined {
   return Option.match(row, {
     onNone: () => undefined,
-    onSome: (value) => ({
-      ...(value.planModeEnabled === null ? {} : { planModeEnabled: value.planModeEnabled !== 0 }),
-      ...(value.appearanceMode === null ? {} : { appearanceMode: value.appearanceMode }),
-      ...(value.themeId === null ? {} : { themeId: value.themeId }),
-      updatedAtByField: {
-        ...(value.planModeEnabledUpdatedAt === null
-          ? {}
-          : { planModeEnabled: value.planModeEnabledUpdatedAt }),
-        ...(value.appearanceModeUpdatedAt === null
-          ? {}
-          : { appearanceMode: value.appearanceModeUpdatedAt }),
-        ...(value.themeIdUpdatedAt === null ? {} : { themeId: value.themeIdUpdatedAt }),
-      },
-      updatedAt: value.updatedAt,
-    }),
+    onSome: (value) => {
+      let preferences: SyncedClientPreferences = {
+        updatedAt: value.updatedAt,
+      };
+      if (value.planModeEnabled !== null) {
+        preferences = { ...preferences, planModeEnabled: value.planModeEnabled !== 0 };
+      }
+      if (value.appearanceMode !== null) {
+        preferences = { ...preferences, appearanceMode: value.appearanceMode };
+      }
+      if (value.themeId !== null) {
+        preferences = { ...preferences, themeId: value.themeId };
+      }
+
+      let updatedAtByField: NonNullable<SyncedClientPreferences["updatedAtByField"]> = {};
+      if (value.planModeEnabledUpdatedAt !== null) {
+        updatedAtByField = {
+          ...updatedAtByField,
+          planModeEnabled: value.planModeEnabledUpdatedAt,
+        };
+      }
+      if (value.appearanceModeUpdatedAt !== null) {
+        updatedAtByField = {
+          ...updatedAtByField,
+          appearanceMode: value.appearanceModeUpdatedAt,
+        };
+      }
+      if (value.themeIdUpdatedAt !== null) {
+        updatedAtByField = { ...updatedAtByField, themeId: value.themeIdUpdatedAt };
+      }
+      return { ...preferences, updatedAtByField };
+    },
   });
 }
 
@@ -2348,7 +2365,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       })),
     );
 
-  const getSyncedClientPreferences: ProjectionSnapshotQueryShape["getSyncedClientPreferences"] =
+  const getSyncedClientPreferences: ProjectionSnapshotQuery["Service"]["getSyncedClientPreferences"] =
     () => readSyncedClientPreferences("getSyncedClientPreferences");
 
   const getCounts: ProjectionSnapshotQueryShape["getCounts"] = () =>

@@ -1,8 +1,8 @@
 import {
+  EnvironmentId,
   getSyncedClientPreferenceUpdatedAt,
   nextSyncedClientPreferencesUpdatedAt,
   SYNCED_CLIENT_PREFERENCE_FIELDS,
-  type EnvironmentId,
   type PatchSyncedClientPreferencesRequest,
   type SyncedClientPreferenceField,
   type SyncedClientPreferences,
@@ -12,6 +12,7 @@ import {
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import * as Schema from "effect/Schema";
 
 import type { Preferences } from "../persistence/mobile-preferences";
 
@@ -59,18 +60,21 @@ function compareEnvironmentPreferenceCandidates(
   return left.updatedAt.localeCompare(right.updatedAt) || left.source.localeCompare(right.source);
 }
 
-type PlanModePreferenceReconciliationIdentity = readonly [
-  updatedAt: string,
-  source: EnvironmentId,
-  value: boolean,
-];
+const PlanModePreferenceReconciliationIdentity = Schema.Tuple([
+  Schema.String,
+  EnvironmentId,
+  Schema.Boolean,
+]);
+type PlanModePreferenceReconciliationIdentity =
+  typeof PlanModePreferenceReconciliationIdentity.Type;
+const decodePlanModePreferenceReconciliationIdentity = Schema.decodeUnknownSync(
+  Schema.fromJsonString(PlanModePreferenceReconciliationIdentity),
+);
 
 function parsePlanModePreferenceReconciliationKey(
   key: string,
 ): PlanModePreferenceReconciliationIdentity | undefined {
-  return key === ""
-    ? undefined
-    : (JSON.parse(key) as unknown as PlanModePreferenceReconciliationIdentity);
+  return key === "" ? undefined : decodePlanModePreferenceReconciliationIdentity(key);
 }
 
 function comparePlanModePreferenceReconciliationIdentities(
@@ -363,10 +367,7 @@ export function createSyncedClientPreferencesWrite(input: {
   readonly legacyCurrentUpdatedAt?: string;
   readonly authoritativePreferences?: ReadonlyArray<SyncedClientPreferences | undefined>;
   readonly now: string;
-}): {
-  readonly localPatch: LocalSyncedClientPreferencesPatch;
-  readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
-} {
+}) {
   const fields = SYNCED_CLIENT_PREFERENCE_FIELDS.filter(
     (field) => input.patch[field] !== undefined,
   );
@@ -398,13 +399,7 @@ export function createPlanModePreferenceWrite(input: {
   readonly legacyCurrentUpdatedAt?: string;
   readonly authoritativePreferences?: ReadonlyArray<SyncedClientPreferences | undefined>;
   readonly now: string;
-}): {
-  readonly localPatch: {
-    readonly planModeEnabled: boolean;
-    readonly syncedClientPreferencesUpdatedAtByField: SyncedClientPreferencesUpdatedAtByField;
-  };
-  readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
-} {
+}) {
   const write = createSyncedClientPreferencesWrite({
     patch: { planModeEnabled: input.value },
     connectedEnvironmentIds: input.connectedEnvironmentIds,
@@ -434,12 +429,15 @@ export function createPlanModePreferenceWriteController() {
         (persistedUpdatedAt !== undefined && persistedUpdatedAt > latestRequestedUpdatedAt)
           ? persistedUpdatedAt
           : latestRequestedUpdatedAt;
+      const currentUpdatedAtByField: MutableSyncedClientPreferencesUpdatedAtByField = {
+        ...input.currentUpdatedAtByField,
+      };
+      if (currentUpdatedAt !== undefined) {
+        currentUpdatedAtByField.planModeEnabled = currentUpdatedAt;
+      }
       const write = createPlanModePreferenceWrite({
         ...input,
-        currentUpdatedAtByField: {
-          ...input.currentUpdatedAtByField,
-          ...(currentUpdatedAt === undefined ? {} : { planModeEnabled: currentUpdatedAt }),
-        },
+        currentUpdatedAtByField,
       });
       latestRequestedUpdatedAt =
         write.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled;
@@ -468,10 +466,7 @@ export function reconcileSyncedClientPreferences(input: {
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
   readonly fields?: ReadonlyArray<SyncedClientPreferenceField>;
-}): {
-  readonly localPatch: LocalSyncedClientPreferencesPatch | null;
-  readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
-} {
+}) {
   if (input.environments.length === 0) {
     return { localPatch: null, environmentPatches: [] };
   }
@@ -558,20 +553,21 @@ export function reconcilePlanModePreferences(input: {
   readonly localUpdatedAt: string | undefined;
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
-}): {
-  readonly localPatch: Partial<Preferences> | null;
-  readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
-} {
-  const reconciliation = reconcileSyncedClientPreferences({
-    local: {
-      values:
-        input.localPlanModeEnabled === undefined
-          ? {}
-          : { planModeEnabled: input.localPlanModeEnabled },
-      ...(input.localUpdatedAt === undefined
+}) {
+  let local: LocalSyncedClientPreferencesState = {
+    values:
+      input.localPlanModeEnabled === undefined
         ? {}
-        : { updatedAtByField: { planModeEnabled: input.localUpdatedAt } }),
-    },
+        : { planModeEnabled: input.localPlanModeEnabled },
+  };
+  if (input.localUpdatedAt !== undefined) {
+    local = {
+      ...local,
+      updatedAtByField: { planModeEnabled: input.localUpdatedAt },
+    };
+  }
+  const reconciliation = reconcileSyncedClientPreferences({
+    local,
     environments: input.environments,
     now: input.now,
     fields: ["planModeEnabled"],

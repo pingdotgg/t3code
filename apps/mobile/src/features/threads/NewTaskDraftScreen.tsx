@@ -861,7 +861,7 @@ export function NewTaskDraftScreen(props: {
     startInFlightRef.current = true;
     flow.setSubmitting(true);
     try {
-      const result = await createProjectThread({
+      let createInput: Parameters<typeof createProjectThread>[0] = {
         project: selectedProject,
         modelSelection,
         envMode: workspaceMode,
@@ -872,17 +872,19 @@ export function NewTaskDraftScreen(props: {
         interactionMode,
         initialMessageText,
         initialAttachments: draft.attachments,
-        ...(editingPendingTask
-          ? {
-              turnMetadata: {
-                threadId: editingPendingTask.threadId,
-                commandId: editingPendingTask.commandId,
-                messageId: editingPendingTask.messageId,
-                createdAt: editingPendingTask.createdAt,
-              },
-            }
-          : {}),
-      });
+      };
+      if (editingPendingTask) {
+        createInput = {
+          ...createInput,
+          turnMetadata: {
+            threadId: editingPendingTask.threadId,
+            commandId: editingPendingTask.commandId,
+            messageId: editingPendingTask.messageId,
+            createdAt: editingPendingTask.createdAt,
+          },
+        };
+      }
+      const result = await createProjectThread(createInput);
 
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {

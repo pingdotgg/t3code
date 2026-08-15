@@ -236,17 +236,18 @@ export function mergeEnvironmentSettings(
     pendingPlanModeWrite !== undefined &&
     (syncedPlanModeUpdatedAt === undefined ||
       pendingPlanModeWrite.updatedAt > syncedPlanModeUpdatedAt);
-  return {
+  let merged: UnifiedSettings = {
     ...serverSettings,
     ...clientSettings,
-    ...(!syncedPlanModeCanOverrideClient
-      ? {}
-      : pendingPlanModeIsNewer
-        ? { planModeEnabled: pendingPlanModeWrite.value }
-        : syncedClientPreferences?.planModeEnabled === undefined
-          ? {}
-          : { planModeEnabled: syncedClientPreferences.planModeEnabled }),
   };
+  if (syncedPlanModeCanOverrideClient) {
+    if (pendingPlanModeIsNewer) {
+      merged = { ...merged, planModeEnabled: pendingPlanModeWrite.value };
+    } else if (syncedClientPreferences?.planModeEnabled !== undefined) {
+      merged = { ...merged, planModeEnabled: syncedClientPreferences.planModeEnabled };
+    }
+  }
+  return merged;
 }
 
 function useMergedSettings<T>(

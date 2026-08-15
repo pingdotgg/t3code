@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { reactHookHarness as hooks } from "../test/reactHookHarness";
 
 const testState = vi.hoisted(() => ({
-  primaryEnvironmentId: "primary" as EnvironmentId,
+  primaryEnvironmentIds: new Array<EnvironmentId>(),
   sessionAtom: Symbol("session"),
   updateSettingsAtom: Symbol("update-settings"),
   patchPreferencesAtom: Symbol("patch-preferences"),
   serverSettingsAtom: Symbol("server-settings"),
-  sessionEnvironmentIds: [] as EnvironmentId[],
+  sessionEnvironmentIds: new Array<EnvironmentId>(),
   updateSettings: vi.fn(),
   patchPreferences: vi.fn(),
   setClientSettings: vi.fn(async () => undefined),
@@ -25,7 +25,10 @@ vi.mock("react", async (importOriginal) => {
     useCallback: reactHookHarness.useCallback,
     useEffect: (effect: () => void | (() => void)) => effect(),
     useMemo: reactHookHarness.useMemo,
-    useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
+    useSyncExternalStore: <Snapshot>(
+      _subscribe: (onStoreChange: () => void) => () => void,
+      getSnapshot: () => Snapshot,
+    ): Snapshot => getSnapshot(),
   };
 });
 
@@ -35,7 +38,7 @@ vi.mock("react/compiler-runtime", async () => {
 });
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: unknown) =>
+  useAtomValue: (atom: symbol) =>
     atom === testState.serverSettingsAtom
       ? {}
       : atom === testState.sessionAtom
@@ -58,7 +61,7 @@ vi.mock("~/localApi", () => ({
 }));
 
 vi.mock("~/state/environments", () => ({
-  usePrimaryEnvironment: () => ({ environmentId: testState.primaryEnvironmentId }),
+  usePrimaryEnvironment: () => ({ environmentId: testState.primaryEnvironmentIds[0] }),
 }));
 
 vi.mock("~/state/server", () => ({
@@ -112,6 +115,8 @@ describe("useUpdateEnvironmentSettings", () => {
         }),
     );
     testState.setClientSettings.mockClear();
+    testState.primaryEnvironmentIds.length = 0;
+    testState.primaryEnvironmentIds.push(EnvironmentId.make("primary"));
     testState.sessionEnvironmentIds.length = 0;
   });
 

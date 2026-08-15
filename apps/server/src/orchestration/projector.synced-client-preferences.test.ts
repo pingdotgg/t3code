@@ -26,7 +26,7 @@ function preferenceEvent(input: {
     correlationId: null,
     metadata: {},
     payload: { patch: input.patch, updatedAt: input.updatedAt },
-  } as OrchestrationEvent;
+  };
 }
 
 it.effect("merges synced preferences by field when a later event is globally stale", () =>

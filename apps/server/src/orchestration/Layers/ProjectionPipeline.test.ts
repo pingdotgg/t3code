@@ -159,8 +159,9 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
 
-      const syncedPreferenceRows = yield* sql<Record<string, unknown>>`
-        SELECT * FROM projection_synced_client_preferences
+      const syncedPreferenceRows = yield* sql<{ readonly singletonId: number }>`
+        SELECT singleton_id AS "singletonId"
+        FROM projection_synced_client_preferences
       `;
       assert.deepEqual(syncedPreferenceRows, []);
 

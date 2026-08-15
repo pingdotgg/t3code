@@ -320,15 +320,20 @@ export function createSyncedPlanModeHydrationController(
     }
     if (environmentId !== input.primaryEnvironmentId) return deactivateSynchronization;
 
-    const action = resolveSyncedPlanModeHydrationAction({
+    let hydrationInput: Parameters<typeof resolveSyncedPlanModeHydrationAction>[0] = {
       clientHydrated: input.clientHydrated,
       clientValue: input.clientValue,
       serverPreferences: input.serverPreferences,
       seedPending: state.seedPendingUpdatedAt !== undefined,
-      ...(activePendingWrite === undefined ? {} : { writePending: activePendingWrite }),
-      ...(state.adoptedUpdatedAt === undefined ? {} : { adoptedUpdatedAt: state.adoptedUpdatedAt }),
       now: input.now,
-    });
+    };
+    if (activePendingWrite !== undefined) {
+      hydrationInput = { ...hydrationInput, writePending: activePendingWrite };
+    }
+    if (state.adoptedUpdatedAt !== undefined) {
+      hydrationInput = { ...hydrationInput, adoptedUpdatedAt: state.adoptedUpdatedAt };
+    }
+    const action = resolveSyncedPlanModeHydrationAction(hydrationInput);
     if (action.type === "adopt") {
       if (!input.canPatch) return deactivateSynchronization;
       markAdopted(state, action.updatedAt);
@@ -380,12 +385,15 @@ export function createSyncedPlanModeHydrationController(
           : latest,
       undefined,
     );
-    const next = createSyncedPlanModeWrite({
+    let writeInput: Parameters<typeof createSyncedPlanModeWrite>[0] = {
       value: input.value,
       serverPreferences: input.serverPreferences,
-      ...(controllerUpdatedAt === undefined ? {} : { pendingUpdatedAt: controllerUpdatedAt }),
       now: input.now,
-    });
+    };
+    if (controllerUpdatedAt !== undefined) {
+      writeInput = { ...writeInput, pendingUpdatedAt: controllerUpdatedAt };
+    }
+    const next = createSyncedPlanModeWrite(writeInput);
     state.writePending = {
       value: input.value,
       updatedAt: next.request.updatedAt,

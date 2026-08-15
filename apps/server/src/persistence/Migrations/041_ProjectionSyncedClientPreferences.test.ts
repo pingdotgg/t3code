@@ -58,8 +58,9 @@ layer("041_ProjectionSyncedClientPreferences", (it) => {
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_synced_client_preferences)
       `;
-      const rows = yield* sql<Record<string, unknown>>`
-        SELECT * FROM projection_synced_client_preferences
+      const rows = yield* sql<{ readonly singletonId: number }>`
+        SELECT singleton_id AS "singletonId"
+        FROM projection_synced_client_preferences
       `;
       const projectorState = yield* sql<{
         readonly projector: string;

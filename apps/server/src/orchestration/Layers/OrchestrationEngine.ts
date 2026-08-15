@@ -1,10 +1,4 @@
-import type {
-  OrchestrationEvent,
-  OrchestrationReadModel,
-  ProjectId,
-  SyncedClientPreferencesAggregateId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationReadModel } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -59,28 +53,25 @@ interface CommandEnvelope {
   startedAtMs: number;
 }
 
-function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "client-preferences" | "project" | "thread";
-  readonly aggregateId: SyncedClientPreferencesAggregateId | ProjectId | ThreadId;
-} {
+function commandToAggregateRef(command: OrchestrationCommand) {
   switch (command.type) {
     case "client-preferences.patch":
       return {
         aggregateKind: "client-preferences",
         aggregateId: "client-preferences",
-      };
+      } as const;
     case "project.create":
     case "project.meta.update":
     case "project.delete":
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
-      };
+      } as const;
     default:
       return {
         aggregateKind: "thread",
         aggregateId: command.threadId,
-      };
+      } as const;
   }
 }
 

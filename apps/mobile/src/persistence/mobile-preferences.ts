@@ -153,10 +153,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.syncedClientPreferencesUpdatedAtByField =
       parsed.syncedClientPreferencesUpdatedAtByField;
   }
-  if (
-    typeof parsed.syncedClientPreferencesUpdatedAt === "string" &&
-    isSyncedClientPreferencesUpdatedAt(parsed.syncedClientPreferencesUpdatedAt)
-  ) {
+  if (isSyncedClientPreferencesUpdatedAt(parsed.syncedClientPreferencesUpdatedAt)) {
     preferences.syncedClientPreferencesUpdatedAt = parsed.syncedClientPreferencesUpdatedAt;
   }
   if (typeof parsed.legacyThreadListEnabled === "boolean") {
@@ -345,18 +342,19 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
             try: () => transform(current),
             catch: (cause) => new MobilePreferencesSaveError({ cause }),
           });
-          const next: Preferences = {
+          let next: Preferences = {
             ...current,
             ...patch,
-            ...(patch.syncedClientPreferencesUpdatedAtByField === undefined
-              ? {}
-              : {
-                  syncedClientPreferencesUpdatedAtByField: {
-                    ...current.syncedClientPreferencesUpdatedAtByField,
-                    ...patch.syncedClientPreferencesUpdatedAtByField,
-                  },
-                }),
           };
+          if (patch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+            next = {
+              ...next,
+              syncedClientPreferencesUpdatedAtByField: {
+                ...current.syncedClientPreferencesUpdatedAtByField,
+                ...patch.syncedClientPreferencesUpdatedAtByField,
+              },
+            };
+          }
           const payload = yield* encode(PREFERENCES_KEY, next);
           yield* saveJson(payload);
           return next;

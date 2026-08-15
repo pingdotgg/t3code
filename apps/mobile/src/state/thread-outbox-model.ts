@@ -106,10 +106,7 @@ export function resolveQueuedThreadSendDecision(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
   readPlanModeEnabled: () => boolean,
-): {
-  readonly settings: ThreadSettingsSnapshot;
-  readonly readStartTurnInteractionMode: () => ThreadSettingsSnapshot["interactionMode"];
-} {
+) {
   const planModeEnabled = readPlanModeEnabled();
   return {
     settings: resolveQueuedThreadSettings(message, thread, planModeEnabled),

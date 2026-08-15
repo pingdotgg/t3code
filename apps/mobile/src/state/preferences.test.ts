@@ -360,18 +360,20 @@ describe("mobile preferences state", () => {
                 new MobilePreferencesSaveError({ cause: new Error("write failed") }),
               );
             }
-            persisted = {
+            let next = {
               ...persisted,
               ...patch,
-              ...(patch.syncedClientPreferencesUpdatedAtByField === undefined
-                ? {}
-                : {
-                    syncedClientPreferencesUpdatedAtByField: {
-                      ...persisted.syncedClientPreferencesUpdatedAtByField,
-                      ...patch.syncedClientPreferencesUpdatedAtByField,
-                    },
-                  }),
             };
+            if (patch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+              next = {
+                ...next,
+                syncedClientPreferencesUpdatedAtByField: {
+                  ...persisted.syncedClientPreferencesUpdatedAtByField,
+                  ...patch.syncedClientPreferencesUpdatedAtByField,
+                },
+              };
+            }
+            persisted = next;
             return persisted;
           }),
       });

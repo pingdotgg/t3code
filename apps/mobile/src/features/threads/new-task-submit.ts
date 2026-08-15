@@ -15,7 +15,7 @@ export function resolveNewTaskComposerSelection(input: {
   readonly draftKey: string | null;
   readonly promptLength: number;
   readonly selection: { readonly start: number; readonly end: number };
-}): { readonly start: number; readonly end: number } {
+}) {
   if (input.previousDraftKey !== input.draftKey) {
     return { start: input.promptLength, end: input.promptLength };
   }
