@@ -463,6 +463,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "**/node_modules/.bin",
         "**/node_modules/.bin/**",
       ]);
+      assert.deepStrictEqual((mac.mac as Record<string, unknown>).extendInfo, {
+        NSMicrophoneUsageDescription: "T3 Code uses the microphone for voice dictation.",
+      });
       // Linux must register the renderer schemes so the generated .desktop
       // entry advertises MimeType=x-scheme-handler/t3code; for OAuth deep links.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [

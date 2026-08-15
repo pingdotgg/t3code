@@ -56,6 +56,7 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
+import { SettingsVoiceDictationRouteScreen } from "./features/settings/SettingsVoiceDictationRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
@@ -196,6 +197,13 @@ const SettingsContentStack = createNativeStackNavigator({
       linking: "project-grouping",
       options: {
         title: "Project Grouping",
+      },
+    }),
+    SettingsVoiceDictation: createNativeStackScreen({
+      screen: SettingsVoiceDictationRouteScreen,
+      linking: "voice-dictation",
+      options: {
+        title: "Voice Dictation",
       },
     }),
     SettingsClientStorage: createNativeStackScreen({

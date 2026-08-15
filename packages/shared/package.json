@@ -167,6 +167,10 @@
       "types": "./src/composerInlineTokens.ts",
       "import": "./src/composerInlineTokens.ts"
     },
+    "./voiceTranscription": {
+      "types": "./src/voiceTranscription.ts",
+      "import": "./src/voiceTranscription.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"

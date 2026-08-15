@@ -86,6 +86,43 @@ type TypographySettings = Pick<
   | "fontSizeTerminal"
 >;
 
+type VoiceTranscriptionSettings = Pick<
+  UnifiedSettings,
+  | "voiceTranscriptionEnabled"
+  | "voiceTranscriptionProvider"
+  | "voiceTranscriptionApiKey"
+  | "voiceTranscriptionModel"
+>;
+
+export function hasChangedVoiceTranscriptionSettings(
+  settings: VoiceTranscriptionSettings,
+): boolean {
+  return (
+    settings.voiceTranscriptionEnabled !== DEFAULT_UNIFIED_SETTINGS.voiceTranscriptionEnabled ||
+    settings.voiceTranscriptionProvider !== DEFAULT_UNIFIED_SETTINGS.voiceTranscriptionProvider ||
+    settings.voiceTranscriptionApiKey !== DEFAULT_UNIFIED_SETTINGS.voiceTranscriptionApiKey ||
+    settings.voiceTranscriptionModel !== DEFAULT_UNIFIED_SETTINGS.voiceTranscriptionModel
+  );
+}
+
+export function shouldRestoreVoiceTranscriptionDefaults(input: {
+  readonly wasIncludedInConfirmation: boolean;
+  readonly liveSettings: VoiceTranscriptionSettings;
+}): boolean {
+  return (
+    input.wasIncludedInConfirmation && hasChangedVoiceTranscriptionSettings(input.liveSettings)
+  );
+}
+
+export function voiceTranscriptionModelOptions(
+  availableModels: readonly string[],
+  selectedModel: string,
+): readonly string[] {
+  return selectedModel && !availableModels.includes(selectedModel)
+    ? [selectedModel, ...availableModels]
+    : availableModels;
+}
+
 /** Labels the font rows whose family or size differs from the defaults. */
 export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
   return [

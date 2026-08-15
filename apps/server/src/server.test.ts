@@ -1363,6 +1363,9 @@ const assertBrowserApiCorsPreflightHeaders = (
     "content-type",
     "dpop",
     "traceparent",
+    "x-t3-transcription-api-key",
+    "x-t3-transcription-model",
+    "x-t3-transcription-provider",
   ]);
 };
 const crossOriginClientOrigin = "http://remote-client.test:3773";
@@ -4294,6 +4297,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "content-type",
         "dpop",
         "traceparent",
+        "x-t3-transcription-api-key",
+        "x-t3-transcription-model",
+        "x-t3-transcription-provider",
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

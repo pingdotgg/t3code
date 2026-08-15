@@ -33,7 +33,7 @@ function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpC
 export function makePrimaryEnvironmentHttpLayer() {
   return Layer.unwrap(
     Effect.sync(() => {
-      const baseLayer = remoteHttpClientLayer(globalThis.fetch);
+      const baseLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
       if (isSameOriginBrowserPrimary()) {
         return Layer.merge(
           baseLayer,

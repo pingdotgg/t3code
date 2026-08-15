@@ -73,6 +73,7 @@
     "effect": "catalog:",
     "expo": "~56.0.12",
     "expo-asset": "~56.0.17",
+    "expo-audio": "~56.0.13",
     "expo-auth-session": "~56.0.14",
     "expo-blur": "~56.0.3",
     "expo-build-properties": "~56.0.19",

@@ -2024,6 +2024,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extendInfo: {
+        NSMicrophoneUsageDescription: "T3 Code uses the microphone for voice dictation.",
+      },
       protocols: [
         {
           name: "T3 Code",

@@ -1,6 +1,7 @@
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
@@ -34,7 +35,10 @@ type RuntimeLayerSource =
 export const remoteHttpRuntime = ManagedRuntime.make(httpClientLayer);
 
 const primaryHttpRuntime = ManagedRuntime.make(
-  PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
+  Layer.merge(
+    primaryEnvironmentHttpLayer,
+    PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
+  ),
 );
 
 export type PrimaryHttpEffectRunner = <A, E>(
@@ -50,8 +54,24 @@ export const runPrimaryHttp = <A, E>(
   effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient.PrimaryEnvironmentHttpClient>,
 ) => primaryHttpRunner(effect);
 
+export type PrimaryRawHttpEffectRunner = <A, E>(
+  effect: Effect.Effect<A, E, HttpClient.HttpClient>,
+) => Promise<A>;
+
+const livePrimaryRawHttpRunner: PrimaryRawHttpEffectRunner = (effect) =>
+  primaryHttpRuntime.runPromise(effect);
+
+let primaryRawHttpRunner = livePrimaryRawHttpRunner;
+
+export const runPrimaryRawHttp = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) =>
+  primaryRawHttpRunner(effect);
+
 export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner): void {
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
+}
+
+export function __setPrimaryRawHttpRunnerForTests(runner?: PrimaryRawHttpEffectRunner): void {
+  primaryRawHttpRunner = runner ?? livePrimaryRawHttpRunner;
 }
 
 const runtimeLayer = Layer.mergeAll(
