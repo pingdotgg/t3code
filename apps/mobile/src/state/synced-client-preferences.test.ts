@@ -29,6 +29,14 @@ describe("synced client preferences", () => {
     ).toBe("2026-08-14T12:05:00.001Z");
   });
 
+  it("advances past authoritative environment stamps on a slow device clock", () => {
+    expect(
+      nextMobileSyncedPreferencesUpdatedAt([], "2026-08-14T12:00:00.000Z", [
+        "2026-08-14T13:00:00.000Z",
+      ]),
+    ).toBe("2026-08-14T13:00:00.001Z");
+  });
+
   it("adopts the environment plan mode into the device cache on connect", () => {
     expect(
       reconcilePlanModePreferences({
@@ -58,7 +66,8 @@ describe("synced client preferences", () => {
     const write = createPlanModePreferenceWrite({
       value: true,
       connectedEnvironmentIds: [environmentId("environment-1"), environmentId("environment-2")],
-      currentUpdatedAts: ["2026-08-14T12:00:00.000Z", "2026-08-14T12:02:00.000Z"],
+      currentUpdatedAts: ["2026-08-14T12:00:00.000Z"],
+      authoritativeUpdatedAts: ["2026-08-14T12:02:00.000Z"],
       now: "2026-08-14T12:01:00.000Z",
     });
 
@@ -203,7 +212,6 @@ describe("synced client preferences", () => {
       expect(reconciliation.localPatch?.planModeEnabled).toBe(true);
     } finally {
       if (descriptor === undefined) {
-        // oxlint-disable-next-line no-extend-native -- Restore the pre-test Hermes-like shape.
         Reflect.deleteProperty(Array.prototype, "toSorted");
       } else {
         // oxlint-disable-next-line no-extend-native -- Restore the pre-test implementation.

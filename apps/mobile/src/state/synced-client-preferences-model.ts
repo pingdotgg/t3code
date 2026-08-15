@@ -53,11 +53,12 @@ export function settlePendingPlanModePreferencePatch<E>(input: {
 }
 
 export function nextMobileSyncedPreferencesUpdatedAt(
-  currentUpdatedAts: ReadonlyArray<string | undefined>,
+  localUpdatedAts: ReadonlyArray<string | undefined>,
   now: string,
+  authoritativeUpdatedAts: ReadonlyArray<string | undefined> = [],
 ): string {
   const maximumUpdatedAt = Date.parse(now) + SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS;
-  const latest = currentUpdatedAts.reduce<string | undefined>(
+  const latestLocal = localUpdatedAts.reduce<string | undefined>(
     (current, candidate) =>
       candidate !== undefined &&
       Date.parse(candidate) <= maximumUpdatedAt &&
@@ -65,6 +66,13 @@ export function nextMobileSyncedPreferencesUpdatedAt(
         ? candidate
         : current,
     undefined,
+  );
+  const latest = authoritativeUpdatedAts.reduce<string | undefined>(
+    (current, candidate) =>
+      candidate !== undefined && (current === undefined || candidate > current)
+        ? candidate
+        : current,
+    latestLocal,
   );
   if (latest === undefined || now > latest) return now;
   return new Date(Date.parse(latest) + 1).toISOString();
@@ -74,12 +82,17 @@ export function createPlanModePreferenceWrite(input: {
   readonly value: boolean;
   readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
   readonly currentUpdatedAts: ReadonlyArray<string | undefined>;
+  readonly authoritativeUpdatedAts?: ReadonlyArray<string | undefined>;
   readonly now: string;
 }): {
   readonly localPatch: Pick<Preferences, "planModeEnabled" | "syncedClientPreferencesUpdatedAt">;
   readonly environmentPatches: ReadonlyArray<PlanModePreferencePatchTarget>;
 } {
-  const updatedAt = nextMobileSyncedPreferencesUpdatedAt(input.currentUpdatedAts, input.now);
+  const updatedAt = nextMobileSyncedPreferencesUpdatedAt(
+    input.currentUpdatedAts,
+    input.now,
+    input.authoritativeUpdatedAts,
+  );
   const request = {
     patch: { planModeEnabled: input.value },
     updatedAt,
@@ -103,7 +116,10 @@ export function createPlanModePreferenceWriteController() {
     create(input: Parameters<typeof createPlanModePreferenceWrite>[0]) {
       const write = createPlanModePreferenceWrite({
         ...input,
-        currentUpdatedAts: [latestRequestedUpdatedAt, ...input.currentUpdatedAts],
+        authoritativeUpdatedAts: [
+          latestRequestedUpdatedAt,
+          ...(input.authoritativeUpdatedAts ?? []),
+        ],
       });
       latestRequestedUpdatedAt = write.localPatch.syncedClientPreferencesUpdatedAt;
       return write;
@@ -166,10 +182,9 @@ export function reconcilePlanModePreferences(input: {
     input.localUpdatedAt !== undefined &&
     latestObservedEnvironmentUpdatedAt !== undefined &&
     input.localUpdatedAt > latestObservedEnvironmentUpdatedAt
-      ? nextMobileSyncedPreferencesUpdatedAt(
-          [latestObservedEnvironmentUpdatedAt],
+      ? nextMobileSyncedPreferencesUpdatedAt([], latestObservedEnvironmentUpdatedAt, [
           latestObservedEnvironmentUpdatedAt,
-        )
+        ])
       : input.localUpdatedAt;
   // Across environments, the newest plan-bearing stamp wins. Exact stamp ties
   // use environment id for deterministic convergence; an unstamped legacy
@@ -199,7 +214,11 @@ export function reconcilePlanModePreferences(input: {
         updatedAt !== undefined && (winningUpdatedAt === undefined || updatedAt > winningUpdatedAt),
     );
   const updatedAt = needsNewStamp
-    ? nextMobileSyncedPreferencesUpdatedAt(observedUpdatedAts, input.now)
+    ? nextMobileSyncedPreferencesUpdatedAt(
+        [boundedLocalUpdatedAt],
+        input.now,
+        input.environments.map((environment) => environment.preferences?.updatedAt),
+      )
     : (winningUpdatedAt ?? input.now);
   const localPatch =
     input.localPlanModeEnabled === value && input.localUpdatedAt === updatedAt

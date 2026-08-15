@@ -9,6 +9,8 @@ const testState = vi.hoisted(() => ({
   sessionAtom: Symbol("session"),
   updateSettingsAtom: Symbol("update-settings"),
   patchPreferencesAtom: Symbol("patch-preferences"),
+  serverSettingsAtom: Symbol("server-settings"),
+  sessionEnvironmentIds: [] as EnvironmentId[],
   updateSettings: vi.fn(),
   patchPreferences: vi.fn(),
   setClientSettings: vi.fn(async () => undefined),
@@ -20,6 +22,9 @@ vi.mock("react", async (importOriginal) => {
   return {
     ...actual,
     useCallback: reactHookHarness.useCallback,
+    useEffect: (effect: () => void | (() => void)) => effect(),
+    useMemo: reactHookHarness.useMemo,
+    useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
   };
 });
 
@@ -30,15 +35,17 @@ vi.mock("react/compiler-runtime", async () => {
 
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
-    atom === testState.sessionAtom
-      ? {
-          authenticated: true,
-          scopes: ["orchestration:operate"],
-        }
-      : {
-          planModeEnabled: false,
-          updatedAt: "2026-08-14T12:00:00.000Z",
-        },
+    atom === testState.serverSettingsAtom
+      ? {}
+      : atom === testState.sessionAtom
+        ? {
+            authenticated: true,
+            scopes: ["orchestration:operate"],
+          }
+        : {
+            planModeEnabled: false,
+            updatedAt: "2026-08-14T12:00:00.000Z",
+          },
 }));
 
 vi.mock("~/localApi", () => ({
@@ -56,6 +63,7 @@ vi.mock("~/state/environments", () => ({
 vi.mock("~/state/server", () => ({
   primaryServerSettingsAtom: Symbol("primary-settings"),
   serverEnvironment: {
+    settingsValueAtom: () => testState.serverSettingsAtom,
     updateSettings: testState.updateSettingsAtom,
     patchSyncedClientPreferences: testState.patchPreferencesAtom,
   },
@@ -63,7 +71,10 @@ vi.mock("~/state/server", () => ({
 
 vi.mock("~/state/session", () => ({
   environmentSession: {
-    sessionStateValueAtom: () => testState.sessionAtom,
+    sessionStateValueAtom: (environmentId: EnvironmentId) => {
+      testState.sessionEnvironmentIds.push(environmentId);
+      return testState.sessionAtom;
+    },
   },
 }));
 
@@ -78,7 +89,7 @@ vi.mock("~/state/use-atom-command", () => ({
     atom === testState.patchPreferencesAtom ? testState.patchPreferences : testState.updateSettings,
 }));
 
-import { useUpdateEnvironmentSettings } from "./useSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "./useSettings";
 
 describe("useUpdateEnvironmentSettings", () => {
   beforeEach(() => {
@@ -95,6 +106,7 @@ describe("useUpdateEnvironmentSettings", () => {
         }),
     );
     testState.setClientSettings.mockClear();
+    testState.sessionEnvironmentIds.length = 0;
   });
 
   it("patches synced preferences in the supplied secondary environment", () => {
@@ -111,5 +123,14 @@ describe("useUpdateEnvironmentSettings", () => {
         updatedAt: expect.any(String),
       },
     });
+  });
+
+  it("checks synced-preference access in the supplied secondary environment", () => {
+    const secondaryEnvironmentId = EnvironmentId.make("secondary");
+    hooks.beginRender();
+
+    useEnvironmentSettings(secondaryEnvironmentId);
+
+    expect(testState.sessionEnvironmentIds).toEqual([secondaryEnvironmentId]);
   });
 });

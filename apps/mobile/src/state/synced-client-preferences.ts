@@ -121,14 +121,12 @@ export function useUpdatePlanModePreference() {
       const write = writeController.create({
         value,
         connectedEnvironmentIds,
-        currentUpdatedAts: [
-          current.syncedClientPreferencesUpdatedAt,
-          ...states.map(({ shell }) =>
-            shell.snapshot._tag === "Some"
-              ? shell.snapshot.value.syncedClientPreferences?.updatedAt
-              : undefined,
-          ),
-        ],
+        currentUpdatedAts: [current.syncedClientPreferencesUpdatedAt],
+        authoritativeUpdatedAts: states.map(({ shell }) =>
+          shell.snapshot._tag === "Some"
+            ? shell.snapshot.value.syncedClientPreferences?.updatedAt
+            : undefined,
+        ),
         now: new Date().toISOString(),
       });
       savePreferences(write.localPatch);

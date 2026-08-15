@@ -502,6 +502,56 @@ describe("synced plan mode", () => {
     expect(persisted).toEqual([false]);
   });
 
+  it("ignores a seed acknowledgement after a newer write is queued", async () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const controller = createSyncedPlanModeHydrationController();
+    const targets: Array<Parameters<SyncedPlanModeHydrationInput<never>["patch"]>[0]> = [];
+    const resolvePatches: Array<
+      (result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>) => void
+    > = [];
+    const patch: SyncedPlanModeHydrationInput<never>["patch"] = (target) =>
+      new Promise((resolve) => {
+        targets.push(target);
+        resolvePatches.push(resolve);
+      });
+    const persisted: boolean[] = [];
+    const persist = (value: boolean) => persisted.push(value);
+
+    controller.synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: true,
+      serverPreferences: undefined,
+      canPatch: true,
+      now: "2026-08-14T12:00:00.000Z",
+      patch,
+      persist,
+    });
+    controller.write({
+      environmentId: primaryEnvironmentId,
+      value: true,
+      serverPreferences: undefined,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist,
+    });
+
+    resolvePatches[0]?.(
+      AsyncResult.success({ planModeEnabled: false, updatedAt: targets[0]!.input.updatedAt }),
+    );
+    await Promise.resolve();
+    expect(persisted).toEqual([]);
+
+    resolvePatches[1]?.(
+      AsyncResult.success({ planModeEnabled: true, updatedAt: targets[1]!.input.updatedAt }),
+    );
+    await Promise.resolve();
+    expect(persisted).toEqual([true]);
+  });
+
   it("keeps the synced preference atom stable across thread-only shell updates", () => {
     const preferences = {
       planModeEnabled: true,

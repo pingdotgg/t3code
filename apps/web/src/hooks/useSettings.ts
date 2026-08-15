@@ -416,15 +416,18 @@ export function createSyncedPlanModeHydrationController(
       return;
     }
 
-    const matchingWrite =
-      writePendingByEnvironment.get(input.environmentId)?.updatedAt === input.requestedUpdatedAt;
-    const matchingSeed =
+    const pendingWrite = writePendingByEnvironment.get(input.environmentId);
+    const matchingWrite = pendingWrite?.updatedAt === input.requestedUpdatedAt;
+    const seedMatchesRequest =
       seedPendingByEnvironment.get(input.environmentId) === input.requestedUpdatedAt;
+    const matchingSeed =
+      seedMatchesRequest &&
+      (pendingWrite === undefined || pendingWrite.updatedAt <= input.requestedUpdatedAt);
+    if (seedMatchesRequest) seedPendingByEnvironment.delete(input.environmentId);
     if (!matchingWrite && !matchingSeed) return;
 
     cancelRetry(input.environmentId);
     if (matchingWrite) writePendingByEnvironment.delete(input.environmentId);
-    if (matchingSeed) seedPendingByEnvironment.delete(input.environmentId);
     markAdopted(input.environmentId, input.result.value.updatedAt);
     if (input.result.value.planModeEnabled !== undefined) {
       input.persist(input.result.value.planModeEnabled);
@@ -625,7 +628,7 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
   const clientHydrated = useClientSettingsHydrated();
   const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
   const synced = useEnvironmentSyncedClientPreferences(environmentId);
-  const canPatch = useCanPatchSyncedClientPreferences(primaryEnvironmentId);
+  const canPatch = useCanPatchSyncedClientPreferences(environmentId);
   const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
     label: "synced client preferences seed",
     reportFailure: false,

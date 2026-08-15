@@ -219,13 +219,14 @@ export function useThreadOutboxDrain(): void {
         }
       }
 
-      if (settings.interactionMode !== thread.interactionMode) {
+      const interactionMode = readStartTurnInteractionMode();
+      if (interactionMode !== thread.interactionMode) {
         const interactionResult = await setThreadInteractionMode({
           environmentId: queuedMessage.environmentId,
           input: {
             commandId: settingsCommandId(queuedMessage, "interaction-mode"),
             threadId: queuedMessage.threadId,
-            interactionMode: settings.interactionMode,
+            interactionMode,
             createdAt: queuedMessage.createdAt,
           },
         });
@@ -248,7 +249,7 @@ export function useThreadOutboxDrain(): void {
           },
           modelSelection: settings.modelSelection,
           runtimeMode: settings.runtimeMode,
-          interactionMode: readStartTurnInteractionMode(),
+          interactionMode,
           createdAt: queuedMessage.createdAt,
         },
       });

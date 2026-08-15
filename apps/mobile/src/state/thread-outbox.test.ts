@@ -136,7 +136,7 @@ describe("thread outbox", () => {
     expect(resolveQueuedThreadSettings(message, thread, true).interactionMode).toBe("plan");
   });
 
-  it("uses the live preference when legacy plan mode is disabled mid-drain", () => {
+  it("uses one live interaction mode for metadata and turn delivery", () => {
     let planModeEnabled = true;
     let preferenceReads = 0;
     const message = {
@@ -162,7 +162,10 @@ describe("thread outbox", () => {
     expect(sendDecision.settings.interactionMode).toBe("plan");
     expect(preferenceReads).toBe(1);
     planModeEnabled = false;
-    expect(sendDecision.readStartTurnInteractionMode()).toBe("default");
+    const deliveryInteractionMode = sendDecision.readStartTurnInteractionMode();
+    planModeEnabled = true;
+
+    expect(deliveryInteractionMode).toBe("default");
     expect(preferenceReads).toBe(2);
   });
 
