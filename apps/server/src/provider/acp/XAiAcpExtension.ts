@@ -1007,7 +1007,9 @@ function promptResponseFromXAi(
   notification: XAiPromptCompleteNotification,
 ): EffectAcpSchema.PromptResponse {
   const stopReason = normalizeXAiStopReason(notification.stopReason);
-  const meta: Record<string, unknown> = {
+  // Values originate from a decoded JSON-RPC payload, so they are JSON even
+  // though the x.ai schema types agentResult as unknown.
+  const meta: Record<string, Schema.Json> = {
     sessionId: notification.sessionId,
   };
   if (notification.stopReason === undefined) {
@@ -1018,7 +1020,7 @@ function promptResponseFromXAi(
     meta.requestId = notification.promptId;
   }
   if (notification.agentResult !== undefined) {
-    meta.agentResult = notification.agentResult;
+    meta.agentResult = notification.agentResult as Schema.Json;
   }
   return {
     stopReason,

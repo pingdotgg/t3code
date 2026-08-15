@@ -208,6 +208,9 @@ export const ClaudeProviderCapabilitiesV2 = {
     nativeItemIds: "strong",
     nativeRequestIds: "strong",
   },
+  runtimePolicy: {
+    enforcement: "native",
+  },
 } satisfies OrchestrationV2ProviderCapabilities;
 
 const CLAUDE_CODE_PRESET_TOOLS = {

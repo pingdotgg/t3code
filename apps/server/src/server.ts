@@ -28,6 +28,7 @@ import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
+import { AcpRegistryCatalogLive } from "./provider/Layers/AcpRegistryCatalog.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -361,6 +362,9 @@ const RuntimeCoreDependenciesBaseLive = AgentAwarenessRelay.layer.pipe(
 );
 
 const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
+  // Search, prepare, status inspection, and turn launch share one registry
+  // cache so every client and provider instance sees the same prepared agents.
+  Layer.provideMerge(AcpRegistryCatalogLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // V2 drivers and the orchestration runtime. Provide resource attribution so
   // the rewritten telemetry pipeline can account for logical NDJSON writes.

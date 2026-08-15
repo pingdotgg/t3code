@@ -104,6 +104,12 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import {
+  AcpRegistryCatalog,
+  AcpRegistryError,
+  isAcpRegistryError,
+  toAcpRegistryOperationError,
+} from "./provider/acp/AcpRegistrySupport.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -444,6 +450,7 @@ const makeWsRpcLayer = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const acpRegistryCatalog = yield* AcpRegistryCatalog;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1304,6 +1311,59 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverSearchAcpRegistry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSearchAcpRegistry,
+            acpRegistryCatalog.search(input).pipe(Effect.mapError(toAcpRegistryOperationError)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverPrepareAcpRegistryAgent,
+            acpRegistryCatalog.prepare(input).pipe(Effect.mapError(toAcpRegistryOperationError)),
+            {
+              "rpc.aggregate": "server",
+              "acp_registry.agent_id": input.agentId,
+            },
+          ),
+        [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+            serverSettings
+              .withSettingsSnapshot((settings) =>
+                acpRegistryCatalog.uninstallManagedBinary(
+                  input,
+                  Effect.succeed(
+                    Object.values(settings.providerInstances).some((instance) => {
+                      if (
+                        instance.driver !== "acpRegistry" ||
+                        instance.config === null ||
+                        typeof instance.config !== "object"
+                      ) {
+                        return false;
+                      }
+                      return (instance.config as Record<string, unknown>).agentId === input.agentId;
+                    }),
+                  ),
+                ),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  isAcpRegistryError(cause)
+                    ? cause
+                    : new AcpRegistryError({
+                        reason: "install_failed",
+                        detail: `Could not read provider settings while checking references for ACP Registry agent ${input.agentId}.`,
+                        cause,
+                      }),
+                ),
+                Effect.mapError(toAcpRegistryOperationError),
+              ),
+            {
+              "rpc.aggregate": "server",
+              "acp_registry.agent_id": input.agentId,
+            },
+          ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
@@ -1380,12 +1440,13 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
+        [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
-            serverSettings
-              .updateSettings(patch)
-              .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
+            (providerInstanceMutation === undefined
+              ? serverSettings.updateSettings(patch)
+              : serverSettings.updateProviderInstance(providerInstanceMutation, patch)
+            ).pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
             {
               "rpc.aggregate": "server",
             },

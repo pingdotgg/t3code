@@ -171,6 +171,12 @@ export const ServerProvider = Schema.Struct({
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  // Whether this instance can generate application text (commit messages, PR
+  // content, branch names, thread titles). Optional for back-compat: absent
+  // means supported (see `isProviderTextGenerationCapable`), so legacy
+  // producers keep their behavior and only instances that reject the
+  // operations, such as ACP Registry agents, declare `false`.
+  supportsAppTextGeneration: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
@@ -212,6 +218,14 @@ export type ServerProviders = typeof ServerProviders.Type;
  */
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
+
+/**
+ * Treat an absent `supportsAppTextGeneration` as supported so legacy
+ * producers, which all support application text generation, keep working
+ * without resending the field.
+ */
+export const isProviderTextGenerationCapable = (snapshot: ServerProvider): boolean =>
+  snapshot.supportsAppTextGeneration !== false;
 
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,

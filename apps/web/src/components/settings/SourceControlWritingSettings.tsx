@@ -9,6 +9,7 @@ import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSet
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  isProviderInstanceTextGenerationCapable,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import {
@@ -62,7 +63,7 @@ export function SourceControlWritingSettingsSection() {
       : resolvedSourceControlWriterSelection;
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
-  );
+  ).filter(isProviderInstanceTextGenerationCapable);
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     serverProviders,

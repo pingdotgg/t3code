@@ -5,28 +5,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
+import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import type { ToolLifecycleItemType } from "@t3tools/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isSessionModelState(value: unknown): value is EffectAcpSchema.SessionModelState {
-  if (!isRecord(value) || typeof value.currentModelId !== "string") {
-    return false;
-  }
-  if (!Array.isArray(value.availableModels)) {
-    return false;
-  }
-  return value.availableModels.every(
-    (model) =>
-      isRecord(model) &&
-      typeof model.modelId === "string" &&
-      typeof model.name === "string" &&
-      (model.description === undefined ||
-        model.description === null ||
-        typeof model.description === "string"),
-  );
 }
 
 function isSessionModeState(value: unknown): value is EffectAcpSchema.SessionModeState {
@@ -316,6 +299,7 @@ function makeToolCallState(
     readonly rawOutput?: unknown;
     readonly content?: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined;
     readonly locations?: ReadonlyArray<EffectAcpSchema.ToolCallLocation> | null | undefined;
+    readonly _meta?: unknown;
   },
   options?: {
     readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed";
@@ -337,11 +321,22 @@ function makeToolCallState(
   if (kind) {
     data.kind = kind;
   }
+  if (title) {
+    // The agent's verbatim title. Presentation summarizes `title` on the
+    // state (e.g. a command line becomes "Ran command"), so identity checks
+    // such as MCP-fallback detection need the raw value preserved here.
+    data.title = title;
+  }
   if (command) {
     data.command = command;
   }
   if (input.rawInput !== undefined) {
     data.rawInput = input.rawInput;
+  }
+  if (isRecord(input._meta)) {
+    // Some agents identify MCP calls only here (goose `goose.toolCall`,
+    // qwen `toolName`/`serverId`, claude-acp `claudeCode.toolName`).
+    data.meta = input._meta;
   }
   if (input.rawOutput !== undefined) {
     data.rawOutput = input.rawOutput;
@@ -396,6 +391,7 @@ function parseTypedToolCallState(
       rawOutput: event.rawOutput,
       content: event.content,
       locations: event.locations,
+      _meta: event._meta,
     },
     options,
   );
@@ -423,6 +419,157 @@ export function mergeToolCallState(
       ...next.data,
     },
   };
+}
+
+export interface AcpMcpToolCallIdentity {
+  readonly server: string;
+  readonly tool: string;
+}
+
+/** Matches an invocation of T3's `acp-mcp-call` bridge fallback CLI. */
+const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)/u;
+
+/**
+ * Agents flatten injected MCP tools into model-facing function names with no
+ * shared convention (survey of the 2026-08 registry builds): Kilo and
+ * opencode use `t3-code_<tool>`, claude-acp and qwen `mcp__t3-code__<tool>`,
+ * Amp `mcp__t3_code__<tool>` (hyphens mangled), droid `t3-code___<tool>`,
+ * Copilot `t3-code-<tool>`, cline appends `: <args json>`. T3 always injects
+ * its server as "t3-code", and matches are additionally gated on the known
+ * T3 tool inventory, so the separator match can stay loose.
+ */
+const T3_MCP_TITLE_CALL =
+  /^(?:mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
+
+/**
+ * Gemini CLI titles injected MCP calls "<tool> (<server> MCP Server)" and
+ * qwen-code appends ": <args json>" to the same template; Auggie namespaces
+ * tool-first as "<tool>_t3-code".
+ */
+const T3_MCP_TITLE_SUFFIX_CALL =
+  /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
+
+/**
+ * glm-acp-agent and Kimi CLI register injected MCP tools under their bare
+ * names; Kimi additionally appends ": <raw args json>". Safe only because the
+ * match is gated on the known T3 tool inventory.
+ */
+const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
+
+/**
+ * Best-effort recovery of MCP identity from a generic ACP tool call.
+ *
+ * ACP has no typed MCP tool-call item, so agents surface MCP calls in
+ * agent-specific shapes: codex-acp tags execute calls with
+ * `rawInput.server`/`rawInput.tool`, while agents on T3's terminal fallback
+ * run the `acp-mcp-call <tool>` CLI through their command or an embedded
+ * client terminal. Recovered identity lets the projection render the same
+ * branded MCP item that native providers produce.
+ */
+export function extractMcpToolCallIdentity(
+  toolCall: AcpToolCallState,
+  options?: {
+    /** Command lines of client terminals embedded in this tool call. */
+    readonly embeddedTerminalCommands?: ReadonlyArray<string>;
+  },
+): AcpMcpToolCallIdentity | undefined {
+  const rawInput = isRecord(toolCall.data.rawInput) ? toolCall.data.rawInput : undefined;
+  const server = typeof rawInput?.server === "string" ? rawInput.server.trim() : "";
+  const tool = typeof rawInput?.tool === "string" ? rawInput.tool.trim() : "";
+  if (server.length > 0 && tool.length > 0) {
+    return { server, tool };
+  }
+  // Agents without tagged rawInput identify their MCP calls through _meta
+  // (goose, qwen, claude-acp) or only through the namespaced function name
+  // in the title. The verbatim wire title survives merges even when a later
+  // titleless or LLM-enriched update replaces the presentation title, so
+  // match those rather than the summarized state title. Name-derived matches
+  // are gated on the known T3 tool inventory so path-like titles (for
+  // example "t3-code/README.md") never brand.
+  const meta = isRecord(toolCall.data.meta) ? toolCall.data.meta : undefined;
+  const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
+  const gooseToolCall = isRecord(meta?.goose)
+    ? isRecord(meta.goose.toolCall)
+      ? meta.goose.toolCall
+      : undefined
+    : undefined;
+  // qwen asserts the origin server explicitly, so any known tool suffix in
+  // its toolName identifies the call even under future prefix formats.
+  const metaServerId = typeof meta?.serverId === "string" ? meta.serverId.trim() : "";
+  const metaToolName = typeof meta?.toolName === "string" ? meta.toolName.trim() : "";
+  if (/^t3[-_ ]?code$/i.test(metaServerId) && metaToolName.length > 0) {
+    for (const knownTool of T3_MCP_TOOL_NAMES) {
+      const boundary = metaToolName.length - knownTool.length - 1;
+      if (
+        metaToolName === knownTool ||
+        (metaToolName.endsWith(knownTool) &&
+          boundary >= 0 &&
+          !/[A-Za-z0-9]/.test(metaToolName.charAt(boundary)))
+      ) {
+        return { server: "t3-code", tool: knownTool };
+      }
+    }
+  }
+  // A present-but-foreign origin assertion marks the whole call as another
+  // server's MCP call, so no loose name matching (meta or title) may brand it.
+  const gooseExtension =
+    typeof gooseToolCall?.extensionName === "string" ? gooseToolCall.extensionName.trim() : "";
+  const assertsForeignOrigin =
+    (metaServerId.length > 0 && !/^t3[-_ ]?code$/i.test(metaServerId)) ||
+    (gooseExtension.length > 0 && !/^t3[-_ ]?code$/i.test(gooseExtension));
+  if (assertsForeignOrigin) {
+    return undefined;
+  }
+  const candidates = [
+    meta?.toolName,
+    claudeCode?.toolName,
+    gooseToolCall?.toolName,
+    toolCall.data.title,
+  ].filter((value): value is string => typeof value === "string");
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim();
+    const match =
+      T3_MCP_TITLE_CALL.exec(trimmed) ??
+      T3_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??
+      T3_MCP_BARE_TITLE_CALL.exec(trimmed);
+    const candidateTool = match?.groups?.tool;
+    if (candidateTool !== undefined && T3_MCP_TOOL_NAMES.has(candidateTool)) {
+      return { server: "t3-code", tool: candidateTool };
+    }
+  }
+  const commands = [
+    ...(toolCall.command === undefined ? [] : [toolCall.command]),
+    // pi-acp reports the exec command line only as the verbatim title.
+    ...(typeof toolCall.data.title === "string" ? [toolCall.data.title] : []),
+    ...(options?.embeddedTerminalCommands ?? []),
+  ];
+  for (const command of commands) {
+    const match = ACP_MCP_FALLBACK_CALL.exec(command);
+    if (match?.[1] !== undefined) {
+      // The acp-mcp-call CLI exists only as T3's bridge fallback, so the
+      // server identity is T3's by construction.
+      return { server: "t3-code", tool: match[1] };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Terminal ids embedded in a raw tool_call update, captured before
+ * {@link resolveEmbeddedTerminalContent} rewrites them into plain text, so the
+ * projection can still resolve the terminal's command line.
+ */
+export function embeddedTerminalIdsFromSessionUpdate(
+  notification: EffectAcpSchema.SessionNotification,
+): { readonly toolCallId: string; readonly terminalIds: ReadonlyArray<string> } | undefined {
+  const update = notification.update;
+  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+    return undefined;
+  }
+  const terminalIds = (update.content ?? [])
+    .filter((entry) => entry.type === "terminal")
+    .map((entry) => entry.terminalId);
+  return terminalIds.length === 0 ? undefined : { toolCallId: update.toolCallId, terminalIds };
 }
 
 export function parsePermissionRequest(
@@ -522,13 +669,10 @@ export function syntheticLoadSessionResponseFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,
 ): EffectAcpSchema.LoadSessionResponse {
   const meta = initializeResult._meta;
-  const modelState = isRecord(meta) ? meta.modelState : undefined;
   const modeState = isRecord(meta) ? meta.modeState : undefined;
-  const models = isSessionModelState(modelState) ? modelState : undefined;
   const modes = isSessionModeState(modeState) ? modeState : undefined;
 
   return {
-    ...(models ? { models } : {}),
     ...(modes ? { modes } : {}),
     _meta: {
       t3SessionLoadReady: "replay_idle",

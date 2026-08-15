@@ -326,6 +326,19 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
+      updateProviderInstance: (mutation, patch = {}) =>
+        Effect.gen(function* () {
+          const current = yield* Ref.get(settingsRef);
+          const next = ServerSettingsModule.applyProviderInstanceMutation(
+            applyServerSettingsPatch(current, patch),
+            mutation,
+          );
+          encodeServerSettings(next);
+          yield* Ref.set(settingsRef, next);
+          yield* PubSub.publish(changes, next);
+          return next;
+        }),
+      withSettingsSnapshot: (use) => Ref.get(settingsRef).pipe(Effect.flatMap(use)),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },
@@ -598,6 +611,82 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
         ]);
+      });
+
+      it("drops stale ACP Registry models missing from a completed discovery probe", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("acpRegistry_codex"),
+          driver: ProviderDriverKind.make("acpRegistry"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-13T00:00:00.000Z",
+          version: "1.2.0",
+          models: [
+            { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+            {
+              slug: "gpt-5.6-sol[low]",
+              name: "GPT-5.6-Sol (low)",
+              isCustom: false,
+              capabilities: null,
+            },
+            { slug: "default", name: "Default", isCustom: false, capabilities: null },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-08-13T00:01:00.000Z",
+          models: [
+            { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...refreshedProvider.models,
+        ]);
+      });
+
+      it("retains ACP Registry models while discovery has not completed", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("acpRegistry_codex"),
+          driver: ProviderDriverKind.make("acpRegistry"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-13T00:00:00.000Z",
+          version: "1.2.0",
+          models: [
+            { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const checkingProvider = {
+          ...previousProvider,
+          checkedAt: "2026-08-13T00:01:00.000Z",
+          auth: { status: "unknown" },
+          models: [{ slug: "default", name: "Default", isCustom: false, capabilities: null }],
+        } satisfies ServerProvider;
+        const failedProbeProvider = {
+          ...checkingProvider,
+          status: "warning",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, checkingProvider).models, [
+          { slug: "default", name: "Default", isCustom: false, capabilities: null },
+          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+        ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, failedProbeProvider).models,
+          [
+            { slug: "default", name: "Default", isCustom: false, capabilities: null },
+            { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ],
+        );
       });
 
       it("drops stale OpenCode models missing from a successful refresh", () => {

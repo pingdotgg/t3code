@@ -6,6 +6,7 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  isProviderInstanceTextGenerationCapable,
   resolveDefaultProviderModelSelection,
   resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
@@ -20,10 +21,14 @@ function provider(input: {
   displayName?: string;
   status?: ServerProvider["status"];
   models?: ServerProvider["models"];
+  supportsAppTextGeneration?: boolean;
 }): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(input.instanceId),
     driver: input.provider,
+    ...(input.supportsAppTextGeneration === undefined
+      ? {}
+      : { supportsAppTextGeneration: input.supportsAppTextGeneration }),
     ...(input.displayName ? { displayName: input.displayName } : {}),
     enabled: input.enabled ?? true,
     installed: true,
@@ -125,6 +130,22 @@ describe("isProviderInstancePickerVisible", () => {
   });
 });
 
+describe("isProviderInstanceTextGenerationCapable", () => {
+  it("keeps instances that omit the flag and drops instances that declare false", () => {
+    const [legacyEntry, acpEntry] = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+      provider({
+        provider: ProviderDriverKind.make("acpRegistry"),
+        instanceId: "acp_gemini",
+        supportsAppTextGeneration: false,
+      }),
+    ]);
+
+    expect(legacyEntry && isProviderInstanceTextGenerationCapable(legacyEntry)).toBe(true);
+    expect(acpEntry && isProviderInstanceTextGenerationCapable(acpEntry)).toBe(false);
+  });
+});
+
 describe("applyProviderInstanceSettings", () => {
   it("uses settings when a streamed snapshot still reports a disabled default as enabled", () => {
     const entries = deriveProviderInstanceEntries([
@@ -156,6 +177,31 @@ describe("applyProviderInstanceSettings", () => {
     });
 
     expect(entry?.enabled).toBe(false);
+  });
+
+  it("projects generic ACP registry identity and catalog icon metadata", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_kilo");
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("acpRegistry"), instanceId }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          config: {
+            agentId: "kilo",
+            registryIconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/kilo.svg",
+          },
+        },
+      },
+      providers: {} as never,
+    });
+
+    expect(entry).toMatchObject({
+      acpRegistryAgentId: "kilo",
+      acpRegistryIconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/kilo.svg",
+    });
   });
 });
 

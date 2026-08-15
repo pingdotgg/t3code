@@ -10,6 +10,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
@@ -142,6 +143,48 @@ describe("AcpSessionRuntime", () => {
           },
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("can surface auth-required without authenticating during discovery", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    let advertisedAuthMethodName: string | undefined;
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const result = yield* Effect.result(runtime.start());
+
+      expect(Result.isFailure(result)).toBe(true);
+      expect(advertisedAuthMethodName).toBe("Mock agent authentication");
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(["initialize", "session/new"]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authenticateOnAuthRequired: false,
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHOD_ID: "test",
+              T3_ACP_REQUIRE_AUTH: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          onInitialized: (initializeResult) =>
+            Effect.sync(() => {
+              advertisedAuthMethodName = initializeResult.authMethods?.[0]?.name;
+            }),
           requestLogger: (event) =>
             Effect.sync(() => {
               requestEvents.push(event);

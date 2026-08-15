@@ -33,7 +33,10 @@ import {
   type TerminalWriteInput,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { mergePathEntries } from "@t3tools/shared/shell";
+
+import { acpRegistryManagedBinaryDirectories } from "../provider/acp/AcpRegistrySupport.ts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -1182,6 +1185,12 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Caches directory holding ACP Registry managed binaries. When set, their
+   * install directories are appended to the terminal PATH so users can run
+   * managed agents by name (e.g. `kimi login`).
+   */
+  managedBinaryCacheDir?: string;
   subprocessInspector?: TerminalSubprocessInspector;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -1198,12 +1207,13 @@ interface TerminalManagerOptions {
 }
 
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
+    managedBinaryCacheDir: providerStatusCacheDir,
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
   });
@@ -1220,6 +1230,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const logsDir = options.logsDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
   const platform = yield* HostProcessPlatform;
+  const architecture = yield* HostProcessArchitecture;
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
   // things like PSModulePath, DISPLAY, proxies, and toolchain variables.
@@ -1922,6 +1933,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+            // Append (never prepend) managed ACP agent install directories so
+            // `kimi login` and friends resolve by name without shadowing any
+            // system or user tool of the same name.
+            if (options.managedBinaryCacheDir !== undefined) {
+              const managedDirectories = yield* acpRegistryManagedBinaryDirectories({
+                fileSystem,
+                path,
+                cacheDir: options.managedBinaryCacheDir,
+                platform,
+                architecture,
+              });
+              if (managedDirectories.length > 0) {
+                const delimiter = platform === "win32" ? ";" : ":";
+                const merged = mergePathEntries(
+                  terminalEnv.PATH,
+                  managedDirectories.join(delimiter),
+                  platform,
+                );
+                if (merged !== undefined) {
+                  terminalEnv.PATH = merged;
+                }
+              }
+            }
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;

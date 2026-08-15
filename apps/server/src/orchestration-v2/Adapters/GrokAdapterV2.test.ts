@@ -3,16 +3,10 @@ import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import {
   AcpProviderCapabilitiesV2,
   acpCompletedTurnShouldTerminalizeTool,
-  acpPermissionDisposition,
-  acpRootSessionUpdateIngestsOutput,
-  acpRootTurnCompletionDrainMs,
-  acpRootTurnHasIngestedOutput,
-  acpRootTurnIsIdle,
-  acpRootTurnSettleDebounceMs,
-  acpRootTurnShouldRearmRecoveryTimers,
   acpSubagentStatusBlocksTurnSettlement,
   acpSupportsImagePrompts,
 } from "./AcpAdapterV2.ts";
@@ -54,112 +48,6 @@ function runtimePolicy(input: {
   });
 }
 
-describe("acpRootTurnSettleDebounceMs", () => {
-  it("keeps the historical debounce constant for re-enable experiments", () => {
-    assert.equal(acpRootTurnSettleDebounceMs, 2_000);
-  });
-});
-
-describe("acpRootTurnCompletionDrainMs", () => {
-  it("gives trailing root chunks a short landing window", () => {
-    assert.equal(acpRootTurnCompletionDrainMs, 100);
-  });
-});
-
-describe("acpRootSessionUpdateIngestsOutput", () => {
-  const sessionId = "session-1";
-
-  it("ignores empty assistant chunks used as Grok keepalives", () => {
-    assert.isFalse(
-      acpRootSessionUpdateIngestsOutput({
-        sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "" },
-        },
-      }),
-    );
-  });
-
-  it("accepts non-empty assistant and reasoning chunks", () => {
-    assert.isTrue(
-      acpRootSessionUpdateIngestsOutput({
-        sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "hello" },
-        },
-      }),
-    );
-    assert.isTrue(
-      acpRootSessionUpdateIngestsOutput({
-        sessionId,
-        update: {
-          sessionUpdate: "agent_thought_chunk",
-          content: { type: "text", text: "thinking" },
-        },
-      }),
-    );
-  });
-
-  it("accepts tool and plan updates", () => {
-    assert.isTrue(
-      acpRootSessionUpdateIngestsOutput({
-        sessionId,
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId: "tool-1",
-          title: "Read",
-          kind: "read",
-          status: "pending",
-        },
-      }),
-    );
-    assert.isTrue(
-      acpRootSessionUpdateIngestsOutput({
-        sessionId,
-        update: {
-          sessionUpdate: "plan",
-          entries: [{ content: "Step 1", status: "pending", priority: "medium" }],
-        },
-      }),
-    );
-  });
-});
-
-describe("acpRootTurnHasIngestedOutput", () => {
-  const empty = {
-    assistant: { current: null, nextSegment: 0 },
-    reasoning: { current: null, nextSegment: 0 },
-    tools: new Map(),
-    plan: null,
-  } as const;
-
-  it("is false before any root turn items land", () => {
-    assert.isFalse(acpRootTurnHasIngestedOutput(empty));
-  });
-
-  it("is true once assistant segments have streamed", () => {
-    assert.isTrue(
-      acpRootTurnHasIngestedOutput({
-        ...empty,
-        assistant: { current: null, nextSegment: 1 },
-      }),
-    );
-  });
-});
-
-describe("acpRootTurn recovery timer re-arm", () => {
-  it("re-arms idle settle after pending clears on active turns", () => {
-    assert.isTrue(acpRootTurnShouldRearmRecoveryTimers({ finalized: false, interrupted: false }));
-  });
-
-  it("skips re-arm when the turn is already terminal", () => {
-    assert.isFalse(acpRootTurnShouldRearmRecoveryTimers({ finalized: true, interrupted: false }));
-    assert.isFalse(acpRootTurnShouldRearmRecoveryTimers({ finalized: false, interrupted: true }));
-  });
-});
-
 describe("acpSubagentStatusBlocksTurnSettlement", () => {
   it("blocks settlement for pending and running subagents", () => {
     assert.isTrue(acpSubagentStatusBlocksTurnSettlement("pending"));
@@ -171,54 +59,6 @@ describe("acpSubagentStatusBlocksTurnSettlement", () => {
     assert.isFalse(acpSubagentStatusBlocksTurnSettlement("completed"));
     assert.isFalse(acpSubagentStatusBlocksTurnSettlement("failed"));
     assert.isFalse(acpSubagentStatusBlocksTurnSettlement("interrupted"));
-  });
-});
-
-describe("acpRootTurnIsIdle", () => {
-  const quiet = {
-    finalized: false,
-    interrupted: false,
-    assistantStreamOpen: false,
-    reasoningStreamOpen: false,
-    hasRunningTool: false,
-    hasPendingRuntimeRequest: false,
-    hasToolHistory: false,
-    hasActiveSubagent: false,
-    hasOutput: true,
-  } as const;
-
-  it("is false while assistant text is still streaming", () => {
-    assert.isFalse(acpRootTurnIsIdle({ ...quiet, assistantStreamOpen: true }));
-  });
-
-  it("is false while a tool is running", () => {
-    assert.isFalse(acpRootTurnIsIdle({ ...quiet, hasRunningTool: true }));
-  });
-
-  it("is false after tool history (prompt RPC owns terminalization)", () => {
-    assert.isFalse(acpRootTurnIsIdle({ ...quiet, hasToolHistory: true }));
-  });
-
-  it("is false while a native subagent task is still running", () => {
-    assert.isFalse(acpRootTurnIsIdle({ ...quiet, hasActiveSubagent: true }));
-  });
-
-  it("is false when only reasoning or tools have streamed", () => {
-    assert.isFalse(acpRootTurnIsIdle({ ...quiet, hasOutput: false }));
-  });
-
-  it("is false for assistant-only quiet (preamble-before-tools must not settle)", () => {
-    assert.isFalse(acpRootTurnIsIdle(quiet));
-  });
-
-  it("is false when tools finished and root is quiet (no speculative multi-wave settle)", () => {
-    assert.isFalse(
-      acpRootTurnIsIdle({
-        ...quiet,
-        hasToolHistory: true,
-        hasRunningTool: false,
-      }),
-    );
   });
 });
 

@@ -17,18 +17,22 @@ const atoms = vi.hoisted(() => ({
   providersAtom: Symbol("providers"),
   refreshProviders: Symbol("refreshProviders"),
   updateProvider: Symbol("updateProvider"),
+  uninstallAcpRegistryManagedBinary: Symbol("uninstallAcpRegistryManagedBinary"),
 }));
 
 const commands = vi.hoisted(() => ({
   refresh: vi.fn(),
   updateProvider: vi.fn(),
+  uninstall: vi.fn(),
 }));
 
 const settingsState = vi.hoisted(() => ({
   value: null as UnifiedSettings | null,
   readEnvironmentIds: [] as EnvironmentId[],
   updateEnvironmentIds: [] as EnvironmentId[],
+  mutationEnvironmentIds: [] as EnvironmentId[],
   updateSettings: vi.fn(),
+  mutateProviderInstance: vi.fn(),
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -58,12 +62,17 @@ vi.mock("../../state/server", () => ({
     providersValueAtom: () => atoms.providersAtom,
     refreshProviders: atoms.refreshProviders,
     updateProvider: atoms.updateProvider,
+    uninstallAcpRegistryManagedBinary: atoms.uninstallAcpRegistryManagedBinary,
   },
 }));
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (atom: symbol) =>
-    atom === atoms.refreshProviders ? commands.refresh : commands.updateProvider,
+    atom === atoms.refreshProviders
+      ? commands.refresh
+      : atom === atoms.uninstallAcpRegistryManagedBinary
+        ? commands.uninstall
+        : commands.updateProvider,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
@@ -74,6 +83,10 @@ vi.mock("../../hooks/useSettings", () => ({
   useUpdateEnvironmentSettings: (environmentId: EnvironmentId) => {
     settingsState.updateEnvironmentIds.push(environmentId);
     return settingsState.updateSettings;
+  },
+  usePersistEnvironmentProviderInstanceMutation: (environmentId: EnvironmentId) => {
+    settingsState.mutationEnvironmentIds.push(environmentId);
+    return settingsState.mutateProviderInstance;
   },
 }));
 
@@ -139,15 +152,21 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.value = DEFAULT_UNIFIED_SETTINGS;
     settingsState.readEnvironmentIds = [];
     settingsState.updateEnvironmentIds = [];
+    settingsState.mutationEnvironmentIds = [];
     settingsState.updateSettings.mockReset();
+    settingsState.mutateProviderInstance
+      .mockReset()
+      .mockResolvedValue({ _tag: "Success", value: {} });
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
+    commands.uninstall.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   });
 
   it("coalesces a nullable provider snapshot before rendering array-backed UI", () => {
     expect(() => renderPanel()).not.toThrow();
     expect(settingsState.readEnvironmentIds).toEqual([environmentId]);
     expect(settingsState.updateEnvironmentIds).toEqual([environmentId]);
+    expect(settingsState.mutationEnvironmentIds).toEqual([environmentId]);
   });
 
   it("routes refresh and provider update commands to the selected environment", async () => {
@@ -207,7 +226,7 @@ describe("EnvironmentProviderSettings routing", () => {
     ).toBeNull();
   });
 
-  it("deletes and resets provider configuration without erasing shared preferences", () => {
+  it("deletes and resets provider configuration without erasing shared preferences", async () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
@@ -229,14 +248,14 @@ describe("EnvironmentProviderSettings routing", () => {
     const customCard = visitElements(panel, (element) => element.props.instanceId === customId);
     expect(customCard).not.toBeNull();
     (customCard?.props.onDelete as (() => void) | undefined)?.();
+    await flushPromises();
 
-    expect(settingsState.updateSettings).toHaveBeenLastCalledWith({
-      providerInstances: {
-        [codexId]: settingsState.value.providerInstances?.[codexId],
-      },
+    expect(settingsState.mutateProviderInstance).toHaveBeenLastCalledWith({
+      operation: "remove",
+      instanceId: customId,
     });
 
-    settingsState.updateSettings.mockClear();
+    settingsState.mutateProviderInstance.mockClear();
     const defaultCard = visitElements(panel, (element) => element.props.instanceId === codexId);
     const resetAction = defaultCard?.props.headerAction;
     const resetButton = visitElements(
@@ -245,12 +264,69 @@ describe("EnvironmentProviderSettings routing", () => {
     );
     expect(resetButton).not.toBeNull();
     (resetButton?.props.onClick as (() => void) | undefined)?.();
+    await flushPromises();
 
-    const resetPatch = settingsState.updateSettings.mock.lastCall?.[0] as
-      | Record<string, unknown>
-      | undefined;
-    expect(Object.keys(resetPatch ?? {}).sort()).toEqual(["providerInstances", "providers"]);
+    const [resetMutation, resetPatch] = settingsState.mutateProviderInstance.mock.lastCall ?? [];
+    expect(resetMutation).toEqual({ operation: "remove", instanceId: codexId });
+    expect(Object.keys(resetPatch ?? {}).sort()).toEqual(["providers"]);
     expect(resetPatch).not.toHaveProperty("favorites");
     expect(resetPatch).not.toHaveProperty("providerModelPreferences");
+  });
+
+  it("updates one provider instance without sending a stale whole map", async () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          displayName: "Work",
+        },
+      },
+    };
+    const panel = renderPanel();
+    const card = visitElements(panel, (element) => element.props.instanceId === customId);
+    const next = {
+      driver: ProviderDriverKind.make("codex"),
+      enabled: false,
+      displayName: "Work",
+    };
+    (card?.props.onUpdate as ((instance: typeof next) => void) | undefined)?.(next);
+    await flushPromises();
+
+    expect(settingsState.mutateProviderInstance).toHaveBeenCalledWith(
+      { operation: "upsert", instanceId: customId, instance: next },
+      {},
+    );
+  });
+
+  it("lets the server decide managed ACP cleanup after an atomic delete", async () => {
+    const firstId = ProviderInstanceId.make("acpRegistry_kilo_one");
+    const secondId = ProviderInstanceId.make("acpRegistry_kilo_two");
+    const registryInstance = {
+      driver: ProviderDriverKind.make("acpRegistry"),
+      enabled: true,
+      config: { agentId: "kilo" },
+    };
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [firstId]: registryInstance,
+        [secondId]: registryInstance,
+      },
+    };
+    const panel = renderPanel();
+    const card = visitElements(panel, (element) => element.props.instanceId === firstId);
+    (card?.props.onDelete as (() => void) | undefined)?.();
+    await flushPromises();
+
+    expect(settingsState.mutateProviderInstance).toHaveBeenCalledWith({
+      operation: "remove",
+      instanceId: firstId,
+    });
+    expect(commands.uninstall).toHaveBeenCalledWith({
+      environmentId,
+      input: { agentId: "kilo" },
+    });
   });
 });

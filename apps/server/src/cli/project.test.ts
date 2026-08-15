@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import { Command } from "effect/unstable/cli";
 
-import { cli } from "../bin.ts";
+import { cli } from "../binCli.ts";
 import * as ServerConfig from "../config.ts";
 import { ProjectServiceLayerLive } from "../orchestration-v2/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";

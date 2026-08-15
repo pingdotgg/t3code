@@ -6865,6 +6865,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
+        // A Stop can race with terminal provider events. Its empty plan is an
+        // accepted idempotent outcome; every other command must still mutate.
         planned.events.length > 0
           ? Effect.succeed(planned)
           : Effect.fail(

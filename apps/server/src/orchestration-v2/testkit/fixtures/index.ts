@@ -164,16 +164,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     name: "acp_elicitation",
     buildInput: planQuestionsInput,
     providers: [
-      {
-        driver: ProviderDriverKind.make("grok"),
-        transcriptFile: new URL("./acp_elicitation/grok_transcript.ndjson", import.meta.url),
-        modelSelection: GROK_MODEL_SELECTION,
-        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
-        assertOutput: assertPlanQuestionsOutput,
-      },
+      // Grok Build still elicits with the pre-1.0 session/elicitation wire
+      // method the current spec removed; T3 supports standard ACP only, so
+      // the scenario covers the registry driver until Grok ships
+      // elicitation/create.
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./acp_elicitation/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL("./acp_elicitation/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertPlanQuestionsOutput,

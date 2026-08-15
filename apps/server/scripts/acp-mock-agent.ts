@@ -26,6 +26,8 @@ const emitInTurnTaskOutputThenLateDuplicate =
 const injectedReportTriggerPath = process.env.T3_ACP_INJECTED_REPORT_TRIGGER_PATH;
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+const emitMcpToolApprovalElicitation =
+  process.env.T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION === "1";
 const emitUrlElicitation = process.env.T3_ACP_EMIT_URL_ELICITATION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
@@ -64,11 +66,15 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+const omitModelConfigOption = process.env.T3_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const supportsSessionLifecycle = process.env.T3_ACP_SESSION_LIFECYCLE === "1";
 const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
 const requiresAuthentication = process.env.T3_ACP_REQUIRE_AUTH === "1";
+const commandAdvertisementDelayMs = Number(
+  process.env.T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS ?? "-1",
+);
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -129,6 +135,9 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (omitModelConfigOption) {
+    return [];
+  }
   if (parameterizedModelPicker) {
     const baseOptions: Array<AcpSchema.SessionConfigOption> = [
       {
@@ -284,21 +293,6 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
-const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
-  { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
-];
-
-function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
-    ? currentModelId
-    : "grok-build";
-  return {
-    currentModelId: modelId,
-    availableModels: grokAcpModels,
-  };
-}
-
 const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
 
@@ -356,10 +350,34 @@ const program = Effect.gen(function* () {
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (commandAdvertisementDelayMs >= 0) {
+        yield* Effect.sleep(`${commandAdvertisementDelayMs} millis`).pipe(
+          Effect.andThen(
+            agent.client.sessionUpdate({
+              sessionId,
+              update: {
+                sessionUpdate: "available_commands_update",
+                availableCommands: [
+                  {
+                    name: "review",
+                    description: "Review the current changes",
+                    input: { hint: "focus" },
+                  },
+                  {
+                    name: "$workspace-skill",
+                    description: "Run the workspace skill",
+                    input: null,
+                  },
+                ],
+              },
+            }),
+          ),
+          Effect.forkDetach,
+        );
+      }
       return {
         sessionId,
         modes: modeState(),
-        models: modelState(),
         configOptions: configOptions(),
       };
     }),
@@ -405,7 +423,6 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(loadSessionDelayMs);
         return {
           modes: modeState(),
-          models: modelState(),
           configOptions: configOptions(),
         };
       }
@@ -421,7 +438,6 @@ const program = Effect.gen(function* () {
       });
       return {
         modes: modeState(),
-        models: modelState(),
         configOptions: configOptions(),
       };
     }),
@@ -449,7 +465,6 @@ const program = Effect.gen(function* () {
       return {
         sessionId: `${request.sessionId}-fork`,
         modes: modeState(),
-        models: modelState(),
         configOptions: configOptions(),
       };
     }),
@@ -460,7 +475,6 @@ const program = Effect.gen(function* () {
       yield* requireAuthentication();
       return {
         modes: modeState(),
-        models: modelState(),
         configOptions: configOptions(),
       };
     }),
@@ -469,22 +483,6 @@ const program = Effect.gen(function* () {
   yield* agent.handleCloseSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
-      return {};
-    }),
-  );
-
-  yield* agent.handleSetSessionModel((request) =>
-    Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
-        return yield* AcpError.AcpRequestError.invalidParams(
-          `Unknown mock model id: ${request.modelId}`,
-          {
-            method: "session/set_model",
-            params: request,
-          },
-        );
-      }
-      currentModelId = request.modelId;
       return {};
     }),
   );
@@ -947,7 +945,7 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
-      if (emitElicitation) {
+      if (emitElicitation || emitMcpToolApprovalElicitation) {
         yield* agent.client.elicit({
           sessionId: requestedSessionId,
           message: "Approve this request?",
@@ -958,6 +956,9 @@ const program = Effect.gen(function* () {
               approved: { type: "boolean", title: "Approved" },
             },
           },
+          ...(emitMcpToolApprovalElicitation
+            ? { _meta: { codex_approval_kind: "mcp_tool_call" } }
+            : {}),
         });
         return { stopReason: "end_turn" };
       }

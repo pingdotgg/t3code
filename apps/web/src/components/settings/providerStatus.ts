@@ -56,8 +56,9 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     };
   }
   if (provider.auth.status === "unauthenticated") {
+    const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: "Not authenticated",
+      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
       detail: provider.message ?? null,
     };
   }

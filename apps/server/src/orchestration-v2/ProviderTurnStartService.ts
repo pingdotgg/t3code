@@ -170,6 +170,9 @@ export const layer: Layer.Layer<
         ...(existingSessionProjection === undefined
           ? {}
           : { resumeFromSession: existingSessionProjection }),
+        ...(providerThread.nativeThreadRef?.nativeId == null
+          ? {}
+          : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
       });
       let effectiveHandoffs = handoffs;
       const loadedProviderThread = yield* Effect.gen(function* () {

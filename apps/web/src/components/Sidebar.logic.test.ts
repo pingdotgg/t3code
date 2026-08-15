@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
   archiveSelectedThreadEntries,
+  buildSidebarProviderEntriesByEnvironment,
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
@@ -41,7 +42,16 @@ import {
   sortSidebarV2ProjectGroups,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -51,6 +61,74 @@ import {
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("buildSidebarProviderEntriesByEnvironment", () => {
+  it("keeps registry icon metadata scoped to each environment", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const instanceId = ProviderInstanceId.make("acpRegistry_shared");
+    const provider: ServerProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "ACP Registry",
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-08-13T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const registryInstance = (agentId: string, registryIconUrl: string) => ({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      config: { agentId, registryIconUrl },
+    });
+    const entries = buildSidebarProviderEntriesByEnvironment(
+      new Map([
+        [
+          localEnvironmentId,
+          {
+            providers: [provider],
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: registryInstance(
+                  "kilo",
+                  "https://cdn.agentclientprotocol.com/registry/v1/latest/kilo.svg",
+                ),
+              },
+            },
+          },
+        ],
+        [
+          remoteEnvironmentId,
+          {
+            providers: [provider],
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: registryInstance(
+                  "codex",
+                  "https://cdn.agentclientprotocol.com/registry/v1/latest/codex.svg",
+                ),
+              },
+            },
+          },
+        ],
+      ]),
+    );
+
+    expect(entries.get(localEnvironmentId)?.get(instanceId)).toMatchObject({
+      acpRegistryAgentId: "kilo",
+      acpRegistryIconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/kilo.svg",
+    });
+    expect(entries.get(remoteEnvironmentId)?.get(instanceId)).toMatchObject({
+      acpRegistryAgentId: "codex",
+      acpRegistryIconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/codex.svg",
+    });
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

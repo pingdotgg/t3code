@@ -679,6 +679,12 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
     ),
   );
+  const updateSettings = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:update-settings",
+    tag: WS_METHODS.serverUpdateSettings,
+    scheduler: configScheduler,
+    concurrency: configConcurrency,
+  });
 
   return {
     configValueAtom,
@@ -718,6 +724,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
+    }),
+    searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:acp-registry:search",
+      tag: WS_METHODS.serverSearchAcpRegistry,
+      // Each submitted search refreshes the server-side registry. Dropping an
+      // abandoned query immediately also interrupts stale in-flight requests.
+      staleTimeMs: 0,
+      idleTtlMs: 0,
     }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -767,11 +781,26 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
-    updateSettings: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:update-settings",
-      tag: WS_METHODS.serverUpdateSettings,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
+    updateSettings,
+    // Provider-instance mutations share the settings command and its
+    // environment-serial scheduler. The named boundary keeps clients on the
+    // atomic map-entry payload instead of rebuilding a stale whole map.
+    mutateProviderInstance: updateSettings,
+    prepareAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:prepare",
+      tag: WS_METHODS.serverPrepareAcpRegistryAgent,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
+    }),
+    uninstallAcpRegistryManagedBinary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:uninstall-managed-binary",
+      tag: WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

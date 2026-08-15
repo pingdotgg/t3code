@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACP Registry search dialog: visual options</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: #fff; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 36px 0 8px; }
+  p { margin: 6px 0; color: #bbb; }
+  code { background: #151515; padding: 1px 4px; border-radius: 4px; font-size: 12.5px; }
+  .shared { border-left: 2px solid #333; padding-left: 12px; margin: 14px 0 4px; }
+  .shared li { color: #bbb; margin: 3px 0; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; color: #000; background: #fff; border-radius: 4px; padding: 1px 7px; margin-right: 8px; vertical-align: 2px; }
+  .mock { background: #0b0f0d; border: 1px solid #222; border-radius: 10px; padding: 14px 16px; margin: 10px 0 4px; }
+  .note { font-size: 12.5px; color: #888; margin: 6px 0 0; }
+  .row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid #1f2622; }
+  .row:first-child { border-top: 0; }
+  .icon { width: 32px; height: 32px; border-radius: 8px; background: #1a201d; display: flex; align-items: center; justify-content: center; font-size: 15px; flex: none; }
+  .grow { min-width: 0; flex: 1; }
+  .name { font-weight: 600; color: #fff; }
+  .desc { color: #a8b0ab; margin-top: 1px; }
+  .meta { color: #6f7873; font-size: 12px; margin-top: 4px; }
+  .meta a { color: #8fa598; text-decoration: none; }
+  .add { flex: none; border: 1px solid #2c332f; background: transparent; color: #fff; border-radius: 7px; font-size: 12.5px; padding: 4px 12px; height: fit-content; }
+  .sep::before { content: "·"; margin: 0 5px; color: #3a423d; }
+  .ver { color: #9aa39d; font-size: 12px; }
+  .check { color: #7fb894; }
+  footer.mockfooter { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1f2622; margin-top: 10px; padding-top: 10px; color: #6f7873; font-size: 11.5px; }
+  footer.mockfooter b { color: #cfd6d1; font-weight: 500; }
+  .rightcol { flex: none; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.grid td { padding: 8px 8px 8px 0; border-top: 1px solid #1f2622; vertical-align: top; }
+  table.grid tr:first-child td { border-top: 0; }
+  .sub { color: #6f7873; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ACP Registry search dialog: result rows</h1>
+  <p>Four options for the "Find an ACP agent" result list. Same three example agents in each, including the worst real inputs: a raw <code>Name &lt;email&gt;</code> author and a numeric username.</p>
+
+  <h2>Shared fixes (applied whichever option wins)</h2>
+  <ul class="shared">
+    <li>Authors parse to display name only: <code>Augment Code &lt;support@augmentcode.com&gt;</code> becomes <code>Augment Code</code>; extra authors collapse to <code>+N</code>.</li>
+    <li>The stray double divider band between the list and the footer goes away (the list's bottom border and the footer's top border currently stack).</li>
+    <li>Integrity stops being a bare <code>SHA-256</code>/<code>Registry</code> word: verified checksums show a small check glyph with a tooltip, registry-integrity shows nothing.</li>
+  </ul>
+
+  <h2><span class="tag">A</span>Quiet meta line</h2>
+  <p>Closest to today. One muted metadata line, dot separated, links at the end. Lowest churn.</p>
+  <div class="mock">
+    <div class="row">
+      <div class="icon">↯</div>
+      <div class="grow">
+        <span class="name">Amp</span> <span class="ver">v0.9.0</span>
+        <div class="desc">ACP wrapper for Amp, the frontier coding agent</div>
+        <div class="meta">tao12345666333<span class="sep"></span>binary<span class="sep"></span>Apache-2.0<span class="sep"></span><span class="check">✓ checksum</span><span class="sep"></span><a href="#">Source ↗</a></div>
+      </div>
+      <button class="add">Add</button>
+    </div>
+    <div class="row">
+      <div class="icon">⌗</div>
+      <div class="grow">
+        <span class="name">Auggie CLI</span> <span class="ver">v0.35.0</span>
+        <div class="desc">Augment Code's powerful software agent, backed by industry-leading context engine</div>
+        <div class="meta">Augment Code<span class="sep"></span>npx<span class="sep"></span>proprietary<span class="sep"></span><a href="#">Docs ↗</a><span class="sep"></span><a href="#">Source ↗</a></div>
+      </div>
+      <button class="add">Add</button>
+    </div>
+    <div class="row">
+      <div class="icon">⠿</div>
+      <div class="grow">
+        <span class="name">Autohand Code</span> <span class="ver">v0.2.1</span>
+        <div class="desc">AI coding agent powered by Autohand AI</div>
+        <div class="meta">Autohand AI<span class="sep"></span>npx<span class="sep"></span>Apache-2.0<span class="sep"></span><a href="#">Docs ↗</a><span class="sep"></span><a href="#">Source ↗</a></div>
+      </div>
+      <button class="add">Add</button>
+    </div>
+    <footer class="mockfooter"><span>Authentication is completed separately with the selected agent.</span><b>Configure manually</b></footer>
+  </div>
+  <p class="note">Version moves next to the name so the meta line is only provenance: author, runtime, license, integrity, links.</p>
+
+  <h2><span class="tag">B</span>Right rail</h2>
+  <p>Name and description own the left, everything factual right-aligns in a narrow rail above the Add button. Scans like a package manager.</p>
+  <div class="mock">
+    <div class="row">
+      <div class="icon">↯</div>
+      <div class="grow">
+        <div class="name">Amp</div>
+        <div class="desc">ACP wrapper for Amp, the frontier coding agent</div>
+        <div class="meta">tao12345666333<span class="sep"></span><a href="#">Source ↗</a></div>
+      </div>
+      <div class="rightcol">
+        <span class="ver">v0.9.0 · binary <span class="check">✓</span></span>
+        <span class="sub">Apache-2.0</span>
+        <button class="add">Add</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="icon">⌗</div>
+      <div class="grow">
+        <div class="name">Auggie CLI</div>
+        <div class="desc">Augment Code's powerful software agent, backed by industry-leading context engine</div>
+        <div class="meta">Augment Code<span class="sep"></span><a href="#">Docs ↗</a><span class="sep"></span><a href="#">Source ↗</a></div>
+      </div>
+      <div class="rightcol">
+        <span class="ver">v0.35.0 · npx</span>
+        <span class="sub">proprietary</span>
+        <button class="add">Add</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="icon">⠿</div>
+      <div class="grow">
+        <div class="name">Autohand Code</div>
+        <div class="desc">AI coding agent powered by Autohand AI</div>
+        <div class="meta">Autohand AI<span class="sep"></span><a href="#">Docs ↗</a><span class="sep"></span><a href="#">Source ↗</a></div>
+      </div>
+      <div class="rightcol">
+        <span class="ver">v0.2.1 · npx</span>
+        <span class="sub">Apache-2.0</span>
+        <button class="add">Add</button>
+      </div>
+    </div>
+    <footer class="mockfooter"><span>Authentication is completed separately with the selected agent.</span><b>Configure manually</b></footer>
+  </div>
+  <p class="note">Tallest rows of the four, but every fact has a fixed home. Add sits under the facts you review before trusting third-party code.</p>
+
+  <h2><span class="tag">C</span>Dense table</h2>
+  <p>Maximum density. One line per agent plus a clamped description, columns aligned across rows.</p>
+  <div class="mock">
+    <table class="grid">
+      <tr>
+        <td style="width:32px"><div class="icon">↯</div></td>
+        <td><span class="name">Amp</span><div class="sub">ACP wrapper for Amp, the frontier coding agent</div></td>
+        <td style="width:110px"><span class="ver">v0.9.0 <span class="check">✓</span></span><div class="sub">binary · Apache-2.0</div></td>
+        <td style="width:120px"><span class="sub">tao12345666333</span><div class="sub"><a href="#" style="color:#8fa598;text-decoration:none">Source ↗</a></div></td>
+        <td style="width:56px; text-align:right"><button class="add">Add</button></td>
+      </tr>
+      <tr>
+        <td><div class="icon">⌗</div></td>
+        <td><span class="name">Auggie CLI</span><div class="sub">Augment Code's powerful software agent, backed by industry-leading context engine</div></td>
+        <td><span class="ver">v0.35.0</span><div class="sub">npx · proprietary</div></td>
+        <td><span class="sub">Augment Code</span><div class="sub"><a href="#" style="color:#8fa598;text-decoration:none">Docs ↗</a> <a href="#" style="color:#8fa598;text-decoration:none">Source ↗</a></div></td>
+        <td style="text-align:right"><button class="add">Add</button></td>
+      </tr>
+      <tr>
+        <td><div class="icon">⠿</div></td>
+        <td><span class="name">Autohand Code</span><div class="sub">AI coding agent powered by Autohand AI</div></td>
+        <td><span class="ver">v0.2.1</span><div class="sub">npx · Apache-2.0</div></td>
+        <td><span class="sub">Autohand AI</span><div class="sub"><a href="#" style="color:#8fa598;text-decoration:none">Docs ↗</a> <a href="#" style="color:#8fa598;text-decoration:none">Source ↗</a></div></td>
+        <td style="text-align:right"><button class="add">Add</button></td>
+      </tr>
+    </table>
+    <footer class="mockfooter"><span>Authentication is completed separately with the selected agent.</span><b>Configure manually</b></footer>
+  </div>
+  <p class="note">Best for long result lists; weakest on narrow dialogs, where the columns would need to collapse back to stacked rows.</p>
+
+  <h2><span class="tag">D</span>Two facts only</h2>
+  <p>Opinionated: the row shows only what drives the Add decision (name, description, version, runtime). Author, license, and links live one level down, revealed per row with a details toggle.</p>
+  <div class="mock">
+    <div class="row">
+      <div class="icon">↯</div>
+      <div class="grow">
+        <span class="name">Amp</span> <span class="ver">v0.9.0 · binary <span class="check">✓</span></span>
+        <div class="desc">ACP wrapper for Amp, the frontier coding agent</div>
+      </div>
+      <button class="add">Add</button>
+    </div>
+    <div class="row">
+      <div class="icon">⌗</div>
+      <div class="grow">
+        <span class="name">Auggie CLI</span> <span class="ver">v0.35.0 · npx</span>
+        <div class="desc">Augment Code's powerful software agent, backed by industry-leading context engine</div>
+        <div class="meta">Augment Code · proprietary · <a href="#">Docs ↗</a> · <a href="#">Source ↗</a></div>
+      </div>
+      <button class="add">Add</button>
+    </div>
+    <div class="row">
+      <div class="icon">⠿</div>
+      <div class="grow">
+        <span class="name">Autohand Code</span> <span class="ver">v0.2.1 · npx</span>
+        <div class="desc">AI coding agent powered by Autohand AI</div>
+      </div>
+      <button class="add">Add</button>
+    </div>
+    <footer class="mockfooter"><span>Authentication is completed separately with the selected agent.</span><b>Configure manually</b></footer>
+  </div>
+  <p class="note">The middle row shows the expanded state. Cleanest scan, but provenance is a click away, which cuts against "review the source before adding third-party code".</p>
+
+  <p style="margin-top:32px">Reply with a letter to implement, or mix (for example "A with B's checksum placement").</p>
+</main>
+</body>
+</html>

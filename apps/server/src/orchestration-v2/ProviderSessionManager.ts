@@ -138,6 +138,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly modelSelection: ModelSelection;
     readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
+    readonly initialNativeThreadId?: string;
   }) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderSessionManagerV2Error>;
   readonly get: (
     providerSessionId: ProviderSessionId,
@@ -1425,6 +1426,9 @@ export const layerWithOptions = (
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),
+                  ...(input.initialNativeThreadId === undefined
+                    ? {}
+                    : { initialNativeThreadId: input.initialNativeThreadId }),
                 })
                 .pipe(
                   Effect.provideService(Scope.Scope, sessionScope),

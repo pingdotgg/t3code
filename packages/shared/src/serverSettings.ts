@@ -1,6 +1,7 @@
 import {
   isProviderDriverKind,
   isProviderAvailable,
+  isProviderTextGenerationCapable,
   type ModelSelection,
   type ProviderDriverKind,
   type ServerProvider,
@@ -58,7 +59,9 @@ export function resolveSourceControlWriterModelSelection(
   }
 
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  return provider?.enabled === true && isProviderAvailable(provider)
+  return provider?.enabled === true &&
+    isProviderAvailable(provider) &&
+    isProviderTextGenerationCapable(provider)
     ? selection
     : settings.textGenerationModelSelection;
 }

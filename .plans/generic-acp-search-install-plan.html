@@ -1,0 +1,1489 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Generic ACP delivery and standardization state</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #000;
+        --panel: #080808;
+        --panel-2: #0d0d0d;
+        --line: #262626;
+        --line-strong: #3a3a3a;
+        --text: #fff;
+        --muted: #a3a3a3;
+        --dim: #737373;
+        --accent: #8b5cf6;
+        --accent-soft: #24133f;
+        --good: #4ade80;
+        --warn: #fbbf24;
+        --bad: #fb7185;
+        --blue: #60a5fa;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+        line-height: 1.48;
+      }
+
+      a {
+        color: #c4b5fd;
+        text-decoration-color: #5b4b7f;
+        text-underline-offset: 3px;
+      }
+
+      code {
+        font-family: var(--mono);
+        font-size: 0.91em;
+        color: #e9d5ff;
+      }
+
+      .shell {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      header {
+        padding: 54px 0 34px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        margin: 0 0 14px;
+        color: #c4b5fd;
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 900px;
+        margin: 0;
+        font-size: clamp(34px, 5vw, 62px);
+        line-height: 0.98;
+        letter-spacing: -0.05em;
+      }
+
+      .lede {
+        max-width: 820px;
+        margin: 24px 0 0;
+        color: #d4d4d4;
+        font-size: 18px;
+      }
+
+      .decision-strip {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        margin-top: 32px;
+        border: 1px solid var(--line-strong);
+      }
+
+      .decision-strip > div {
+        min-height: 112px;
+        padding: 18px;
+        border-right: 1px solid var(--line);
+      }
+
+      .decision-strip > div:last-child {
+        border-right: 0;
+      }
+
+      .label {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .decision-strip strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 16px;
+      }
+
+      .decision-strip p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        overflow-x: auto;
+        background: rgba(0, 0, 0, 0.94);
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(12px);
+      }
+
+      nav .shell {
+        display: flex;
+        gap: 24px;
+        min-width: max-content;
+        padding-top: 13px;
+        padding-bottom: 13px;
+      }
+
+      nav a {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 12px;
+        text-decoration: none;
+      }
+
+      nav a:hover {
+        color: var(--text);
+      }
+
+      main {
+        padding-bottom: 96px;
+      }
+
+      section {
+        padding: 56px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      h2 {
+        margin: 0 0 22px;
+        font-size: 27px;
+        letter-spacing: -0.03em;
+      }
+
+      h3 {
+        margin: 0 0 12px;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+      }
+
+      p {
+        margin: 0 0 14px;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .small {
+        font-size: 13px;
+      }
+
+      .grid-2,
+      .grid-3 {
+        display: grid;
+        gap: 22px;
+      }
+
+      .grid-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .flat {
+        padding: 21px 0 0;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .flat p:last-child,
+      .flat ul:last-child {
+        margin-bottom: 0;
+      }
+
+      ul,
+      ol {
+        margin: 12px 0 0;
+        padding-left: 20px;
+      }
+
+      li {
+        margin: 8px 0;
+      }
+
+      .signal {
+        padding-left: 14px;
+        border-left: 3px solid var(--accent);
+      }
+
+      .signal.good {
+        border-color: var(--good);
+      }
+
+      .signal.warn {
+        border-color: var(--warn);
+      }
+
+      .facts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid var(--line);
+      }
+
+      .fact {
+        padding: 18px 20px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .fact:nth-child(2n) {
+        border-right: 0;
+      }
+
+      .fact:nth-last-child(-n + 2) {
+        border-bottom: 0;
+      }
+
+      .fact strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .fact span {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: 1fr 48px 1fr 48px 1fr 48px 1fr;
+        align-items: stretch;
+        margin-top: 26px;
+      }
+
+      .flow-node {
+        min-height: 132px;
+        padding: 18px;
+        background: var(--panel);
+        border: 1px solid var(--line-strong);
+      }
+
+      .flow-node strong {
+        display: block;
+        margin: 8px 0;
+      }
+
+      .flow-node span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .arrow {
+        display: grid;
+        place-items: center;
+        color: var(--dim);
+        font-size: 22px;
+      }
+
+      .option {
+        position: relative;
+        padding-top: 18px;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .option.recommended {
+        border-top: 3px solid var(--accent);
+        padding-top: 16px;
+      }
+
+      .option-tag {
+        display: inline-block;
+        margin-bottom: 12px;
+        color: #c4b5fd;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .mock {
+        margin-top: 18px;
+        overflow: hidden;
+        background: #050505;
+        border: 1px solid var(--line-strong);
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+      }
+
+      .mock-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+
+      .mock-body {
+        padding: 14px;
+      }
+
+      .search {
+        display: flex;
+        gap: 8px;
+      }
+
+      .search-input {
+        flex: 1;
+        padding: 9px 11px;
+        color: #e5e5e5;
+        background: #0a0a0a;
+        border: 1px solid #383838;
+        font-family: var(--sans);
+        font-size: 12px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 54px;
+        padding: 8px 11px;
+        color: #fff;
+        background: #202020;
+        border: 1px solid #414141;
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .button.primary {
+        background: #6d28d9;
+        border-color: #8b5cf6;
+      }
+
+      .suggestions {
+        display: flex;
+        gap: 11px;
+        margin: 10px 0 4px;
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .suggestions span:not(:first-child) {
+        color: #c4b5fd;
+      }
+
+      .result {
+        display: grid;
+        grid-template-columns: 32px 1fr auto;
+        gap: 10px;
+        align-items: center;
+        padding: 12px 0;
+        border-top: 1px solid #222;
+      }
+
+      .result-icon {
+        display: grid;
+        width: 29px;
+        height: 29px;
+        place-items: center;
+        color: #ddd6fe;
+        background: #17121f;
+        border: 1px solid #392b4e;
+        font-family: var(--mono);
+        font-size: 10px;
+      }
+
+      .result strong {
+        display: block;
+        font-size: 12px;
+      }
+
+      .result p {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .meta {
+        margin-top: 4px;
+        color: var(--dim);
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .wizard-rail {
+        display: flex;
+        gap: 18px;
+        margin-bottom: 13px;
+        color: var(--dim);
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .wizard-rail .active {
+        color: #fff;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        padding: 14px 12px;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid var(--line);
+      }
+
+      th {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .status {
+        display: inline-flex;
+        gap: 7px;
+        align-items: center;
+        white-space: nowrap;
+      }
+
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--dim);
+      }
+
+      .dot.good {
+        background: var(--good);
+      }
+
+      .dot.warn {
+        background: var(--warn);
+      }
+
+      .dot.bad {
+        background: var(--bad);
+      }
+
+      .codebox {
+        overflow-x: auto;
+        margin: 16px 0;
+        padding: 18px;
+        background: #070707;
+        border: 1px solid var(--line);
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.7;
+        white-space: pre;
+      }
+
+      .file-list {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        border-top: 1px solid var(--line);
+      }
+
+      .file-list > div {
+        padding: 13px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .file-list .area {
+        color: #c4b5fd;
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+
+      .checklist {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 28px;
+      }
+
+      .check {
+        display: grid;
+        grid-template-columns: 22px 1fr;
+        gap: 9px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .check-mark {
+        color: var(--good);
+        font-family: var(--mono);
+      }
+
+      .decision-box {
+        padding: 22px;
+        background: var(--accent-soft);
+        border: 1px solid #5b3b86;
+      }
+
+      .decision-box ol {
+        margin-top: 14px;
+      }
+
+      .decision-box li {
+        margin: 12px 0;
+      }
+
+      .sources {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 22px;
+        margin-top: 20px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 900px) {
+        .decision-strip,
+        .grid-3,
+        .grid-2,
+        .facts,
+        .checklist {
+          grid-template-columns: 1fr;
+        }
+
+        .decision-strip > div,
+        .fact,
+        .fact:nth-child(2n) {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .decision-strip > div:last-child,
+        .fact:last-child {
+          border-bottom: 0;
+        }
+
+        .flow {
+          grid-template-columns: 1fr;
+        }
+
+        .arrow {
+          min-height: 40px;
+          transform: rotate(90deg);
+        }
+
+        .file-list {
+          grid-template-columns: 1fr;
+        }
+
+        .file-list .area {
+          padding-bottom: 0;
+          border-bottom: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="shell">
+        <p class="eyebrow">T3 Code · Orchestrator v2 · delivery state · updated 14 Aug 2026</p>
+        <h1>Generic ACP delivery and standardization</h1>
+        <p class="lede">
+          The reviewed discovery plan is now implemented and has expanded through live testing:
+          official search and provisioning, generic authentication guidance, automatic model and
+          command and skill discovery, official agent icons, managed-binary cleanup, atomic settings,
+          and non-blocking health checks. Kilo, Codex, and Pi exposed real compatibility gaps during
+          live testing; those fixes now stay generic and capability-driven. The final hardening
+          round standardizes request identity, current and legacy elicitation, approvals,
+          instructions, session configuration, and MCP delivery across ACP providers. Real Codex ACP
+          and Pi ACP parents have each created and completed the requested four-provider child matrix.
+          A final adversarial review hardened opaque IDs, streaming MCP, terminal concurrency,
+          rollback, registry tolerance, and atomic provider settings. PR #6461 is ready for review,
+          stacked directly on orchestrator v2 PR #2829.
+        </p>
+        <div class="decision-strip">
+          <div>
+            <span class="label">Delivery</span>
+            <strong>PR #6461 is review-ready</strong>
+            <p>The implementation and two-parent live proof are complete. PR #6461 is out of WIP and draft state, with active CI and review monitoring underway.</p>
+          </div>
+          <div>
+            <span class="label">Implemented flow</span>
+            <strong>Search inside Add Provider</strong>
+            <p>Server-side official registry search, explicit prepare, identity confirmation, then awaited settings persistence.</p>
+          </div>
+          <div>
+            <span class="label">Authentication</span>
+            <strong>Generic, user-owned sign-in</strong>
+            <p>Automatic scans never launch interactive auth. T3 displays advertised methods and detects completion on a later scan.</p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <nav>
+      <div class="shell">
+        <a href="#status">Status</a>
+        <a href="#finding">Finding</a>
+        <a href="#ux">UI shape</a>
+        <a href="#design">Technical design</a>
+        <a href="#lifecycle">Lifecycle</a>
+        <a href="#scope">Scope</a>
+        <a href="#implementation">Implementation</a>
+        <a href="#verification">Verification</a>
+        <a href="#verified">Branch check</a>
+        <a href="#validate">Decisions</a>
+        <a href="#handoff">Round 2 + handoff</a>
+        <a href="#standardization">ACP standardization</a>
+      </div>
+    </nav>
+
+    <main class="shell">
+      <section id="status">
+        <h2>Current implementation status</h2>
+        <div class="signal good">
+          <h3>The end-to-end flow works in the isolated development environment</h3>
+          <p>
+            Kilo, Codex, and Pi can be added from official search and started through the generic v2
+            ACP adapter. Live testing covered authentication, models, commands, skills, icons,
+            provider switching, direct resume, and deletion. Pi also proved why model selection must
+            prefer the stable advertised config option over the unstable model RPC.
+          </p>
+        </div>
+
+        <div class="facts" style="margin-top: 28px">
+          <div class="fact">
+            <strong>Implemented</strong>
+            <span>Official catalog search, ranked compatible results, binary/npx/uvx prepare, typed RPCs, and the driver-aware Add Provider wizard.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented</strong>
+            <span>Automatic disposable ACP probes publish authentication state, advertised models, and bounded slash commands without persisting discovery data.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented</strong>
+            <span>Official allowlisted agent icons flow through search, settings, composer, and model picker with browser CacheStorage and an ACP fallback.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented</strong>
+            <span>Deleting the last configured instance removes only T3-managed binary data. Shared npx and uvx caches remain runner-owned.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented and focused-tested</strong>
+            <span>Provider changes no longer block on full ACP health discovery. Fast local readiness publishes first with an explicit discovery-in-progress message; auth/model/command probing continues as enrichment.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented and focused-tested</strong>
+            <span>Persisted ACP startup loads the known native session directly, with a typed stale-session fallback. A foreground startup cancels or suppresses disposable discovery for the same registry agent.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented and focused-tested</strong>
+            <span>The probe keeps a 500 ms cancelable notification window after session creation, so delayed ACP command advertisements reach the provider snapshot and the composer slash-command menu.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented and live-tested</strong>
+            <span>ACP commands appear in the slash menu, while advertised <code>$</code>-prefixed commands are classified into T3’s skill list. This is protocol-driven and has no Codex, Kilo, or Pi production branch.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented and live-tested</strong>
+            <span>npx/uvx runners inherit the real toolchain bin directory after symlink resolution, so packages that spawn sibling executables such as <code>pi</code> work outside an interactive shell.</span>
+          </div>
+          <div class="fact">
+            <strong>Implemented and focused-tested</strong>
+            <span>Model selection prefers the stable advertised model config and retains unstable <code>session/set_model</code> as a capability fallback. This supports both ACP protocol shapes without provider-specific branches.</span>
+          </div>
+        </div>
+
+        <div class="signal warn" style="margin-top: 30px">
+          <h3>Measured latency, not an inferred bottleneck</h3>
+          <p class="muted small">
+            A live Kilo resume spent about 4.9 seconds in <code>initialize</code>, 4.8 seconds creating
+            a session that was immediately discarded, 0.9 seconds loading the persisted session,
+            and 6.6 seconds before first prompt output. Removing the redundant new session saves
+            roughly five seconds on process reactivation. ACP does not define a cheap portable
+            health endpoint, so complete auth/model discovery remains asynchronous and bounded.
+          </p>
+        </div>
+      </section>
+
+      <section id="finding">
+        <h2>Original investigation, validated during implementation</h2>
+        <div class="signal good">
+          <h3>The hard runtime work already exists</h3>
+          <p>
+            PR #2829 already has a generic <code>acpRegistry</code> driver, v2 ACP capability
+            negotiation, official registry resolution, platform selection, binary extraction,
+            versioned cache directories, archive path validation, and filesystem install locks.
+            The missing product layer was discovery plus an explicit provisioning entry point. That
+            layer now exists on this branch and continues to reuse the same v2 runtime.
+          </p>
+        </div>
+
+        <div class="facts" style="margin-top: 28px">
+          <div class="fact">
+            <strong>Manual configuration remains available</strong>
+            <span>Official catalog search is the default path; an exact registry ID and executable override remain an advanced escape hatch.</span>
+          </div>
+          <div class="fact">
+            <strong>Managed binaries prepare eagerly</strong>
+            <span>The explicit Add action downloads a compatible managed binary. npx and uvx validate their pinned runner recipe and materialize on first process start.</span>
+          </div>
+          <div class="fact">
+            <strong>Status is now derived</strong>
+            <span>Catalog/cache/runner inspection publishes installed state and version; asynchronous discovery follows with auth, models, and commands.</span>
+          </div>
+          <div class="fact">
+            <strong>Authentication stays agent-shaped</strong>
+            <span>Scans capture advertised auth methods but never invoke them. Real sessions retain ACP authenticate-and-retry behavior.</span>
+          </div>
+          <div class="fact">
+            <strong>The official index is compact</strong>
+            <span>Observed 38 agents on 13 August 2026, across binary, npx, and uvx distributions. All rows carry authors and license; 8 agents (including Devin and Cursor) publish binaries without SHA-256.</span>
+          </div>
+          <div class="fact">
+            <strong>This belongs on the server</strong>
+            <span>The selected environment owns its OS, architecture, cache, process runner, settings, and credentials.</span>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top: 30px">
+          <div class="flat">
+            <h3>What to borrow from active VS Code theme search</h3>
+            <ul class="muted small">
+              <li>One explicit query with useful suggested searches.</li>
+              <li>Deterministic loading, error, empty, and results states.</li>
+              <li>Compact rows with name, author, description, license, source, and a local action.</li>
+              <li>Cancel stale searches and keep the busy state on the selected row.</li>
+              <li>Derive “Already added” from local state instead of trusting the remote catalog.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>What must differ from theme search</h3>
+            <ul class="muted small">
+              <li>Search and provision through WebSocket RPC, never from the browser.</li>
+              <li>Resolve only distributions compatible with the target environment.</li>
+              <li>Do not invent popularity. The ACP index has no trustworthy download metric.</li>
+              <li>Use only allowlisted official registry icons, cache them in the browser, and retain a neutral ACP fallback for load failures.</li>
+              <li>The Add click is explicit consent to provision third-party code.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="signal warn" style="margin-top: 30px">
+          <h3>Lessons from prior ACP proposals</h3>
+          <p class="muted small">
+            PRs #1601, #2684, and the open #6071 all grew a second runtime or broader lifecycle.
+            Review feedback on #6071 also caught silent remote execution, lying readiness, argument
+            round-trip corruption, placeholder model selection, and process stop races. This plan
+            reuses the v2 adapter and avoids each of those surfaces.
+          </p>
+        </div>
+      </section>
+
+      <section id="ux">
+        <h2>UI shape: search inside Add Provider</h2>
+        <p class="muted">
+          Shape A from the option round is locked in; the dedicated catalog panel and the
+          agent-ID autocomplete variants are dropped. It keeps the existing true-black,
+          information-dense settings language and is the smallest complete path.
+        </p>
+
+        <div class="grid-2" style="margin-top: 30px">
+          <article class="option recommended">
+            <span class="option-tag">Selected shape</span>
+            <h3>Search step inside Add Provider</h3>
+            <p class="muted small">
+              Selecting ACP Registry swaps the normal config step for a catalog search. The step
+              initially lists all compatible official agents; the query narrows the catalog. Add
+              returns to a prefilled identity step, with manual configuration as a secondary path.
+            </p>
+            <div class="mock">
+              <div class="mock-bar"><strong>Add provider</strong><span class="muted">×</span></div>
+              <div class="mock-body">
+                <div class="wizard-rail">
+                  <span>1 Driver</span><span class="active">2 Find ACP</span><span>3 Identity</span>
+                </div>
+                <div class="search">
+                <div class="search-input">Search compatible ACP agents…</div>
+                  <div class="button">Search</div>
+                </div>
+                <div class="suggestions"><span>Try</span><span>Codex</span><span>Copilot</span><span>Kimi</span></div>
+                <div class="result">
+                  <div class="result-icon">G</div>
+                  <div>
+                    <strong>Gemini CLI</strong>
+                    <p>Google’s official CLI for Gemini</p>
+                    <div class="meta">Google · v0.55.1 · npx · Apache-2.0</div>
+                  </div>
+                  <div class="button primary">Add</div>
+                </div>
+                <div class="result">
+                  <div class="result-icon">C</div>
+                  <div>
+                    <strong>Codex</strong>
+                    <p>ACP adapter for OpenAI’s coding assistant</p>
+                    <div class="meta">OpenAI +2 · v1.2.0 · npx · Apache-2.0</div>
+                  </div>
+                  <div class="button">Add</div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <div class="signal" style="margin-top: 18px">
+            <h3>Interaction</h3>
+            <ol class="muted small">
+              <li>User selects <strong>ACP Registry</strong> in the existing Add Provider dialog.</li>
+              <li>The step immediately loads all compatible official entries for the selected environment; entering a query narrows them.</li>
+              <li>User clicks <strong>Add</strong> on one result. That click authorizes provisioning.</li>
+              <li>The server prepares the distribution. The row shows static state text such as “Downloading” or “Preparing,” without a continuously repainting animation.</li>
+              <li>On success, the display name is prefilled with the agent name and the instance ID follows the wizard’s existing <code>deriveInstanceId</code> convention (for example <code>acpRegistry_gemini-cli</code>), with a suffix when the derived ID already exists. The provider settings are then persisted.</li>
+              <li>The completion message links to the agent’s source/docs and explains that authentication, when required, remains user-owned.</li>
+            </ol>
+            <p class="muted small" style="margin-top: 12px">
+              Step-order note: today the wizard runs Driver → Identity → Config, and
+              <code>resolveWizardNavigation</code> gates forward movement past Identity on a valid
+              instance ID. The ACP flow above runs search before identity, so the step model becomes
+              driver-aware for <code>acpRegistry</code>: Driver → Find ACP → Identity, with the search
+              result feeding the identity prefill.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="design">
+        <h2>Technical design</h2>
+        <p>
+          Turn the existing resolver into a single server-scoped ACP Registry catalog service. The
+          service is shared by WebSocket handlers, provider snapshots, and the v2 adapter, so catalog
+          validation and distribution selection cannot drift.
+        </p>
+
+        <div class="flow">
+          <div class="flow-node">
+            <span class="label">Web / desktop</span>
+            <strong>Search + Add UI</strong>
+            <span>Environment-scoped client state. Derives “Added” from current provider settings.</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="flow-node">
+            <span class="label">Contracts</span>
+            <strong>3 typed RPCs</strong>
+            <span>Search, prepare, and managed-binary uninstall. Health discovery uses the normal provider snapshot flow.</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="flow-node">
+            <span class="label">Server singleton</span>
+            <strong>ACP Registry catalog</strong>
+            <span>Fetch, validate, rank, resolve, inspect cache, and prepare one compatible entry.</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="flow-node">
+            <span class="label">Existing runtime</span>
+            <strong>v2 ACP adapter</strong>
+            <span>Starts the pinned recipe during a normal turn and owns all ACP session behavior.</span>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top: 34px">
+          <div class="flat">
+            <h3>RPC 1: search</h3>
+            <div class="codebox">server.searchAcpRegistry({ query })
+→ {
+    agents: [{
+      id, name, version, description,
+      authors, license, website, repository,
+      distribution, integrity
+    }]
+  }</div>
+            <ul class="muted small">
+              <li>Read scope.</li>
+              <li>Empty query can return the compact compatible catalog.</li>
+              <li>Rank exact ID/name, prefix, token, then description/author match.</li>
+              <li>Stable result cap and bounded metadata fields.</li>
+              <li>No persisted state and no executable download.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>RPC 2: prepare</h3>
+            <div class="codebox">server.prepareAcpRegistryAgent({ agentId })
+→ {
+    agentId, version, distribution,
+    prepared: true
+  }</div>
+            <ul class="muted small">
+              <li>Operate scope.</li>
+              <li>Re-fetches and re-validates the selected ID instead of trusting UI metadata.</li>
+              <li>Idempotent across retries and concurrent clients.</li>
+              <li>Returns only after the distribution is usable by the existing resolver contract.</li>
+              <li>Does not write settings. The existing settings RPC runs only after prepare succeeds.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 36px">Distribution semantics</h3>
+        <table>
+          <thead>
+            <tr><th>Distribution</th><th>Prepare behavior</th><th>Runtime behavior</th><th>UI language</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>binary</code></td>
+              <td>Download into the existing versioned cache, verify declared SHA-256, validate archive paths, then atomically rename.</td>
+              <td>Spawn the prepared executable from the target environment cache.</td>
+              <td>“Downloading” then “Added”</td>
+            </tr>
+            <tr>
+              <td><code>npx</code></td>
+              <td>Validate the exact version-pinned recipe and that <code>npx</code> exists. Do not start the ACP agent during setup.</td>
+              <td><code>npx --yes</code> materializes the pinned package on first normal session.</td>
+              <td>“Preparing” then “Added”</td>
+            </tr>
+            <tr>
+              <td><code>uvx</code></td>
+              <td>Validate the exact version-pinned recipe and that <code>uvx</code> exists. Do not start the ACP agent during setup.</td>
+              <td><code>uvx</code> materializes the pinned package on first normal session.</td>
+              <td>“Preparing” then “Added”</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="muted small" style="margin-top: 14px">
+          This is the narrowest honest definition of automatic provisioning: the user never copies an
+          install command, but T3 also does not launch arbitrary third-party ACP processes during a
+          settings operation. Binary downloads are eager because the current resolver already owns a
+          safe managed cache. Runner-based packages stay runner-managed.
+        </p>
+
+        <div class="grid-3" style="margin-top: 34px">
+          <div class="flat">
+            <h3>Registry hardening</h3>
+            <ul class="muted small">
+              <li>Bound fetch time and response bytes.</li>
+              <li>Decode optional authors, license, source URLs, and SHA-256.</li>
+              <li>Require HTTPS download/source URLs with no embedded credentials.</li>
+              <li>Verify SHA-256 when present. Keep supporting official rows that omit it; 8 of 38 agents do today.</li>
+              <li>Preserve current archive size, traversal, executable-root, and lock checks.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>Search freshness</h3>
+            <ul class="muted small">
+              <li>Already built: single-flight fetch, atomic JSON persist, and offline fallback to the last validated disk copy.</li>
+              <li>New: the in-memory index currently memoizes forever after first load; explicit searches must refresh it.</li>
+              <li>Resolver uses the most recent validated in-memory index.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>Status correction</h3>
+            <ul class="muted small">
+              <li>No agent ID: not installed, unconfigured message.</li>
+              <li>Unsupported platform or missing runner: error, not ready.</li>
+              <li>Prepared/runner available: installed, ready, registry version.</li>
+              <li>Fast refresh re-inspects catalog/cache/runner and publishes readiness without waiting for an ACP process.</li>
+              <li>A bounded background enrichment starts a disposable session to discover generic auth state, models, and slash commands.</li>
+              <li>Auth-required probes fail fast and never call ACP <code>authenticate</code>, OAuth, or a terminal flow.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="lifecycle">
+        <h2>Lifecycle and failure model</h2>
+        <table>
+          <thead>
+            <tr><th>Moment</th><th>Required behavior</th><th>Failure outcome</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Search</td>
+              <td>Resolve against the connected environment’s OS and architecture. Cancel stale client requests.</td>
+              <td>Inline retry; keep settings unchanged. Cached validated results may be used offline.</td>
+            </tr>
+            <tr>
+              <td>Add click</td>
+              <td>Revalidate the ID and compatible distribution on the server. The explicit click is install consent.</td>
+              <td>Keep the dialog and query intact. No provider instance is created.</td>
+            </tr>
+            <tr>
+              <td>Concurrent prepare</td>
+              <td>Reuse the existing process semaphore plus filesystem lock. A second client receives the same prepared result.</td>
+              <td>One stable typed error. Temporary directories and lock files are cleaned.</td>
+            </tr>
+            <tr>
+              <td>Settings write</td>
+              <td>Add <code>{ driver: "acpRegistry", config: { agentId, distribution: "auto" } }</code> through the existing settings RPC.</td>
+              <td>Prepared cache may remain as safe regenerable data; no broken provider config is persisted.</td>
+            </tr>
+            <tr>
+              <td>First turn</td>
+              <td>The v2 adapter resolves the same recipe, starts ACP, loads a known persisted session directly when available, and retains normal user-driven auth for real sessions.</td>
+              <td>Surface the existing typed ACP spawn/auth failure with source/docs guidance.</td>
+            </tr>
+            <tr>
+              <td>Registry update</td>
+              <td>Settings retain the stable agent ID. A newer binary uses a new versioned cache path.</td>
+              <td>Old cache remains usable/regenerable. Explicit update management is outside this PR.</td>
+            </tr>
+            <tr>
+              <td>Remove provider</td>
+              <td>Persist instance deletion, then remove the agent’s T3-managed binary tree only when no configured instance still references it.</td>
+              <td>Never purge shared npx/uvx caches. Server-side settings rechecks protect another configured instance.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="signal warn" style="margin-top: 30px">
+          <h3>Authentication boundary</h3>
+          <p class="muted small">
+            T3 does not collect, copy, migrate, or store ACP credentials. Automatic discovery starts
+            a bounded disposable session but explicitly disables authenticate-and-retry. If the agent
+            reports auth required, T3 records its advertised generic method and tells the user to
+            complete it on the server. A real conversation may use the ACP protocol's normal
+            agent-managed authentication flow. Terminal-only login remains a manual server step.
+          </p>
+        </div>
+      </section>
+
+      <section id="scope">
+        <h2>Scope and surface audit</h2>
+        <div class="grid-2">
+          <div class="flat">
+            <h3>In this PR</h3>
+            <ul class="muted small">
+              <li>Official registry search and compatible result metadata.</li>
+              <li>Explicit environment-side prepare action.</li>
+              <li>ACP-specific branch in the existing Add Provider wizard.</li>
+              <li>Collision-safe prefilled provider identity.</li>
+              <li>Truthful ACP Registry snapshot and refresh behavior.</li>
+              <li>Generic advertised authentication guidance and automatic detection.</li>
+              <li>Automatic advertised model and slash-command discovery.</li>
+              <li>Official agent icons with allowlisting, fallback, and browser caching.</li>
+              <li>Last-instance cleanup for T3-managed binary distributions.</li>
+              <li>Direct persisted-session load and non-blocking health enrichment.</li>
+              <li>Registry response bounds, URL validation, and optional checksum verification.</li>
+              <li>Focused docs and tests.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>Explicitly out</h3>
+            <ul class="muted small">
+              <li>Credential storage, secret migration, or a T3-owned generic login terminal.</li>
+              <li>Custom arbitrary ACP commands unrelated to the official registry.</li>
+              <li>Purging package-manager-owned npx or uvx caches.</li>
+              <li>ACP update management.</li>
+              <li>Agent-specific model/reasoning hacks.</li>
+              <li>Auxiliary title, branch, commit, or PR generation.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 38px">Product surfaces</h3>
+        <table>
+          <thead><tr><th>Surface</th><th>Decision</th></tr></thead>
+          <tbody>
+            <tr><td>Settings → Providers</td><td>Primary entry point. Add Provider owns search and provisioning.</td></tr>
+            <tr><td>Chat provider/model picker</td><td>Consumes discovered models and the shared official agent-icon resolver in trigger, provider rail, and model rows.</td></tr>
+            <tr><td>Web + local hosted web</td><td>Supported through the same RPC and environment-scoped client state.</td></tr>
+            <tr><td>Desktop</td><td>Supported through the web wrapper. Installation always occurs on the connected server environment.</td></tr>
+            <tr><td>Mobile</td><td>No provider-management UI exists to extend in this PR. Configured ACP instances remain usable through shared runtime contracts.</td></tr>
+            <tr><td>Local / relay / tunnel</td><td>Same behavior because discovery and preparation are server-side, not browser-side.</td></tr>
+            <tr><td>Multiple environments</td><td>Each environment returns only its compatible distributions and owns its own cache/settings.</td></tr>
+            <tr><td>Multiple clients</td><td>Idempotent prepare, server/filesystem locking, atomic per-instance settings mutations, and an in-lock managed-binary reference check prevent stale whole-map writes and prepare/delete races.</td></tr>
+            <tr><td>Other providers</td><td>Codex, Claude, Cursor, Grok, and OpenCode are unchanged. Generic ACP stays one driver.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="implementation">
+        <h2>Implementation complete</h2>
+        <ol>
+          <li>
+            <strong>Complete: extract a shared catalog service from the current resolver.</strong>
+            The registry schema has bounded display metadata and optional SHA-256. The
+            service <code>search</code>, <code>prepare</code>, <code>inspect</code>, and existing
+            <code>resolve</code> operations share cache layout and install locks; managed binaries also
+            expose a narrowly scoped uninstall operation.
+          </li>
+          <li>
+            <strong>Complete: add typed RPCs and authorization mappings.</strong>
+            Search gets orchestration-read scope. Prepare and uninstall get orchestration-operate scope. Wire them
+            through the normal server RPC group and environment-scoped client runtime.
+          </li>
+          <li>
+            <strong>Complete: make readiness fast and enrichment truthful.</strong>
+            Publish catalog/cache/runner readiness synchronously, then discover auth, models, and
+            commands in bounded background enrichment. A failed or slow ACP must affect only its own
+            snapshot and must not hold <code>server.refreshProviders</code> open.
+          </li>
+          <li>
+            <strong>Complete: add the ACP Registry search branch.</strong>
+            The step model in <code>AddProviderInstanceDialog.logic.ts</code> is driver-aware so
+            <code>acpRegistry</code> runs Driver → Find ACP → Identity instead of Driver → Identity →
+            Config. It supports retry, stale request cancellation, source links, row-local state,
+            already-added state, and manual configuration fallback. Opening Find ACP now loads all
+            compatible entries immediately; the query narrows that catalog.
+          </li>
+          <li>
+            <strong>Complete: prepare first, persist second.</strong>
+            After prepare succeeds, add the provider instance with the existing settings mutation.
+            Default to <code>distribution: auto</code>; keep command path, auth method ID, and custom
+            models under Advanced settings. Await the settings result before closing or showing success.
+          </li>
+          <li>
+            <strong>Complete: extend generic runtime behavior and every icon surface.</strong>
+            Successful discovery publishes advertised models and slash commands. Official allowlisted
+            icons are cached and flow through settings, composer, model picker, and compact thread/run
+            rows. Advertised <code>$</code>-prefixed commands are routed into T3’s skill list; agent-internal
+            skills that are not advertised remain inside the harness because ACP has no separate portable
+            skill inventory contract.
+          </li>
+          <li>
+            <strong>Complete: remove avoidable turn and provider-switch latency.</strong>
+            Pass the persisted native session ID into eager ACP startup so it performs
+            <code>initialize → session/load</code>, not <code>initialize → session/new → session/load</code>.
+            Split local readiness from full background discovery so switching providers is not gated
+            by a disposable ACP process. Foreground launch also interrupts a same-agent disposable
+            probe and suppresses a new one while startup remains active.
+          </li>
+          <li>
+            <strong>Complete: close concurrency and fidelity findings.</strong>
+            Add, update, reset, and delete use an atomic per-instance settings boundary. Managed cleanup
+            coordinates with preparation and authoritative references under the install lock, and the
+            wizard retains prepare’s refreshed version and distribution metadata.
+          </li>
+          <li>
+            <strong>Complete: documentation, final proof, and the stacked PR.</strong>
+            Keep user and internals docs aligned with server-side install, generic authentication,
+            discovery timing, icon caching, managed cleanup, remote environments, and latency behavior.
+            PR <a href="https://github.com/pingdotgg/t3code/pull/6461" target="_blank" rel="noopener noreferrer">#6461</a>
+            is based on PR #2829. The final ACP standardization changes are verified and are moving
+            through active CI and review monitoring without automatic merge.
+          </li>
+        </ol>
+
+        <div class="file-list" style="margin-top: 30px">
+          <div class="area">contracts</div><div><code>packages/contracts/src/acpRegistry.ts</code>, <code>rpc.ts</code>, exports, contract tests</div>
+          <div class="area">server catalog</div><div>Refactor <code>AcpRegistrySupport.ts</code> or split a small <code>AcpRegistryCatalog.ts</code>; wire one live service layer</div>
+          <div class="area">server RPC</div><div><code>apps/server/src/ws.ts</code> handlers and the exhaustive <code>apps/server/src/auth/RpcAuthorization.ts</code> scope map</div>
+          <div class="area">provider status</div><div><code>AcpRegistryDriver.ts</code> local readiness plus asynchronous auth/model/command enrichment</div>
+          <div class="area">client runtime</div><div>Environment-scoped search query and prepare command in <code>packages/client-runtime</code></div>
+          <div class="area">web</div><div>Add wizard, official icon resolver/cache, settings cards, compact rows, composer, and model picker</div>
+          <div class="area">docs</div><div>User provider guide, internals provider guide, and the v2 ACP registry note</div>
+        </div>
+
+        <div class="grid-2" style="margin-top: 32px">
+          <div class="flat">
+            <h3>Suggested PR</h3>
+            <p><code>feat(providers): add ACP Registry search and install</code></p>
+            <p class="muted small">
+              The current checkout <code>t3code/codex-turn-mapping</code> is PR #2829’s head branch.
+              Open as a focused follow-up with #2829 as its base while v2 is unmerged. If registry
+              discovery is considered launch-blocking, merge or cherry-pick the same commits into
+              #2829. Do not target main independently because the generic driver and adapter only exist
+              on the v2 branch.
+            </p>
+          </div>
+          <div class="flat">
+            <h3>Review boundary</h3>
+            <p class="muted small">
+              The PR stays one concern: make the generic v2 ACP Registry adapter discoverable,
+              installable, observable, and usable. The latency changes are required to keep that
+              provider path from blocking composer availability; they do not introduce a second runtime.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="verification">
+        <h2>Focused proof plan and current evidence</h2>
+        <div class="checklist">
+          <div class="check"><span class="check-mark">01</span><span><strong>Registry decode</strong><br /><span class="muted small">Bounds, URL schemes, optional metadata, optional checksums, malformed rows.</span></span></div>
+          <div class="check"><span class="check-mark">02</span><span><strong>Search behavior</strong><br /><span class="muted small">Ranking, query cap, platform filtering, stable result cap, cached fallback.</span></span></div>
+          <div class="check"><span class="check-mark">03</span><span><strong>Binary prepare</strong><br /><span class="muted small">Checksum success/failure, archive validation, atomic reuse, concurrent callers, cleanup.</span></span></div>
+          <div class="check"><span class="check-mark">04</span><span><strong>Runner prepare</strong><br /><span class="muted small">npx/uvx present and absent; exact pinned recipe preserved without process launch.</span></span></div>
+          <div class="check"><span class="check-mark">05</span><span><strong>Provider snapshot</strong><br /><span class="muted small">Unconfigured, incompatible, missing runner, prepared, disabled, refresh, version.</span></span></div>
+          <div class="check"><span class="check-mark">06</span><span><strong>RPC authorization</strong><br /><span class="muted small">Read can search; operate is required to prepare; errors stay typed.</span></span></div>
+          <div class="check"><span class="check-mark">07</span><span><strong>Wizard state</strong><br /><span class="muted small">Loading/error/empty/results, stale result suppression, already added, ID collision.</span></span></div>
+          <div class="check"><span class="check-mark">08</span><span><strong>Two-phase add</strong><br /><span class="muted small">Prepare failure writes nothing; success writes exact instance; settings failure leaves only cache.</span></span></div>
+          <div class="check"><span class="check-mark">09</span><span><strong>v2 regression</strong><br /><span class="muted small">Existing resolver and live mock ACP adapter tests continue to pass.</span></span></div>
+          <div class="check"><span class="check-mark">10</span><span><strong>Generic discovery</strong><br /><span class="muted small">Auth-required scans do not authenticate; successful scans publish bounded models and slash commands, including a delayed post-session command notification.</span></span></div>
+          <div class="check"><span class="check-mark">11</span><span><strong>Icon surfaces</strong><br /><span class="muted small">Official icon, cache hit, direct-network fallback, load error fallback, dark SVG handling, and every compact/composer/settings entry point.</span></span></div>
+          <div class="check"><span class="check-mark">12</span><span><strong>Latency</strong><br /><span class="muted small">Persisted session startup emits one <code>session/load</code> and no <code>session/new</code>; provider refresh returns before enrichment completes; foreground startup preempts a same-agent probe.</span></span></div>
+          <div class="check"><span class="check-mark">13</span><span><strong>Cleanup</strong><br /><span class="muted small">Last managed-binary instance removal, retained shared references, repeated uninstall, and no npx/uvx cache deletion.</span></span></div>
+          <div class="check"><span class="check-mark">14</span><span><strong>Integrated evidence</strong><br /><span class="muted small">One isolated web pass covering catalog-first search, add, provider switch, auth guidance, models, icons, a real turn, and delete.</span></span></div>
+        </div>
+        <p class="muted small" style="margin-top: 18px">
+          Current focused evidence includes passing web, client-runtime, registry catalog, probe,
+          coordinator, driver, runtime, and adapter suites plus clean scoped typechecks and targeted
+          lint/format validation. Live isolated testing covered Kilo, Codex, and Pi. Pi’s Anthropic
+          no-output case was traced outside T3 to an account-usage HTTP 400 that <code>pi-acp</code>
+          reports as an empty successful turn. Since ACP permits legitimate output-free background and
+          continuation turns, T3 does not apply a false generic failure heuristic.
+          No repo-wide suite is required for this delivery.
+        </p>
+      </section>
+
+      <section id="verified">
+        <h2>Original branch check, 13 August 2026</h2>
+        <p class="muted">
+          Every factual claim was verified against <code>t3code/codex-turn-mapping</code> (PR #2829’s
+          head) and the live registry index. Confirmed claims stand as written; the corrections below
+          are already folded into the sections above.
+        </p>
+        <div class="grid-2" style="margin-top: 26px">
+          <div class="flat">
+            <h3>Confirmed in code</h3>
+            <ul class="muted small">
+              <li>The original <code>AcpRegistryDriver.ts</code> hardcoded readiness. The implementation replaces it with managed snapshots, local inspection, and asynchronous discovery.</li>
+              <li><code>AcpRegistrySupport.ts</code> already has versioned cache paths (<code>agents/&lt;id&gt;/&lt;version&gt;/&lt;platform&gt;</code>), install locks with stale takeover, archive-entry and executable-root validation, a 512&nbsp;MB archive bound, atomic registry cache writes, and offline disk fallback.</li>
+              <li><code>AcpRegistryAdapterV2</code> originally built a resolver per provider instance. The implementation now consumes one server-scoped catalog service.</li>
+              <li><code>AuthOrchestrationReadScope</code> / <code>AuthOrchestrationOperateScope</code> and the dotted <code>server.*</code> RPC naming both exist as assumed.</li>
+              <li>ThemeSearchSection already models stale-request cancellation via AbortController plus suggested searches.</li>
+              <li>The runtime handles ACP <code>auth_required</code> by retrying <code>authenticate</code> with the configured or first agent-managed method.</li>
+              <li>Live registry: 38 agents; authors and license on every row, repository on 32, website on 31; mock metadata (Gemini CLI 0.55.1 npx, Codex 1.2.0 by OpenAI +2, Kimi binary) matches real rows.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>Corrected in this revision</h3>
+            <ul class="muted small">
+              <li>The existing wizard order is Driver → Identity → Config, not config-last-optional. The ACP search-before-identity flow needs a driver-aware step model; noted in UI and implementation step 4.</li>
+              <li>Instance identity now follows the existing <code>deriveInstanceId</code> convention (<code>acpRegistry_&lt;label-slug&gt;</code>) instead of a new <code>acp_&lt;agent-id&gt;</code> scheme.</li>
+              <li><code>RpcAuthorization.ts</code> lives at <code>apps/server/src/auth/</code>.</li>
+              <li><code>AcpRegistrySettings</code> has no environment field; Advanced settings are command path, auth method ID, and custom models.</li>
+              <li>PR #5654 (Open VSX theme search) is merged, not active.</li>
+              <li>Search-freshness bullets now separate already-built resolver behavior from the one genuinely new piece: the in-memory index memoizes forever today and needs refresh semantics.</li>
+              <li>Live-data addition: 8 of 38 agents (including Devin and Cursor) publish binaries without SHA-256, confirming checksum verification must stay optional.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="validate">
+        <h2>Current decisions</h2>
+        <div class="decision-box">
+          <h3>Reviewed direction plus live-test refinements · 13 August 2026</h3>
+          <ol>
+            <li><strong>UI:</strong> search inside the existing Add Provider wizard. Find ACP initially lists all compatible entries; the query narrows the catalog.</li>
+            <li><strong>Provisioning:</strong> eagerly download safe managed binaries; npx/uvx materialize their pinned packages during the first normal session. No ACP process starts during setup.</li>
+            <li><strong>Authentication:</strong> generic advertised methods and guidance, no provider-specific production branches, no automatic interactive auth during health discovery.</li>
+            <li><strong>Discovery:</strong> models and slash commands come from the same bounded automatic ACP probe used to enrich provider snapshots.</li>
+            <li><strong>Health:</strong> provider selection and refresh wait only for local readiness; full ACP discovery is asynchronous and individually bounded.</li>
+            <li><strong>Priority:</strong> starting a user session interrupts or suppresses disposable discovery for the same registry agent.</li>
+            <li><strong>Removal:</strong> remove only T3-managed binary data after the final reference; keep package-manager caches untouched.</li>
+            <li><strong>Delivery:</strong> focused PR <a href="https://github.com/pingdotgg/t3code/pull/6461" target="_blank" rel="noopener noreferrer">#6461</a> is based directly on <code>t3code/codex-turn-mapping</code>, the head branch for orchestrator v2 PR #2829. WIP and draft state are removed, and active monitoring is underway.</li>
+          </ol>
+          <p class="muted small">
+            Implementation and requested delivery are complete. The two real-parent proofs close the
+            former WIP boundary, so the PR is ready for normal review.
+          </p>
+        </div>
+
+        <div class="sources">
+          <span>Sources:</span>
+          <a href="https://github.com/pingdotgg/t3code/pull/6461" target="_blank" rel="noopener noreferrer">ACP Registry PR #6461</a>
+          <a href="https://github.com/pingdotgg/t3code/pull/2829" target="_blank" rel="noopener noreferrer">orchestrator v2 PR #2829</a>
+          <a href="https://github.com/pingdotgg/t3code/pull/5654" target="_blank" rel="noopener noreferrer">merged Open VSX search PR #5654</a>
+          <a href="https://github.com/pingdotgg/t3code/pull/6071" target="_blank" rel="noopener noreferrer">adjacent generic ACP PR #6071</a>
+          <a href="https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json" target="_blank" rel="noopener noreferrer">official ACP Registry index</a>
+          <a href="https://agentclientprotocol.com/get-started/registry" target="_blank" rel="noopener noreferrer">ACP Registry documentation</a>
+        </div>
+      </section>
+
+      <section id="handoff">
+        <h2>Round 2: capability expansion, review fixes, and handoff · 13 August 2026 evening</h2>
+        <p class="muted">
+          A second working session addressed the Macroscope review round on #6461, implemented the
+          previously unused ACP capabilities, and fixed every defect surfaced during live testing.
+          That earlier handoff is now incorporated into the final ACP standardization and live proof.
+        </p>
+
+        <div class="grid-2" style="margin-top: 26px">
+          <div class="flat">
+            <h3>Shipped this round</h3>
+            <ul class="muted small">
+              <li>All 11 Macroscope comments addressed in code: truncated archive listings now fail closed, linear download buffering, probe field normalization, inline service shapes, accent badge restored, honest uninstall error detail.</li>
+              <li>ACP client <code>fs</code> capability: <code>fs/read_text_file</code> and <code>fs/write_text_file</code> handled for every ACP flavor (<code>AcpClientFs.ts</code>).</li>
+              <li>ACP client <code>terminal</code> capability with per-terminal scopes, spec-shaped truncation, embedded tool-call output, and failure logging (<code>AcpClientTerminals.ts</code>).</li>
+              <li>Session config options and modes map onto provider option descriptors (<code>AcpSessionConfig.ts</code>); the composer traits menu drives them with no new UI. Collaboration-mode options follow T3's own Plan/Build toggle.</li>
+              <li>Legacy model-times-effort variants collapse onto the model config option's base models; stale inventories are replaced on completed probes instead of retained forever (<code>ProviderRegistry.ts</code>).</li>
+              <li>Terminal-auth methods surface their exact runnable command; env-var methods name their variables in the provider card.</li>
+              <li>Discovery probes: 60&nbsp;s timeout for cold npx starts, failures downgrade to warnings, successful probes cached 15 minutes so health refreshes stop respawning agents.</li>
+              <li>Checkpoint rollback on ACP threads with documented reset semantics.</li>
+              <li><strong>Stdio MCP bridge</strong> (<code>t3 acp-mcp-bridge</code>, <code>AcpMcpStdioBridge.ts</code>): every ACP agent now receives the t3-code orchestration toolkit through ACP's required stdio transport. Live testing proved agents never connected to the injected http servers (codex-acp advertises http MCP and drops it; pi-acp has none); zero t3-code tool calls existed in the projection before this fix.</li>
+              <li>Registry icons fall back to native <code>&lt;img&gt;</code> loading when the validating fetch fails: the official CDN serves no CORS headers, so the cache pipeline alone can never load them cross-origin.</li>
+              <li>Rejected config-option values (codex-acp advertises <code>ultra</code> and rejects it per model) degrade to a logged warning instead of failing session open.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>Follow-up results and completed handoff</h3>
+            <ul class="muted small">
+              <li><strong>ACP interrupts resolved:</strong> Stop now selects <code>waiting</code> runs as well as <code>preparing/starting/running</code>. The existing ACP interrupt path already cancels the pending runtime request; the missing client dispatch was the defect.</li>
+              <li><strong>Failed <code>exec-…</code> item diagnosed:</strong> the native item was a failed <code>t3-code.delegate_task</code> MCP call, not a command execution. Codex ACP sent an extended elicitation schema for MCP approval. T3 decoded away the extension fields, failed an exact raw-schema correlation, returned a protocol error, and codex-acp converted that error to <code>user cancelled MCP tool call</code>.</li>
+              <li><strong>Subagent approval fixed:</strong> the final boundary carries the exact transport request ID and supports both current <code>elicitation/create</code> flat responses and legacy <code>session/elicitation</code> nested responses. Explicitly tagged MCP approvals follow the thread runtime policy, while ordinary forms and URL elicitation retain their existing behavior.</li>
+              <li><strong>Real retry complete:</strong> both a Codex ACP parent and a Pi ACP parent created native Codex, Claude, Codex ACP, and Codex-through-Pi child tasks. All eight child tasks completed.</li>
+              <li><strong>Claude review follow-ups:</strong> boolean ACP session options are no longer discarded, and cached provider snapshots now refresh their live slash-command and skill inventory instead of returning stale cached values.</li>
+              <li><strong>ACP instruction parity:</strong> because ACP has no system/developer prompt field, T3 now supplies a provider-neutral interaction-mode bundle in the first prompt and again after Plan/Build transitions. It includes collaborative-browser and orchestration guidance when the <code>t3-code</code> MCP tools are attached; native Codex and Claude prompt paths remain unchanged.</li>
+              <li><strong>Review handoff:</strong> the former Macroscope findings are incorporated. The PR now moves to ready-for-review state and stays under active monitoring until the latest commit is green with no unresolved actionable feedback.</li>
+              <li><strong>Environment quirks:</strong> the dev env symlinks <code>/srv/...-d23f5fac/repo</code> to this worktree and live-serves edits — batch server changes and restart <code>t3dev-env@t3code-codex-turn-mapping-d23f5fac</code> deliberately; Vite keeps stale <code>packages/*</code> transforms across branch switches. <code>vp test</code> flakes at collection on this VPS — run <code>corepack pnpm test &lt;paths&gt;</code> from <code>apps/server</code>. <code>AcpSessionRuntime.processTree</code> has one pre-existing environment-only failure (node not in <code>/usr/bin</code>).</li>
+            </ul>
+          </div>
+        </div>
+
+        <p class="muted small" style="margin-top: 18px">
+          Verification at handoff: server, web, contracts, client-runtime, and effect-acp typechecks
+          pass. The latest focused run covers 250 tests across ACP protocol identity, registry,
+          probe, terminal, session configuration, MCP bridge, settings, icon, and adapter behavior.
+          The isolated dev environment served the final worktree edits for both live parent proofs.
+        </p>
+      </section>
+
+      <section id="standardization">
+        <h2>Round 3: ACP standardization and subagent repair, proven</h2>
+        <div class="signal good">
+          <h3>Resolved: current Codex elicitation crossed a legacy ACP boundary</h3>
+          <p>
+            <code>codex-acp</code> 1.2.0 sends <code>elicitation/create</code> and expects the current
+            flat response <code>{"action":"accept"}</code>. T3's pinned ACP 0.11.3 schema registered
+            only <code>session/elicitation</code> and encoded a nested action. Codex translated that
+            protocol mismatch into a cancelled MCP call before child creation.
+          </p>
+          <p class="muted small">
+            The compatibility boundary now registers both method generations. Internally both use a
+            flat normalized action; only the legacy wire response is converted back to the nested
+            shape. Exact JSON-RPC request IDs travel beside decoded requests, so approval routing no
+            longer depends on raw payload queues or schema-shape correlation.
+          </p>
+        </div>
+
+        <div class="flow">
+          <div class="flow-node">
+            <span class="label">ACP agent</span>
+            <strong>JSON-RPC request</strong>
+            <span>One native ID, standard method, provider-owned extension fields.</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="flow-node">
+            <span class="label">effect-acp</span>
+            <strong>Typed request context</strong>
+            <span>Carry the exact request ID and method beside the decoded payload.</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="flow-node">
+            <span class="label">Generic adapter</span>
+            <strong>Policy + projection</strong>
+            <span>Approve, ask, deny, render input, or execute client capability.</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="flow-node">
+            <span class="label">Response lifecycle</span>
+            <strong>Acknowledge exact ID</strong>
+            <span>No payload matching, FIFO guesses, or provider-specific correlation.</span>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top: 34px">
+          <div class="flat">
+            <h3>Standardized in this PR</h3>
+            <ul class="muted small">
+              <li>First-class transport request context for all typed core and extension request handlers.</li>
+              <li>One approval translation for standard permission requests and tagged MCP approval elicitations.</li>
+              <li>One provider-neutral T3 instruction bundle, re-applied only when the interaction mode changes.</li>
+              <li>One ACP session configuration projection for select, boolean, and model options.</li>
+              <li>One MCP delivery boundary: stdio for compliant agents and the same authenticated, thread-scoped tools through <code>acp-mcp-call</code> when an agent drops injected servers.</li>
+              <li>One current/legacy elicitation normalizer instead of upgrading the entire pinned schema and breaking older agents.</li>
+              <li>One response-admission lifecycle keyed by the real transport ID across restart, Stop, and stale generations.</li>
+              <li>One live command and skill refresh path, including cached provider snapshots.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>Deleted complexity</h3>
+            <ul class="muted small">
+              <li>No second queue of raw requests inside the orchestration adapter.</li>
+              <li>No canonical JSON comparison or decoded-subset heuristic.</li>
+              <li>No request correlation based on session IDs, tool-call IDs, messages, schemas, or provider extensions.</li>
+              <li>No Codex-only execution path for ordinary ACP request identity.</li>
+              <li>No silent fallback from a missing transport identity to an unrelated pending request.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 38px">Provider conformance matrix</h3>
+        <table>
+          <thead><tr><th>Capability</th><th>Codex ACP</th><th>Pi ACP</th><th>Kilo ACP</th><th>Grok ACP</th></tr></thead>
+          <tbody>
+            <tr><td>Typed request identity</td><td>Required for MCP approval elicitation</td><td>Shared core path</td><td>Shared core path</td><td>Shared core and xAI extension path</td></tr>
+            <tr><td>T3 orchestration MCP</td><td>stdio bridge</td><td>authenticated terminal fallback because pi-acp drops injected servers</td><td>stdio bridge</td><td>stdio bridge plus native extensions</td></tr>
+            <tr><td>Instructions</td><td>First prompt + mode transitions</td><td>First prompt + mode transitions</td><td>First prompt + mode transitions</td><td>First prompt + mode transitions</td></tr>
+            <tr><td>Permission policy</td><td>Standard permission + tagged elicitation</td><td>Standard permission</td><td>Standard permission</td><td>Standard permission + xAI user input</td></tr>
+            <tr><td>Session options</td><td>Select, boolean, model</td><td>Select, boolean, model</td><td>Select, boolean, model</td><td>Select, boolean, model</td></tr>
+            <tr><td>Stop and restart</td><td>Waiting and running turns</td><td>Waiting and running turns</td><td>Waiting and running turns</td><td>Waiting and running turns plus background-task policy</td></tr>
+          </tbody>
+        </table>
+
+        <div class="signal good" style="margin-top: 30px">
+          <h3>Acceptance completed with two real ACP parents</h3>
+          <p class="muted small">
+            The exact user prompt was run first under Codex ACP
+            (<code>acpRegistry_codex / gpt-5.6-sol</code>, thread
+            <code>a02eaa0d-27df-4b80-9a7b-0fa20c53d832</code>) and then under Pi ACP
+            (<code>acpRegistry_pi_acp / openai-codex/gpt-5.6-sol</code>, thread
+            <code>69e0ca9b-91be-47e6-9120-b4d799d1897a</code>). Both parents created four durable
+            child threads. All eight children reached <code>completed</code>.
+          </p>
+          <table>
+            <thead><tr><th>Parent</th><th>Native Codex</th><th>Claude</th><th>Codex ACP</th><th>Codex in Pi</th></tr></thead>
+            <tbody>
+              <tr><td>Codex ACP</td><td><code>codex / gpt-5.6-sol</code></td><td><code>claudeAgent / claude-sonnet-5</code></td><td><code>acpRegistry_codex / gpt-5.6-sol</code></td><td><code>acpRegistry_pi_acp / openai-codex/gpt-5.6-sol</code></td></tr>
+              <tr><td>Pi ACP</td><td><code>codex</code></td><td><code>claudeAgent / claude-fable-5</code></td><td><code>acpRegistry_codex / gpt-5.6-sol</code></td><td><code>acpRegistry_pi_acp / openai-codex/gpt-5.6-sol</code></td></tr>
+            </tbody>
+          </table>
+          <p class="muted small" style="margin-top: 16px">
+            Final focused verification: server, web, contracts, client-runtime, and effect-acp
+            typechecks pass. 250 focused tests pass, including the selected ACP adapter lifecycle scenarios;
+            current flat and legacy nested elicitation responses have explicit wire-shape coverage.
+          </p>
+        </div>
+
+        <div class="grid-2" style="margin-top: 30px">
+          <div class="flat">
+            <h3>Final interoperability hardening</h3>
+            <ul class="muted small">
+              <li>Numeric and string JSON-RPC request IDs remain distinct across protocol, client, agent, and adapter boundaries.</li>
+              <li>The stdio MCP bridge orders session setup, then forwards independent requests and cancellation concurrently while streaming SSE events incrementally.</li>
+              <li>All ACP replay fixtures negotiate the standardized client capabilities and require the first-prompt T3 instruction envelope while preserving the recorded user request exactly; all 12 ACP replay routes and 8 fixture contract checks pass.</li>
+              <li>ACP terminal creation is concurrency-safe, interruption-safe, and session-scoped, resolves MCP credentials from the requesting native session without letting a later thread binding reassign them, waits for output drains, reports exit signals, force-kills uncooperative children, and bounds retained output without invalidating live handles.</li>
+              <li>Rollback stages a replacement ACP session with the target thread's MCP context before closing the original, buffers startup notifications and termination state until its callback generation commits, defers candidate terminal access until then, quarantines failed generations, and clears session-scoped state only after the replacement is ready.</li>
+              <li>Opaque model, auth, and option IDs are preserved exactly or omitted when unsafe; current-model references always point into the published bounded inventory.</li>
+            </ul>
+          </div>
+          <div class="flat">
+            <h3>Final delivery hardening</h3>
+            <ul class="muted small">
+              <li>Registry entries are decoded independently, so one malformed third-party recipe cannot hide every valid ACP provider.</li>
+              <li><code>npx</code> and <code>uvx</code> validate their own package syntax, while oversized authentication commands are omitted instead of sliced into invalid commands.</li>
+              <li>Provider creation is atomic under concurrency. Secret writes and removals share one rollback, followed by one uninterruptible settings commit.</li>
+              <li>Registry icon URL replacement is safe under rapid A → B → A source changes.</li>
+              <li>Authenticated T3 MCP calls inherit the thread runtime policy instead of being mislabeled as unknown workspace writes.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

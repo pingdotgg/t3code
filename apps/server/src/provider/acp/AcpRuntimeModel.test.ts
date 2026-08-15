@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
+  embeddedTerminalIdsFromSessionUpdate,
+  extractMcpToolCallIdentity,
   extractModelConfigId,
   mergeToolCallState,
   parsePermissionRequest,
@@ -176,43 +178,10 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
-  it("builds a synthetic load response from initialize model state", () => {
+  it("ignores malformed initialize mode state in synthetic load responses", () => {
     const response = syntheticLoadSessionResponseFromInitialize({
       protocolVersion: 1,
       _meta: {
-        modelState: {
-          currentModelId: "grok-build",
-          availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
-        },
-      },
-    } satisfies EffectAcpSchema.InitializeResponse);
-
-    expect(response.models?.currentModelId).toBe("grok-build");
-    expect(response._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
-  });
-
-  it("accepts initialize model descriptions with null", () => {
-    const response = syntheticLoadSessionResponseFromInitialize({
-      protocolVersion: 1,
-      _meta: {
-        modelState: {
-          currentModelId: "grok-build",
-          availableModels: [{ modelId: "grok-build", name: "Grok Build", description: null }],
-        },
-      },
-    } satisfies EffectAcpSchema.InitializeResponse);
-
-    expect(response.models?.availableModels[0]?.description).toBeNull();
-  });
-
-  it("ignores malformed initialize model state in synthetic load responses", () => {
-    const response = syntheticLoadSessionResponseFromInitialize({
-      protocolVersion: 1,
-      _meta: {
-        modelState: {
-          currentModelId: "grok-build",
-          availableModels: [null],
-        },
         modeState: {
           currentModeId: "code",
           availableModes: [{ id: "code", name: 12 }],
@@ -220,7 +189,6 @@ describe("AcpRuntimeModel", () => {
       },
     } as EffectAcpSchema.InitializeResponse);
 
-    expect(response.models).toBeUndefined();
     expect(response.modes).toBeUndefined();
     expect(response._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
   });
@@ -281,6 +249,7 @@ describe("AcpRuntimeModel", () => {
           data: {
             toolCallId: "tool-1",
             kind: "execute",
+            title: "Terminal",
             command: "bun run typecheck",
             rawInput: {
               executable: "bun",
@@ -466,5 +435,285 @@ describe("AcpRuntimeModel", () => {
         command: "cat package.json",
       },
     });
+  });
+});
+
+describe("extractMcpToolCallIdentity", () => {
+  function toolCallFromUpdate(
+    update: EffectAcpSchema.SessionNotification["update"],
+  ): NonNullable<ReturnType<typeof parsePermissionRequest>["toolCall"]> {
+    const parsed = parseSessionUpdateEvent({ sessionId: "session-1", update });
+    const event = parsed.events.find(
+      (
+        candidate,
+      ): candidate is Extract<(typeof parsed.events)[number], { _tag: "ToolCallUpdated" }> =>
+        candidate._tag === "ToolCallUpdated",
+    );
+    if (event === undefined) throw new Error("expected a tool call event");
+    return event.toolCall;
+  }
+
+  it("recovers server and tool from codex-acp tagged execute calls", () => {
+    // Captured verbatim from codex-acp 2026-08-14: MCP calls arrive as kind
+    // "execute" with the identity only in rawInput.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-f4591587-0754-4bb4-990b-f2767894ba93",
+      kind: "execute",
+      title: "mcp.t3-code.orchestrator_capabilities",
+      status: "in_progress",
+      rawInput: { server: "t3-code", tool: "orchestrator_capabilities", arguments: {} },
+      _meta: { is_mcp_tool_call: true },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "orchestrator_capabilities",
+    });
+  });
+
+  it("recovers T3 identity from acp-mcp-call fallback commands", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-1",
+      kind: "execute",
+      title: "Ran command",
+      status: "in_progress",
+    });
+
+    expect(
+      extractMcpToolCallIdentity(toolCall, {
+        embeddedTerminalCommands: [
+          '/usr/bin/node /srv/t3/bin.ts acp-mcp-call delegate_task {"task":"x"}',
+        ],
+      }),
+    ).toEqual({ server: "t3-code", tool: "delegate_task" });
+  });
+
+  it("recovers T3 identity from pi-acp title-only fallback execs", () => {
+    // Captured verbatim from pi-acp 0.0.33 2026-08-14: rawInput is null and
+    // the command line only appears as the verbatim title, which the
+    // presentation layer summarizes into "Ran command".
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_JdxnvzjHHrbvyASTLVekLYWV|fc_08f5a805a7159aa6016a7ec4afad548191",
+      kind: "execute",
+      title:
+        '"$T3_ACP_MCP_NODE" "$T3_ACP_MCP_ENTRYPOINT" acp-mcp-call orchestrator_capabilities \'{}\'',
+      status: "in_progress",
+      rawInput: null,
+      content: [
+        {
+          type: "terminal",
+          terminalId: "call_JdxnvzjHHrbvyASTLVekLYWV|fc_08f5a805a7159aa6016a7ec4afad548191",
+        },
+      ],
+    });
+
+    expect(toolCall.title).toBe("Ran command");
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "orchestrator_capabilities",
+    });
+  });
+
+  it("recovers T3 identity from server-namespaced titles across titleless updates", () => {
+    // Captured verbatim from Kilo 7.4.22 2026-08-15: the initial tool_call
+    // titles the MCP function "<server>_<tool>" with kind "other", and the
+    // completed update carries no title at all, so the merged presentation
+    // title regresses to "Tool" while data.title keeps the wire value.
+    const created = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "chatcmpl-tool-b2a6142ee1a510a5",
+      kind: "other",
+      title: "t3-code_orchestrator_capabilities",
+      status: "pending",
+      locations: [],
+      rawInput: {},
+    });
+    const completed = toolCallFromUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "chatcmpl-tool-b2a6142ee1a510a5",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: '{"ok":true}' } }],
+    });
+    const merged = mergeToolCallState(created, completed);
+
+    expect(extractMcpToolCallIdentity(merged)).toEqual({
+      server: "t3-code",
+      tool: "orchestrator_capabilities",
+    });
+  });
+
+  it("recovers T3 identity from Gemini and qwen MCP-server title templates", () => {
+    // Gemini CLI 0.55.1: "<tool> (<server> MCP Server)"; qwen-code 0.21.12
+    // appends ": <args json>" to the same template.
+    const gemini = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "gemini-1",
+      kind: "other",
+      title: "delegate_task (t3-code MCP Server)",
+      status: "in_progress",
+    });
+    const qwen = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "qwen-1",
+      kind: "other",
+      title: 'task_status (t3-code MCP Server): {"taskId":"node:delegated-task:1"}',
+      status: "pending",
+      rawInput: { taskId: "node:delegated-task:1" },
+    });
+
+    expect(extractMcpToolCallIdentity(gemini)).toEqual({
+      server: "t3-code",
+      tool: "delegate_task",
+    });
+    expect(extractMcpToolCallIdentity(qwen)).toEqual({ server: "t3-code", tool: "task_status" });
+  });
+
+  it("recovers T3 identity across the registry agents' naming conventions", () => {
+    // One representative per surveyed convention (2026-08 registry builds):
+    // droid triple underscore, Copilot hyphen, Amp mangled server + detail
+    // tail, cline args tail, Auggie tool-first suffix.
+    // One representative per surveyed convention (2026-08 registry builds):
+    // droid triple underscore, Copilot hyphen, Amp mangled server + detail
+    // tail, cline args tail, Auggie tool-first suffix, fast-agent slash,
+    // Kimi bare name with args tail.
+    for (const title of [
+      "t3-code___delegate_task",
+      "t3-code-delegate_task",
+      'mcp__t3_code__delegate_task: {"mode":"async"}',
+      't3-code__delegate_task: {"mode":"async"}',
+      "delegate_task_t3-code",
+      "t3-code/delegate_task",
+      'delegate_task: {"mode":"async"}',
+    ]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "convention-1",
+        kind: "other",
+        title,
+        status: "pending",
+      });
+      expect(extractMcpToolCallIdentity(toolCall), title).toEqual({
+        server: "t3-code",
+        tool: "delegate_task",
+      });
+    }
+  });
+
+  it("recovers T3 identity from goose _meta despite LLM-rewritten titles", () => {
+    // goose enriches titles asynchronously, so only _meta.goose.toolCall is
+    // stable; shape from crates/goose/src/acp/server/tool_calls/conversion.rs.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "goose-1",
+      title: "Checking on the delegated task",
+      status: "in_progress",
+      _meta: {
+        goose: {
+          toolCall: { toolName: "t3-code__task_status", extensionName: "t3-code" },
+          messageId: "message-1",
+        },
+      },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "task_status",
+    });
+  });
+
+  it("recovers T3 identity from qwen serverId meta regardless of prefix format", () => {
+    // qwen-code 0.21.12 emits _meta.serverId + _meta.toolName; serverId is an
+    // explicit origin assertion, so a known tool suffix suffices even if the
+    // prefix format changes.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "qwen-meta-1",
+      kind: "other",
+      title: "unrelated display title",
+      status: "pending",
+      _meta: { toolName: "mcp::t3-code::t3_thread_send", serverId: "t3-code", provenance: "mcp" },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "t3_thread_send",
+    });
+  });
+
+  it("does not brand tools whose meta asserts a foreign server", () => {
+    // The foreign assertion vetoes every loose source, including a title
+    // that would otherwise match a T3 convention.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "foreign-1",
+      kind: "other",
+      title: "t3-code_delegate_task",
+      status: "pending",
+      _meta: { toolName: "delegate_task", serverId: "other-orchestrator" },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+  });
+
+  it("does not brand path-like or unknown-tool titles", () => {
+    for (const title of ["t3-code/README.md", "t3-code_not_a_real_tool"]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "path-1",
+        kind: "other",
+        title,
+        status: "pending",
+      });
+      expect(extractMcpToolCallIdentity(toolCall), title).toBeUndefined();
+    }
+  });
+
+  it("leaves ordinary execute calls unidentified", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-2",
+      kind: "execute",
+      title: "cat package.json",
+      status: "in_progress",
+      rawInput: { command: "cat package.json" },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+    expect(
+      extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: ["bash -lc ls"] }),
+    ).toBeUndefined();
+  });
+});
+
+describe("embeddedTerminalIdsFromSessionUpdate", () => {
+  it("collects terminal ids from tool_call content before the text rewrite", () => {
+    expect(
+      embeddedTerminalIdsFromSessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call_1",
+          status: "in_progress",
+          content: [
+            { type: "terminal", terminalId: "t3-term-9" },
+            { type: "content", content: { type: "text", text: "noise" } },
+          ],
+        },
+      }),
+    ).toEqual({ toolCallId: "call_1", terminalIds: ["t3-term-9"] });
+    expect(
+      embeddedTerminalIdsFromSessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_2",
+          title: "Tool",
+          status: "pending",
+        },
+      }),
+    ).toBeUndefined();
   });
 });

@@ -375,6 +375,8 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly resumeFromSession?: OrchestrationV2ProviderSession;
+  /** Native thread to activate while an eager adapter opens its provider process. */
+  readonly initialNativeThreadId?: string;
 }
 
 export interface ProviderAdapterV2EnsureThreadInput {

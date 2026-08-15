@@ -2,6 +2,15 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import {
+  AcpRegistryManagedBinaryUninstallInput,
+  AcpRegistryManagedBinaryUninstallResult,
+  AcpRegistryOperationError,
+  AcpRegistryPrepareInput,
+  AcpRegistryPrepareResult,
+  AcpRegistrySearchInput,
+  AcpRegistrySearchResult,
+} from "./acpRegistry.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -66,7 +75,7 @@ import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
 } from "./orchestration.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -285,6 +294,9 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverSearchAcpRegistry: "server.searchAcpRegistry",
+  serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
+  serverUninstallAcpRegistryManagedBinary: "server.uninstallAcpRegistryManagedBinary",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
@@ -411,7 +423,10 @@ export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 });
 
 export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
-  payload: Schema.Struct({ patch: ServerSettingsPatch }),
+  payload: Schema.Struct({
+    patch: ServerSettingsPatch,
+    providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+  }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
@@ -421,6 +436,30 @@ export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscov
   success: SourceControlDiscoveryResult,
   error: EnvironmentAuthorizationError,
 });
+
+export const WsServerSearchAcpRegistryRpc = Rpc.make(WS_METHODS.serverSearchAcpRegistry, {
+  payload: AcpRegistrySearchInput,
+  success: AcpRegistrySearchResult,
+  error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerPrepareAcpRegistryAgentRpc = Rpc.make(
+  WS_METHODS.serverPrepareAcpRegistryAgent,
+  {
+    payload: AcpRegistryPrepareInput,
+    success: AcpRegistryPrepareResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerUninstallAcpRegistryManagedBinaryRpc = Rpc.make(
+  WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+  {
+    payload: AcpRegistryManagedBinaryUninstallInput,
+    success: AcpRegistryManagedBinaryUninstallResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
   payload: Schema.Struct({}),
@@ -1098,6 +1137,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerSearchAcpRegistryRpc,
+  WsServerPrepareAcpRegistryAgentRpc,
+  WsServerUninstallAcpRegistryManagedBinaryRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,

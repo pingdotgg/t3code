@@ -122,6 +122,7 @@ import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   filterSidebarV2VisibleThreads,
+  buildSidebarProviderEntriesByEnvironment,
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
@@ -140,6 +141,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  type SidebarProviderEntriesByEnvironment,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -159,8 +161,7 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
-import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
+import type { ProviderInstanceEntry } from "../providerInstances";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -248,7 +249,7 @@ function SidebarThreadTooltip({
   projectCwd,
   projectFaviconPath,
   environmentLabel,
-  driverKind,
+  providerEntry,
   modelInstanceId,
   modelLabel,
   branchMismatch,
@@ -260,7 +261,7 @@ function SidebarThreadTooltip({
   projectCwd: string | null;
   projectFaviconPath: string | null;
   environmentLabel: string | null;
-  driverKind: ProviderInstanceEntry["driverKind"] | null;
+  providerEntry: ProviderInstanceEntry | null;
   modelInstanceId: string;
   modelLabel: string;
   branchMismatch: {
@@ -314,11 +315,13 @@ function SidebarThreadTooltip({
               </div>
             </div>
           ) : null}
-          {driverKind ? (
+          {providerEntry ? (
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
-                driverKind={driverKind}
+                driverKind={providerEntry.driverKind}
                 displayName={thread.runtime?.providerName ?? modelInstanceId}
+                acpRegistryAgentId={providerEntry.acpRegistryAgentId}
+                acpRegistryIconUrl={providerEntry.acpRegistryIconUrl}
                 iconClassName="size-3 shrink-0 grayscale opacity-60"
               />
               <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
@@ -688,7 +691,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectTitle: string | null;
-  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
+  providerEntriesByEnvironment: SidebarProviderEntriesByEnvironment;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
@@ -858,7 +861,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   }, [onChangeRequestState, prState, threadKey]);
 
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const providerEntry =
+    props.providerEntriesByEnvironment.get(thread.environmentId)?.get(modelInstanceId) ?? null;
   const driverKind = providerEntry?.driverKind ?? null;
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
@@ -877,7 +881,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       projectCwd={props.projectCwd}
       projectFaviconPath={props.projectFaviconPath}
       environmentLabel={props.environmentLabel}
-      driverKind={driverKind}
+      providerEntry={providerEntry}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
       branchMismatch={branchMismatch}
@@ -1465,6 +1469,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={thread.runtime?.providerName ?? modelInstanceId}
+                      acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+                      acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
                       iconClassName="size-3.5"
                     />
                   </span>
@@ -1495,7 +1501,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   projectFaviconPath: string | null;
   projectTitle: string | null;
   environmentLabel: string | null;
-  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
+  providerEntriesByEnvironment: SidebarProviderEntriesByEnvironment;
   isHighlighted: boolean;
   isRouteActive: boolean;
   resultId: string;
@@ -1521,8 +1527,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
-  const driverKind = providerEntry?.driverKind ?? null;
+  const providerEntry =
+    props.providerEntriesByEnvironment.get(thread.environmentId)?.get(modelInstanceId) ?? null;
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
@@ -1580,7 +1586,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           projectCwd={props.projectCwd}
           projectFaviconPath={props.projectFaviconPath}
           environmentLabel={props.environmentLabel}
-          driverKind={driverKind}
+          providerEntry={providerEntry}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
           branchMismatch={branchMismatch}
@@ -1754,15 +1760,10 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const providerEntryByInstanceId = useMemo(
-    () =>
-      new Map(
-        deriveProviderInstanceEntries(serverProviders).map(
-          (entry) => [entry.instanceId as string, entry] as const,
-        ),
-      ),
-    [serverProviders],
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const providerEntriesByEnvironment = useMemo(
+    () => buildSidebarProviderEntriesByEnvironment(serverConfigs),
+    [serverConfigs],
   );
   const projectCwdByKey = useMemo(
     () =>
@@ -1902,7 +1903,6 @@ export default function Sidebar() {
   // the partition works directly off live shells: no archived-snapshot
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -3469,7 +3469,7 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntriesByEnvironment={providerEntriesByEnvironment}
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
@@ -3578,7 +3578,7 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntriesByEnvironment={providerEntriesByEnvironment}
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}

@@ -1,17 +1,20 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import { makeAcpRegistryResolver } from "../../provider/acp/AcpRegistrySupport.ts";
+import type { AcpRegistryAvailableCommands } from "../../provider/acp/AcpRegistryProbe.ts";
+import { makeAcpRegistryCatalog } from "../../provider/acp/AcpRegistrySupport.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import { BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2 } from "../builtInProviderAdapterDrivers.ts";
@@ -97,7 +100,7 @@ describe("AcpRegistryAdapterV2", () => {
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
-      const resolver = yield* makeAcpRegistryResolver({
+      const resolver = yield* makeAcpRegistryCatalog({
         cacheDir: serverConfig.providerStatusCacheDir,
         registryUrl,
       });
@@ -106,20 +109,52 @@ describe("AcpRegistryAdapterV2", () => {
         commandPath: process.execPath,
         authMethodId: "test",
       });
+      let startupActive = false;
+      let startupCount = 0;
       const instanceId = ProviderInstanceId.make("acp-registry-fixture");
+      const commandsPublished = yield* Deferred.make<{
+        readonly instanceId: ProviderInstanceId;
+        readonly commands: AcpRegistryAvailableCommands;
+      }>();
       const adapter = makeAcpRegistryAdapterV2({
         crypto: yield* Crypto.Crypto,
         instanceId,
         settings,
         environment: {
           T3_ACP_SESSION_LIFECYCLE: "1",
+          T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
         },
         childProcessSpawner,
         fileSystem,
         idAllocator,
+        runtimeCoordinator: {
+          withForegroundStartup: (agentId, effect) =>
+            Effect.acquireUseRelease(
+              Effect.sync(() => {
+                assert.equal(agentId, "fixture-agent");
+                startupActive = true;
+                startupCount += 1;
+              }),
+              () => effect,
+              () =>
+                Effect.sync(() => {
+                  startupActive = false;
+                }),
+            ),
+          runBackgroundProbe: (_agentId, effect) => effect.pipe(Effect.map(Option.some)),
+          clearAvailableCommands: () => Effect.void,
+          publishAvailableCommands: (publishedInstanceId, commands) =>
+            Deferred.succeed(commandsPublished, {
+              instanceId: publishedInstanceId,
+              commands,
+            }).pipe(Effect.asVoid),
+          getAvailableCommands: () => Effect.succeed(Option.none()),
+          watchAvailableCommands: () => Effect.never,
+        },
         resolver: {
           resolve: (configuredSettings, cwd, environment) =>
-            resolver.resolve(configuredSettings, cwd, environment).pipe(
+            Effect.sync(() => assert.isTrue(startupActive)).pipe(
+              Effect.andThen(resolver.resolve(configuredSettings, cwd, environment)),
               Effect.map((resolved) => ({
                 ...resolved,
                 spawn: {
@@ -151,9 +186,32 @@ describe("AcpRegistryAdapterV2", () => {
       });
 
       assert.equal(runtime.providerSession.driver, "acpRegistry");
+      assert.equal(startupCount, 1);
+      assert.isFalse(startupActive);
       assert.equal(providerThread.nativeThreadRef?.nativeId, "mock-session-1");
       assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
       assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
+      assert.deepEqual(yield* Deferred.await(commandsPublished), {
+        instanceId,
+        commands: {
+          slashCommands: [
+            {
+              name: "review",
+              description: "Review the current changes",
+              input: { hint: "focus" },
+            },
+          ],
+          skills: [
+            {
+              name: "workspace-skill",
+              description: "Run the workspace skill",
+              path: "acp://skill/workspace-skill",
+              scope: "agent",
+              enabled: true,
+            },
+          ],
+        },
+      });
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

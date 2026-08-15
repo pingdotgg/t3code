@@ -8,9 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -201,6 +203,81 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             { id: "fastMode", value: false },
           ],
         ),
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("creates provider instances atomically without overwriting a concurrent add", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("acpRegistry_shared");
+      const results = yield* Effect.all(
+        ["First", "Second"].map((displayName) =>
+          serverSettings
+            .updateProviderInstance({
+              operation: "create",
+              instanceId,
+              instance: {
+                driver: ProviderDriverKind.make("acpRegistry"),
+                displayName,
+                config: { agentId: "shared", distribution: "auto" },
+              },
+            })
+            .pipe(Effect.result),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      assert.equal(results.filter((result) => result._tag === "Success").length, 1);
+      assert.equal(results.filter((result) => result._tag === "Failure").length, 1);
+      assert.isTrue(
+        ["First", "Second"].includes(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.displayName ?? "",
+        ),
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("pauses provider-instance mutations while a settings snapshot is in use", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const snapshotEntered = yield* Deferred.make<void>();
+      const releaseSnapshot = yield* Deferred.make<void>();
+      const mutationCompleted = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("acpRegistry_kilo");
+
+      const snapshotFiber = yield* serverSettings
+        .withSettingsSnapshot(() =>
+          Deferred.succeed(snapshotEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSnapshot)),
+          ),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(snapshotEntered);
+
+      const mutationFiber = yield* serverSettings
+        .updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("acpRegistry"),
+            displayName: "Kilo",
+            config: { agentId: "kilo", distribution: "auto" },
+          },
+        })
+        .pipe(
+          Effect.tap(() => Deferred.succeed(mutationCompleted, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Effect.yieldNow;
+
+      assert.isTrue(Option.isNone(yield* Deferred.poll(mutationCompleted)));
+      yield* Deferred.succeed(releaseSnapshot, undefined);
+      yield* Fiber.join(snapshotFiber);
+      yield* Fiber.join(mutationFiber);
+      assert.equal(
+        (yield* serverSettings.getSettings).providerInstances[instanceId]?.displayName,
+        "Kilo",
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -691,4 +768,160 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("rolls back provider secret changes when the settings file commit fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let failRename = false;
+      let settingsPathToFail: string | undefined;
+      const writeFailure = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "rename",
+        description: "Forced settings write failure.",
+      });
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        rename: (fromPath, toPath) =>
+          failRename && toPath === settingsPathToFail
+            ? Effect.fail(writeFailure)
+            : fileSystem.rename(fromPath, toPath),
+      });
+      const instanceId = ProviderInstanceId.make("codex_write_failure");
+      const settingsLayer = makeServerSettingsLayer().pipe(
+        Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
+      );
+
+      yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        settingsPathToFail = (yield* ServerConfig.ServerConfig).settingsPath;
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
+            config: {},
+          },
+        });
+
+        failRename = true;
+        const failedUpdate = yield* serverSettings
+          .updateProviderInstance({
+            operation: "upsert",
+            instanceId,
+            instance: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
+              config: {},
+            },
+          })
+          .pipe(Effect.result);
+        assert.equal(failedUpdate._tag, "Failure");
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+
+        const failed = yield* serverSettings
+          .updateProviderInstance({ operation: "remove", instanceId })
+          .pipe(Effect.result);
+        assert.equal(failed._tag, "Failure");
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+      }).pipe(Effect.provide(settingsLayer));
+    }),
+  );
+
+  it.effect("rolls back provider secret changes when response materialization fails", () => {
+    const textDecoder = new TextDecoder();
+    const secrets = new Map<string, Uint8Array>();
+    let rejectNewSecret = false;
+    const secretStoreLayer = Layer.succeed(
+      ServerSecretStore.ServerSecretStore,
+      ServerSecretStore.ServerSecretStore.of({
+        get: (name) =>
+          Effect.suspend(() => {
+            const value = secrets.get(name);
+            if (rejectNewSecret && value !== undefined && textDecoder.decode(value) === "sk-new") {
+              return Effect.fail(
+                new ServerSecretStore.SecretStoreReadError({
+                  resource: `secret ${name}`,
+                  cause: "Forced response materialization failure.",
+                }),
+              );
+            }
+            return Effect.succeed(
+              value === undefined ? Option.none() : Option.some(Uint8Array.from(value)),
+            );
+          }),
+        set: (name, value) =>
+          Effect.sync(() => {
+            secrets.set(name, Uint8Array.from(value));
+          }),
+        create: (name, value) =>
+          Effect.sync(() => {
+            secrets.set(name, Uint8Array.from(value));
+          }),
+        getOrCreateRandom: (name, bytes) =>
+          Effect.sync(() => {
+            const value = secrets.get(name) ?? new Uint8Array(bytes);
+            secrets.set(name, value);
+            return Uint8Array.from(value);
+          }),
+        remove: (name) =>
+          Effect.sync(() => {
+            secrets.delete(name);
+          }),
+      }),
+    );
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(secretStoreLayer),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-materialization-failure-test-",
+          }),
+        ),
+      ),
+    );
+    const instanceId = ProviderInstanceId.make("codex_materialization_failure");
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: {
+          driver: ProviderDriverKind.make("codex"),
+          environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
+          config: {},
+        },
+      });
+
+      rejectNewSecret = true;
+      const failedUpdate = yield* serverSettings
+        .updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
+            config: {},
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.equal(failedUpdate._tag, "Failure");
+      rejectNewSecret = false;
+      assert.equal(
+        (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]?.value,
+        "sk-kept",
+      );
+    }).pipe(Effect.provide(settingsLayer));
+  });
 });

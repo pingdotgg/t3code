@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { buildTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -126,6 +127,7 @@ function failureDetail(error: unknown): string {
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -314,6 +316,20 @@ export const make = Effect.gen(function* () {
     }
 
     const cwd = worktreePath ?? project.workspaceRoot;
+    // Warm the checkpoint object store while the provider session starts, so
+    // the first blocking baseline capture (measured ~10s cold on a large
+    // fresh worktree) reuses the hashed blobs instead of paying that on the
+    // prompt critical path. Best effort in the background.
+    yield* checkpointStore.warmCheckpoint({ cwd }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("Thread launch checkpoint warm-up failed", {
+          commandId: input.commandId,
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.forkIn(preparationScope),
+    );
     if (runId !== null) {
       yield* threads
         .dispatch({

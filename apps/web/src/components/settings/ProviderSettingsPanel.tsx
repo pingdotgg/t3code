@@ -36,7 +36,11 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  useEnvironmentSettings,
+  usePersistEnvironmentProviderInstanceMutation,
+  useUpdateEnvironmentSettings,
+} from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
 import {
@@ -113,6 +117,12 @@ function withoutProviderInstanceFavorites(
   instanceId: ProviderInstanceId,
 ) {
   return favorites.filter((favorite) => favorite.provider !== instanceId);
+}
+
+function providerConfigString(config: unknown, key: string): string | null {
+  if (config === null || typeof config !== "object") return null;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
@@ -369,6 +379,7 @@ export function EnvironmentProviderSettings({
 }) {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -377,6 +388,10 @@ export function EnvironmentProviderSettings({
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
+  const uninstallAcpRegistryManagedBinary = useAtomCommand(
+    serverEnvironment.uninstallAcpRegistryManagedBinary,
+    { reportFailure: false },
+  );
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
@@ -568,7 +583,7 @@ export function EnvironmentProviderSettings({
     }
   }
 
-  const updateProviderInstance = (
+  const updateProviderInstance = async (
     row: InstanceRow,
     next: ProviderInstanceConfig,
     options?: {
@@ -577,22 +592,62 @@ export function EnvironmentProviderSettings({
       >[0]["textGenerationModelSelection"];
     },
   ) => {
-    updateSettings(
-      buildProviderInstanceUpdatePatch({
-        settings,
-        instanceId: row.instanceId,
-        instance: next,
-        driver: row.driver,
-        isDefault: row.isDefault,
-        textGenerationModelSelection: options?.textGenerationModelSelection,
-      }),
+    const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
+      settings,
+      instanceId: row.instanceId,
+      instance: next,
+      driver: row.driver,
+      isDefault: row.isDefault,
+      textGenerationModelSelection: options?.textGenerationModelSelection,
+    });
+    const result = await persistProviderInstance(
+      { operation: "upsert", instanceId: row.instanceId, instance: next },
+      patch,
     );
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not update provider instance",
+        description: error instanceof Error ? error.message : "The settings update failed.",
+      });
+    }
   };
 
-  const deleteProviderInstance = (id: ProviderInstanceId) => {
-    updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+  const deleteProviderInstance = async (row: InstanceRow) => {
+    const updateResult = await persistProviderInstance({
+      operation: "remove",
+      instanceId: row.instanceId,
     });
+    if (updateResult._tag === "Failure") {
+      const error = squashAtomCommandFailure(updateResult);
+      toastManager.add({
+        type: "error",
+        title: "Could not delete provider instance",
+        description: error instanceof Error ? error.message : "The settings update failed.",
+      });
+      return;
+    }
+
+    if (row.driver !== ProviderDriverKind.make("acpRegistry")) return;
+    const agentId = providerConfigString(row.instance.config, "agentId");
+    if (agentId === null) return;
+
+    // The server decides from its latest settings whether this was the last
+    // instance using the managed agent. A client-side snapshot check can race
+    // two removals and make both callers skip cleanup.
+    const uninstallResult = await uninstallAcpRegistryManagedBinary({
+      environmentId,
+      input: { agentId },
+    });
+    if (uninstallResult._tag === "Failure" && !isAtomCommandInterrupted(uninstallResult)) {
+      const error = squashAtomCommandFailure(uninstallResult);
+      toastManager.add({
+        type: "warning",
+        title: "Provider deleted, but managed files remain",
+        description: error instanceof Error ? error.message : "Managed binary cleanup failed.",
+      });
+    }
   };
 
   const updateProviderModelPreferences = (
@@ -639,7 +694,7 @@ export function EnvironmentProviderSettings({
     });
   };
 
-  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
+  const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
     type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
     const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
       string,
@@ -648,13 +703,23 @@ export function EnvironmentProviderSettings({
     const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
     const defaultLegacyProvider = defaultLegacyProviders[driverKind];
     if (defaultLegacyProvider === undefined) return;
-    updateSettings({
-      providers: {
-        ...settings.providers,
-        [driverKind]: defaultLegacyProvider,
-      } as typeof settings.providers,
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
-    });
+    const result = await persistProviderInstance(
+      { operation: "remove", instanceId: defaultInstanceId },
+      {
+        providers: {
+          ...settings.providers,
+          [driverKind]: defaultLegacyProvider,
+        } as typeof settings.providers,
+      },
+    );
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not reset provider instance",
+        description: error instanceof Error ? error.message : "The settings update failed.",
+      });
+    }
   };
 
   return (
@@ -818,11 +883,11 @@ export function EnvironmentProviderSettings({
                 : Result.failVoid,
             );
             const resetLabel = driverOption?.label ?? String(row.driver);
-            const headerAction =
+            const resetAction =
               row.isDefault && row.isDirty ? (
                 <SettingResetButton
                   label={`${resetLabel} provider settings`}
-                  onClick={() => resetDefaultInstance(row.driver)}
+                  onClick={() => void resetDefaultInstance(row.driver)}
                 />
               ) : null;
             return (
@@ -844,16 +909,16 @@ export function EnvironmentProviderSettings({
                   const isDisabling = next.enabled === false && wasEnabled;
                   const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
                   if (shouldClearTextGen) {
-                    updateProviderInstance(row, next, {
+                    void updateProviderInstance(row, next, {
                       textGenerationModelSelection:
                         DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
                     });
                   } else {
-                    updateProviderInstance(row, next);
+                    void updateProviderInstance(row, next);
                   }
                 }}
-                onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
-                headerAction={headerAction}
+                onDelete={row.isDefault ? undefined : () => void deleteProviderInstance(row)}
+                headerAction={resetAction}
                 hiddenModels={modelPreferences.hiddenModels}
                 favoriteModels={favoriteModels}
                 modelOrder={modelPreferences.modelOrder}

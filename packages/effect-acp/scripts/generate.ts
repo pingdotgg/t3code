@@ -13,7 +13,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const CURRENT_SCHEMA_RELEASE = "v0.11.3";
+const CURRENT_SCHEMA_RELEASE = "schema-v1.20.0";
 
 interface GenerateCommandError {
   readonly _tag: "GenerateCommandError";

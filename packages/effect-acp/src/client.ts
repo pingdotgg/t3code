@@ -13,7 +13,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as AcpError from "./errors.ts";
 import * as AcpProtocol from "./protocol.ts";
 import * as AcpRpcs from "./rpc.ts";
-import * as AcpSchema from "./_generated/schema.gen.ts";
+import * as AcpSchema from "./schema.ts";
 import { AGENT_METHODS, CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import {
   callRpc,
@@ -38,6 +38,8 @@ type AcpClientRaw = {
   readonly request: (method: string, payload: unknown) => Effect.Effect<unknown, AcpError.AcpError>;
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
 };
+
+export type AcpRequestHandler<Request, Response> = AcpProtocol.AcpRequestHandler<Request, Response>;
 
 export class AcpClient extends Context.Service<
   AcpClient,
@@ -108,13 +110,6 @@ export class AcpClient extends Context.Service<
         payload: AcpSchema.CloseSessionRequest,
       ) => Effect.Effect<AcpSchema.CloseSessionResponse, AcpError.AcpError>;
       /**
-       * Selects the active model for a session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/set_model
-       */
-      readonly setSessionModel: (
-        payload: AcpSchema.SetSessionModelRequest,
-      ) => Effect.Effect<AcpSchema.SetSessionModelResponse, AcpError.AcpError>;
-      /**
        * Updates a session configuration option.
        * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
        */
@@ -141,81 +136,81 @@ export class AcpClient extends Context.Service<
      * @see https://agentclientprotocol.com/protocol/schema#session/request_permission
      */
     readonly handleRequestPermission: (
-      handler: (
-        request: AcpSchema.RequestPermissionRequest,
-      ) => Effect.Effect<AcpSchema.RequestPermissionResponse, AcpError.AcpError>,
+      handler: AcpRequestHandler<
+        AcpSchema.RequestPermissionRequest,
+        AcpSchema.RequestPermissionResponse
+      >,
     ) => Effect.Effect<void>;
     /**
-     * Registers a handler for `session/elicitation`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/elicitation
+     * Registers a handler for `elicitation/create` requests.
+     * @see https://agentclientprotocol.com/protocol/schema#elicitation/create
      */
     readonly handleElicitation: (
-      handler: (
-        request: AcpSchema.ElicitationRequest,
-      ) => Effect.Effect<AcpSchema.ElicitationResponse, AcpError.AcpError>,
+      handler: AcpRequestHandler<
+        AcpSchema.CreateElicitationRequest,
+        AcpSchema.CreateElicitationResponse
+      >,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `fs/read_text_file`.
      * @see https://agentclientprotocol.com/protocol/schema#fs/read_text_file
      */
     readonly handleReadTextFile: (
-      handler: (
-        request: AcpSchema.ReadTextFileRequest,
-      ) => Effect.Effect<AcpSchema.ReadTextFileResponse, AcpError.AcpError>,
+      handler: AcpRequestHandler<AcpSchema.ReadTextFileRequest, AcpSchema.ReadTextFileResponse>,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `fs/write_text_file`.
      * @see https://agentclientprotocol.com/protocol/schema#fs/write_text_file
      */
     readonly handleWriteTextFile: (
-      handler: (
-        request: AcpSchema.WriteTextFileRequest,
-      ) => Effect.Effect<AcpSchema.WriteTextFileResponse | void, AcpError.AcpError>,
+      handler: AcpRequestHandler<
+        AcpSchema.WriteTextFileRequest,
+        AcpSchema.WriteTextFileResponse | void
+      >,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `terminal/create`.
      * @see https://agentclientprotocol.com/protocol/schema#terminal/create
      */
     readonly handleCreateTerminal: (
-      handler: (
-        request: AcpSchema.CreateTerminalRequest,
-      ) => Effect.Effect<AcpSchema.CreateTerminalResponse, AcpError.AcpError>,
+      handler: AcpRequestHandler<AcpSchema.CreateTerminalRequest, AcpSchema.CreateTerminalResponse>,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `terminal/output`.
      * @see https://agentclientprotocol.com/protocol/schema#terminal/output
      */
     readonly handleTerminalOutput: (
-      handler: (
-        request: AcpSchema.TerminalOutputRequest,
-      ) => Effect.Effect<AcpSchema.TerminalOutputResponse, AcpError.AcpError>,
+      handler: AcpRequestHandler<AcpSchema.TerminalOutputRequest, AcpSchema.TerminalOutputResponse>,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `terminal/wait_for_exit`.
      * @see https://agentclientprotocol.com/protocol/schema#terminal/wait_for_exit
      */
     readonly handleTerminalWaitForExit: (
-      handler: (
-        request: AcpSchema.WaitForTerminalExitRequest,
-      ) => Effect.Effect<AcpSchema.WaitForTerminalExitResponse, AcpError.AcpError>,
+      handler: AcpRequestHandler<
+        AcpSchema.WaitForTerminalExitRequest,
+        AcpSchema.WaitForTerminalExitResponse
+      >,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `terminal/kill`.
      * @see https://agentclientprotocol.com/protocol/schema#terminal/kill
      */
     readonly handleTerminalKill: (
-      handler: (
-        request: AcpSchema.KillTerminalRequest,
-      ) => Effect.Effect<AcpSchema.KillTerminalResponse | void, AcpError.AcpError>,
+      handler: AcpRequestHandler<
+        AcpSchema.KillTerminalRequest,
+        AcpSchema.KillTerminalResponse | void
+      >,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `terminal/release`.
      * @see https://agentclientprotocol.com/protocol/schema#terminal/release
      */
     readonly handleTerminalRelease: (
-      handler: (
-        request: AcpSchema.ReleaseTerminalRequest,
-      ) => Effect.Effect<AcpSchema.ReleaseTerminalResponse | void, AcpError.AcpError>,
+      handler: AcpRequestHandler<
+        AcpSchema.ReleaseTerminalRequest,
+        AcpSchema.ReleaseTerminalResponse | void
+      >,
     ) => Effect.Effect<void>;
     /**
      * Registers a handler for `session/update`.
@@ -227,12 +222,12 @@ export class AcpClient extends Context.Service<
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
     /**
-     * Registers a handler for `session/elicitation/complete`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/elicitation/complete
+     * Registers a handler for `elicitation/complete`.
+     * @see https://agentclientprotocol.com/protocol/schema#elicitation/complete
      */
     readonly handleElicitationComplete: (
       handler: (
-        notification: AcpSchema.ElicitationCompleteNotification,
+        notification: AcpSchema.CompleteElicitationNotification,
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
     /**
@@ -240,7 +235,11 @@ export class AcpClient extends Context.Service<
      * @see https://agentclientprotocol.com/protocol/extensibility
      */
     readonly handleUnknownExtRequest: (
-      handler: (method: string, params: unknown) => Effect.Effect<unknown, AcpError.AcpError>,
+      handler: (
+        method: string,
+        params: unknown,
+        context: AcpProtocol.AcpRequestContext,
+      ) => Effect.Effect<unknown, AcpError.AcpError>,
     ) => Effect.Effect<void>;
     /**
      * Registers a fallback extension notification handler.
@@ -256,7 +255,7 @@ export class AcpClient extends Context.Service<
     readonly handleExtRequest: <A, I>(
       method: string,
       payload: Schema.Codec<A, I>,
-      handler: (payload: A) => Effect.Effect<unknown, AcpError.AcpError>,
+      handler: AcpRequestHandler<A, unknown>,
     ) => Effect.Effect<void>;
     /**
      * Registers a typed extension notification handler.
@@ -271,38 +270,44 @@ export class AcpClient extends Context.Service<
 >()("effect-acp/client/AcpClient") {}
 
 interface AcpCoreRequestHandlers {
-  requestPermission?: (
-    request: AcpSchema.RequestPermissionRequest,
-  ) => Effect.Effect<AcpSchema.RequestPermissionResponse, AcpError.AcpError>;
-  elicitation?: (
-    request: AcpSchema.ElicitationRequest,
-  ) => Effect.Effect<AcpSchema.ElicitationResponse, AcpError.AcpError>;
-  readTextFile?: (
-    request: AcpSchema.ReadTextFileRequest,
-  ) => Effect.Effect<AcpSchema.ReadTextFileResponse, AcpError.AcpError>;
-  writeTextFile?: (
-    request: AcpSchema.WriteTextFileRequest,
-  ) => Effect.Effect<AcpSchema.WriteTextFileResponse | void, AcpError.AcpError>;
-  createTerminal?: (
-    request: AcpSchema.CreateTerminalRequest,
-  ) => Effect.Effect<AcpSchema.CreateTerminalResponse, AcpError.AcpError>;
-  terminalOutput?: (
-    request: AcpSchema.TerminalOutputRequest,
-  ) => Effect.Effect<AcpSchema.TerminalOutputResponse, AcpError.AcpError>;
-  terminalWaitForExit?: (
-    request: AcpSchema.WaitForTerminalExitRequest,
-  ) => Effect.Effect<AcpSchema.WaitForTerminalExitResponse, AcpError.AcpError>;
-  terminalKill?: (
-    request: AcpSchema.KillTerminalRequest,
-  ) => Effect.Effect<AcpSchema.KillTerminalResponse | void, AcpError.AcpError>;
-  terminalRelease?: (
-    request: AcpSchema.ReleaseTerminalRequest,
-  ) => Effect.Effect<AcpSchema.ReleaseTerminalResponse | void, AcpError.AcpError>;
+  requestPermission?: AcpRequestHandler<
+    AcpSchema.RequestPermissionRequest,
+    AcpSchema.RequestPermissionResponse
+  >;
+  elicitation?: AcpRequestHandler<
+    AcpSchema.CreateElicitationRequest,
+    AcpSchema.CreateElicitationResponse
+  >;
+  readTextFile?: AcpRequestHandler<AcpSchema.ReadTextFileRequest, AcpSchema.ReadTextFileResponse>;
+  writeTextFile?: AcpRequestHandler<
+    AcpSchema.WriteTextFileRequest,
+    AcpSchema.WriteTextFileResponse | void
+  >;
+  createTerminal?: AcpRequestHandler<
+    AcpSchema.CreateTerminalRequest,
+    AcpSchema.CreateTerminalResponse
+  >;
+  terminalOutput?: AcpRequestHandler<
+    AcpSchema.TerminalOutputRequest,
+    AcpSchema.TerminalOutputResponse
+  >;
+  terminalWaitForExit?: AcpRequestHandler<
+    AcpSchema.WaitForTerminalExitRequest,
+    AcpSchema.WaitForTerminalExitResponse
+  >;
+  terminalKill?: AcpRequestHandler<
+    AcpSchema.KillTerminalRequest,
+    AcpSchema.KillTerminalResponse | void
+  >;
+  terminalRelease?: AcpRequestHandler<
+    AcpSchema.ReleaseTerminalRequest,
+    AcpSchema.ReleaseTerminalResponse | void
+  >;
 }
 
 interface AcpNotificationHandlers {
   readonly sessionUpdate: BufferedNotificationHandler<AcpSchema.SessionNotification>;
-  readonly elicitationComplete: BufferedNotificationHandler<AcpSchema.ElicitationCompleteNotification>;
+  readonly elicitationComplete: BufferedNotificationHandler<AcpSchema.CompleteElicitationNotification>;
 }
 
 interface BufferedNotificationHandler<A> {
@@ -320,16 +325,17 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     sessionUpdate: { handlers: [], pending: [] },
     elicitationComplete: { handlers: [], pending: [] },
   };
-  const extRequestHandlers = new Map<
-    string,
-    (params: unknown) => Effect.Effect<unknown, AcpError.AcpError>
-  >();
+  const extRequestHandlers = new Map<string, AcpRequestHandler<unknown, unknown>>();
   const extNotificationHandlers = new Map<
     string,
     (params: unknown) => Effect.Effect<void, AcpError.AcpError>
   >();
   let unknownExtRequestHandler:
-    | ((method: string, params: unknown) => Effect.Effect<unknown, AcpError.AcpError>)
+    | ((
+        method: string,
+        params: unknown,
+        context: AcpProtocol.AcpRequestContext,
+      ) => Effect.Effect<unknown, AcpError.AcpError>)
     | undefined;
   let unknownExtNotificationHandler:
     | ((method: string, params: unknown) => Effect.Effect<void, AcpError.AcpError>)
@@ -391,13 +397,17 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     }
   };
 
-  const dispatchExtRequest = (method: string, params: unknown) => {
+  const dispatchExtRequest = (
+    method: string,
+    params: unknown,
+    context: AcpProtocol.AcpRequestContext,
+  ) => {
     const handler = extRequestHandlers.get(method);
     if (handler) {
-      return handler(params);
+      return handler(params, context);
     }
     return unknownExtRequestHandler
-      ? unknownExtRequestHandler(method, params)
+      ? unknownExtRequestHandler(method, params, context)
       : Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
   };
 
@@ -418,40 +428,79 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     onExtRequest: dispatchExtRequest,
   });
 
+  const requestContext = (
+    requestId: RpcMessage.RequestId,
+    method: string,
+  ): AcpProtocol.AcpRequestContext => ({
+    requestId: AcpProtocol.acpRequestIdentity(requestId),
+    method,
+  });
+
   const clientHandlerLayer = AcpRpcs.ClientRpcs.toLayer(
     AcpRpcs.ClientRpcs.of({
-      [CLIENT_METHODS.session_request_permission]: (payload) =>
+      [CLIENT_METHODS.session_request_permission]: (payload, { requestId }) =>
         runHandler(
           coreHandlers.requestPermission,
           payload,
           CLIENT_METHODS.session_request_permission,
+          requestContext(requestId, CLIENT_METHODS.session_request_permission),
         ),
-      [CLIENT_METHODS.session_elicitation]: (payload) =>
-        runHandler(coreHandlers.elicitation, payload, CLIENT_METHODS.session_elicitation),
-      [CLIENT_METHODS.fs_read_text_file]: (payload) =>
-        runHandler(coreHandlers.readTextFile, payload, CLIENT_METHODS.fs_read_text_file),
-      [CLIENT_METHODS.fs_write_text_file]: (payload) =>
-        runHandler(coreHandlers.writeTextFile, payload, CLIENT_METHODS.fs_write_text_file).pipe(
-          Effect.map((result) => result ?? {}),
+      [CLIENT_METHODS.elicitation_create]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.elicitation,
+          payload,
+          CLIENT_METHODS.elicitation_create,
+          requestContext(requestId, CLIENT_METHODS.elicitation_create),
         ),
-      [CLIENT_METHODS.terminal_create]: (payload) =>
-        runHandler(coreHandlers.createTerminal, payload, CLIENT_METHODS.terminal_create),
-      [CLIENT_METHODS.terminal_output]: (payload) =>
-        runHandler(coreHandlers.terminalOutput, payload, CLIENT_METHODS.terminal_output),
-      [CLIENT_METHODS.terminal_wait_for_exit]: (payload) =>
+      [CLIENT_METHODS.fs_read_text_file]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.readTextFile,
+          payload,
+          CLIENT_METHODS.fs_read_text_file,
+          requestContext(requestId, CLIENT_METHODS.fs_read_text_file),
+        ),
+      [CLIENT_METHODS.fs_write_text_file]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.writeTextFile,
+          payload,
+          CLIENT_METHODS.fs_write_text_file,
+          requestContext(requestId, CLIENT_METHODS.fs_write_text_file),
+        ).pipe(Effect.map((result) => result ?? {})),
+      [CLIENT_METHODS.terminal_create]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.createTerminal,
+          payload,
+          CLIENT_METHODS.terminal_create,
+          requestContext(requestId, CLIENT_METHODS.terminal_create),
+        ),
+      [CLIENT_METHODS.terminal_output]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.terminalOutput,
+          payload,
+          CLIENT_METHODS.terminal_output,
+          requestContext(requestId, CLIENT_METHODS.terminal_output),
+        ),
+      [CLIENT_METHODS.terminal_wait_for_exit]: (payload, { requestId }) =>
         runHandler(
           coreHandlers.terminalWaitForExit,
           payload,
           CLIENT_METHODS.terminal_wait_for_exit,
+          requestContext(requestId, CLIENT_METHODS.terminal_wait_for_exit),
         ),
-      [CLIENT_METHODS.terminal_kill]: (payload) =>
-        runHandler(coreHandlers.terminalKill, payload, CLIENT_METHODS.terminal_kill).pipe(
-          Effect.map((result) => result ?? {}),
-        ),
-      [CLIENT_METHODS.terminal_release]: (payload) =>
-        runHandler(coreHandlers.terminalRelease, payload, CLIENT_METHODS.terminal_release).pipe(
-          Effect.map((result) => result ?? {}),
-        ),
+      [CLIENT_METHODS.terminal_kill]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.terminalKill,
+          payload,
+          CLIENT_METHODS.terminal_kill,
+          requestContext(requestId, CLIENT_METHODS.terminal_kill),
+        ).pipe(Effect.map((result) => result ?? {})),
+      [CLIENT_METHODS.terminal_release]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.terminalRelease,
+          payload,
+          CLIENT_METHODS.terminal_release,
+          requestContext(requestId, CLIENT_METHODS.terminal_release),
+        ).pipe(Effect.map((result) => result ?? {})),
     }),
   );
 
@@ -490,8 +539,6 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
         callRpc(AGENT_METHODS.session_resume, rpc[AGENT_METHODS.session_resume](payload)),
       closeSession: (payload) =>
         callRpc(AGENT_METHODS.session_close, rpc[AGENT_METHODS.session_close](payload)),
-      setSessionModel: (payload) =>
-        callRpc(AGENT_METHODS.session_set_model, rpc[AGENT_METHODS.session_set_model](payload)),
       setSessionConfigOption: (payload) =>
         callRpc(
           AGENT_METHODS.session_set_config_option,

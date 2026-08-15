@@ -183,6 +183,9 @@ export const CursorProviderCapabilitiesV2 = {
     nativeItemIds: "weak",
     nativeRequestIds: "none",
   },
+  runtimePolicy: {
+    enforcement: "native",
+  },
 } satisfies OrchestrationV2ProviderCapabilities;
 
 export interface CursorRuntimeAgentPolicy {

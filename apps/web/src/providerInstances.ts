@@ -15,6 +15,7 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  isProviderTextGenerationCapable,
   PROVIDER_DISPLAY_NAMES,
   type ModelSelection,
   type ProviderDriverKind,
@@ -48,6 +49,10 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  /** Registry identity used to resolve the official icon for generic ACP instances. */
+  readonly acpRegistryAgentId?: string | undefined;
+  /** Catalog-advertised icon URL. The renderer still applies the official-CDN allowlist. */
+  readonly acpRegistryIconUrl?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
@@ -95,6 +100,15 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
 /** Picker rails contain configured, enabled instances only. */
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
   return entry.enabled;
+}
+
+/**
+ * Whether an instance may be offered for application text generation
+ * (commit messages, PR content, branch names, thread titles). ACP Registry
+ * instances reject these operations, so their selection would only fail later.
+ */
+export function isProviderInstanceTextGenerationCapable(entry: ProviderInstanceEntry): boolean {
+  return isProviderTextGenerationCapable(entry.snapshot);
 }
 
 /**
@@ -225,7 +239,25 @@ export function applyProviderInstanceSettings(
       : entry.isDefault
         ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
         : false;
-    return enabled === entry.enabled ? entry : { ...entry, enabled };
+    if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) {
+      return enabled === entry.enabled ? entry : { ...entry, enabled };
+    }
+    const config =
+      explicitInstance.config !== null && typeof explicitInstance.config === "object"
+        ? (explicitInstance.config as Readonly<Record<string, unknown>>)
+        : null;
+    const agentId = config?.agentId;
+    const iconUrl = config?.registryIconUrl;
+    return {
+      ...entry,
+      enabled,
+      ...(typeof agentId === "string" && agentId.trim()
+        ? { acpRegistryAgentId: agentId.trim() }
+        : {}),
+      ...(typeof iconUrl === "string" && iconUrl.trim()
+        ? { acpRegistryIconUrl: iconUrl.trim() }
+        : {}),
+    };
   });
 }
 

@@ -116,12 +116,22 @@ provider-specific MCP tools.
 ### ACP Registry V2
 
 The `acpRegistry` driver is the generic flavor of the same shared ACP adapter.
-Each provider instance names an agent from the official ACP Registry. At
-session startup the driver resolves the current platform distribution, uses a
-managed binary cache or the declared `npx`/`uvx` package, and then negotiates
-standard ACP capabilities during `initialize`. A local executable may override
-the managed command without changing the registry-declared arguments or
-environment.
+Each provider instance names an agent from the official ACP Registry. Settings
+searches the registry through the connected server, then prepares a compatible
+distribution before persisting the provider instance. Binary distributions use
+a managed, versioned cache; declared checksums are verified when present.
+Version-pinned `npx` and `uvx` packages remain runner-managed and materialize on
+the first normal session. A local executable may override the managed command
+without changing the registry-declared arguments or environment.
+
+Search, preparation, provider status, and session startup share one
+server-scoped catalog service. This keeps platform selection and registry
+validation identical across settings and runtime use. Catalog inspection never
+starts an ACP process, probes models, or performs authentication. The managed
+provider snapshot creates a disposable `session/new` through the normal provider
+refresh lifecycle, using success as the authentication-readiness proof and
+projecting advertised models into the snapshot. Terminal-only login remains a
+manual operation on the connected server.
 
 Capabilities such as session loading, session forking, models, modes, and MCP
 transport are enabled only when the selected agent advertises them. Missing

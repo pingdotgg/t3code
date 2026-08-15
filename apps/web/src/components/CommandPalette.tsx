@@ -128,6 +128,7 @@ import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import {
+  applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   resolveDefaultProviderModelSelection,
   type ProviderInstanceEntry,
@@ -591,10 +592,17 @@ function OpenCommandPaletteDialog(props: {
   const providerEntryByEnvironmentAndInstanceId = useMemo(() => {
     const map = new Map<string, ProviderInstanceEntry>();
     for (const environment of environments) {
+      const serverConfig = environment.serverConfig;
       const environmentProviders =
-        environment.serverConfig?.providers ??
+        serverConfig?.providers ??
         (environment.environmentId === primaryEnvironmentId ? providers : []);
-      for (const entry of deriveProviderInstanceEntries(environmentProviders)) {
+      const derived = deriveProviderInstanceEntries(environmentProviders);
+      // Settings fill the ACP registry identity (agent id, icon URL) the
+      // derived entries alone do not carry.
+      const entries = serverConfig
+        ? applyProviderInstanceSettings(derived, serverConfig.settings)
+        : derived;
+      for (const entry of entries) {
         map.set(`${environment.environmentId}:${entry.instanceId}`, entry);
       }
     }
@@ -1040,6 +1048,8 @@ function OpenCommandPaletteDialog(props: {
               providerDisplayName={
                 thread.runtime?.providerName ?? providerEntry?.displayName ?? modelInstanceId
               }
+              acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+              acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
             />
           );
         },

@@ -98,31 +98,10 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
-  modelState: EffectAcpSchema.SessionModelState | null | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  if (!modelState || modelState.availableModels.length === 0) {
-    return [];
-  }
-  const seen = new Set<string>();
-  return modelState.availableModels
-    .map((model): ServerProviderModel | undefined => {
-      const slug = resolveGrokAcpBaseModelId(model.modelId);
-      if (!slug || seen.has(slug)) {
-        return undefined;
-      }
-      seen.add(slug);
-      return {
-        slug,
-        name: model.name.trim() || slug,
-        isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
-      };
-    })
-    .filter((model): model is ServerProviderModel => model !== undefined);
-}
-
-const discoverGrokModelsViaAcp = (
+// Session-model discovery went away with the ACP session models state; the
+// startup probe remains the health check while the model list comes from the
+// built-in catalog plus custom models.
+const probeGrokAcpStartup = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) =>
@@ -135,8 +114,7 @@ const discoverGrokModelsViaAcp = (
       cwd: process.cwd(),
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
-    const started = yield* acp.start();
-    return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    yield* acp.start();
   }).pipe(Effect.scoped);
 
 const runGrokVersionCommand = (
@@ -250,7 +228,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
+  const discoveryExit = yield* probeGrokAcpStartup(grokSettings, environment).pipe(
     Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
     Effect.exit,
   );
@@ -290,17 +268,11 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       },
     });
   }
-  const discoveredModels = discoveryExit.value.value;
-  const models =
-    discoveredModels.length > 0
-      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
-      : fallbackModels;
-
   return buildServerProvider({
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
     checkedAt,
-    models,
+    models: fallbackModels,
     probe: {
       installed: true,
       version,

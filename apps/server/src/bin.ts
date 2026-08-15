@@ -1,70 +1,19 @@
-import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import { Argument, Command } from "effect/unstable/cli";
-import * as CliError from "effect/unstable/cli/CliError";
-
-import * as NetService from "@t3tools/shared/Net";
-import packageJson from "../package.json" with { type: "json" };
-import { authCommand } from "./cli/auth.ts";
-import { connectCommand } from "./cli/connect.ts";
-import { pairCommand } from "./cli/pair.ts";
-import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { sharedServerCommandFlags } from "./cli/config.ts";
-import { projectCommand } from "./cli/project.ts";
-import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
-import { serviceCommand } from "./cli/service.ts";
-import { servicePreflightCommand } from "./cli/servicePreflight.ts";
-
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
-
-const connectPublicConfigMissingMessage =
-  "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
-
-class ConnectPublicConfigMissingError extends CliError.UserError {
-  override get message() {
-    return connectPublicConfigMissingMessage;
-  }
-}
-
-const connectUnavailableCommand = Command.make("connect", {
-  command: Argument.string("command").pipe(Argument.variadic),
-}).pipe(
-  Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
-  Command.withHidden,
-  Command.withHandler(() =>
-    Effect.fail(
-      new CliError.ShowHelp({
-        commandPath: ["t3", "connect"],
-        errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
-      }),
-    ),
-  ),
-);
-
-export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
-  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
-    Command.withDescription("Run the T3 Code server."),
-    Command.withHandler((flags) => runServerCommand(flags)),
-    Command.withSubcommands([
-      startCommand,
-      serveCommand,
-      pairCommand,
-      authCommand,
-      projectCommand,
-      serviceCommand,
-      servicePreflightCommand,
-      cloudEnabled ? connectCommand : connectUnavailableCommand,
-    ]),
-  );
-
-export const cli = makeCli();
-
+/**
+ * Thin CLI entry.
+ *
+ * Every ACP agent spawns `t3 acp-mcp-bridge` while opening its session, and
+ * terminal-fallback agents run `t3 acp-mcp-call` per tool call, so their
+ * startup sits on first-message latency. Both dispatch here before the full
+ * CLI module graph (seconds of evaluation) loads; everything else defers to
+ * the real CLI in ./binCli.ts.
+ */
 if (import.meta.main) {
-  Command.run(cli, { version: packageJson.version }).pipe(
-    Effect.scoped,
-    Effect.provide(CliRuntimeLayer),
-    NodeRuntime.runMain,
-  );
+  const command = process.argv[2];
+  if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
+    const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
+    await runAcpMcpCliFastPath(command, process.argv.slice(3));
+  } else {
+    const { runCli } = await import("./binCli.ts");
+    runCli();
+  }
 }

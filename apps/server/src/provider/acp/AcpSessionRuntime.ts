@@ -90,6 +90,12 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId?: string;
+  /** Disable only for non-interactive discovery that must surface auth-required immediately. */
+  readonly authenticateOnAuthRequired?: boolean;
+  /** Observes the normalized handshake before any session setup or authentication retry. */
+  readonly onInitialized?: (
+    result: EffectAcpSchema.InitializeResponse,
+  ) => Effect.Effect<void, never>;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -1219,13 +1225,6 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     /**
-     * Selects the active model through the unstable ACP `session/set_model` capability.
-     * @see https://agentclientprotocol.com/protocol/schema#session/set_model
-     */
-    readonly setSessionModel: (
-      modelId: string,
-    ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
-    /**
      * Sends a generic ACP extension request and records it through the request logger.
      * @see https://agentclientprotocol.com/protocol/extensibility
      */
@@ -1901,6 +1900,7 @@ export const make = (
         initializePayload,
         acp.agent.initialize(initializePayload),
       );
+      yield* options.onInitialized?.(initializeResult) ?? Effect.void;
 
       const authenticateAfterRequired = (
         authRequiredError: EffectAcpErrors.AcpError,
@@ -1977,9 +1977,9 @@ export const make = (
 
       const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
         Effect.catch((error) =>
-          isAcpAuthenticationRequired(error)
-            ? authenticateAfterRequired(error).pipe(Effect.andThen(setupSession))
-            : Effect.fail(error),
+          !isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false
+            ? Effect.fail(error)
+            : authenticateAfterRequired(error).pipe(Effect.andThen(setupSession)),
         ),
       );
 
@@ -2216,20 +2216,6 @@ export const make = (
         getStartedState.pipe(
           Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
           Effect.asVoid,
-        ),
-      setSessionModel: (modelId) =>
-        getStartedState.pipe(
-          Effect.flatMap((started) => {
-            const requestPayload = {
-              sessionId: started.sessionId,
-              modelId,
-            } satisfies EffectAcpSchema.SetSessionModelRequest;
-            return runLoggedRequest(
-              "session/set_model",
-              requestPayload,
-              acp.agent.setSessionModel(requestPayload),
-            );
-          }),
         ),
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),

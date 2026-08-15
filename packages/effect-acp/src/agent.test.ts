@@ -12,6 +12,7 @@ import { assert, it } from "@effect/vitest";
 
 import * as AcpAgent from "./agent.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
+import type * as AcpProtocol from "./protocol.ts";
 import {
   encodeJsonl,
   jsonRpcNotification,
@@ -38,12 +39,14 @@ const decodeRequestPermissionRequest = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionRequest),
 );
 const decodeInitializeResponse = Schema.decodeEffect(Schema.fromJsonString(InitializeResponse));
+const decodeExtResponse = Schema.decodeEffect(Schema.fromJsonString(ExtResponse));
 
 it.effect("effect-acp agent handles core agent requests and outbound client requests", () =>
   Effect.gen(function* () {
     const { stdio, input, output } = yield* makeInMemoryStdio();
     const cancelNotifications = yield* Ref.make<Array<string>>([]);
     const extNotifications = yield* Ref.make<Array<number>>([]);
+    const requestContexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
     const cancelReceived = yield* Deferred.make<void>();
     const extReceived = yield* Deferred.make<void>();
     const scope = yield* Scope.make();
@@ -52,15 +55,25 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
     yield* Effect.gen(function* () {
       const agent = yield* AcpAgent.AcpAgent;
 
-      yield* agent.handleInitialize(() =>
-        Effect.succeed({
-          protocolVersion: 1,
-          agentCapabilities: {},
-          agentInfo: {
-            name: "mock-agent",
-            version: "0.0.0",
-          },
-        }),
+      yield* agent.handleInitialize((_request, requestContext) =>
+        Ref.update(requestContexts, (current) => [...current, requestContext]).pipe(
+          Effect.as({
+            protocolVersion: 1,
+            agentCapabilities: {},
+            agentInfo: {
+              name: "mock-agent",
+              version: "0.0.0",
+            },
+          }),
+        ),
+      );
+      yield* agent.handleExtRequest(
+        "x/test",
+        Schema.Struct({ hello: Schema.String }),
+        (_payload, requestContext) =>
+          Ref.update(requestContexts, (current) => [...current, requestContext]).pipe(
+            Effect.as({ ok: true }),
+          ),
       );
       yield* agent.handleCancel((notification) =>
         Ref.update(cancelNotifications, (current) => [...current, notification.sessionId]).pipe(
@@ -151,6 +164,27 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
           },
         },
       });
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: "extension-3",
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      const extResponse = yield* decodeExtResponse(yield* Queue.take(output));
+      assert.deepEqual(extResponse, {
+        jsonrpc: "2.0",
+        id: "extension-3",
+        result: { ok: true },
+      });
+      assert.deepEqual(yield* Ref.get(requestContexts), [
+        { requestId: "$t3:jsonrpc:number:2", method: "initialize" },
+        { requestId: "extension-3", method: "x/test" },
+      ]);
 
       yield* Queue.offer(
         input,

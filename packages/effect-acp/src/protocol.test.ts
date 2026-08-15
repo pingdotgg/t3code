@@ -16,7 +16,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { it, assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
-import * as AcpSchema from "./_generated/schema.gen.ts";
+import * as AcpSchema from "./schema.ts";
 import * as AcpProtocol from "./protocol.ts";
 import {
   encodeJsonl,
@@ -35,8 +35,8 @@ const SessionUpdateNotification = jsonRpcNotification(
   AcpSchema.SessionNotification,
 );
 const ElicitationCompleteNotification = jsonRpcNotification(
-  "session/elicitation/complete",
-  AcpSchema.ElicitationCompleteNotification,
+  "elicitation/complete",
+  AcpSchema.CompleteElicitationNotification,
 );
 const RequestPermissionRequest = jsonRpcRequest(
   "session/request_permission",
@@ -53,6 +53,14 @@ const decodeExtResponse = Schema.decodeEffect(Schema.fromJsonString(ExtResponse)
 const decodeRequestPermissionResponse = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionResponse),
 );
+const decodeJsonRpcRequestId = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
+);
+const JsonRpcErrorResponse = Schema.Struct({
+  jsonrpc: Schema.Literal("2.0"),
+  id: Schema.Number,
+  error: Schema.Struct({ code: Schema.Number, message: Schema.String }),
+});
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encoder = new TextEncoder();
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
@@ -126,7 +134,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           input,
           yield* encodeJsonl(ElicitationCompleteNotification, {
             jsonrpc: "2.0",
-            method: "session/elicitation/complete",
+            method: "elicitation/complete",
             params: {
               elicitationId: "elicitation-1",
             },
@@ -137,6 +145,32 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         assert.equal(update?._tag, "SessionUpdate");
         assert.equal(completion?._tag, "ElicitationComplete");
       }),
+  );
+
+  it.effect("decodes standard JSON-RPC errors into typed ACP request failures", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const request = yield* transport.request("x/auth", {}).pipe(Effect.forkScoped);
+      const outbound = yield* decodeJsonRpcRequestId(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(JsonRpcErrorResponse, {
+          jsonrpc: "2.0",
+          id: outbound.id,
+          error: { code: -32000, message: "Authentication required" },
+        }),
+      );
+
+      const error = yield* Fiber.join(request).pipe(Effect.flip, Effect.orDie);
+      assert.instanceOf(error, AcpError.AcpRequestError);
+      assert.equal(error.code, -32000);
+      assert.equal(error.message, "Authentication required");
+    }),
   );
 
   it.effect("keeps invalid core notification values only in the schema cause", () =>
@@ -333,6 +367,43 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("does not correlate a string response id with a numeric extension request id", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const response = yield* transport
+        .request("x/test", { hello: "world" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            id: "1",
+            result: { ok: false },
+          })}\n`,
+        ),
+      );
+      yield* Effect.yieldNow;
+      assert.isUndefined(response.pollUnsafe());
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtResponse, {
+          jsonrpc: "2.0",
+          id: 1,
+          result: { ok: true },
+        }),
+      );
+      assert.deepEqual(yield* Fiber.join(response), { ok: true });
+    }),
+  );
+
   it.effect("correlates extension response errors with the originating request", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
@@ -417,6 +488,34 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           ok: true,
         },
       });
+    }),
+  );
+
+  it.effect("keeps numeric and string extension request ids distinct in handler context", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const contexts = yield* Queue.unbounded<string>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onExtRequest: (_method, _params, context) =>
+          Queue.offer(contexts, context.requestId).pipe(Effect.as({ ok: true })),
+      });
+
+      for (const id of [1, "1"] as const) {
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(ExtRequest, {
+            jsonrpc: "2.0",
+            id,
+            method: "x/test",
+            params: { hello: "world" },
+            headers: [],
+          }),
+        );
+      }
+
+      assert.deepEqual(yield* Queue.takeAll(contexts), ["$t3:jsonrpc:number:1", "1"]);
     }),
   );
 

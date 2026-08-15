@@ -46,7 +46,21 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("matches the separator variants ACP registry agents emit", () => {
+    for (const name of [
+      "mcp_t3-code_delegate_task",
+      "t3_code:delegate_task",
+      "t3code/delegate_task",
+      "t3-code delegate_task",
+      "T3 Code delegate_task",
+      "t3-code__delegate_task",
+    ]) {
+      expect(resolveT3McpToolPresentation(name)?.displayName).toBe("Delegate a child task");
+    }
+  });
+
   it("keeps unknown MCP tools on the generic renderer path", () => {
     expect(resolveT3McpToolPresentation("mcp__github__search_issues")).toBeNull();
+    expect(resolveT3McpToolPresentation("t3-code.not_a_real_tool")).toBeNull();
   });
 });

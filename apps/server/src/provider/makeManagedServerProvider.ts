@@ -8,6 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -144,7 +145,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
     const nextSettings = yield* input.getSettings;
-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
+    const refreshed = yield* refreshSemaphore.withPermitsIfAvailable(1)(
+      applySnapshotBase(nextSettings, { forceRefresh: true }),
+    );
+    return yield* Option.match(refreshed, {
+      onNone: () => Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+      onSome: Effect.succeed,
+    });
   });
 
   const hasProviderStatusDemand = Effect.gen(function* () {
