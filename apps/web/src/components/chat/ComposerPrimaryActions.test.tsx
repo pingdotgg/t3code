@@ -251,6 +251,7 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).toContain('aria-label="Send message"');
     expect(markup).toContain('type="submit"');
+    expect(markup).toContain("size-9 sm:size-8");
   });
 
   it("keeps stop as the only action while running with an empty composer", () => {
