@@ -30,6 +30,7 @@ import type {
   NetworkStatus,
   SupervisorConnectionState,
 } from "./model.ts";
+import { connectionRouteId } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -59,17 +60,43 @@ export class PlatformEnvironmentRemovalError extends Schema.TaggedErrorClass<Pla
   }
 }
 
+export class ConnectionRouteNotRegisteredError extends Schema.TaggedErrorClass<ConnectionRouteNotRegisteredError>()(
+  "ConnectionRouteNotRegisteredError",
+  {
+    environmentId: EnvironmentId,
+    routeId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Route ${this.routeId} is not registered for environment ${this.environmentId}.`;
+  }
+}
+
 export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistry,
   {
     readonly entries: SubscriptionRef.SubscriptionRef<
       ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
     >;
+    readonly routes: SubscriptionRef.SubscriptionRef<
+      ReadonlyMap<EnvironmentId, ReadonlyArray<ConnectionCatalogEntry>>
+    >;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
     readonly start: Effect.Effect<void>;
     readonly register: (
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly selectRoute: (
+      environmentId: EnvironmentId,
+      routeId: string,
+    ) => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | ConnectionAttemptError
+      | EnvironmentNotRegisteredError
+      | ConnectionRouteNotRegisteredError
+      | PlatformEnvironmentRemovalError
+    >;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -137,24 +164,41 @@ export const make = Effect.gen(function* () {
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
+  const persistedRoutes = yield* storage.listRoutes;
+  const loadCatalogEntry = Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (
+    target: ConnectionTarget,
+  ) {
+    const profile =
+      target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
+        ? yield* profiles.get(target.connectionId)
+        : Option.none();
+    return { target, profile } satisfies ConnectionCatalogEntry;
+  });
   const initialEntries = new Map(
     yield* Effect.forEach(
       persistedTargets,
-      Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (target) {
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
-        return [
-          target.environmentId,
-          { target, profile } satisfies ConnectionCatalogEntry,
-        ] as const;
-      }),
+      (target) =>
+        loadCatalogEntry(target).pipe(
+          Effect.map((entry) => [target.environmentId, entry] as const),
+        ),
       { concurrency: "unbounded" },
     ),
   );
+  const initialRoutes = new Map<EnvironmentId, ReadonlyArray<ConnectionCatalogEntry>>();
+  for (const entry of yield* Effect.forEach(persistedRoutes, loadCatalogEntry, {
+    concurrency: "unbounded",
+  })) {
+    initialRoutes.set(entry.target.environmentId, [
+      ...(initialRoutes.get(entry.target.environmentId) ?? []),
+      entry,
+    ]);
+  }
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
+  const routes =
+    yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ReadonlyArray<ConnectionCatalogEntry>>>(
+      initialRoutes,
+    );
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);
   const serviceScopes = yield* SubscriptionRef.make<
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
@@ -403,6 +447,57 @@ export const make = Effect.gen(function* () {
           next.set(environmentId, registration.target);
           return next;
         });
+        yield* SubscriptionRef.update(routes, (current) => {
+          const next = new Map(current);
+          const existing = next.get(environmentId) ?? [];
+          next.set(environmentId, [
+            ...existing.filter(
+              (candidate) =>
+                connectionRouteId(candidate.target) !== connectionRouteId(entry.target),
+            ),
+            entry,
+          ]);
+          return next;
+        });
+        yield* installEntryLocked(entry);
+      }),
+    );
+  });
+
+  const selectRoute = Effect.fn("EnvironmentRegistry.selectRoute")(function* (
+    environmentId: EnvironmentId,
+    routeId: string,
+  ) {
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          return yield* new PlatformEnvironmentRemovalError({ environmentId });
+        }
+        yield* getEntry(environmentId);
+        const entry = (yield* SubscriptionRef.get(routes))
+          .get(environmentId)
+          ?.find((candidate) => connectionRouteId(candidate.target) === routeId);
+        if (entry === undefined) {
+          return yield* new ConnectionRouteNotRegisteredError({ environmentId, routeId });
+        }
+        if (entry.target._tag === "PrimaryConnectionTarget") {
+          return yield* new PlatformEnvironmentRemovalError({ environmentId });
+        }
+        const selected = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        if (selected !== undefined && Equal.equals(selected, entry)) {
+          return;
+        }
+
+        // Keep the current session active while credentials, transport, and the
+        // stable environment identity for the candidate route are verified.
+        yield* driver.prepare(entry);
+        yield* registrations.select(entry.target);
+        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+          const next = new Map(current);
+          next.set(environmentId, entry.target);
+          return next;
+        });
         yield* installEntryLocked(entry);
       }),
     );
@@ -459,6 +554,11 @@ export const make = Effect.gen(function* () {
               ),
             );
           }
+          yield* SubscriptionRef.update(routes, (current) => {
+            const next = new Map(current);
+            next.delete(target.environmentId);
+            return next;
+          });
 
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
         }),
@@ -551,10 +651,14 @@ export const make = Effect.gen(function* () {
           });
         }
         const target = (yield* getEntry(environmentId)).target;
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
+        const sshTargets = ((yield* SubscriptionRef.get(routes)).get(environmentId) ?? []).flatMap(
+          (entry) =>
+            entry.target._tag === "SshConnectionTarget" &&
+            Option.isSome(entry.profile) &&
+            isSshConnectionProfile(entry.profile.value)
+              ? [entry.profile.value.target]
+              : [],
+        );
 
         yield* registrations.remove(target);
         yield* Ref.update(persistedTargetsByEnvironment, (current) => {
@@ -564,6 +668,11 @@ export const make = Effect.gen(function* () {
         });
         yield* closeServiceScope(environmentId);
         yield* SubscriptionRef.update(entries, (current) => {
+          const next = new Map(current);
+          next.delete(environmentId);
+          return next;
+        });
+        yield* SubscriptionRef.update(routes, (current) => {
           const next = new Map(current);
           next.delete(environmentId);
           return next;
@@ -583,21 +692,20 @@ export const make = Effect.gen(function* () {
           { concurrency: "unbounded", discard: true },
         );
 
-        if (
-          target._tag === "SshConnectionTarget" &&
-          Option.isSome(profile) &&
-          isSshConnectionProfile(profile.value)
-        ) {
-          yield* ssh.disconnect(profile.value.target).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("Could not disconnect the managed SSH environment.", {
-                environmentId,
-                error,
-              }),
+        yield* Effect.forEach(
+          sshTargets,
+          (sshTarget) =>
+            ssh.disconnect(sshTarget).pipe(
+              Effect.tapError((error) =>
+                Effect.logWarning("Could not disconnect the managed SSH environment.", {
+                  environmentId,
+                  error,
+                }),
+              ),
+              Effect.ignore,
             ),
-            Effect.ignore,
-          );
-        }
+          { discard: true },
+        );
       }),
     );
   });
@@ -659,9 +767,11 @@ export const make = Effect.gen(function* () {
 
   return EnvironmentRegistry.of({
     entries,
+    routes,
     networkStatus,
     start,
     register,
+    selectRoute,
     registerPlatform,
     reconcilePlatform,
     remove,

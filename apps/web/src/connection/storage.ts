@@ -10,6 +10,8 @@ import {
   removeCatalogValue,
   removeConnectionFromCatalog,
   replaceCatalogValue,
+  selectConnectionRouteInCatalog,
+  connectionRoutes,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -97,7 +99,9 @@ function catalogError(operation: string, cause: unknown) {
 function persistenceError(
   operation:
     | "list-targets"
+    | "list-routes"
     | "register-connection"
+    | "select-connection-route"
     | "remove-connection"
     | "load-shell"
     | "save-shell"
@@ -375,12 +379,20 @@ export const connectionStorageLayer = Layer.effectContext(
         Effect.map((document) => document.targets),
         Effect.mapError((cause) => persistenceError("list-targets", cause)),
       ),
+      listRoutes: catalog.read.pipe(
+        Effect.map(connectionRoutes),
+        Effect.mapError((cause) => persistenceError("list-routes", cause)),
+      ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
       register: (registration) =>
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
           .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
+      select: (target) =>
+        catalog
+          .update((document) => selectConnectionRouteInCatalog(document, target))
+          .pipe(Effect.mapError((cause) => persistenceError("select-connection-route", cause))),
       remove: (target) =>
         catalog
           .update((document) => removeConnectionFromCatalog(document, target))

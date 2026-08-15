@@ -12,14 +12,16 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { ConnectionRegistration } from "../connection/catalog.ts";
-import type { ConnectionTarget } from "../connection/model.ts";
+import type { ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 
 export class ConnectionPersistenceError extends Schema.TaggedErrorClass<ConnectionPersistenceError>()(
   "ConnectionPersistenceError",
   {
     operation: Schema.Literals([
       "list-targets",
+      "list-routes",
       "register-connection",
+      "select-connection-route",
       "remove-connection",
       "load-shell",
       "save-shell",
@@ -42,6 +44,7 @@ export class ConnectionTargetStore extends Context.Service<
   ConnectionTargetStore,
   {
     readonly list: Effect.Effect<ReadonlyArray<ConnectionTarget>, ConnectionPersistenceError>;
+    readonly listRoutes: Effect.Effect<ReadonlyArray<ConnectionTarget>, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionTargetStore") {}
 
@@ -50,6 +53,9 @@ export class ConnectionRegistrationStore extends Context.Service<
   {
     readonly register: (
       registration: ConnectionRegistration,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    readonly select: (
+      target: PersistedConnectionTarget,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly remove: (target: ConnectionTarget) => Effect.Effect<void, ConnectionPersistenceError>;
   }

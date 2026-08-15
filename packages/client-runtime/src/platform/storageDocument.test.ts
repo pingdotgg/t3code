@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
 import * as TokenStore from "../authorization/tokenStore.ts";
 import {
@@ -17,6 +18,8 @@ import {
 } from "../connection/model.ts";
 import {
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  ConnectionCatalogDocument,
+  connectionRoutes,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
 } from "./storageDocument.ts";
@@ -52,6 +55,19 @@ const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
 });
 
 describe("ConnectionCatalogDocument", () => {
+  it("treats targets from a legacy catalog as its initial routes", () => {
+    const decoded = Schema.decodeUnknownSync(ConnectionCatalogDocument)({
+      schemaVersion: 1,
+      targets: [BEARER_TARGET],
+      profiles: [BEARER_PROFILE],
+      credentials: [],
+      remoteDpopTokens: [],
+    });
+
+    expect(decoded.routes).toEqual([]);
+    expect(connectionRoutes(decoded)).toEqual([BEARER_TARGET]);
+  });
+
   it("registers a bearer connection as one catalog mutation", () => {
     const document = registerConnectionInCatalog(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
@@ -63,6 +79,7 @@ describe("ConnectionCatalogDocument", () => {
     );
 
     expect(document.targets).toEqual([BEARER_TARGET]);
+    expect(document.routes).toEqual([BEARER_TARGET]);
     expect(document.profiles).toEqual([BEARER_PROFILE]);
     expect(document.credentials).toEqual([
       {
@@ -72,7 +89,7 @@ describe("ConnectionCatalogDocument", () => {
     ]);
   });
 
-  it("replaces obsolete connection metadata without discarding a reusable DPoP token", () => {
+  it("selects a newly registered route without discarding other routes", () => {
     const bearer = registerConnectionInCatalog(
       {
         ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
@@ -94,8 +111,14 @@ describe("ConnectionCatalogDocument", () => {
     );
 
     expect(relay.targets).toEqual([relayTarget]);
-    expect(relay.profiles).toEqual([]);
-    expect(relay.credentials).toEqual([]);
+    expect(relay.routes).toEqual([BEARER_TARGET, relayTarget]);
+    expect(relay.profiles).toEqual([BEARER_PROFILE]);
+    expect(relay.credentials).toEqual([
+      {
+        connectionId: BEARER_TARGET.connectionId,
+        credential: BEARER_CREDENTIAL,
+      },
+    ]);
     expect(relay.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
   });
 
@@ -140,6 +163,7 @@ describe("ConnectionCatalogDocument", () => {
     );
 
     expect(document.targets).toEqual([target]);
+    expect(document.routes).toEqual([target]);
     expect(document.profiles).toEqual([profile]);
     expect(document.credentials).toEqual([]);
   });

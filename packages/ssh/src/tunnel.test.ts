@@ -188,7 +188,12 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), 'kill "$REMOTE_PID" 2>/dev/null || true');
     assert.include(buildRemoteLaunchScript(), "wait_ready");
     assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
-    assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
+    assert.notInclude(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
+    assert.include(buildRemoteLaunchScript(), "discover_running_runtime()");
+    assert.include(buildRemoteLaunchScript(), "systemctl --user show t3code.service");
+    assert.include(buildRemoteLaunchScript(), 'fs.readdirSync("/proc")');
+    assert.include(buildRemoteLaunchScript(), '"server-runtime.json"');
+    assert.include(buildRemoteLaunchScript(), "/.well-known/t3/environment");
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
     assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
     assert.include(buildRemoteLaunchScript(), 'wait_ready "60000"');
@@ -197,9 +202,10 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemotePairingScript(target),
-      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+      '"$RUNNER_FILE" pair --base-dir "$PAIRING_BASE_DIR" >"$PAIR_OUTPUT_FILE"',
     );
-    assert.include(buildRemotePairingScript(target), 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
+    assert.include(buildRemotePairingScript(target), 'line.startsWith("Token: ")');
+    assert.include(buildRemotePairingScript(target), 'BASE_DIR_FILE="$STATE_DIR/base-dir"');
     assert.notInclude(buildRemotePairingScript(target), "server-home");
     assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
@@ -234,6 +240,23 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
+  });
+
+  it("embeds syntactically valid Node scripts", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    for (const script of [buildRemoteLaunchScript(), buildRemotePairingScript(target)]) {
+      const embeddedScripts = [...script.matchAll(/<<'NODE'\n([\s\S]*?)\nNODE/gu)];
+      assert.isAbove(embeddedScripts.length, 0);
+      for (const match of embeddedScripts) {
+        assert.doesNotThrow(() => Function(match[1]!));
+      }
+    }
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {

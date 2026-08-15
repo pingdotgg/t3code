@@ -57,8 +57,10 @@ control plane or a copy of session state.
 | `RelayConnectionTarget`   | Managed T3 Connect relay tunnels.                                        |
 | `SshConnectionTarget`     | Desktop-managed SSH environments.                                        |
 
-Bearer, relay, and SSH are persisted; primary is platform-managed. Note that Tailscale is not a
-separate target kind. A Tailscale URL is paired through the ordinary bearer path in
+Bearer, relay, and SSH routes are persisted; primary is platform-managed. The catalog keeps one
+selected target per environment plus every known route for that stable environment ID. Registering
+an SSH route for an environment already reached through the relay retains both routes instead of
+replacing the relay registration. Note that Tailscale is not a separate target kind. A Tailscale URL is paired through the ordinary bearer path in
 [`onboarding.ts`][onboarding] (`preparePairingRegistration`), which accepts either a pairing URL or a
 host plus pairing code. Tailscale is an endpoint provider and transport, not a distinct runtime
 concept.
@@ -166,6 +168,14 @@ server, opens a local tunnel, checks HTTP readiness, optionally issues a remote 
 returns local HTTP/WS endpoints. Disconnect closes the tunnel and stops the remote server if the
 launcher started it; a server that was already running (marked `external`) is left running.
 
+Remote discovery checks the user-level `t3code.service` process first, then the SSH environment and
+same-user `/proc` metadata for `T3CODE_HOME` values. Each recorded runtime is accepted only when its
+PID is live and its loopback environment descriptor answers. The discovered base directory is saved
+for `t3 pair --base-dir`, so the pairing credential lands in the database the reused server actually
+reads. The launcher reuses that reported port before considering a new server. This is what prevents
+an SSH access path from creating a second logical environment beside an already-running T3 Connect
+service whose private service environment is not inherited by SSH.
+
 The desktop main process owns this because it can spawn SSH, manage prompts, write launch scripts,
 and clean up forwards. The renderer connects through the forwarded URL like any other environment and
 needs no SSH-specific RPC path.
@@ -174,6 +184,13 @@ Failure handling is explicit: SSH auth failure surfaces before an environment is
 failure includes launcher output where available, forwarded-port failure leaves the environment
 disconnected rather than falling back to an unrelated endpoint, and reconnect restores the SSH bridge
 before reconnecting the WebSocket client.
+
+Route selection is manual and device-local. `EnvironmentRegistry.selectRoute` prepares and
+authenticates the candidate while the current supervisor remains active, including verifying its
+environment ID. Only then does it persist the selected target and replace the supervisor. There is
+one active RPC session per environment on a client; an inactive SSH tunnel may remain warm for a
+later manual switch, but it owns no subscriptions. A failed candidate leaves the selected route and
+active session unchanged. Mobile shares the route-capable catalog model but exposes no SSH UI.
 
 ## Launch methods
 
