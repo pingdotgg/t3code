@@ -28,6 +28,19 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 // window is a failed/stale start, not pending work. Mirrors the client's
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const AUTO_CONTINUE_AFTER_USAGE_LIMIT_PROMPT =
+  "Continue the task from where you left off. Do not repeat work that is already complete.";
+
+function modelSelectionsEqual(
+  left: { readonly instanceId: string; readonly model: string; readonly options?: unknown },
+  right: { readonly instanceId: string; readonly model: string; readonly options?: unknown },
+): boolean {
+  return (
+    left.instanceId === right.instanceId &&
+    left.model === right.model &&
+    JSON.stringify(left.options ?? []) === JSON.stringify(right.options ?? [])
+  );
+}
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -400,13 +413,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      return {
+      const deletedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -419,16 +432,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           deletedAt: occurredAt,
         },
       };
+      if (thread.usageLimitWait == null) {
+        return deletedEvent;
+      }
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.usage-limit-wait-cleared",
+          payload: {
+            threadId: command.threadId,
+            waitId: thread.usageLimitWait.waitId,
+            reason: "stale",
+            updatedAt: occurredAt,
+          },
+        },
+        deletedEvent,
+      ];
     }
 
     case "thread.archive": {
-      yield* requireThreadNotArchived({
+      const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      return {
+      const archivedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -442,6 +476,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      if (thread.usageLimitWait == null) {
+        return archivedEvent;
+      }
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.usage-limit-wait-cleared",
+          payload: {
+            threadId: command.threadId,
+            waitId: thread.usageLimitWait.waitId,
+            reason: "stale",
+            updatedAt: occurredAt,
+          },
+        },
+        archivedEvent,
+      ];
     }
 
     case "thread.unarchive": {
@@ -822,7 +877,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ? thread.branch
           : command.branch;
       const occurredAt = yield* nowIso;
-      return {
+      const metaUpdatedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -863,6 +918,31 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      const changesWaitingModel =
+        thread.usageLimitWait != null &&
+        command.modelSelection !== undefined &&
+        !modelSelectionsEqual(command.modelSelection, thread.usageLimitWait.modelSelection);
+      if (!changesWaitingModel || thread.usageLimitWait == null) {
+        return metaUpdatedEvent;
+      }
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.usage-limit-wait-cleared",
+          payload: {
+            threadId: command.threadId,
+            waitId: thread.usageLimitWait.waitId,
+            reason: "stale",
+            updatedAt: occurredAt,
+          },
+        },
+        metaUpdatedEvent,
+      ];
     }
 
     case "thread.title.regeneration.complete": {
@@ -1014,6 +1094,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // A snooze clears the same way — sending a message to a snoozed
       // thread is the user re-engaging, so the return ticket is spent.
       const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (targetThread.usageLimitWait != null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.usage-limit-wait-cleared",
+          payload: {
+            threadId: command.threadId,
+            waitId: targetThread.usageLimitWait.waitId,
+            reason: "superseded",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
       if (targetThread.settledOverride !== null) {
         lifecycleResetEvents.push({
           ...(yield* withEventBase({
@@ -1047,6 +1144,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.usage-limit-wait.cancel": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.usage-limit-wait-cleared",
+        payload: {
+          threadId: command.threadId,
+          waitId: command.waitId,
+          reason: command.reason ?? "user",
+          updatedAt: command.createdAt,
+        },
+      };
     }
 
     case "thread.turn.interrupt": {
@@ -1236,6 +1356,133 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [unsettledEvent, sessionSetEvent];
+    }
+
+    case "thread.usage-limit-wait.schedule": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const wait = command.wait;
+      if (!Number.isFinite(Date.parse(wait.resumeAt))) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `usage-limit reset time ${wait.resumeAt} is invalid`,
+        });
+      }
+      if (
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        thread.latestTurn?.turnId !== wait.blockedTurnId ||
+        thread.latestTurn.state !== "error" ||
+        !modelSelectionsEqual(thread.modelSelection, wait.modelSelection)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is no longer blocked on the reported usage limit`,
+        });
+      }
+      const scheduledEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.usage-limit-wait-scheduled",
+        payload: {
+          threadId: command.threadId,
+          wait,
+          updatedAt: command.createdAt,
+        },
+      };
+      if (thread.usageLimitWait == null || thread.usageLimitWait.waitId === wait.waitId) {
+        return scheduledEvent;
+      }
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.usage-limit-wait-cleared",
+          payload: {
+            threadId: command.threadId,
+            waitId: thread.usageLimitWait.waitId,
+            reason: "superseded",
+            updatedAt: command.createdAt,
+          },
+        },
+        scheduledEvent,
+      ];
+    }
+
+    case "thread.usage-limit-wait.resume": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const wait = thread.usageLimitWait;
+      const waitIsCurrent = wait?.waitId === command.waitId;
+      const canResume =
+        waitIsCurrent &&
+        thread.deletedAt === null &&
+        thread.archivedAt === null &&
+        thread.latestTurn?.turnId === wait.blockedTurnId &&
+        thread.latestTurn.state === "error" &&
+        thread.session?.status !== "starting" &&
+        thread.session?.status !== "running" &&
+        modelSelectionsEqual(thread.modelSelection, wait.modelSelection);
+      const clearedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.usage-limit-wait-cleared",
+        payload: {
+          threadId: command.threadId,
+          waitId: command.waitId,
+          reason: canResume ? "resumed" : "stale",
+          updatedAt: command.createdAt,
+        },
+      };
+      if (!canResume || wait == null) {
+        return clearedEvent;
+      }
+      const lastUserMessage = thread.messages.findLast((message) => message.role === "user");
+      if (!lastUserMessage) {
+        return {
+          ...clearedEvent,
+          payload: { ...clearedEvent.payload, reason: "stale" },
+        };
+      }
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        causationEventId: clearedEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: lastUserMessage.id,
+          modelSelection: wait.modelSelection,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          origin: "usage-limit-auto-resume",
+          promptOverride: AUTO_CONTINUE_AFTER_USAGE_LIMIT_PROMPT,
+          createdAt: command.createdAt,
+        },
+      };
+      return [clearedEvent, turnStartRequestedEvent];
     }
 
     case "thread.message.assistant.delta": {

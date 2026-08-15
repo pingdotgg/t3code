@@ -19,6 +19,8 @@ import {
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
+  ThreadUsageLimitWaitScheduledPayload,
+  ThreadUsageLimitWaitClearedPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -310,6 +312,7 @@ export function projectEvent(
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            usageLimitWait: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -499,6 +502,39 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             updatedAt: payload.updatedAt,
           }),
+        })),
+      );
+
+    case "thread.usage-limit-wait-scheduled":
+      return decodeForEvent(
+        ThreadUsageLimitWaitScheduledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            usageLimitWait: payload.wait,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.usage-limit-wait-cleared":
+      return decodeForEvent(
+        ThreadUsageLimitWaitClearedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: nextBase.threads.map((thread) =>
+            thread.id === payload.threadId && thread.usageLimitWait?.waitId === payload.waitId
+              ? { ...thread, usageLimitWait: null, updatedAt: payload.updatedAt }
+              : thread,
+          ),
         })),
       );
 

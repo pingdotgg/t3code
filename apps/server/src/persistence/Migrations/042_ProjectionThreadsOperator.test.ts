@@ -8,13 +8,13 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("041_ProjectionThreadsOperator", (it) => {
+layer("042_ProjectionThreadsOperator", (it) => {
   it.effect("adds durable Operator ownership and workspace columns", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 40 });
       yield* runMigrations({ toMigrationInclusive: 41 });
+      yield* runMigrations({ toMigrationInclusive: 42 });
 
       const columns = yield* sql<{
         readonly name: string;

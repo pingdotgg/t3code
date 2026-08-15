@@ -1,6 +1,6 @@
 import type { KeyboardEvent, PointerEvent } from "react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { isThemeColor, type ThemeColorRole } from "../../themePalette";
+import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -37,39 +37,18 @@ function clampThemeColor(value: number, min = 0, max = 1) {
 }
 
 /**
- * The picker's plane and sliders operate on opaque six-digit hex, but theme
- * colors may carry alpha. The suffix is preserved separately and re-attached
- * on commit so adjusting hue or brightness cannot change transparency.
+ * The picker remains an sRGB/hex adapter over the OKLCH palette engine. Alpha
+ * is preserved separately and re-attached on commit so adjusting hue or
+ * brightness cannot change transparency.
  */
 function themePickerAlphaSuffix(value: string): string {
-  const trimmed = value.trim().toLowerCase();
-  const alpha = /^#[0-9a-f]{4}$/.test(trimmed)
-    ? trimmed.slice(4).repeat(2)
-    : /^#[0-9a-f]{8}$/.test(trimmed)
-      ? trimmed.slice(7)
-      : "";
+  const normalized = themeColorToHex(value) ?? "";
+  const alpha = normalized.length === 9 ? normalized.slice(7) : "";
   return alpha === "ff" ? "" : alpha;
 }
 
 function normalizeThemePickerColor(value: string): string {
-  const trimmed = value.trim();
-  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
-    return `#${trimmed
-      .slice(1)
-      .split("")
-      .map((character) => `${character}${character}`)
-      .join("")}`;
-  }
-  if (/^#[0-9a-f]{4}$/i.test(trimmed)) {
-    return `#${trimmed
-      .slice(1, 4)
-      .split("")
-      .map((character) => `${character}${character}`)
-      .join("")}`;
-  }
-  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed;
-  if (/^#[0-9a-f]{8}$/i.test(trimmed)) return trimmed.slice(0, 7);
-  return "#000000";
+  return (themeColorToHex(value) ?? "#000000").slice(0, 7);
 }
 
 function themeHexToHsv(hex: string): ThemeColorHsv {
@@ -505,6 +484,9 @@ export const ThemeColorField = memo(function ThemeColorField({
   const label = customLabel ?? getThemeRoleLabel(role);
   const isColorValue = isThemeColor(value);
   const swatchValue = isColorValue ? value : "#000000";
+  const editorValue = value.trim().toLowerCase().startsWith("oklch(")
+    ? (themeColorToHex(value) ?? value)
+    : value;
 
   return (
     <div
@@ -542,7 +524,7 @@ export const ThemeColorField = memo(function ThemeColorField({
           onPointerDown={() => onSelect?.(role)}
           size="sm"
           unstyled
-          value={value}
+          value={editorValue}
         />
       </div>
     </div>

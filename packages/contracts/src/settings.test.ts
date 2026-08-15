@@ -119,9 +119,17 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("decodes a fully empty config (legacy on-disk shape) without complaint", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providerInstances).toEqual({});
+    expect(decoded.autoContinueAfterUsageLimitReset).toBe(true);
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
+  });
+
+  it("accepts opting out of automatic continuation after usage limits", () => {
+    expect(
+      decodeServerSettingsPatch({ autoContinueAfterUsageLimitReset: false })
+        .autoContinueAfterUsageLimitReset,
+    ).toBe(false);
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {

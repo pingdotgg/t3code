@@ -361,6 +361,14 @@ const TurnStartedPayload = Schema.Struct({
 });
 export type TurnStartedPayload = typeof TurnStartedPayload.Type;
 
+/** A subscription usage window that prevented the provider turn from running. */
+export const ProviderUsageLimit = Schema.Struct({
+  resetsAt: IsoDateTime,
+  limitType: Schema.optional(TrimmedNonEmptyStringSchema),
+  isEstimated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type ProviderUsageLimit = typeof ProviderUsageLimit.Type;
+
 const TurnCompletedPayload = Schema.Struct({
   state: RuntimeTurnState,
   stopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
@@ -368,6 +376,7 @@ const TurnCompletedPayload = Schema.Struct({
   modelUsage: Schema.optional(UnknownRecordSchema),
   totalCostUsd: Schema.optional(Schema.Number),
   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+  usageLimit: Schema.optional(ProviderUsageLimit),
 });
 export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;
 

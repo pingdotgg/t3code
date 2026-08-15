@@ -553,6 +553,67 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("attaches the structured subscription reset to usage-limited turns", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-rate-limit-update"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "account/rateLimits/updated",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          rateLimits: {
+            limitName: "five-hour",
+            rateLimitReachedType: "rate_limit_reached",
+            primary: {
+              usedPercent: 100,
+              resetsAt: 1_767_243_600,
+              windowDurationMins: 300,
+            },
+          },
+        },
+      });
+      yield* runtime.emit({
+        id: asEventId("evt-usage-limit-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "turn/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turn: {
+            id: "turn-1",
+            items: [],
+            status: "failed",
+            error: {
+              message: "Usage limit reached",
+              codexErrorInfo: "usageLimitExceeded",
+            },
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completed = events[1];
+      NodeAssert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        NodeAssert.deepStrictEqual(completed.payload.usageLimit, {
+          resetsAt: "2026-01-01T05:00:00.000Z",
+          limitType: "five-hour",
+          isEstimated: false,
+        });
+      }
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

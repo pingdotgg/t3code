@@ -123,11 +123,11 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
-  pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
   type RightPanelSurface,
+  updatePullRequestTabStatus,
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
@@ -144,6 +144,7 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
+import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
@@ -170,6 +171,7 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
+import { formatShortTimestamp } from "../timestampFormat";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -270,7 +272,13 @@ import {
   ProviderStatusBanner,
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
-import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import {
+  dismissThreadErrorBannerForSession,
+  getThreadErrorBannerKey,
+  isThreadErrorBannerDismissedForSession,
+  shouldShowThreadErrorBanner,
+  ThreadErrorBanner,
+} from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
@@ -479,6 +487,14 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
+
+  // The right-panel surface launcher claims its shortcut letters while it is
+  // visible (data attribute set in RightPanelTabs); those keys open surfaces
+  // instead of typing into the composer.
+  const launcherKeys = document
+    .querySelector("[data-surface-launcher-keys]")
+    ?.getAttribute("data-surface-launcher-keys");
+  if (launcherKeys && launcherKeys.toLowerCase().includes(event.key.toLowerCase())) return false;
 
   return true;
 }
@@ -1217,6 +1233,9 @@ function ChatViewContent(props: ChatViewProps) {
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
+  const cancelUsageLimitWait = useAtomCommand(threadEnvironment.cancelUsageLimitWait, {
+    reportFailure: false,
+  });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
     reportFailure: false,
   });
@@ -1502,6 +1521,24 @@ function ChatViewContent(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
+  // Dismissals can only mask the shown error, never clear it: a server thread
+  // keeps its error in session.lastError, so clearing the local shadow would
+  // just fall through to the persisted one. Mask the current error until a
+  // different error arrives, mirroring the provider status banner.
+  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
+  const visibleThreadError = shouldShowThreadErrorBanner(
+    routeThreadKey,
+    threadError,
+    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
+  )
+    ? threadError
+    : null;
+  // Dismissing only mutates the session-scoped mask set, which does not
+  // trigger a render on its own; setThreadError(null) can also bail when the
+  // local shadow is already empty and the banner is driven purely by
+  // session.lastError. Bump a tick so the banner hides immediately. Mirrors
+  // the branch mismatch banner.
+  const [, setThreadErrorBannerDismissTick] = useState(0);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   // Plan mode is legacy (Settings → Beta). With the flag off the effective
   // mode is forced to "default" — even for threads with a stored plan mode —
@@ -1595,14 +1632,18 @@ function ChatViewContent(props: ChatViewProps) {
   const [pullRequestTabStatuses, setPullRequestTabStatuses] = useState<
     Record<string, PullRequestTabStatus>
   >({});
-  const handlePullRequestTabStatusChange = useCallback((status: PullRequestTabStatus) => {
-    const id = pullRequestSurfaceId(status);
-    setPullRequestTabStatuses((current) =>
-      current[id]?.state === status.state && current[id]?.isDraft === status.isDraft
-        ? current
-        : { ...current, [id]: status },
-    );
-  }, []);
+  // Keyed by the surface the panel is showing rather than by a key rebuilt from the status, so
+  // the tab is found again whether or not that surface was opened with an environment on it.
+  const activePullRequestSurfaceId =
+    activeRightPanelSurface?.kind === "pull-request" ? activeRightPanelSurface.id : undefined;
+  const handlePullRequestTabStatusChange = useCallback(
+    (status: PullRequestTabStatus) => {
+      const id = activePullRequestSurfaceId;
+      if (id === undefined) return;
+      setPullRequestTabStatuses((current) => updatePullRequestTabStatus(current, id, status));
+    },
+    [activePullRequestSurfaceId],
+  );
   const activeFileSurface =
     activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
@@ -2652,7 +2693,7 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(threadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -4432,6 +4473,61 @@ function ChatViewContent(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
+  const [isCancellingUsageLimitWait, setIsCancellingUsageLimitWait] = useState(false);
+  const usageLimitWait = activeThread?.usageLimitWait ?? null;
+  useEffect(() => {
+    setIsCancellingUsageLimitWait(false);
+  }, [usageLimitWait?.waitId]);
+  const handleCancelUsageLimitWait = useCallback(async () => {
+    if (!activeThread || !usageLimitWait) return;
+    setIsCancellingUsageLimitWait(true);
+    const result = await cancelUsageLimitWait({
+      environmentId,
+      input: { threadId: activeThread.id, waitId: usageLimitWait.waitId },
+    });
+    if (result._tag === "Failure") {
+      setIsCancellingUsageLimitWait(false);
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to cancel automatic continuation.",
+        );
+      }
+    }
+  }, [activeThread, cancelUsageLimitWait, environmentId, setThreadError, usageLimitWait]);
+  const usageLimitWaitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!usageLimitWait) return null;
+    const providerLabel = usageLimitWait.provider === "codex" ? "Codex" : "Claude";
+    const resumeDate = new Date(usageLimitWait.resumeAt);
+    const sameDay = resumeDate.toDateString() === new Date().toDateString();
+    const time = formatShortTimestamp(usageLimitWait.resumeAt, timestampFormat);
+    const resumeLabel = sameDay
+      ? time
+      : `${resumeDate.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        })} at ${time}`;
+    return {
+      id: `usage-limit-wait:${usageLimitWait.waitId}`,
+      variant: "warning",
+      icon: <AlarmClockIcon />,
+      title: `${providerLabel} usage limit reached`,
+      description: usageLimitWait.isEstimated
+        ? `Automatically tries again at ${resumeLabel}.`
+        : `Automatically continues at ${resumeLabel}.`,
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isCancellingUsageLimitWait}
+          onClick={() => void handleCancelUsageLimitWait()}
+        >
+          {isCancellingUsageLimitWait ? "Cancelling..." : "Cancel"}
+        </Button>
+      ),
+    };
+  }, [handleCancelUsageLimitWait, isCancellingUsageLimitWait, timestampFormat, usageLimitWait]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.
@@ -4511,11 +4607,13 @@ function ChatViewContent(props: ChatViewProps) {
     const calmSystemItems = systemComposerBannerItems.filter((item) => !isUrgentSystemItem(item));
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
+    const usageLimitWaitItems = usageLimitWaitBannerItem === null ? [] : [usageLimitWaitBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...urgentSystemItems,
+        ...usageLimitWaitItems,
         ...backgroundLivenessItems,
         ...calmSystemItems,
         ...wokeThreadItems,
@@ -4524,6 +4622,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [
       ...urgentSystemItems,
+      ...usageLimitWaitItems,
       ...backgroundLivenessItems,
       ...calmSystemItems,
       ...wokeThreadItems,
@@ -4577,6 +4676,7 @@ function ChatViewContent(props: ChatViewProps) {
     parkedThreadBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
+    usageLimitWaitBannerItem,
     wokeThreadBannerItem,
   ]);
 
@@ -6088,11 +6188,23 @@ function ChatViewContent(props: ChatViewProps) {
           number: activeRightPanelSurface.number,
         }}
         context={
-          activeThreadPr?.number === activeRightPanelSurface.number &&
-          threadRepository === activeRightPanelSurface.repository
+          isThreadOwnPullRequest(
+            {
+              projectId: activeProject?.id ?? null,
+              repository: threadRepository,
+              number: activeThreadPr?.number ?? null,
+            },
+            {
+              projectId: activeRightPanelSurface.projectId,
+              repository: activeRightPanelSurface.repository,
+              number: activeRightPanelSurface.number,
+            },
+          )
             ? "thread"
             : "page"
         }
+        chromeVariant="collapse"
+        composerDraftTarget={composerDraftTarget}
         onStateChange={handlePullRequestTabStatusChange}
       />
     ) : activeRightPanelSurface?.kind === "agents" ? (
@@ -6193,8 +6305,12 @@ function ChatViewContent(props: ChatViewProps) {
         </header>
 
         <ThreadErrorBanner
-          error={threadError}
-          onDismiss={() => setThreadError(activeThread.id, null)}
+          error={visibleThreadError}
+          onDismiss={() => {
+            setThreadError(activeThread.id, null);
+            dismissThreadErrorBannerForSession(threadErrorBannerKey);
+            setThreadErrorBannerDismissTick((tick) => tick + 1);
+          }}
         />
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">

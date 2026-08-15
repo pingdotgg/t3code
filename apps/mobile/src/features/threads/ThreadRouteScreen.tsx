@@ -12,6 +12,10 @@ import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -214,6 +218,10 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const cancelUsageLimitWait = useAtomCommand(threadEnvironment.cancelUsageLimitWait, {
+    label: "cancel automatic continuation",
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -496,6 +504,17 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+  const handleCancelUsageLimitWait = useCallback(async () => {
+    const wait = selectedThread?.usageLimitWait;
+    if (!selectedThread || !wait) return;
+    const result = await cancelUsageLimitWait({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id, waitId: wait.waitId },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      throw squashAtomCommandFailure(result);
+    }
+  }, [cancelUsageLimitWait, selectedThread]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -799,6 +818,7 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
+          onCancelUsageLimitWait={handleCancelUsageLimitWait}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
