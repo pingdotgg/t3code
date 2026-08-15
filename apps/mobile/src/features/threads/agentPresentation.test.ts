@@ -9,10 +9,29 @@ import {
   findMobileAgent,
 } from "./agentPresentation";
 
+interface AgentActivityPayload {
+  readonly taskId: string;
+  readonly taskType?: "local_workflow";
+  readonly workflowName?: string;
+  readonly phases?: ReadonlyArray<{ readonly index: number; readonly title: string }>;
+  readonly parentAgentId?: string;
+  readonly phaseIndex?: number;
+  readonly phaseTitle?: string;
+  readonly agentIndex?: number;
+  readonly status?: "running" | "idle" | "completed" | "failed";
+  readonly title?: string;
+  readonly role?: string;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly summary?: string;
+  readonly error?: string;
+  readonly typedUsage?: { readonly totalTokens: number; readonly toolUses: number };
+}
+
 function activity(
   id: string,
   kind: OrchestrationThreadActivity["kind"],
-  payload: Record<string, unknown>,
+  payload: AgentActivityPayload,
   second: number,
 ): OrchestrationThreadActivity {
   return {

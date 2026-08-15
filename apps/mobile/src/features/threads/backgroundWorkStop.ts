@@ -3,7 +3,9 @@ import type {
   OrchestrationThread,
   OrchestrationThreadActivity,
 } from "@t3tools/contracts";
+import type { InterruptThreadTurnInput } from "@t3tools/client-runtime/operations";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import * as Predicate from "effect/Predicate";
 
 interface BackgroundWorkStopOutcome {
   readonly title: string;
@@ -40,9 +42,9 @@ export function createBackgroundWorkStopGuard(
         resolveAttempt(pending);
       }
     },
-    run: async (
+    run: async <InterruptResult>(
       commandId: CommandId,
-      interrupt: (attempt: { readonly resolve: () => void }) => Promise<unknown>,
+      interrupt: (attempt: { readonly resolve: () => void }) => Promise<InterruptResult>,
     ) => {
       if (pending !== null) {
         return false;
@@ -87,7 +89,7 @@ export function buildBackgroundWorkInterruptInput(
   thread: Pick<OrchestrationThread, "id" | "session">,
   commandId: CommandId,
   serverVersion: string | null | undefined,
-) {
+): InterruptThreadTurnInput | null {
   if (serverVersion === undefined) {
     return null;
   }
@@ -97,43 +99,45 @@ export function buildBackgroundWorkInterruptInput(
     return null;
   }
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
-  return {
+  const input: InterruptThreadTurnInput = {
     threadId: thread.id,
     commandId,
-    ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
-    ...(supportsGuardedInterrupt
-      ? {
-          expectedTurnId: thread.session?.activeTurnId ?? null,
-          ...(thread.session !== null
-            ? { expectedSessionUpdatedAt: thread.session.updatedAt }
-            : {}),
-        }
-      : {}),
   };
+  if (runningTurnId !== null) {
+    Object.assign(input, { turnId: runningTurnId });
+  }
+  if (supportsGuardedInterrupt) {
+    Object.assign(input, { expectedTurnId: thread.session?.activeTurnId ?? null });
+    if (thread.session !== null) {
+      Object.assign(input, { expectedSessionUpdatedAt: thread.session.updatedAt });
+    }
+  }
+  return input;
 }
 
 export function findBackgroundWorkStopResolution(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   commandId: CommandId,
 ) {
-  const resolved = activities.findLast((entry) => {
-    if (entry.kind !== "provider.turn.interrupt.resolved") return false;
-    const payload =
-      typeof entry.payload === "object" && entry.payload !== null
-        ? (entry.payload as Record<string, unknown>)
-        : null;
-    return payload?.requestId === commandId;
-  });
-  const payload =
-    resolved && typeof resolved.payload === "object" && resolved.payload !== null
-      ? (resolved.payload as Record<string, unknown>)
+  const resolved = activities.findLast(
+    (entry) =>
+      entry.kind === "provider.turn.interrupt.resolved" &&
+      Predicate.isObjectOrArray(entry.payload) &&
+      Predicate.hasProperty(entry.payload, "requestId") &&
+      entry.payload.requestId === commandId,
+  );
+  const outcome =
+    resolved &&
+    Predicate.isObjectOrArray(resolved.payload) &&
+    Predicate.hasProperty(resolved.payload, "outcome")
+      ? resolved.payload.outcome
       : null;
-  switch (payload?.outcome) {
+  switch (outcome) {
     case "interrupted":
-      return { outcome: payload.outcome, alert: null };
+      return { outcome, alert: null };
     case "work-changed":
       return {
-        outcome: payload.outcome,
+        outcome,
         alert: {
           title: "Work already changed",
           message: "A newer turn or provider session is active, so it was left running.",
@@ -141,7 +145,7 @@ export function findBackgroundWorkStopResolution(
       };
     case "no-session":
       return {
-        outcome: payload.outcome,
+        outcome,
         alert: {
           title: "Stop status unknown",
           message:
@@ -150,7 +154,7 @@ export function findBackgroundWorkStopResolution(
       };
     case "interrupt-failed":
       return {
-        outcome: payload.outcome,
+        outcome,
         alert: {
           title: "Stop failed",
           message: "The provider could not interrupt the work. It may still be running.",

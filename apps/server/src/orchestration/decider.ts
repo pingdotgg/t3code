@@ -1056,6 +1056,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             actualTurnId,
           }
         : undefined;
+      const payload: Extract<
+        OrchestrationEvent,
+        { type: "thread.turn-interrupt-requested" }
+      >["payload"] = {
+        threadId: command.threadId,
+        createdAt: command.createdAt,
+      };
+      if (command.turnId !== undefined) {
+        Object.assign(payload, { turnId: command.turnId });
+      }
+      if (command.expectedTurnId !== undefined) {
+        Object.assign(payload, { expectedTurnId: command.expectedTurnId });
+      }
+      if (command.expectedSessionUpdatedAt !== undefined) {
+        Object.assign(payload, {
+          expectedSessionUpdatedAt: command.expectedSessionUpdatedAt,
+        });
+      }
+      if (guardDecision !== undefined) {
+        Object.assign(payload, { guardDecision });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1064,18 +1085,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           commandId: command.commandId,
         })),
         type: "thread.turn-interrupt-requested",
-        payload: {
-          threadId: command.threadId,
-          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
-          ...(command.expectedTurnId !== undefined
-            ? { expectedTurnId: command.expectedTurnId }
-            : {}),
-          ...(command.expectedSessionUpdatedAt !== undefined
-            ? { expectedSessionUpdatedAt: command.expectedSessionUpdatedAt }
-            : {}),
-          ...(guardDecision !== undefined ? { guardDecision } : {}),
-          createdAt: command.createdAt,
-        },
+        payload,
       };
     }
 

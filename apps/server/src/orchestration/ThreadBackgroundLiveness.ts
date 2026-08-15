@@ -24,14 +24,13 @@ import * as Predicate from "effect/Predicate";
 
 export type ThreadBackgroundLiveness = "working" | "monitoring" | null;
 
+interface ThreadLiveAgentActivityIds {
+  readonly startedActivityId?: string;
+  readonly latestUpdatedActivityId?: string;
+}
+
 interface ThreadLivenessState {
-  readonly agents: Map<
-    string,
-    {
-      readonly startedActivityId?: string;
-      readonly latestUpdatedActivityId?: string;
-    }
-  >;
+  readonly agents: Map<string, ThreadLiveAgentActivityIds>;
   readonly monitors: Map<string, string | undefined>;
 }
 
@@ -221,10 +220,14 @@ export function make(
         input.kind === "updated" && input.activityId
           ? input.activityId
           : previousAgent?.latestUpdatedActivityId;
-      state.agents.set(input.taskId, {
-        ...(startedActivityId ? { startedActivityId } : {}),
-        ...(latestUpdatedActivityId ? { latestUpdatedActivityId } : {}),
-      });
+      const activityIds: ThreadLiveAgentActivityIds = {};
+      if (startedActivityId) {
+        Object.assign(activityIds, { startedActivityId });
+      }
+      if (latestUpdatedActivityId) {
+        Object.assign(activityIds, { latestUpdatedActivityId });
+      }
+      state.agents.set(input.taskId, activityIds);
     }
   };
 

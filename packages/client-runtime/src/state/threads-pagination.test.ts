@@ -354,21 +354,26 @@ describe("thread pagination state", () => {
         activitySequence: number,
         createdAt: string,
         status?: "running",
-      ): OrchestrationThreadActivity => ({
-        id: EventId.make(id),
-        tone: "info",
-        kind,
-        summary: kind,
-        payload: {
+      ): OrchestrationThreadActivity => {
+        const payload = {
           taskId: "retained-agent",
           taskType: "subagent",
           agentKind: "agent",
-          ...(status ? { status } : {}),
-        },
-        turnId: TurnId.make(`turn-${activitySequence}`),
-        sequence: activitySequence,
-        createdAt,
-      });
+        };
+        if (status) {
+          Object.assign(payload, { status });
+        }
+        return {
+          id: EventId.make(id),
+          tone: "info",
+          kind,
+          summary: kind,
+          payload,
+          turnId: TurnId.make(`turn-${activitySequence}`),
+          sequence: activitySequence,
+          createdAt,
+        };
+      };
       const start = taskActivity("retained-start", "task.started", 1, startAt);
       const intermediate = taskActivity(
         "intermediate-progress",
@@ -425,22 +430,27 @@ describe("thread pagination state", () => {
         id: string,
         kind: "task.started" | "task.completed",
         sequence?: number,
-      ): OrchestrationThreadActivity => ({
-        id: EventId.make(id),
-        tone: "info",
-        kind,
-        summary: kind,
-        payload: {
-          taskId: "mixed-sequence-agent",
-          taskType: "subagent",
-          agentKind: "agent",
-          status: kind === "task.started" ? "running" : "completed",
-        },
-        turnId: TurnId.make("turn-mixed-sequence"),
-        ...(sequence === undefined ? {} : { sequence }),
-        createdAt:
-          kind === "task.started" ? "2026-04-01T00:00:00.000Z" : "2026-04-01T01:00:00.000Z",
-      });
+      ): OrchestrationThreadActivity => {
+        const activity: OrchestrationThreadActivity = {
+          id: EventId.make(id),
+          tone: "info",
+          kind,
+          summary: kind,
+          payload: {
+            taskId: "mixed-sequence-agent",
+            taskType: "subagent",
+            agentKind: "agent",
+            status: kind === "task.started" ? "running" : "completed",
+          },
+          turnId: TurnId.make("turn-mixed-sequence"),
+          createdAt:
+            kind === "task.started" ? "2026-04-01T00:00:00.000Z" : "2026-04-01T01:00:00.000Z",
+        };
+        if (sequence !== undefined) {
+          Object.assign(activity, { sequence });
+        }
+        return activity;
+      };
       const start = taskActivity("sequenced-start", "task.started", 1);
       const completion = taskActivity("sequence-less-completion", "task.completed");
       const initial: OrchestrationThreadDetailSnapshot = {

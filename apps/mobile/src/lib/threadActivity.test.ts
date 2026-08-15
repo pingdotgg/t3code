@@ -686,6 +686,17 @@ describe("subagent spawn batches", () => {
       readonly turnId?: TurnId;
     } = {},
   ): OrchestrationThreadActivity {
+    const payload = {
+      taskId,
+      taskType: options.taskType ?? "local_agent",
+      agentKind: "agent",
+    };
+    if (options.parentAgentId) {
+      Object.assign(payload, { parentAgentId: options.parentAgentId });
+    }
+    if (options.status) {
+      Object.assign(payload, { status: options.status });
+    }
     return makeActivity({
       id: EventId.make(id),
       kind: options.kind ?? "task.started",
@@ -693,13 +704,7 @@ describe("subagent spawn batches", () => {
       createdAt: `2026-04-01T00:00:${String(sequence).padStart(2, "0")}.000Z`,
       turnId: options.turnId ?? turnOne,
       sequence,
-      payload: {
-        taskId,
-        taskType: options.taskType ?? "local_agent",
-        agentKind: "agent",
-        ...(options.parentAgentId ? { parentAgentId: options.parentAgentId } : {}),
-        ...(options.status ? { status: options.status } : {}),
-      },
+      payload,
     });
   }
 

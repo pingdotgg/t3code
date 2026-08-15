@@ -26,6 +26,11 @@ export interface FoldSubagentActivitiesOptions {
   readonly sessionLive?: boolean;
 }
 
+export interface DerivedSubagentBatchCounts {
+  readonly batchKeyByActivityId: ReadonlyMap<string, string>;
+  readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
+}
+
 interface SubagentBatchAgent {
   readonly id: string;
   readonly kind: "subagent" | "workflow" | "workflow_agent";
@@ -52,10 +57,7 @@ function batchKey(agent: SubagentBatchAgent, turnId: string | null): string {
 export function deriveSubagentBatchCounts<Agent extends SubagentBatchAgent>(
   agents: Iterable<Agent>,
   activityActivations: ReadonlyMap<string, readonly [Agent, number]>,
-): {
-  readonly batchKeyByActivityId: ReadonlyMap<string, string>;
-  readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
-} {
+): DerivedSubagentBatchCounts {
   const batchKeyByActivityId = new Map<string, string>();
   const statusesByBatch = new Map<string, Map<string, RuntimeSubagentStatus>>();
   for (const agent of agents) {

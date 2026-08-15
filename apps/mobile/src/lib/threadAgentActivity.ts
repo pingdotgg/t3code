@@ -7,6 +7,7 @@ import {
 import type { OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import * as Predicate from "effect/Predicate";
 
 interface AgentSpawnRow {
   readonly id: string;
@@ -16,6 +17,17 @@ interface AgentSpawnRow {
   readonly agentLive: boolean;
   readonly tone: "info";
   readonly activityKind: OrchestrationThreadActivity["kind"];
+}
+
+interface SubagentActivityFold {
+  readonly ordered: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly fold: FoldedSubagentActivitiesWithBatchCounts;
+}
+
+export interface DerivedAgentSpawnRows {
+  readonly orderedActivities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly agentTaskIds: ReadonlySet<string>;
+  readonly rowsByAnchorActivityId: ReadonlyMap<string, AgentSpawnRow>;
 }
 
 const AGENT_TASK_ACTIVITY_KINDS: ReadonlySet<OrchestrationThreadActivity["kind"]> = new Set([
@@ -50,10 +62,7 @@ const foldedSubagentsByActivityList = new WeakMap<
 function getSubagentActivityFold(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
-): {
-  readonly ordered: ReadonlyArray<OrchestrationThreadActivity>;
-  readonly fold: FoldedSubagentActivitiesWithBatchCounts;
-} {
+): SubagentActivityFold {
   let cached = foldedSubagentsByActivityList.get(activities);
   if (!cached) {
     cached = { ordered: Arr.sort(activities, activityOrder), folds: new Map() };
@@ -77,19 +86,21 @@ export function memoizedFoldSubagentActivities(
 
 export function agentTaskIdFromActivity(activity: OrchestrationThreadActivity): string | null {
   if (!AGENT_TASK_ACTIVITY_KINDS.has(activity.kind)) return null;
-  if (typeof activity.payload !== "object" || activity.payload === null) return null;
-  const taskId = (activity.payload as Record<string, unknown>).taskId;
-  return typeof taskId === "string" && taskId.trim().length > 0 ? taskId.trim() : null;
+  if (
+    !Predicate.isObjectOrArray(activity.payload) ||
+    !Predicate.hasProperty(activity.payload, "taskId") ||
+    !Predicate.isString(activity.payload.taskId)
+  ) {
+    return null;
+  }
+  const taskId = activity.payload.taskId.trim();
+  return taskId.length > 0 ? taskId : null;
 }
 
 export function deriveAgentSpawnRows(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: FoldSubagentActivitiesOptions,
-): {
-  readonly orderedActivities: ReadonlyArray<OrchestrationThreadActivity>;
-  readonly agentTaskIds: ReadonlySet<string>;
-  readonly rowsByAnchorActivityId: ReadonlyMap<string, AgentSpawnRow>;
-} {
+): DerivedAgentSpawnRows {
   const { ordered, fold } = getSubagentActivityFold(activities, options);
   const agentsById = new Map(fold.agents.map((agent) => [agent.id, agent]));
   const batches = new Map<

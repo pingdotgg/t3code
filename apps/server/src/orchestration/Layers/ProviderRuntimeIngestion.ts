@@ -15,6 +15,7 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
+  type OrchestrationSession,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
@@ -1629,18 +1630,18 @@ const make = Effect.gen(function* () {
             );
           }
 
-          const nextSession = {
+          const nextSession: OrchestrationSession = {
             threadId: thread.id,
             status,
             providerName: event.provider,
-            ...(event.providerInstanceId !== undefined
-              ? { providerInstanceId: event.providerInstanceId }
-              : {}),
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
             activeTurnId: nextActiveTurnId,
             lastError,
             updatedAt: now,
-          } as const;
+          };
+          if (event.providerInstanceId !== undefined) {
+            Object.assign(nextSession, { providerInstanceId: event.providerInstanceId });
+          }
           const currentSession = thread.session;
           const sessionStateUnchanged =
             currentSession !== null &&

@@ -11,7 +11,7 @@ import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
 import { memoizedFoldSubagentActivities } from "../../lib/threadAgentActivity";
 
-const STATUS_LABELS: Record<RuntimeSubagent["status"], string> = {
+const STATUS_LABELS = {
   pending: "Working",
   running: "Working",
   waiting: "Working",
@@ -20,7 +20,7 @@ const STATUS_LABELS: Record<RuntimeSubagent["status"], string> = {
   failed: "Failed",
   cancelled: "Stopped",
   interrupted: "Stopped",
-};
+} satisfies Record<RuntimeSubagent["status"], string>;
 
 export function deriveMobileAgentPanelModel(input: {
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;

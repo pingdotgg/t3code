@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
+import * as Predicate from "effect/Predicate";
 import type {
   MessageId,
   OrchestrationCheckpointSummary,
@@ -591,13 +592,11 @@ export function applyThreadDetailEvent(
         Arr.append(activity),
         Arr.sort(activityOrder),
       );
-      const activityPayload =
-        typeof activity.payload === "object" && activity.payload !== null
-          ? (activity.payload as Record<string, unknown>)
-          : null;
       const interruptResolved =
         activity.kind === "provider.turn.interrupt.resolved" &&
-        activityPayload?.outcome === "interrupted";
+        Predicate.isObjectOrArray(activity.payload) &&
+        Predicate.hasProperty(activity.payload, "outcome") &&
+        activity.payload.outcome === "interrupted";
       const latestTurn =
         interruptResolved &&
         activity.turnId !== null &&

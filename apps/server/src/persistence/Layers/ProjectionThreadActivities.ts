@@ -171,17 +171,22 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
         ),
       ),
       Effect.map((rows) =>
-        rows.map((row) => ({
-          activityId: row.activityId,
-          threadId: row.threadId,
-          turnId: row.turnId,
-          tone: row.tone,
-          kind: row.kind,
-          summary: row.summary,
-          payload: row.payload,
-          ...(row.sequence !== null ? { sequence: row.sequence } : {}),
-          createdAt: row.createdAt,
-        })),
+        rows.map((row) => {
+          const activity: ProjectionThreadActivity = {
+            activityId: row.activityId,
+            threadId: row.threadId,
+            turnId: row.turnId,
+            tone: row.tone,
+            kind: row.kind,
+            summary: row.summary,
+            payload: row.payload,
+            createdAt: row.createdAt,
+          };
+          if (row.sequence !== null) {
+            Object.assign(activity, { sequence: row.sequence });
+          }
+          return activity;
+        }),
       ),
     );
 

@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -129,11 +130,14 @@ function taskLifecycleTaskId(activity: {
   ) {
     return null;
   }
-  if (typeof activity.payload !== "object" || activity.payload === null) {
+  if (
+    !Predicate.isObjectOrArray(activity.payload) ||
+    !Predicate.hasProperty(activity.payload, "taskId") ||
+    !Predicate.isString(activity.payload.taskId)
+  ) {
     return null;
   }
-  const taskId = (activity.payload as Record<string, unknown>).taskId;
-  return typeof taskId === "string" ? taskId : null;
+  return activity.payload.taskId;
 }
 
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
@@ -1453,13 +1457,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
         case "thread.activity-appended": {
           const activity = event.payload.activity;
-          const payload =
-            typeof activity.payload === "object" && activity.payload !== null
-              ? (activity.payload as Record<string, unknown>)
-              : null;
           if (
             activity.kind !== "provider.turn.interrupt.resolved" ||
-            payload?.outcome !== "interrupted" ||
+            !Predicate.isObjectOrArray(activity.payload) ||
+            !Predicate.hasProperty(activity.payload, "outcome") ||
+            activity.payload.outcome !== "interrupted" ||
             activity.turnId === null
           ) {
             return;

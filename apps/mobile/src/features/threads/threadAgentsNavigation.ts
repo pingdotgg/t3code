@@ -3,6 +3,12 @@ export interface AgentsColdStartHomeAction {
   readonly onPress: () => void;
 }
 
+export interface AgentDetailUnavailablePresentation {
+  readonly title: string;
+  readonly detail: string;
+  readonly loadEarlierLabel: string | null;
+}
+
 export function agentsColdStartHomeAction(input: {
   readonly canGoBack: boolean;
   readonly replaceWithHome: () => void;
@@ -41,11 +47,7 @@ export function agentDetailColdStartRosterAction(input: {
 export function agentDetailUnavailablePresentation(input: {
   readonly hasOlderTurns: boolean;
   readonly loadingOlder: boolean;
-}): {
-  readonly title: string;
-  readonly detail: string;
-  readonly loadEarlierLabel: string | null;
-} {
+}): AgentDetailUnavailablePresentation {
   if (input.hasOlderTurns) {
     return {
       title: "Agent not loaded",
