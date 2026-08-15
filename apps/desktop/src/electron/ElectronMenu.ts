@@ -78,6 +78,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
+      ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
     };
 
     if (sourceItem.children) {
@@ -141,10 +142,17 @@ export const make = Effect.gen(function* () {
   ): Electron.MenuItemConstructorOptions[] => {
     const template: Electron.MenuItemConstructorOptions[] = [];
     let hasInsertedDestructiveSeparator = false;
+    const appendSeparator = () => {
+      if (template.length === 0 || template.at(-1)?.type === "separator") return;
+      template.push({ type: "separator" });
+    };
 
     for (const item of entries) {
+      if (item.separatorBefore) {
+        appendSeparator();
+      }
       if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
-        template.push({ type: "separator" });
+        appendSeparator();
         hasInsertedDestructiveSeparator = true;
       }
 

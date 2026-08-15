@@ -35,7 +35,6 @@ import {
   deriveTimelineEntries,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
-  workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
@@ -57,7 +56,6 @@ import {
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
-  MinusIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -920,17 +918,34 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const isExpandedToolGroupEntry = row.kind === "work" && row.isExpandedToolGroupEntry;
+  const isLastExpandedToolGroupEntry = row.kind === "work" && row.isLastExpandedToolGroupEntry;
+  const isExpandedToolGroupHeader =
+    (row.kind === "work-toggle" && row.onlyToolEntries && row.expanded) ||
+    (row.kind === "work-live" && row.expanded);
+
   return (
     <div
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
-          row.kind === "work" ||
-          row.kind === "work-toggle" ||
-          row.kind === "turn-plan"
-          ? "pb-2"
-          : "pb-4",
+        isExpandedToolGroupEntry
+          ? isLastExpandedToolGroupEntry
+            ? "pb-1"
+            : "pb-0"
+          : isExpandedToolGroupHeader
+            ? "pb-0"
+            : row.kind === "turn-fold"
+              ? "pb-1.5"
+              : (row.kind === "message" &&
+                    row.message.role === "assistant" &&
+                    !row.showAssistantMeta) ||
+                  row.kind === "work" ||
+                  row.kind === "work-live" ||
+                  row.kind === "work-toggle" ||
+                  row.kind === "turn-plan"
+                ? "pb-2"
+                : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
       data-timeline-row-id={row.id}
@@ -938,7 +953,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
+      {row.kind === "work" ? (
+        <WorkGroupSection
+          groupedEntries={row.groupedEntries}
+          isExpandedToolGroupEntry={row.isExpandedToolGroupEntry}
+        />
+      ) : null}
+      {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -1083,7 +1104,6 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
-  const Icon = row.expanded ? ChevronDownIcon : ChevronRightIcon;
 
   return (
     <div className="border-b border-border/60 pb-2 pt-1">
@@ -1092,10 +1112,12 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
         onClick={() => ctx.onToggleTurnFold(row.turnId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span>{row.label}</span>
-        <Icon className="size-3.5" />
+        <ChevronRightIcon
+          className={cn("size-3.5 transition-transform", row.expanded && "-rotate-90")}
+        />
       </button>
     </div>
   );
@@ -1278,16 +1300,10 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
 });
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { workingStepLabel } = use(TimelineRowActivityCtx);
   return (
-    <div className="py-0.5 pl-1.5">
-      <div className="flex min-w-0 items-center gap-2 pt-1 text-secondary-label text-[11px] tabular-nums">
-        <span className="inline-flex items-center gap-[3px]">
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
-        </span>
-        <span className="shrink-0">
+    <div>
+      <div className="border-b border-border/60 pb-2 pt-1">
+        <div className="px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
           {row.createdAt ? (
             <>
               Working for <WorkingTimer createdAt={row.createdAt} />
@@ -1295,11 +1311,13 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
           ) : (
             "Working..."
           )}
-        </span>
-        {workingStepLabel ? (
-          <span className="min-w-0 truncate text-muted-foreground/55">· {workingStepLabel}</span>
-        ) : null}
+        </div>
       </div>
+      {row.showThinking ? (
+        <div className="mt-2">
+          <ThinkingActivityRow />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1340,8 +1358,10 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
 /** Renders one or more already-derived work log rows. Overflow expansion is modeled as LegendList data. */
 const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries,
+  isExpandedToolGroupEntry,
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
+  isExpandedToolGroupEntry: boolean;
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
@@ -1358,7 +1378,10 @@ const WorkGroupSection = memo(function WorkGroupSection({
   if (nonEmptyEntries.length === 0) return null;
 
   return (
-    <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
+    <section
+      className={cn("-mx-1 px-1", isExpandedToolGroupEntry ? "py-0" : "space-y-0.5 py-0.5")}
+      aria-label={groupLabel}
+    >
       {!onlyToolEntries && (
         <p className="px-0.5 pb-0.5 font-medium text-secondary-label text-[11px]">{groupLabel}</p>
       )}
@@ -1368,6 +1391,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
             key={workEntry.id}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
+            isExpandedToolGroupEntry={isExpandedToolGroupEntry}
           />
         ))}
       </div>
@@ -1375,12 +1399,128 @@ const WorkGroupSection = memo(function WorkGroupSection({
   );
 });
 
+function LiveActivityRow({ label, iconName }: { label: string; iconName?: WorkEntryIconName }) {
+  return (
+    <div className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed">
+      <LiveActivityContent label={label} iconName={iconName} />
+      <div aria-hidden className="live-activity-focus pointer-events-none absolute inset-0">
+        <div className="live-activity-focus-counter">
+          <div className="live-activity-focus-aligned">
+            <LiveActivityContent label={label} iconName={iconName} highlighted />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThinkingActivityRow() {
+  return <LiveActivityRow label="Thinking" />;
+}
+
+function LiveActivityContent({
+  label,
+  iconName,
+  highlighted = false,
+}: {
+  label: string;
+  iconName: WorkEntryIconName | undefined;
+  highlighted?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-h-6 min-w-0 items-center gap-1.5 px-1 py-0.5",
+        highlighted ? "text-foreground" : "text-secondary-label",
+      )}
+    >
+      {iconName ? (
+        <span
+          className={cn(
+            "flex size-6 shrink-0 items-center justify-center",
+            highlighted ? "text-foreground" : "text-icon-muted",
+          )}
+        >
+          <WorkEntryIconSvg name={iconName} className="block size-4 shrink-0 stroke-[1.8]" />
+        </span>
+      ) : null}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </div>
+  );
+}
+
+function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <button
+      type="button"
+      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-expanded={row.expanded}
+      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+    >
+      <LiveActivityRow
+        label={liveWorkEntryLabel(row.entry, ctx.workspaceRoot)}
+        iconName={workEntryIconName(row.entry)}
+      />
+    </button>
+  );
+}
+
+function toolGroupSummaryIconName(
+  kind: Extract<TimelineRow, { kind: "work-toggle" }>["summaryKind"],
+): WorkEntryIconName {
+  switch (kind) {
+    case "read":
+      return "eye";
+    case "edit":
+      return "square-pen";
+    case "command":
+      return "terminal";
+    case "search":
+      return "globe";
+    case "other":
+      return "wrench";
+    case "mixed":
+    case null:
+      return "hammer";
+  }
+}
+
 function WorkGroupToggleTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  if (row.onlyToolEntries && row.summary) {
+    return (
+      <button
+        type="button"
+        className="group/tool-group flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-expanded={row.expanded}
+        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      >
+        <span
+          className={cn(
+            "flex size-6 shrink-0 items-center justify-center",
+            row.hasFailure ? "text-destructive" : "text-icon-muted",
+          )}
+          aria-label={row.hasFailure ? "Tool call failed" : undefined}
+        >
+          {row.hasFailure ? (
+            <XIcon className="size-4 shrink-0 stroke-[1.8]" aria-hidden />
+          ) : (
+            <WorkEntryIconSvg
+              name={toolGroupSummaryIconName(row.summaryKind)}
+              className="size-4 shrink-0 stroke-[1.8] opacity-70"
+            />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
+      </button>
+    );
+  }
   const labelNoun = row.onlyToolEntries
     ? row.hiddenCount === 1
       ? "tool call"
@@ -2019,32 +2159,101 @@ function workEntryPreview(
     : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
 }
 
-function workEntryRawCommand(
-  workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
-): string | null {
-  const rawCommand = workEntry.rawCommand?.trim();
-  if (!rawCommand || !workEntry.command) {
-    return null;
+type CommandWrapper = "env" | "sudo";
+
+const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<string>> = {
+  env: new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]),
+  sudo: new Set(["-C", "--close-from", "-D", "--chdir", "-g", "--group", "-u", "--user"]),
+};
+
+const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
+  env: new Set(["-0", "--null", "-i", "--ignore-environment", "--debug"]),
+  sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
+};
+
+function commandProgramName(command: string): string | null {
+  const tokens = command.trim().split(/\s+/);
+  let index = 0;
+  let wrapper: CommandWrapper | null = null;
+
+  while (index < tokens.length) {
+    const token = tokens[index]?.replace(/^["']|["']$/g, "");
+    if (!token) return null;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+      index += 1;
+      continue;
+    }
+    if (token === "env" || token === "sudo") {
+      wrapper = token;
+      index += 1;
+      continue;
+    }
+    if (wrapper !== null && token === "--") {
+      wrapper = null;
+      index += 1;
+      continue;
+    }
+    if (wrapper !== null && token.startsWith("-")) {
+      if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token)) {
+        if (tokens[index + 1] === undefined) return null;
+        index += 2;
+        continue;
+      }
+      if (COMMAND_WRAPPER_FLAGS[wrapper].has(token) || /^--[^=]+=/.test(token)) {
+        index += 1;
+        continue;
+      }
+      if (/^-[A-Za-z].+/.test(token) && !token.startsWith("--")) {
+        let consumesNextToken = false;
+        for (const [optionIndex, option] of token.slice(1).split("").entries()) {
+          const shortOption = `-${option}`;
+          if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(shortOption)) {
+            consumesNextToken = optionIndex === token.length - 2;
+            break;
+          }
+          if (!COMMAND_WRAPPER_FLAGS[wrapper].has(shortOption)) return null;
+        }
+        if (consumesNextToken && tokens[index + 1] === undefined) return null;
+        index += consumesNextToken ? 2 : 1;
+        continue;
+      }
+      return null;
+    }
+    return token.split(/[\\/]/).at(-1) || null;
   }
-  return rawCommand === workEntry.command.trim() ? null : rawCommand;
+
+  return null;
+}
+
+function liveWorkEntryLabel(
+  workEntry: TimelineWorkEntry,
+  workspaceRoot: string | undefined,
+): string {
+  const command = workEntry.command?.trim();
+  if (command) {
+    const program = commandProgramName(command);
+    if (program) return `Running ${program}`;
+    return "Running command";
+  }
+
+  return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
 }
 
 function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
 ): string | null {
+  const command = workEntry.rawCommand?.trim() || workEntry.command?.trim();
   const blocks: string[] = [];
+  if (command) {
+    blocks.push(command);
+  }
   if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
     blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
   }
-  const raw = workEntryRawCommand(workEntry);
-  if (raw?.trim()) {
-    blocks.push(raw.trim());
-  } else if (workEntry.command?.trim()) {
-    blocks.push(workEntry.command.trim());
-  }
-  if (workEntry.detail?.trim()) {
-    blocks.push(workEntry.detail.trim());
+  const detail = workEntry.detail?.trim();
+  if (detail && detail !== command) {
+    blocks.push(detail);
   }
   const changedFiles = workEntry.changedFiles ?? [];
   if (changedFiles.length > 0) {
@@ -2180,71 +2389,88 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
         : "working"
     : failed > 0
       ? `${failed} failed`
-      : "✓ completed";
+      : "Completed";
 
   return (
-    <button
-      type="button"
-      onClick={onOpenAgents}
-      className="-mx-1 flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px] transition hover:bg-accent/50"
-    >
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
-      <WorkEntryIconSvg name="bot" className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 truncate">
-        <span className="font-medium">{lead}</span>
-        {workflowName ? <span className="text-muted-foreground"> · {workflowName}</span> : null}
-      </span>
-      <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[.7rem] text-muted-foreground">
-        <span>{status}</span>
-        {totalTokens > 0 ? (
-          <span className="tabular-nums">Σ {formatSubagentTokenCount(totalTokens)}</span>
-        ) : null}
-        <span className="text-info-foreground">{live ? "Open Agents ▸" : "View ▸"}</span>
-      </span>
-    </button>
+    <div className="-mx-1 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32">
+      <div className="flex items-center justify-between gap-2 rounded-xl px-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1 py-1.5 text-left text-xs leading-4">
+          <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
+          <WorkEntryIconSvg name="bot" className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate font-medium text-foreground">{lead}</span>
+          {workflowName ? (
+            <span className="hidden min-w-0 truncate text-[11px] text-muted-foreground md:inline">
+              {workflowName}
+            </span>
+          ) : null}
+          <span className="ml-auto hidden shrink-0 items-center gap-2 text-[11px] text-muted-foreground sm:flex">
+            <span>{status}</span>
+            {totalTokens > 0 ? (
+              <span className="font-mono tabular-nums">
+                Σ {formatSubagentTokenCount(totalTokens)}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          aria-label={live ? "Open agents" : "View agents"}
+          onClick={onOpenAgents}
+        >
+          <EyeIcon className="size-3" />
+          <span className="hidden sm:inline">{live ? "Open agents" : "View agents"}</span>
+        </Button>
+      </div>
+    </div>
   );
 });
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
+  isExpandedToolGroupEntry: boolean;
 }) {
-  const { workEntry, workspaceRoot } = props;
+  const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
   // Before any hooks: spawn CTA rows render their own component.
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
-  return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
+  return (
+    <PlainWorkEntryRow
+      workEntry={workEntry}
+      workspaceRoot={workspaceRoot}
+      isExpandedToolGroupEntry={isExpandedToolGroupEntry}
+    />
+  );
 });
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
+  isExpandedToolGroupEntry: boolean;
 }) {
-  const { workEntry, workspaceRoot } = props;
-  const activity = use(TimelineRowActivityCtx);
+  const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
-  const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
-  const preview =
-    rawPreview &&
-    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
-      normalizeCompactToolLabel(heading).toLowerCase()
-      ? null
-      : rawPreview;
-  const displayText = preview ? `${heading} - ${preview}` : heading;
+  const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
+  const entryIconName =
+    showWarningIndicator || showFailedIndicator ? "x" : workEntryIconName(workEntry);
+  const isCommandEntry =
+    workEntry.requestKind === "command" ||
+    workEntry.itemType === "command_execution" ||
+    Boolean(workEntry.command);
+  const displayText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const canExpand = expandedBody !== null;
-  const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
     (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
   const iconWrapperClass = cn(
-    "flex size-5 shrink-0 items-center justify-center",
-    showWarningIndicator
+    "flex size-6 shrink-0 items-center justify-center",
+    showWarningIndicator || showFailedIndicator
       ? "text-destructive"
       : showDestructiveRowStyle
         ? "text-destructive"
@@ -2256,17 +2482,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : "font-medium text-foreground";
-  const turnSettled = !activity.activeTurnInProgress;
-  const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
-  const showSuccessIndicator =
-    workEntryIndicatesToolSuccess(workEntry) ||
-    (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
+      : workLogEntryIsToolLike(workEntry)
+        ? "text-secondary-label"
+        : "text-foreground/80";
+  const showEntryIcon = !isExpandedToolGroupEntry || showWarningIndicator || showFailedIndicator;
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
         "aria-label": displayText,
+        "aria-expanded": expanded,
         onClick: () => setExpanded((v) => !v),
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -2280,94 +2505,50 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+        "flex flex-col rounded-md px-0.5 transition-colors",
+        isExpandedToolGroupEntry ? "py-0" : "py-0.5",
         canExpand &&
-          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       {...rowToggleProps}
     >
       <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
-        <span className={iconWrapperClass}>
-          <WorkEntryIconSvg
-            name={entryIconName}
-            className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
-          />
-        </span>
+        {showEntryIcon ? (
+          <span
+            className={iconWrapperClass}
+            aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          >
+            <WorkEntryIconSvg
+              name={entryIconName}
+              className="block size-4 shrink-0 stroke-[1.8] opacity-70"
+            />
+          </span>
+        ) : null}
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
-              <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
-              {preview && (
-                <span className="min-w-0 flex-1 truncate text-secondary-label">{preview}</span>
+            <p
+              className={cn(
+                "flex min-w-0 w-full items-baseline gap-1.5 leading-relaxed",
+                isExpandedToolGroupEntry ? "text-[12px] leading-5" : "text-sm",
               )}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-px text-icon-muted">
-            <span
-              className="flex size-4 shrink-0 items-center justify-center"
-              aria-hidden={!canExpand}
             >
-              {canExpand ? (
-                <ChevronDownIcon
-                  className={cn(
-                    "size-3 shrink-0 opacity-70 transition-transform duration-200",
-                    expanded && "rotate-180",
-                  )}
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <span className="flex size-4 shrink-0 items-center justify-center">
-              {showFailedIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        className="flex size-4 items-center justify-center"
-                        aria-label="Tool call failed"
-                      />
-                    }
-                  >
-                    <XIcon className="block size-3 shrink-0 text-destructive" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Failed</TooltipPopup>
-                </Tooltip>
-              ) : showSuccessIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <span className="inline-flex size-4 items-center justify-center">
-                      <CheckIcon
-                        className="block size-3 shrink-0 stroke-current"
-                        stroke="currentColor"
-                        aria-hidden
-                      />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipPopup>Completed</TooltipPopup>
-                </Tooltip>
-              ) : showNeutralIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Empty</TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </span>
+              <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
+            </p>
           </div>
         </div>
       </div>
       {expanded && canExpand && expandedBody ? (
         <div
-          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
+          className="mt-1 ms-[1.875rem] cursor-default pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed select-text">
+          <pre
+            className={cn(
+              "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed",
+              isCommandEntry ? "select-all" : "select-text",
+            )}
+          >
             {expandedBody}
           </pre>
         </div>

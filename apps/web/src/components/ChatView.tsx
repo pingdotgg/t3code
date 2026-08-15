@@ -167,7 +167,6 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
@@ -220,7 +219,11 @@ import {
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import {
+  selectThreadTerminalCustomLabels,
+  selectThreadTerminalUiState,
+  useTerminalUiStateStore,
+} from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -256,6 +259,7 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
+import { WorkspacePageHeader } from "./WorkspacePageContainer";
 import {
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
@@ -653,6 +657,7 @@ interface PersistentThreadTerminalDrawerProps {
   newShortcutLabel: string | undefined;
   closeShortcutLabel: string | undefined;
   keybindings: ResolvedKeybindingsConfig;
+  onHide: () => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -667,6 +672,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   newShortcutLabel,
   closeShortcutLabel,
   keybindings,
+  onHide,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
@@ -990,6 +996,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         onSplitTerminal={splitTerminal}
         onSplitTerminalVertical={splitTerminalVertical}
         onNewTerminal={createNewTerminal}
+        onHide={onHide}
         splitShortcutLabel={visible ? splitShortcutLabel : undefined}
         splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
         newShortcutLabel={visible ? newShortcutLabel : undefined}
@@ -1540,6 +1547,16 @@ function ChatViewContent(props: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
+  const activeThreadRef = useMemo(
+    () =>
+      activeThreadEnvironmentId && activeThreadId
+        ? scopeThreadRef(activeThreadEnvironmentId, activeThreadId)
+        : null,
+    [activeThreadEnvironmentId, activeThreadId],
+  );
+  const activeTerminalCustomLabels = useTerminalUiStateStore((state) =>
+    selectThreadTerminalCustomLabels(state.terminalCustomLabelsByThreadKey, activeThreadRef),
+  );
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -1569,18 +1586,15 @@ function ChatViewContent(props: ChatViewProps) {
     for (const session of activeThreadKnownSessions) {
       labels.set(
         session.target.terminalId,
-        resolveTerminalSessionLabel(session.target.terminalId, session.state.summary),
+        activeTerminalCustomLabels[session.target.terminalId] ??
+          resolveTerminalSessionLabel(session.target.terminalId, session.state.summary),
       );
     }
+    for (const [terminalId, label] of Object.entries(activeTerminalCustomLabels)) {
+      if (!labels.has(terminalId)) labels.set(terminalId, label);
+    }
     return labels;
-  }, [activeThreadKnownSessions]);
-  const activeThreadRef = useMemo(
-    () =>
-      activeThreadEnvironmentId && activeThreadId
-        ? scopeThreadRef(activeThreadEnvironmentId, activeThreadId)
-        : null,
-    [activeThreadEnvironmentId, activeThreadId],
-  );
+  }, [activeTerminalCustomLabels, activeThreadKnownSessions]);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -2808,6 +2822,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, storeSetTerminalOpen],
   );
+  const hideTerminal = useCallback(() => setTerminalOpen(false), [setTerminalOpen]);
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadRef) return;
     const nextOpen = !terminalUiState.terminalOpen;
@@ -6114,7 +6129,6 @@ function ChatViewContent(props: ChatViewProps) {
             ? "thread"
             : "page"
         }
-        chromeVariant="collapse"
         composerDraftTarget={composerDraftTarget}
         onStateChange={handlePullRequestTabStatusChange}
       />
@@ -6160,20 +6174,11 @@ function ChatViewContent(props: ChatViewProps) {
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
       >
         {/* Top bar */}
-        <header
+        <WorkspacePageHeader
           data-chat-header
-          className={cn(
-            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
-            isElectron
-              ? cn(
-                  "drag-region relative flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
-                  reserveTitleBarControlInset &&
-                    !inlineRightPanelOwnsTitleBar &&
-                    "wco:pr-[var(--workspace-native-controls-inset)]",
-                )
-              : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          )}
+          electron={isElectron}
+          reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
+          className="relative bg-background"
         >
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
@@ -6204,7 +6209,7 @@ function ChatViewContent(props: ChatViewProps) {
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
           />
-        </header>
+        </WorkspacePageHeader>
 
         <ThreadErrorBanner
           error={visibleThreadError}
@@ -6542,6 +6547,7 @@ function ChatViewContent(props: ChatViewProps) {
             newShortcutLabel={newTerminalShortcutLabel ?? undefined}
             closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
             keybindings={keybindings}
+            onHide={hideTerminal}
             onAddTerminalContext={addTerminalContextToDraft}
           />
         ))}
