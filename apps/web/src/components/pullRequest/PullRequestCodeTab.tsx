@@ -6,6 +6,7 @@ import type {
   PullRequestDiffSide,
   PullRequestOmittedFileStat,
   PullRequestRef,
+  PullRequestReviewPosition,
   PullRequestReviewThread,
 } from "@t3tools/contracts";
 import {
@@ -43,7 +44,11 @@ import {
 } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
-import { buildDiffReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
+import {
+  buildDiffReviewComment,
+  resolveDiffReviewPosition,
+  type ReviewCommentContext,
+} from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -129,8 +134,7 @@ interface DraftAnchor {
   readonly path: string;
   /** What the file was called before the change, for the hosts that resolve a position by both. */
   readonly oldPath: string | null;
-  readonly line: number;
-  readonly side: PullRequestDiffSide;
+  readonly position: PullRequestReviewPosition;
   /** The whole selection, which the comment collapses to one line but a question keeps. */
   readonly range: SelectedLineRange;
 }
@@ -148,8 +152,21 @@ function toViewerSide(side: PullRequestDiffSide) {
   return side === "left" ? ("deletions" as const) : ("additions" as const);
 }
 
-function fromViewerSide(side: string | undefined): PullRequestDiffSide {
-  return side === "deletions" ? "left" : "right";
+function getReviewPositionAnchor(position: PullRequestReviewPosition): {
+  line: number;
+  side: PullRequestDiffSide;
+} {
+  switch (position.kind) {
+    case "added":
+      return { line: position.newLine, side: "right" };
+    case "deleted":
+      return { line: position.oldLine, side: "left" };
+    case "context":
+      return {
+        line: position.side === "left" ? position.oldLine : position.newLine,
+        side: position.side,
+      };
+  }
 }
 
 /**
@@ -442,10 +459,14 @@ export function PullRequestCodeTab({
         if (commit === null) {
           for (const comment of pendingComments) {
             if (comment.path !== path) continue;
-            groupAt(comment.side, comment.line).pending.push(comment);
+            const anchor = getReviewPositionAnchor(comment.position);
+            groupAt(anchor.side, anchor.line).pending.push(comment);
           }
         }
-        if (draft?.fileKey === fileKey) groupAt(draft.side, draft.line).draft = true;
+        if (draft?.fileKey === fileKey) {
+          const anchor = getReviewPositionAnchor(draft.position);
+          groupAt(anchor.side, anchor.line).draft = true;
+        }
 
         const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
 
@@ -594,12 +615,13 @@ export function PullRequestCodeTab({
       // that silently lost its first line on the other hosts would be worse than one line.
       const path = resolveFileDiffPath(file);
       const previousPath = resolveFileDiffPreviousPath(file);
+      const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
+      if (position === null) return;
       setDraft({
         fileKey: item.id,
         path,
         oldPath: previousPath === path ? null : previousPath,
-        line: range.end,
-        side: fromViewerSide(range.endSide ?? range.side),
+        position,
         range,
       });
     },
@@ -668,13 +690,12 @@ export function PullRequestCodeTab({
       // chevron follows it rather than recomputing the default here.
       const collapsed = item.collapsed === true;
       return (
-        <button
-          type="button"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-          className={cn(
-            "mr-1 inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground",
-          )}
+          className="mr-1 rounded hover:bg-transparent"
           onClick={(event) => {
             event.stopPropagation();
             toggleFile(item.id);
@@ -685,7 +706,7 @@ export function PullRequestCodeTab({
           ) : (
             <ChevronDownIcon className="size-4" />
           )}
-        </button>
+        </Button>
       );
     },
     [toggleFile],
@@ -843,7 +864,7 @@ export function PullRequestCodeTab({
         {annotation.metadata.draft && draft ? (
           <DiffCommentAnnotation
             kind="draft"
-            rangeLabel={`${draft.path}:${draft.line}`}
+            rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
             text=""
             submitLabel="Add to review"
             {...(onAskAboutSelection
@@ -865,8 +886,7 @@ export function PullRequestCodeTab({
                 id: nextPendingReviewCommentId(),
                 path: draft.path,
                 ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
-                line: draft.line,
-                side: draft.side,
+                position: draft.position,
                 body,
               });
               setDraft(null);
@@ -899,7 +919,7 @@ export function PullRequestCodeTab({
     review.verdicts.length === 0 ? null : (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
         {reviewOpen ? (
-          <div className="chat-composer-glass pointer-events-auto absolute inset-x-3 bottom-3 rounded-xl border border-border/60 shadow-lg">
+          <div className="surface-glass pointer-events-auto absolute inset-x-3 bottom-3 rounded-xl border border-border/60 shadow-lg">
             <Button
               type="button"
               size="icon-sm"
@@ -923,10 +943,11 @@ export function PullRequestCodeTab({
         ) : (
           // Bottom-right, clear of the vertical scrollbar the diff view keeps to its own right
           // edge.
-          <button
-            type="button"
-            className="chat-composer-glass pointer-events-auto absolute bottom-3 right-4 flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1.5 text-xs font-medium shadow-lg"
+          <Button
+            className="pointer-events-auto absolute right-4 bottom-3 rounded-full shadow-lg"
             onClick={() => setReviewOpen(true)}
+            size="compact"
+            variant="glass"
           >
             <MessageSquareIcon className="size-3.5" />
             Review
@@ -935,7 +956,7 @@ export function PullRequestCodeTab({
                 {pendingComments.length}
               </span>
             ) : null}
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -959,7 +980,7 @@ export function PullRequestCodeTab({
    * diff API offers it.
    */
   const toolbar = (
-    <div className="surface-subheader justify-between gap-2 px-4 text-xs text-muted-foreground">
+    <div className="flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {/* A host that reports no commits has nothing to scope by, and a dropdown whose only
             entry is the scope already showing is a control that does nothing. */}

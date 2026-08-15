@@ -72,6 +72,7 @@ export function useThreadActionMenu(input: {
     unsnoozeThread,
     pinThread,
     unpinThread,
+    archiveThread,
     confirmAndDeleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -81,6 +82,7 @@ export function useThreadActionMenu(input: {
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
+  const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
@@ -138,6 +140,7 @@ export function useThreadActionMenu(input: {
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
+          isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
         });
@@ -252,6 +255,27 @@ export function useThreadActionMenu(input: {
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
+          case "archive": {
+            if (confirmThreadArchive) {
+              const confirmed = await settlePromise(() =>
+                api.dialogs.confirm(`Archive thread "${thread.title}"?`),
+              );
+              if (confirmed._tag === "Failure" || !confirmed.value) return;
+            }
+            let didArchive = false;
+            const result = await archiveThread(threadRef, {
+              onArchived: () => {
+                didArchive = true;
+              },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              failureToast(
+                didArchive ? "Thread archived, but navigation failed" : "Failed to archive thread",
+                squashAtomCommandFailure(result),
+              );
+            }
+            return;
+          }
           case "delete": {
             const deleted = await confirmAndDeleteThread(threadRef);
             if (
@@ -272,10 +296,12 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
+      archiveThread,
       autoSettleAfterDays,
       autoSettleOnMerge,
       changeRequestState,
       confirmAndDeleteThread,
+      confirmThreadArchive,
       copyBranchToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
