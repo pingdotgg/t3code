@@ -18,8 +18,6 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-export { buildComputerHistoryContextBlock };
-
 export const loadComputerHistoryContext = Effect.fn("computerHistory.loadContext")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;

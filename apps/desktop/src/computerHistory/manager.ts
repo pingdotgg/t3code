@@ -24,7 +24,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import { resolveDesktopMcpBinaryPathSync } from "./resolveBinary.ts";
 
@@ -38,6 +38,18 @@ type DaemonState = {
   rootPath: string | null;
   stopping: Promise<void> | null;
 };
+
+export class ComputerHistoryOperationError extends Schema.TaggedErrorClass<ComputerHistoryOperationError>()(
+  "ComputerHistoryOperationError",
+  {
+    operation: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `${this.operation}: ${this.reason}`;
+  }
+}
 
 async function writeUnavailableStatus(root: string, lastError: string): Promise<void> {
   await ensureComputerHistoryLayout(root);
@@ -78,38 +90,37 @@ export class ComputerHistoryManager extends Context.Service<
       stateDir: string,
       path: string,
       settings: ComputerHistorySettings,
-    ) => Effect.Effect<ComputerHistoryTimeline>;
+    ) => Effect.Effect<ComputerHistoryTimeline, ComputerHistoryOperationError>;
     readonly revealMemory: (path: string) => Effect.Effect<boolean>;
     readonly currentRoot: () => Effect.Effect<string | null>;
   }
 >()("ComputerHistoryManager") {}
 
-const make = Effect.gen(function* () {
-  const stateRef = yield* Ref.make<DaemonState>({
+export const make = Effect.gen(function* () {
+  // Plain mutable state — avoids Effect.runPromise on every Ref touch inside
+  // imperative daemon helpers (Macroscope Effect Service Conventions).
+  const state: DaemonState = {
     child: null,
     generation: 0,
     rootPath: null,
     stopping: null,
-  });
+  };
 
   const stopDaemonImpl = async (): Promise<void> => {
-    const current = await Effect.runPromise(Ref.get(stateRef));
-    if (current.stopping) {
-      await current.stopping;
+    if (state.stopping) {
+      await state.stopping;
       return;
     }
-    const child = current.child;
+    const child = state.child;
     if (!child) return;
 
     const stopping = new Promise<void>((resolve) => {
       const finish = () => {
-        void Effect.runPromise(
-          Ref.update(stateRef, (state) => ({
-            ...state,
-            child: state.child === child ? null : state.child,
-            stopping: null,
-          })),
-        ).finally(resolve);
+        if (state.child === child) {
+          state.child = null;
+        }
+        state.stopping = null;
+        resolve();
       };
 
       const onExit = () => {
@@ -133,11 +144,19 @@ const make = Effect.gen(function* () {
       }, 2_000);
     });
 
-    await Effect.runPromise(Ref.update(stateRef, (state) => ({ ...state, stopping })));
+    state.stopping = stopping;
     await stopping;
   };
 
-  yield* Effect.addFinalizer(() => Effect.promise(() => stopDaemonImpl()));
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(async () => {
+      try {
+        await stopDaemonImpl();
+      } catch {
+        // Best-effort teardown on layer shutdown.
+      }
+    }),
+  );
 
   const ensureDaemonImpl = async (
     stateDir: string,
@@ -153,19 +172,17 @@ const make = Effect.gen(function* () {
       websiteFilterMode: settings.websiteFilterMode,
       websites: [...settings.websites],
     });
-    await Effect.runPromise(Ref.update(stateRef, (state) => ({ ...state, rootPath: root })));
+    state.rootPath = root;
 
     if (!settings.enabled) {
       await stopDaemonImpl();
       return;
     }
 
-    const before = await Effect.runPromise(Ref.get(stateRef));
-    if (before.stopping) {
-      await before.stopping;
+    if (state.stopping) {
+      await state.stopping;
     }
-    const live = await Effect.runPromise(Ref.get(stateRef));
-    if (live.child && !live.child.killed) {
+    if (state.child && !state.child.killed) {
       return;
     }
 
@@ -175,95 +192,125 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const generation = live.generation + 1;
+    const generation = state.generation + 1;
     const child = spawn(binary, ["computer-history", "--root", root], {
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     });
-    await Effect.runPromise(
-      Ref.set(stateRef, {
-        child,
-        generation,
-        rootPath: root,
-        stopping: null,
-      }),
-    );
+    state.child = child;
+    state.generation = generation;
+    state.rootPath = root;
+    state.stopping = null;
     child.stderr?.on("data", (chunk: Buffer) => {
       process.stderr.write(chunk);
     });
     child.on("error", (error) => {
-      void Effect.runPromise(
-        Ref.update(stateRef, (state) =>
-          state.child === child && state.generation === generation
-            ? { ...state, child: null }
-            : state,
-        ),
-      );
+      if (state.child === child && state.generation === generation) {
+        state.child = null;
+      }
       void writeUnavailableStatus(
         root,
         `failed to start computer-history daemon: ${error.message}`,
       );
     });
     child.on("exit", () => {
-      void Effect.runPromise(
-        Ref.update(stateRef, (state) =>
-          state.child === child && state.generation === generation
-            ? { ...state, child: null }
-            : state,
-        ),
-      );
+      if (state.child === child && state.generation === generation) {
+        state.child = null;
+      }
     });
   };
 
   return ComputerHistoryManager.of({
     ensureDaemon: (stateDir, settings) =>
-      Effect.promise(() => ensureDaemonImpl(stateDir, settings)),
-    stopDaemon: () => Effect.promise(() => stopDaemonImpl()),
+      Effect.tryPromise({
+        try: () => ensureDaemonImpl(stateDir, settings),
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "ensureDaemon",
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(Effect.orDie),
+    stopDaemon: () =>
+      Effect.tryPromise({
+        try: () => stopDaemonImpl(),
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "stopDaemon",
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(Effect.orDie),
     getStatus: (stateDir, settings) =>
-      Effect.promise(async () => {
-        const root = resolveComputerHistoryRoot(stateDir);
-        await ensureComputerHistoryLayout(root);
-        const file = await readStatusFile(root);
-        const memoriesPath = NodePath.join(root, "memories", "resources");
-        const codexMirrorPath = settings.mirrorToCodex
-          ? NodePath.join(defaultCodexHome(), "memories", "extensions", "skysight", "resources")
-          : undefined;
-        const { child } = await Effect.runPromise(Ref.get(stateRef));
-        return {
-          enabled: settings.enabled,
-          paused: settings.paused,
-          phase: !settings.enabled ? "stopped" : (file?.phase ?? (child ? "starting" : "stopped")),
-          accessibilityGranted: file?.accessibilityGranted ?? false,
-          rootPath: root,
-          memoriesPath,
-          ...(codexMirrorPath ? { codexMirrorPath } : {}),
-          ...(file?.activeSegmentId ? { activeSegmentId: file.activeSegmentId } : {}),
-          eventCount: file?.eventCount ?? 0,
-          ...(file?.lastError ? { lastError: file.lastError } : {}),
-          platform: file?.platform ?? process.platform,
-        } satisfies ComputerHistoryStatus;
-      }),
+      Effect.tryPromise({
+        try: async () => {
+          const root = resolveComputerHistoryRoot(stateDir);
+          await ensureComputerHistoryLayout(root);
+          const file = await readStatusFile(root);
+          const memoriesPath = NodePath.join(root, "memories", "resources");
+          const codexMirrorPath = settings.mirrorToCodex
+            ? NodePath.join(defaultCodexHome(), "memories", "extensions", "skysight", "resources")
+            : undefined;
+          return {
+            enabled: settings.enabled,
+            paused: settings.paused,
+            phase: !settings.enabled
+              ? "stopped"
+              : (file?.phase ?? (state.child ? "starting" : "stopped")),
+            accessibilityGranted: file?.accessibilityGranted ?? false,
+            rootPath: root,
+            memoriesPath,
+            ...(codexMirrorPath ? { codexMirrorPath } : {}),
+            ...(file?.activeSegmentId ? { activeSegmentId: file.activeSegmentId } : {}),
+            eventCount: file?.eventCount ?? 0,
+            ...(file?.lastError ? { lastError: file.lastError } : {}),
+            platform: file?.platform ?? process.platform,
+          } satisfies ComputerHistoryStatus;
+        },
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "getStatus",
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(Effect.orDie),
     getTimeline: (stateDir) =>
-      Effect.promise(async () => listTimeline(resolveComputerHistoryRoot(stateDir))),
+      Effect.tryPromise({
+        try: () => listTimeline(resolveComputerHistoryRoot(stateDir)),
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "getTimeline",
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(Effect.orDie),
     clear: (stateDir, scope, settings) =>
-      Effect.promise(async () =>
-        clearHistory(resolveComputerHistoryRoot(stateDir), scope, {
-          ...(settings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
-        }),
-      ),
+      Effect.tryPromise({
+        try: () =>
+          clearHistory(resolveComputerHistoryRoot(stateDir), scope, {
+            ...(settings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
+          }),
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "clear",
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(Effect.orDie),
     removeMemory: (stateDir, path, settings) =>
-      Effect.promise(async () =>
-        deleteMemory(resolveComputerHistoryRoot(stateDir), path, {
-          ...(settings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
-        }),
-      ),
+      Effect.tryPromise({
+        try: () =>
+          deleteMemory(resolveComputerHistoryRoot(stateDir), path, {
+            ...(settings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
+          }),
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "removeMemory",
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }),
     revealMemory: (path) =>
       Effect.sync(() => {
         if (!NodeFs.existsSync(path)) return false;
         shell.showItemInFolder(path);
         return true;
       }),
-    currentRoot: () => Ref.get(stateRef).pipe(Effect.map((state) => state.rootPath)),
+    currentRoot: () => Effect.sync(() => state.rootPath),
   });
 });
 
