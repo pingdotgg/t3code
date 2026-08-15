@@ -608,12 +608,27 @@ const make = Effect.gen(function* () {
 
     if (effectiveCwd) {
       const fs = yield* FileSystem.FileSystem;
-      const exists = yield* fs.exists(effectiveCwd).pipe(Effect.orElseSucceed(() => false));
-      if (!exists) {
+      const stat = yield* fs.stat(effectiveCwd).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeed(null)
+              : new ProviderAdapterRequestError({
+                  provider: preferredProvider,
+                  method: "thread.turn.start",
+                  detail: `Could not access workspace directory '${effectiveCwd}': ${cause.reason._tag}`,
+                  cause,
+                }),
+        }),
+      );
+      if (stat === null || stat.type !== "Directory") {
+        const isWorktree = thread.worktreePath != null;
         return yield* new ProviderAdapterRequestError({
           provider: preferredProvider,
           method: "thread.turn.start",
-          detail: `Workspace directory '${effectiveCwd}' no longer exists. Has it been moved or renamed? Update the project's workspace root in Settings to point at the new location.`,
+          detail: isWorktree
+            ? `Worktree directory '${effectiveCwd}' no longer exists. It may have been cleaned up — start a new thread or recreate the worktree to continue.`
+            : `Workspace directory '${effectiveCwd}' no longer exists. Has it been moved or renamed? Update the project's workspace root in Settings to point at the new location.`,
         });
       }
     }
