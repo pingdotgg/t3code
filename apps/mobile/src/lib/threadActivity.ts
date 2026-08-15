@@ -80,6 +80,7 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  agentLive?: boolean;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -1553,7 +1554,9 @@ export function buildThreadFeed(
             return true;
           }
           return (
-            oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
+            entry.agentLive === true ||
+            oldestLoadedMessageCreatedAt === null ||
+            entry.createdAt >= oldestLoadedMessageCreatedAt
           );
         })
         .map<RawThreadFeedEntry>((entry) => {

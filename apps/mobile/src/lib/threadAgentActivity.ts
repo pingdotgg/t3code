@@ -13,6 +13,7 @@ interface AgentSpawnRow {
   readonly createdAt: string;
   readonly turnId: TurnId | null;
   readonly label: string;
+  readonly agentLive: boolean;
   readonly tone: "info";
   readonly activityKind: OrchestrationThreadActivity["kind"];
 }
@@ -157,6 +158,7 @@ export function deriveAgentSpawnRows(
       createdAt: batch.anchor.createdAt,
       turnId: batch.anchor.turnId,
       label: `${lead} · ${status}`,
+      agentLive: live,
       tone: "info",
       activityKind: batch.anchor.kind,
     });

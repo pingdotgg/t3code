@@ -156,6 +156,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly interruptResolutionActivityDispatchFailures?: number;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly startSessionEffect?: (
@@ -372,6 +373,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     let titleRegenerationCompletionDispatchAttempts = 0;
+    let interruptResolutionActivityDispatchAttempts = 0;
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
       Effect.gen(function* () {
@@ -379,6 +381,18 @@ describe("ProviderCommandReactor", () => {
         return {
           readEvents: engine.readEvents,
           dispatch: (command) => {
+            if (
+              command.type === "thread.activity.append" &&
+              command.activity.kind === "provider.turn.interrupt.resolved"
+            ) {
+              interruptResolutionActivityDispatchAttempts += 1;
+              if (
+                interruptResolutionActivityDispatchAttempts <=
+                (input?.interruptResolutionActivityDispatchFailures ?? 0)
+              ) {
+                return Effect.die(new Error("Injected interrupt resolution activity failure"));
+              }
+            }
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -527,6 +541,9 @@ describe("ProviderCommandReactor", () => {
       drain,
       interruptReceipts,
       runEffect,
+      get interruptResolutionActivityDispatchAttempts() {
+        return interruptResolutionActivityDispatchAttempts;
+      },
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
@@ -2835,6 +2852,61 @@ describe("ProviderCommandReactor", () => {
         timelineBypass: true,
       },
     });
+  });
+
+  it("publishes a guarded interrupt outcome when durable resolution activity fails", async () => {
+    const harness = await createHarness({
+      interruptResolutionActivityDispatchFailures: 1,
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-resolution-failure"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-resolution-failure"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        expectedSessionUpdatedAt: now,
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.interruptTurn).toHaveBeenCalledOnce();
+    expect(harness.interruptResolutionActivityDispatchAttempts).toBe(1);
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-resolution-failure",
+      outcome: "interrupted",
+      expectedTurnId: "turn-1",
+      actualTurnId: "turn-1",
+      createdAt: now,
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.find((entry) => entry.kind === "provider.turn.interrupt.resolved"),
+    ).toBeUndefined();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {

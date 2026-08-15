@@ -835,6 +835,30 @@ describe("subagent spawn batches", () => {
     ]);
   });
 
+  it("keeps a live spawn row visible when its anchor predates the loaded message page", () => {
+    const thread = spawnThread("thread-spawn-before-page", [
+      taskActivity("old-agent-start", "old-agent", 1),
+      toolActivity("old-tool", 2),
+    ]);
+    const loadedMessages: OrchestrationThread["messages"] = [
+      {
+        id: MessageId.make("loaded-user-message"),
+        role: "user",
+        text: "Newest loaded page",
+        turnId: turnOne,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:05.000Z",
+        updatedAt: "2026-04-01T00:00:05.000Z",
+      },
+    ];
+
+    const activityIds = buildThreadFeed(thread, { loadedMessages }).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((activity) => activity.id) : [],
+    );
+
+    expect(activityIds).toEqual(["agent-spawn:direct:turn-spawn-1"]);
+  });
+
   it("uses the fold batch when a background start is followed by marker-less progress", () => {
     const thread = spawnThread("thread-spawn-late-agent", [
       makeActivity({

@@ -1228,16 +1228,7 @@ const make = Effect.gen(function* () {
     const publishOutcome = Effect.fn("publishProviderInterruptOutcome")(function* (
       outcome: "interrupted" | "work-changed" | "no-session" | "interrupt-failed",
     ) {
-      if (event.commandId !== null && thread !== undefined) {
-        yield* appendProviderInterruptResolutionActivity({
-          threadId: event.payload.threadId,
-          requestId: event.commandId,
-          outcome,
-          turnId: actualTurnId,
-          createdAt: event.payload.createdAt,
-        });
-      }
-      yield* receiptBus.publish({
+      const publishReceipt = receiptBus.publish({
         type: "provider.turn.interrupt.resolved",
         threadId: event.payload.threadId,
         commandId: event.commandId,
@@ -1248,6 +1239,16 @@ const make = Effect.gen(function* () {
         actualTurnId,
         createdAt: event.payload.createdAt,
       });
+      if (event.commandId === null || thread === undefined) {
+        return yield* publishReceipt;
+      }
+      yield* appendProviderInterruptResolutionActivity({
+        threadId: event.payload.threadId,
+        requestId: event.commandId,
+        outcome,
+        turnId: actualTurnId,
+        createdAt: event.payload.createdAt,
+      }).pipe(Effect.ensuring(publishReceipt));
     });
     if (!thread) {
       if (hasGuard) {

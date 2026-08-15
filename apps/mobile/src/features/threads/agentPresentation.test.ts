@@ -166,7 +166,8 @@ describe("mobile Agents presentation", () => {
 
     const members = model.workflows[0]?.unphasedMembers ?? [];
     expect(members).toHaveLength(150);
-    expect(model.liveCount).toBe(151);
+    // Upstream #6672: the workflow coordinator is no longer counted as a working agent.
+    expect(model.liveCount).toBe(150);
     const targetId = `${workflowId}:wf:149`;
     const target = findMobileAgent(model, targetId);
     expect(target?.id).toBe(targetId);
