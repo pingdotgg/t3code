@@ -47,6 +47,7 @@ import {
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
+import { withAlpha } from "../../lib/mobileTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
@@ -128,7 +129,7 @@ export function NewTaskDraftScreen(props: {
     reserveShare,
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
-  const { effectiveColorScheme } = useAppearancePreferences();
+  const { effectiveColorScheme, nativeSurfaceColors } = useAppearancePreferences();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
   const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
@@ -356,10 +357,12 @@ export function NewTaskDraftScreen(props: {
   const projectUnderlineColor = useThemeColor("--color-foreground-muted");
   const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
-  const sheetFadeOpaque =
-    effectiveColorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
-  const sheetFadeTransparent =
-    effectiveColorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
+  const sheetFadeOpaque = String(useThemeColor("--color-sheet"));
+  const sheetFadeTransparent = nativeSurfaceColors
+    ? withAlpha(nativeSurfaceColors.sheetBackground, "00")
+    : effectiveColorScheme === "dark"
+      ? "rgba(14,14,14,0)"
+      : "rgba(242,242,247,0)";
 
   // A new navigation to this mounted screen delivers a fresh initialProjectRef
   // reference — treat it as a new request and let it apply again.

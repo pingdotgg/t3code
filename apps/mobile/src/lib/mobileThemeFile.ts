@@ -336,8 +336,7 @@ function parseRgbChannel(value: string): number | null {
   const percent = token.endsWith("%");
   const number = parseCssNumber(percent ? token.slice(0, -1) : token);
   if (number === null) return null;
-  const channel = percent ? (number / 100) * 255 : number;
-  return channel >= 0 && channel <= 255 ? channel : null;
+  return percent ? (number / 100) * 255 : number;
 }
 
 function parseAngle(value: string): number | null {
@@ -383,9 +382,20 @@ function parseRgbColor(body: string): string | null {
   if (!parsed || parsed.channels.length !== 3) return null;
   const channels = parsed.channels.map(parseRgbChannel);
   const alpha = parseClampedAlpha(parsed.alpha);
-  return channels.every((channel): channel is number => channel !== null) && alpha !== null
-    ? rgbaToHex(channels[0], channels[1], channels[2], alpha)
-    : null;
+  if (!channels.every((channel): channel is number => channel !== null) || alpha === null) {
+    return null;
+  }
+  if (channels.every((channel) => channel >= 0 && channel <= 255)) {
+    return rgbaToHex(channels[0], channels[1], channels[2], alpha);
+  }
+  return oklchToWebHex(
+    linearSrgbToOklch([
+      encodedSrgbChannelToLinear(channels[0] / 255),
+      encodedSrgbChannelToLinear(channels[1] / 255),
+      encodedSrgbChannelToLinear(channels[2] / 255),
+    ]),
+    alpha,
+  );
 }
 
 function hslToRgb(hue: number, saturation: number, lightness: number): [number, number, number] {

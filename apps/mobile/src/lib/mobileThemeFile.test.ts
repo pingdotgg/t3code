@@ -81,6 +81,9 @@ describe("parseMobileThemeFile", () => {
   it.each([
     { input: "rgb(none 20 30)", expected: "#00141e" },
     { input: "rgb(255 0 0 / 200%)", expected: "#ff0000" },
+    { input: "rgb(300 0 0)", expected: "#ff6c5b" },
+    { input: "rgb(-10 0 0)", expected: "#000000" },
+    { input: "rgb(-10% 0% 0%)", expected: "#000000" },
   ])("normalizes CSS RGB edge case $input", ({ input, expected }) => {
     const parsed = parseMobileThemeFile({ ...themeFile(), colors: { canvas: input } });
 
