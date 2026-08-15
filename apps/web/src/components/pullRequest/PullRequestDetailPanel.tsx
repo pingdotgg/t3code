@@ -103,6 +103,8 @@ import {
   handoffPrompt,
   handoffReviewComments,
   pullRequestActionNeedsHostRefresh,
+  pullRequestMergeWithheld,
+  resolvePullRequestPrimaryAction,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   readableFailure,
@@ -172,6 +174,9 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
   "disable-auto-merge":
     "The host refused it. Check that you have write access, and that the merge has not already happened.",
 };
+
+/** Why there is a Merge button that cannot be pressed, told where the button would be. */
+const MERGE_WITHHELD_REASON = "You need write access on this repository to merge.";
 
 /**
  * Said instead of the update hint when the reader asked for a rebase: it is the one that fails on
@@ -1015,24 +1020,14 @@ export function PullRequestDetailPanel({
   }, [tab, visibleTabs]);
   // Two questions, both of which have to say yes: whether this host can do it at all, and
   // whether this account may. A reader with read access on someone else's project sees the pull
-  // request and none of the buttons that would only ever be refused.
+  // request and none of the buttons that would only ever be refused — except Merge, whose
+  // withheld state is shown with its reason rather than leaving a hole where the button was.
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
-  // One live action holds the slot. A conflicting change cannot be merged now, so the slot goes
-  // to the thing that would help instead of a Merge button that only ever says no.
   const primaryAction =
-    detail === null || detail.state !== "open"
-      ? null
-      : detail.isDraft && can("ready")
-        ? "ready"
-        : !can("merge")
-          ? null
-          : conflicting
-            ? "resolve"
-            : allowedMergeMethods.length > 0
-              ? "merge"
-              : null;
+    detail && resolvePullRequestPrimaryAction(detail, allowedMergeMethods.length);
+  const mergeWithheld = detail !== null && pullRequestMergeWithheld(detail);
   // The pull request number carries this state in the overview and the right-panel tab mirrors
   // it. Conflicts keep their own row below: an open pull request remains green there.
   const statePresentation = detail
@@ -1218,6 +1213,17 @@ export function PullRequestDetailPanel({
                           <GitMergeIcon className="size-3.5" />
                           Disable auto-merge
                         </MenuItem>
+                      ) : primaryAction === "auto-merge" ? (
+                        /* The header offers the arming, so the menu keeps the immediate merge:
+                           an admin can push past the block, and the host refuses anyone else
+                           with its own sentence. */
+                        <MenuItem
+                          disabled={actionPending}
+                          onClick={() => setConfirmAction("merge")}
+                        >
+                          <GitMergeIcon className="size-3.5" />
+                          Merge now
+                        </MenuItem>
                       ) : !autoMergeArmed &&
                         !detail.isDraft &&
                         !conflicting &&
@@ -1379,6 +1385,26 @@ export function PullRequestDetailPanel({
                 >
                   {pendingAction === "merge" ? "Merging..." : "Merge"}
                 </Button>
+              ) : primaryAction === "auto-merge" ? (
+                /* The same arming the menu offers, promoted to the slot the merge cannot hold:
+                   the host has said this merge is blocked, so the button that would only be
+                   refused steps aside for the one that will land. Merge now stays in the menu
+                   for the roles that can push past the block. */
+                <Button
+                  size="xs"
+                  disabled={actionPending}
+                  title="The merge is blocked right now; this merges once everything it requires has passed."
+                  onClick={() => setConfirmAction("enable-auto-merge")}
+                >
+                  {pendingAction === "enable-auto-merge" ? "Arming..." : "Merge when ready"}
+                </Button>
+              ) : mergeWithheld ? (
+                /* The disabled button swallows pointer events, so the reason rides the wrapper. */
+                <span className="flex" title={MERGE_WITHHELD_REASON}>
+                  <Button size="xs" disabled>
+                    Merge
+                  </Button>
+                </span>
               ) : null}
             </>
           ) : null}

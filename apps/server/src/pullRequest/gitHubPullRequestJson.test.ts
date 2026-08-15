@@ -237,6 +237,22 @@ describe("pull request detail decoding", () => {
     expect(armed({})).toBeUndefined();
   });
 
+  it("reads merge readiness off mergeStateStatus, and silence as unknown", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const readiness = (entry: Record<string, unknown>) =>
+      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, ...entry })))
+        .mergeReadiness;
+
+    expect(readiness({ mergeStateStatus: "BLOCKED" })).toBe("blocked");
+    // UNSTABLE is a non-required check failing, which GitHub merges past.
+    for (const status of ["CLEAN", "HAS_HOOKS", "UNSTABLE"]) {
+      expect(readiness({ mergeStateStatus: status })).toBe("ready");
+    }
+    // A status this build has never heard of, and gh not answering at all, both change nothing.
+    expect(readiness({ mergeStateStatus: "SOMETHING_NEW" })).toBe("unknown");
+    expect(readiness({})).toBe("unknown");
+  });
+
   it("shows a re-running check once, as the run that is happening now", () => {
     // What `statusCheckRollup` reports while a workflow is being re-run: the same check twice,
     // the finished run and the one that replaced it, with no id to tell them apart.
@@ -757,7 +773,7 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+    ).toEqual({ canWrite: false, canUpdate: true, didAuthor: true, autoMergeAllowed: false });
   });
 
   it("says no to a passer-by on a repository they can only read", () => {
@@ -770,7 +786,21 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: false, didAuthor: false });
+    ).toEqual({ canWrite: false, canUpdate: false, didAuthor: false, autoMergeAllowed: false });
+  });
+
+  it("reads the repository's auto-merge setting off the same call, on only when stated", () => {
+    expect(
+      expectSuccess(
+        decodeViewerPermissionsJson(
+          viewerJson({
+            viewerPermission: "WRITE",
+            autoMergeAllowed: true,
+            pullRequest: { viewerCanUpdate: true, viewerDidAuthor: false },
+          }),
+        ),
+      ).autoMergeAllowed,
+    ).toBe(true);
   });
 
   it("reads silence as permission, but not as authorship", () => {
@@ -781,6 +811,7 @@ describe("viewer permission decoding", () => {
       canWrite: false,
       canUpdate: true,
       didAuthor: false,
+      autoMergeAllowed: false,
     });
   });
 });

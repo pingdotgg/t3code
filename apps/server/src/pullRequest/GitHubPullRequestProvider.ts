@@ -260,6 +260,7 @@ export const make = Effect.gen(function* () {
               avatarUrl: null,
             })),
             mergeCapabilities: repository.mergeCapabilities,
+            autoMergeAllowed: viewerAccess.autoMergeAllowed === true,
             viewerPermissions: gitHubViewerPermissions({
               ...viewerAccess,
               canUpdateBranch: detail.comparison?.viewerCanUpdate === true,

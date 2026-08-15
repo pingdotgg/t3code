@@ -5,6 +5,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetailView,
+  PullRequestMergeReadiness,
   PullRequestMergeability,
   PullRequestReaction,
   PullRequestReviewThread,
@@ -739,6 +740,67 @@ export function resolveBaseFreshness(detail: {
     behindBy: detail.behindBy ?? null,
     methods: offered.filter((method) => allowed.includes(method)),
   };
+}
+
+export type PullRequestPrimaryAction = "ready" | "resolve" | "merge" | "auto-merge";
+
+/**
+ * The one live action the header's primary slot holds, or null when the slot stays empty. A
+ * conflicting change cannot be merged now, so the slot goes to the thing that would help instead
+ * of a Merge button that only ever says no — and a merge the host reports as blocked goes to
+ * arming auto-merge, for the same reason. Only where the repository allows auto-merge and it is
+ * not already armed: everywhere else the plain Merge stays, and roles that can merge past the
+ * block keep it in the menu.
+ */
+export function resolvePullRequestPrimaryAction(
+  detail: {
+    readonly state: PullRequestState;
+    readonly isDraft: boolean;
+    readonly mergeability: PullRequestMergeability;
+    readonly mergeReadiness?: PullRequestMergeReadiness | undefined;
+    readonly autoMergeAllowed?: boolean | undefined;
+    readonly autoMergeEnabled?: boolean | undefined;
+    readonly capabilities: { readonly actions: ReadonlyArray<PullRequestAction> };
+    readonly viewerPermissions: { readonly actions: ReadonlyArray<PullRequestAction> };
+  },
+  allowedMergeMethodCount: number,
+): PullRequestPrimaryAction | null {
+  const can = (action: PullRequestAction) =>
+    detail.capabilities.actions.includes(action) &&
+    detail.viewerPermissions.actions.includes(action);
+  if (detail.state !== "open") return null;
+  if (detail.isDraft && can("ready")) return "ready";
+  if (!can("merge")) return null;
+  if (detail.mergeability === "conflicting") return "resolve";
+  if (allowedMergeMethodCount === 0) return null;
+  // GitHub reports a draft's merge as blocked and refuses to arm auto-merge on one, so a draft
+  // whose viewer cannot ready it keeps the plain Merge this slot has always given it.
+  return !detail.isDraft &&
+    detail.mergeReadiness === "blocked" &&
+    detail.autoMergeAllowed === true &&
+    detail.autoMergeEnabled !== true &&
+    can("enable-auto-merge")
+    ? "auto-merge"
+    : "merge";
+}
+
+/**
+ * The host merges pull requests and this viewer may not ask it to: the one case where the header
+ * says why there is no Merge button, rather than leaving a hole where it stood — write access is
+ * the single permission the providers withhold instead of granting when unreported.
+ */
+export function pullRequestMergeWithheld(detail: {
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
+  readonly capabilities: { readonly actions: ReadonlyArray<PullRequestAction> };
+  readonly viewerPermissions: { readonly actions: ReadonlyArray<PullRequestAction> };
+}): boolean {
+  return (
+    detail.state === "open" &&
+    !detail.isDraft &&
+    detail.capabilities.actions.includes("merge") &&
+    !detail.viewerPermissions.actions.includes("merge")
+  );
 }
 
 /**

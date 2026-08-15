@@ -21,8 +21,10 @@ import {
   pullRequestActionNeedsHostRefresh,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
+  pullRequestMergeWithheld,
   readableFailure,
   resolveBaseFreshness,
+  resolvePullRequestPrimaryAction,
   buildPullRequestTimeline,
   describePullRequestState,
 } from "./pullRequestDetail.logic";
@@ -935,5 +937,153 @@ describe("which actions need the host read again after they run", () => {
     ] as const) {
       expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
     }
+  });
+});
+
+describe("resolvePullRequestPrimaryAction", () => {
+  const ALL_ACTIONS = [
+    "merge",
+    "enable-auto-merge",
+    "disable-auto-merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+  ] as const;
+  /** A writer on an open, mergeable pull request; each test narrows what it is about. */
+  const facts = (overrides: Record<string, unknown> = {}) => ({
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    capabilities: { actions: ALL_ACTIONS },
+    viewerPermissions: { actions: ALL_ACTIONS },
+    ...overrides,
+  });
+
+  it("offers the plain merge while nothing is known to block it", () => {
+    expect(resolvePullRequestPrimaryAction(facts(), 3)).toBe("merge");
+    expect(resolvePullRequestPrimaryAction(facts({ mergeReadiness: "ready" }), 3)).toBe("merge");
+  });
+
+  it("offers merge-when-ready where the merge is blocked and auto-merge could take it", () => {
+    expect(
+      resolvePullRequestPrimaryAction(
+        facts({ mergeReadiness: "blocked", autoMergeAllowed: true }),
+        3,
+      ),
+    ).toBe("auto-merge");
+  });
+
+  it("keeps the plain merge on a blocked pull request auto-merge cannot take", () => {
+    // A repository with the setting off, one the host said nothing about, and one already
+    // armed: an admin can merge past the block, and the host's own refusal explains the rest.
+    expect(resolvePullRequestPrimaryAction(facts({ mergeReadiness: "blocked" }), 3)).toBe("merge");
+    expect(
+      resolvePullRequestPrimaryAction(
+        facts({ mergeReadiness: "blocked", autoMergeAllowed: false }),
+        3,
+      ),
+    ).toBe("merge");
+    expect(
+      resolvePullRequestPrimaryAction(
+        facts({ mergeReadiness: "blocked", autoMergeAllowed: true, autoMergeEnabled: true }),
+        3,
+      ),
+    ).toBe("merge");
+  });
+
+  it("never offers merge-when-ready without the permission to arm it", () => {
+    expect(
+      resolvePullRequestPrimaryAction(
+        facts({
+          mergeReadiness: "blocked",
+          autoMergeAllowed: true,
+          viewerPermissions: { actions: ["merge"] },
+        }),
+        3,
+      ),
+    ).toBe("merge");
+  });
+
+  it("sends a conflicting change to resolution before any kind of merge", () => {
+    expect(
+      resolvePullRequestPrimaryAction(
+        facts({ mergeability: "conflicting", mergeReadiness: "blocked", autoMergeAllowed: true }),
+        3,
+      ),
+    ).toBe("resolve");
+  });
+
+  it("gives a draft its ready action, and never merge-when-ready", () => {
+    expect(resolvePullRequestPrimaryAction(facts({ isDraft: true }), 3)).toBe("ready");
+    // A draft whose viewer cannot ready it keeps the plain Merge this slot has always given
+    // it: GitHub reports a draft's merge as blocked, but refuses to arm auto-merge on one.
+    expect(
+      resolvePullRequestPrimaryAction(
+        facts({
+          isDraft: true,
+          mergeReadiness: "blocked",
+          autoMergeAllowed: true,
+          viewerPermissions: { actions: ["merge", "enable-auto-merge"] },
+        }),
+        3,
+      ),
+    ).toBe("merge");
+  });
+
+  it("offers nothing without the merge permission, and nothing without a method to merge by", () => {
+    expect(
+      resolvePullRequestPrimaryAction(facts({ viewerPermissions: { actions: [] } }), 3),
+    ).toBeNull();
+    expect(resolvePullRequestPrimaryAction(facts(), 0)).toBeNull();
+    expect(resolvePullRequestPrimaryAction(facts({ state: "merged" }), 3)).toBeNull();
+  });
+});
+
+describe("pullRequestMergeWithheld", () => {
+  const base = { state: "open", isDraft: false } as const;
+
+  it("says why only where the host merges and this viewer may not ask it to", () => {
+    expect(
+      pullRequestMergeWithheld({
+        ...base,
+        capabilities: { actions: ["merge"] },
+        viewerPermissions: { actions: [] },
+      }),
+    ).toBe(true);
+    // A host with no merge at all has no button to explain the absence of.
+    expect(
+      pullRequestMergeWithheld({
+        ...base,
+        capabilities: { actions: [] },
+        viewerPermissions: { actions: [] },
+      }),
+    ).toBe(false);
+    expect(
+      pullRequestMergeWithheld({
+        ...base,
+        capabilities: { actions: ["merge"] },
+        viewerPermissions: { actions: ["merge"] },
+      }),
+    ).toBe(false);
+  });
+
+  it("stays quiet on drafts and on anything no longer open", () => {
+    expect(
+      pullRequestMergeWithheld({
+        ...base,
+        isDraft: true,
+        capabilities: { actions: ["merge"] },
+        viewerPermissions: { actions: [] },
+      }),
+    ).toBe(false);
+    expect(
+      pullRequestMergeWithheld({
+        ...base,
+        state: "merged",
+        capabilities: { actions: ["merge"] },
+        viewerPermissions: { actions: [] },
+      }),
+    ).toBe(false);
   });
 });

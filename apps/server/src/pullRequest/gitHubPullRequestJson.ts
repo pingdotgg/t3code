@@ -11,6 +11,7 @@ import type {
   PullRequestCommit,
   PullRequestLabel,
   PullRequestMergeCapabilities,
+  PullRequestMergeReadiness,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -369,6 +370,7 @@ const RawDetailSchema = Schema.Struct({
    * the question the page asks is whether one exists.
    */
   autoMergeRequest: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawActivitySchema = Schema.Struct({
@@ -598,7 +600,7 @@ export function decodeActorAvatarsJson(
 export const PULL_REQUEST_LIST_JSON_FIELDS =
   "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup";
 
-export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,headRepositoryOwner,autoMergeRequest`;
+export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,headRepositoryOwner,autoMergeRequest,mergeStateStatus`;
 export const PULL_REQUEST_ACTIVITY_JSON_FIELDS = "author,comments,reviews,commits";
 
 /** GitHub's own ceiling on a connection page, which is what both thread reads ask for. */
@@ -995,6 +997,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   /** Absent where `gh` did not answer for auto-merge at all, which is not the same as off. */
   readonly autoMergeEnabled?: boolean;
+  readonly mergeReadiness: PullRequestMergeReadiness;
 }
 
 export interface GitHubPullRequestActivity {
@@ -1079,6 +1082,30 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
       return "mergeable";
     case "CONFLICTING":
       return "conflicting";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * Whether GitHub would carry out a merge right now, from `mergeStateStatus`. UNSTABLE counts as
+ * ready — it is a non-required check failing, which GitHub merges past. DIRTY and DRAFT count as
+ * blocked, though `mergeability` and `isDraft` will have said so first and more precisely. BEHIND
+ * only ever appears where the repository requires branches to be current before merging (see
+ * BASE_COMPARISON_GRAPHQL_QUERY), so on the repositories that report it, it does block. A status
+ * this does not know stays unknown, which leaves the page exactly as it was before this field.
+ */
+function toMergeReadiness(value: string | null | undefined): PullRequestMergeReadiness {
+  switch (value?.trim().toUpperCase()) {
+    case "CLEAN":
+    case "HAS_HOOKS":
+    case "UNSTABLE":
+      return "ready";
+    case "BLOCKED":
+    case "BEHIND":
+    case "DIRTY":
+    case "DRAFT":
+      return "blocked";
     default:
       return "unknown";
   }
@@ -1344,6 +1371,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
     ...(raw.autoMergeRequest === undefined
       ? {}
       : { autoMergeEnabled: raw.autoMergeRequest !== null }),
+    mergeReadiness: toMergeReadiness(raw.mergeStateStatus),
   };
 }
 
@@ -2099,6 +2127,12 @@ export interface GitHubViewerAccess {
    * something to update" at once. Absent where the comparison was not read.
    */
   readonly canUpdateBranch?: boolean;
+  /**
+   * The repository's own auto-merge setting, riding this query because `gh repo view --json`
+   * does not export it. Absent or false reads as off, never as on: offering to arm auto-merge
+   * somewhere it cannot be armed ends in a refusal the page invited.
+   */
+  readonly autoMergeAllowed?: boolean;
 }
 
 /**
@@ -2110,6 +2144,7 @@ export interface GitHubViewerAccess {
 export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     viewerPermission
+    autoMergeAllowed
     pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
   }
 }`;
@@ -2118,6 +2153,7 @@ const RawViewerPermissionsSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
       viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
+      autoMergeAllowed: Schema.optional(Schema.NullOr(Schema.Boolean)),
       /** Null for a number that names no pull request the viewer can see. */
       pullRequest: Schema.NullOr(RawViewerFieldsSchema),
     }),
@@ -2136,6 +2172,7 @@ export function decodeViewerPermissionsJson(
   const repository = decoded.success.data.repository;
   return Result.succeed({
     canWrite: toCanWrite(repository.viewerPermission),
+    autoMergeAllowed: repository.autoMergeAllowed === true,
     ...toPullRequestViewerFields(repository.pullRequest),
   });
 }
