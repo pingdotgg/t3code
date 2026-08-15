@@ -217,13 +217,12 @@ const bootstrap = Effect.gen(function* () {
     // ensureDaemon keeps ComputerHistoryOperationError in the error channel so
     // bootstrap can Effect.catch without turning spawn/layout failures into defects.
     const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
-    yield* manager
-      .ensureDaemon(environment.stateDir, decoded.computerHistory)
-      .pipe(
-        Effect.catchTag("ComputerHistoryOperationError", (cause) =>
+    yield* manager.ensureDaemon(environment.stateDir, decoded.computerHistory).pipe(
+      Effect.catchTags({
+        ComputerHistoryOperationError: (cause) =>
           Effect.logWarning("Computer History daemon bootstrap skipped", { cause }),
-        ),
-      );
+      }),
+    );
   }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning("Computer History daemon bootstrap skipped", { cause }),

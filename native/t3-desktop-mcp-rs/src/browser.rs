@@ -165,7 +165,6 @@ impl BrowserBridge {
     fn dispatch(&mut self, command: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = json!({ "id": id, "command": command, "params": params });
-        let gen_at_send = self.connection_gen.load(Ordering::SeqCst);
 
         // Sample connection generation under the outgoing lock so a reconnect
         // between load and write cannot pair a new SendHalf with an old gen.
