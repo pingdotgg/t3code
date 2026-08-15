@@ -47,6 +47,7 @@ let integrationListeningPort: number | null = null;
 const TestIntegrationNet = Layer.succeed(Net.NetService, {
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: (port) => Effect.sync(() => port !== integrationListeningPort),
+  hasListenerOnHost: (port) => Effect.sync(() => port === integrationListeningPort),
   reserveLoopbackPort: () => Effect.succeed(40_000),
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
@@ -62,6 +63,7 @@ const makeProbeFailureLayer = (
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
           isPortAvailableOnLoopback: () => Effect.succeed(true),
+          hasListenerOnHost: () => Effect.succeed(false),
           reserveLoopbackPort: () => Effect.succeed(40_000),
           findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),
@@ -107,6 +109,7 @@ const makeLsofScannerLayer = (input: {
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
           isPortAvailableOnLoopback: () => Effect.succeed(true),
+          hasListenerOnHost: () => Effect.succeed(false),
           reserveLoopbackPort: () => Effect.succeed(40_000),
           findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),
