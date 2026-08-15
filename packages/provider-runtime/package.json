@@ -1,0 +1,41 @@
+{
+  "name": "@t3tools/provider-runtime",
+  "version": "0.0.33",
+  "description": "Embeddable T3 Code provider runtime.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vite-hub/t3code.git",
+    "directory": "packages/provider-runtime"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "vp pack",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.170",
+    "@effect/platform-node": "catalog:",
+    "@t3tools/contracts": "https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@4934f87487ab50a956c4abc030063ebc1b0ba8d6",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": "^22.16 || ^23.11 || >=24.10"
+  }
+}

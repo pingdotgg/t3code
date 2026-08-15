@@ -829,6 +829,31 @@ importers:
         specifier: 'catalog:'
         version: 0.2.2(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.1)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
+  packages/provider-runtime:
+    dependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.170
+        version: 0.3.170(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+      '@effect/platform-node':
+        specifier: 4.0.0-beta.103
+        version: 4.0.0-beta.103(bufferutil@4.1.0)(effect@4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@t3tools/contracts':
+        specifier: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@4934f87487ab50a956c4abc030063ebc1b0ba8d6
+        version: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@4934f87487ab50a956c4abc030063ebc1b0ba8d6(effect@4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6))
+      effect:
+        specifier: 4.0.0-beta.103
+        version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.0-beta.103
+        version: 4.0.0-beta.103(patch_hash=a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b)(effect@4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6))
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.2.2(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.1)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+
   packages/shared:
     dependencies:
       '@noble/curves':
@@ -4466,6 +4491,12 @@ packages:
   '@szmarczak/http-timer@4.0.6':
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
     engines: {node: '>=10'}
+
+  '@t3tools/contracts@https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@4934f87487ab50a956c4abc030063ebc1b0ba8d6':
+    resolution: {integrity: sha512-T8tmTyb4iE4Zq3UIfIKmEBIuKzjjkBOYDZlvBbvnHfGkJuU5+ah86WGsLIEQNHZXlCsds1Ep7sz8Qy+sPVpj/A==, tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@4934f87487ab50a956c4abc030063ebc1b0ba8d6}
+    version: 0.0.33
+    peerDependencies:
+      effect: 4.0.0-beta.103
 
   '@t3tools/mobile-markdown-text@file:apps/mobile/modules/t3-markdown-text':
     resolution: {directory: apps/mobile/modules/t3-markdown-text, type: directory}
@@ -14658,6 +14689,10 @@ snapshots:
   '@szmarczak/http-timer@4.0.6':
     dependencies:
       defer-to-connect: 2.0.1
+
+  '@t3tools/contracts@https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@4934f87487ab50a956c4abc030063ebc1b0ba8d6(effect@4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6))':
+    dependencies:
+      effect: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
 
   '@t3tools/mobile-markdown-text@file:apps/mobile/modules/t3-markdown-text(ed3009b8f2424467288a00b38bef28fe)':
     dependencies:
