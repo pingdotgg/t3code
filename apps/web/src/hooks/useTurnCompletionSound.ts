@@ -5,11 +5,11 @@ import { useEffect, useRef } from "react";
 import { playTurnCompletionSound } from "~/audio/turnChime";
 import { useClientSettings } from "./useSettings";
 import { useThreadShells } from "~/state/entities";
+import { isLatestTurnSettled } from "~/session-logic";
 
 export function detectNewTurnCompletions(
   threads: ReadonlyArray<EnvironmentThreadShell>,
   previousCompletions: Readonly<Record<string, string>>,
-  sessionStartedAtMs: number,
 ): {
   readonly hasNewCompletion: boolean;
   readonly nextCompletions: Record<string, string>;
@@ -19,18 +19,32 @@ export function detectNewTurnCompletions(
 
   for (const thread of threads) {
     if (thread.archivedAt !== null) continue;
+    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const previousState = previousCompletions[threadKey];
+
+    const isSettled =
+      isLatestTurnSettled(thread.latestTurn, thread.session) &&
+      thread.latestTurn?.state !== "running" &&
+      Boolean(thread.latestTurn?.completedAt);
+
+    if (!isSettled) {
+      if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
+        nextCompletions[threadKey] = "running";
+      }
+      continue;
+    }
+
     const completedAt = thread.latestTurn?.completedAt;
     if (!completedAt) continue;
 
-    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const previousCompletedAt = previousCompletions[threadKey];
-
-    if (previousCompletedAt !== completedAt) {
+    if (previousState === undefined) {
       nextCompletions[threadKey] = completedAt;
-      const completedAtMs = Date.parse(completedAt);
-      if (!Number.isNaN(completedAtMs) && completedAtMs >= sessionStartedAtMs) {
-        hasNewCompletion = true;
-      }
+      continue;
+    }
+
+    if (previousState !== completedAt) {
+      nextCompletions[threadKey] = completedAt;
+      hasNewCompletion = true;
     }
   }
 
@@ -40,28 +54,12 @@ export function detectNewTurnCompletions(
 export function useTurnCompletionSound(): void {
   const settings = useClientSettings();
   const threads = useThreadShells();
-  const sessionStartedAtRef = useRef<number>(Date.now());
   const knownCompletionsRef = useRef<Record<string, string>>({});
-  const initializedRef = useRef(false);
 
   useEffect(() => {
-    if (!initializedRef.current) {
-      const initialMap: Record<string, string> = {};
-      for (const thread of threads) {
-        if (thread.latestTurn?.completedAt) {
-          const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-          initialMap[key] = thread.latestTurn.completedAt;
-        }
-      }
-      knownCompletionsRef.current = initialMap;
-      initializedRef.current = true;
-      return;
-    }
-
     const { hasNewCompletion, nextCompletions } = detectNewTurnCompletions(
       threads,
       knownCompletionsRef.current,
-      sessionStartedAtRef.current,
     );
     knownCompletionsRef.current = nextCompletions;
 

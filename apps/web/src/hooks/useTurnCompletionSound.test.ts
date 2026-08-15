@@ -42,10 +42,9 @@ function createMockThread(
 }
 
 describe("detectNewTurnCompletions", () => {
-  const sessionStart = Date.parse("2026-08-15T07:00:00.000Z");
-
-  it("returns hasNewCompletion false when completions are unchanged", () => {
+  it("does not trigger chime on initial snapshot or environment hydration of settled threads", () => {
     const thread = createMockThread("thread-1", {
+      session: { status: "idle", activeTurnId: null, updatedAt: "2026-08-15T07:02:00.000Z" },
       latestTurn: {
         turnId: TurnId.make("turn-1"),
         state: "completed",
@@ -56,14 +55,54 @@ describe("detectNewTurnCompletions", () => {
       },
     });
     const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const previous = { [key]: "2026-08-15T07:02:00.000Z" };
 
-    const result = detectNewTurnCompletions([thread], previous, sessionStart);
+    const result = detectNewTurnCompletions([thread], {});
     expect(result.hasNewCompletion).toBe(false);
+    expect(result.nextCompletions[key]).toBe("2026-08-15T07:02:00.000Z");
   });
 
-  it("returns hasNewCompletion true when a thread receives a new completion timestamp", () => {
+  it("does not trigger chime during mid-turn checkpoints while state or session is running", () => {
     const thread = createMockThread("thread-1", {
+      session: { status: "running", activeTurnId: "turn-1", updatedAt: "2026-08-15T07:01:30.000Z" },
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "running",
+        requestedAt: "2026-08-15T07:01:00.000Z",
+        startedAt: "2026-08-15T07:01:01.000Z",
+        completedAt: "2026-08-15T07:01:30.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+
+    const result = detectNewTurnCompletions([thread], {});
+    expect(result.hasNewCompletion).toBe(false);
+    expect(result.nextCompletions[key]).toBe("running");
+  });
+
+  it("triggers chime when a running thread settles and completes", () => {
+    const thread = createMockThread("thread-1", {
+      session: { status: "idle", activeTurnId: null, updatedAt: "2026-08-15T07:02:00.000Z" },
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "completed",
+        requestedAt: "2026-08-15T07:01:00.000Z",
+        startedAt: "2026-08-15T07:01:01.000Z",
+        completedAt: "2026-08-15T07:02:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const previous = { [key]: "running" };
+
+    const result = detectNewTurnCompletions([thread], previous);
+    expect(result.hasNewCompletion).toBe(true);
+    expect(result.nextCompletions[key]).toBe("2026-08-15T07:02:00.000Z");
+  });
+
+  it("triggers chime when a previously completed thread completes a new turn", () => {
+    const thread = createMockThread("thread-1", {
+      session: { status: "idle", activeTurnId: null, updatedAt: "2026-08-15T07:06:00.000Z" },
       latestTurn: {
         turnId: TurnId.make("turn-2"),
         state: "completed",
@@ -76,14 +115,34 @@ describe("detectNewTurnCompletions", () => {
     const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     const previous = { [key]: "2026-08-15T07:02:00.000Z" };
 
-    const result = detectNewTurnCompletions([thread], previous, sessionStart);
+    const result = detectNewTurnCompletions([thread], previous);
     expect(result.hasNewCompletion).toBe(true);
     expect(result.nextCompletions[key]).toBe("2026-08-15T07:06:00.000Z");
+  });
+
+  it("ignores unchanged completed threads on subsequent renders", () => {
+    const thread = createMockThread("thread-1", {
+      session: { status: "idle", activeTurnId: null, updatedAt: "2026-08-15T07:06:00.000Z" },
+      latestTurn: {
+        turnId: TurnId.make("turn-2"),
+        state: "completed",
+        requestedAt: "2026-08-15T07:05:00.000Z",
+        startedAt: "2026-08-15T07:05:01.000Z",
+        completedAt: "2026-08-15T07:06:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const previous = { [key]: "2026-08-15T07:06:00.000Z" };
+
+    const result = detectNewTurnCompletions([thread], previous);
+    expect(result.hasNewCompletion).toBe(false);
   });
 
   it("ignores archived threads", () => {
     const thread = createMockThread("thread-1", {
       archivedAt: "2026-08-15T07:04:00.000Z",
+      session: { status: "idle", activeTurnId: null, updatedAt: "2026-08-15T07:06:00.000Z" },
       latestTurn: {
         turnId: TurnId.make("turn-2"),
         state: "completed",
@@ -94,9 +153,9 @@ describe("detectNewTurnCompletions", () => {
       },
     });
     const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const previous = { [key]: "2026-08-15T07:02:00.000Z" };
+    const previous = { [key]: "running" };
 
-    const result = detectNewTurnCompletions([thread], previous, sessionStart);
+    const result = detectNewTurnCompletions([thread], previous);
     expect(result.hasNewCompletion).toBe(false);
   });
 });
