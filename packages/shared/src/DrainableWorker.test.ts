@@ -3,7 +3,7 @@ import { describe, expect } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
-import { makeDrainableWorker } from "./DrainableWorker.ts";
+import { makeDrainableWorker, makeKeyedDrainableWorker } from "./DrainableWorker.ts";
 
 describe("makeDrainableWorker", () => {
   it.live("waits for work enqueued during active processing before draining", () =>
@@ -51,6 +51,44 @@ describe("makeDrainableWorker", () => {
         yield* Deferred.await(drained);
 
         expect(processed).toEqual(["first", "second"]);
+      }),
+    ),
+  );
+});
+
+describe("makeKeyedDrainableWorker", () => {
+  it.live("runs different keys independently while preserving each key's FIFO", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const firstStarted = yield* Deferred.make<void>();
+        const secondStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const worker = yield* makeKeyedDrainableWorker(
+          (item: { readonly key: string; readonly value: string }) => item.key,
+          (item) =>
+            Effect.gen(function* () {
+              if (item.value === "a1") {
+                yield* Deferred.succeed(firstStarted, undefined);
+                yield* Deferred.await(releaseFirst);
+              }
+              processed.push(item.value);
+              if (item.value === "b1") {
+                yield* Deferred.succeed(secondStarted, undefined);
+              }
+            }),
+        );
+
+        yield* worker.enqueue({ key: "a", value: "a1" });
+        yield* Deferred.await(firstStarted);
+        yield* worker.enqueue({ key: "a", value: "a2" });
+        yield* worker.enqueue({ key: "b", value: "b1" });
+        yield* Deferred.await(secondStarted);
+        expect(processed).toEqual(["b1"]);
+
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* worker.drain;
+        expect(processed).toEqual(["b1", "a1", "a2"]);
       }),
     ),
   );
