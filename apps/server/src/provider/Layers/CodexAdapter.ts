@@ -605,6 +605,18 @@ function mapCollabAgentEvent(
           payload: { taskId, status: "running", ...statusLinkage },
         },
       ];
+    case "collabAgent/renamed":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: {
+            taskId,
+            ...(nickname ? { title: nickname } : {}),
+            timelineBypass: true,
+          },
+        },
+      ];
     case "collabAgent/turnCompleted": {
       // Idle, not terminal: the identity is resumable via sendInput/resume.
       const turn =

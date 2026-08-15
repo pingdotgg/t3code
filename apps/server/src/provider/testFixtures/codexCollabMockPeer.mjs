@@ -41,6 +41,13 @@ rl.on("line", (line) => {
   }
   if (method === "thread/start" || method === "thread/resume") {
     write({ id, result: fixture.responses.threadStart });
+    // Some ordering regressions need traffic before the first parent turn has
+    // started, when the runtime has no active spawn turn yet. Scripts should
+    // put a root thread/started notification first when they need to model
+    // that the provider has already identified the root conversation.
+    for (const notification of script.preTurnNotifications ?? []) {
+      write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+    }
     return;
   }
   if (method === "turn/start") {

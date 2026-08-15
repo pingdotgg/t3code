@@ -24,6 +24,8 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
+const CHILD_C = "019fcfd6-1806-7de1-8564-de69fd55bff3";
+const CHILD_D = "019fcfd6-1806-7de1-8564-de69fd55bff4";
 
 /**
  * The captured sequence, extended with the shapes the live capture didn't
@@ -70,10 +72,423 @@ function buildScript() {
   };
 }
 
+function buildDirectChildScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  const childTurnId = `${CHILD_A}-direct-turn`;
+  const childItemId = `${CHILD_A}-direct-message`;
+  return {
+    rootThreadId: ROOT,
+    notifications: [
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_direct_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_A]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/started",
+        params: {
+          threadId: CHILD_A,
+          turnId: childTurnId,
+          item: { type: "agentMessage", id: childItemId, text: "" },
+        },
+      },
+      {
+        method: "item/agentMessage/delta",
+        params: {
+          threadId: CHILD_A,
+          turnId: childTurnId,
+          itemId: childItemId,
+          delta: "child narration must not enter the parent transcript",
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: CHILD_A,
+          turnId: childTurnId,
+          completedAtMs: 1785898350000,
+          item: {
+            type: "agentMessage",
+            id: childItemId,
+            phase: "final_answer",
+            text: "child result is consumed by the parent model",
+          },
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "root-summary",
+            phase: "final_answer",
+            text: "The agent completed:\n- Direct Child Researcher: returned one concise result.",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
+function buildOutOfOrderNamingScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  return {
+    rootThreadId: ROOT,
+    notifications: [
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_direct_spawn_ordered",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A, CHILD_B],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_A]: { status: "pendingInit", message: null },
+              [CHILD_B]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          // A nested spawn reports the child agent's own turn id. It must
+          // still join the root fleet's naming batch.
+          threadId: CHILD_A,
+          turnId: `${CHILD_A}-nested-turn`,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_nested_spawn_ordered",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: CHILD_A,
+            receiverThreadIds: [CHILD_C, CHILD_D],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_C]: { status: "pendingInit", message: null },
+              [CHILD_D]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_direct_wait_reordered",
+            tool: "wait",
+            status: "completed",
+            senderThreadId: ROOT,
+            // Non-spawn calls can list receivers in any order, but they must
+            // not change the original spawn positions.
+            receiverThreadIds: [CHILD_D, CHILD_C],
+            agentsStates: {
+              [CHILD_C]: { status: "running", message: null },
+              [CHILD_D]: { status: "running", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "root-order-summary",
+            phase: "final_answer",
+            text: "Agents:\n- Alpha\n- Beta\n- Gamma\n- Delta",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
+function buildUnscopedExistingChildScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  return {
+    rootThreadId: ROOT,
+    preTurnNotifications: [
+      {
+        // Establish the root identity before replaying early child traffic;
+        // this models the provider's root thread notification and prevents
+        // the fixture from racing the runtime's initial session setup.
+        method: "thread/started",
+        params: { thread: wireFixture.responses.threadStart.thread },
+      },
+      {
+        method: "turn/started",
+        params: {
+          threadId: CHILD_B,
+          turn: {
+            id: `${CHILD_B}-pre-turn`,
+            items: [],
+            itemsView: "notLoaded",
+            status: "inProgress",
+            error: null,
+            startedAt: 1785898342,
+            completedAt: null,
+            durationMs: null,
+          },
+        },
+      },
+    ],
+    notifications: [
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_unscoped_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A, CHILD_B],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_A]: { status: "pendingInit", message: null },
+              [CHILD_B]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "root-unscoped-summary",
+            phase: "final_answer",
+            text: "Agents:\n- Alpha\n- Beta",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
+function buildLogicalRootItemScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  const logicalRootId = "019fcfd6-1806-7de1-8564-de69fd55bfff";
+  return {
+    rootThreadId: ROOT,
+    notifications: [
+      {
+        method: "item/completed",
+        params: {
+          // Some provider versions address coordinator items with a logical
+          // root id that differs from the thread/start response id.
+          threadId: logicalRootId,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "logical-root-summary",
+            phase: "final_answer",
+            text: "The coordinator kept the parent timeline intact.",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
 describe("CodexSessionRuntime collab integration", () => {
+  it.effect("registers receiver ids and keeps child narration out of the parent stream", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildDirectChildScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-direct-child"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "direct child" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const methods = events.map((event) => event.method);
+      assert.include(methods, "collabAgent/started");
+      assert.include(methods, "collabAgent/item");
+      assert.include(methods, "collabAgent/statusChanged");
+      assert.include(methods, "collabAgent/renamed");
+      assert.include(methods, "turn/completed");
+      assert.notInclude(methods, "item/agentMessage/delta");
+      const started = events.find((event) => event.method === "collabAgent/started");
+      assert.isUndefined((started?.payload as { nickname?: string } | undefined)?.nickname);
+      const renamed = events.find((event) => event.method === "collabAgent/renamed");
+      assert.equal(
+        (renamed?.payload as { nickname?: string } | undefined)?.nickname,
+        "Direct Child Researcher",
+      );
+      const statusChanged = events.find(
+        (event) =>
+          event.method === "collabAgent/statusChanged" &&
+          (event.payload as { status?: { type?: string } } | undefined)?.status?.type === "idle",
+      );
+      assert.deepEqual((statusChanged?.payload as { status?: unknown } | undefined)?.status, {
+        type: "idle",
+      });
+
+      const leakedChildEvents = events.filter((event) => {
+        if (event.method === "item/agentMessage/delta") return true;
+        const payload = event.payload as { threadId?: string } | undefined;
+        return payload?.threadId === CHILD_A;
+      });
+      assert.deepEqual(
+        leakedChildEvents.map((event) => event.method),
+        [],
+        "child notifications must not be emitted as parent-timeline events",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("assigns names in global spawn order and ignores later non-spawn receiver order", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildOutOfOrderNamingScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-name-order"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "name the children" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const renamed = events.filter((event) => event.method === "collabAgent/renamed");
+      assert.deepEqual(
+        renamed.map((event) => {
+          const payload = event.payload as { agentThreadId?: string; nickname?: string };
+          return [payload.agentThreadId, payload.nickname];
+        }),
+        [
+          [CHILD_A, "Alpha"],
+          [CHILD_B, "Beta"],
+          [CHILD_C, "Gamma"],
+          [CHILD_D, "Delta"],
+        ],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not backfill an unscoped child into a later parent turn", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildUnscopedExistingChildScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-unscoped-child"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep the unscoped child separate" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const childBEvents = events.filter(
+        (event) =>
+          (event.payload as { agentThreadId?: string } | undefined)?.agentThreadId === CHILD_B,
+      );
+      assert.isAbove(childBEvents.length, 0);
+      assert.isTrue(
+        childBEvents.every((event) => event.turnId === undefined),
+        "an existing child without a spawn turn must not inherit a later turn id",
+      );
+      assert.notInclude(
+        events.map((event) => event.method),
+        "collabAgent/renamed",
+        "the unscoped child must not be included in the later fleet name batch",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
     Effect.gen(function* () {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -290,6 +705,46 @@ describe("CodexSessionRuntime collab integration", () => {
         threadId: ROOT,
         turnId: activeTurnId,
       });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps logical-root items on the coordinator timeline", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildLogicalRootItemScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-logical-root"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "item/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "preserve the parent item" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.include(
+        events.map((event) => event.method),
+        "item/completed",
+      );
+      assert.notInclude(
+        events.map((event) => event.method),
+        "collabAgent/item",
+        "an unknown logical-root item must not become a child-agent event",
+      );
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

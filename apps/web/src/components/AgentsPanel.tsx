@@ -80,6 +80,32 @@ function elapsedBetween(startedAt: string, endIso: string | null): string {
   return formatElapsedSeconds((end - start) / 1000);
 }
 
+function isOpaqueAgentTitle(title: string, id: string): boolean {
+  return (
+    title === id || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(title)
+  );
+}
+
+function readableActivity(activity: string | null): string | null {
+  if (!activity) {
+    return null;
+  }
+  if (/^(?:\/usr\/bin\/)?(?:zsh|bash|sh)\s+-lc\b/i.test(activity)) {
+    return "Running a shell command";
+  }
+  if (activity.trim().toLocaleLowerCase() === "reasoning") {
+    return "Thinking";
+  }
+  return activity;
+}
+
+function readableRole(role: string | null): string | null {
+  if (!role) {
+    return null;
+  }
+  return role.trim().toLocaleLowerCase() === "general-purpose" ? "general" : role;
+}
+
 /**
  * Elapsed time for the current activation. Live agents self-tick via DOM
  * writes (zero React commits per tick); settled agents freeze at completedAt.
@@ -138,28 +164,45 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 }
 
 /** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+function AgentRow({
+  agent,
+  fallbackLabel = "Agent",
+}: {
+  agent: RuntimeSubagent;
+  fallbackLabel?: string;
+}) {
   const visuals = STATUS_VISUALS[agent.status];
-  const activity = agentActivityText(agent);
+  const rawActivity = agentActivityText(agent);
+  const activity = readableActivity(rawActivity);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const titleIsOpaque = isOpaqueAgentTitle(agent.title, agent.id);
+  const displayTitle = titleIsOpaque ? fallbackLabel : agent.title;
   const role =
-    agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
+    readableRole(agent.role)?.trim().toLocaleLowerCase() === displayTitle.trim().toLocaleLowerCase()
       ? null
-      : agent.role;
+      : readableRole(agent.role);
   const metadata = [
     modelLabel,
-    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
-    agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
+    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tokens` : null,
+    agent.usage?.toolUses !== undefined
+      ? `${agent.usage.toolUses} tool${agent.usage.toolUses === 1 ? "" : "s"}`
+      : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
+  const identityLabel = titleIsOpaque ? `${displayTitle} · ${agent.id}` : displayTitle;
 
   return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+    <div
+      className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1 hover:bg-accent/30"
+      aria-label={`${identityLabel}. ${visuals.label}`}
+      title={titleIsOpaque ? `Codex thread: ${agent.id}` : undefined}
+    >
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
       <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
+        <span className="min-w-0 truncate text-sm font-medium">{displayTitle}</span>
+        <span className="shrink-0 text-[.65rem] text-muted-foreground">{visuals.label}</span>
         {role ? (
           <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
             {role}
@@ -179,6 +222,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
           "col-start-2 col-end-4 row-start-2 block truncate text-xs",
           agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
         )}
+        title={rawActivity ?? undefined}
       >
         {activity ?? visuals.label}
       </span>
@@ -368,7 +412,11 @@ function PhaseSection({
           </span>
         ) : null}
       </button>
-      {open ? phase.members.map((member) => <AgentRow key={member.id} agent={member} />) : null}
+      {open
+        ? phase.members.map((member, index) => (
+            <AgentRow key={member.id} agent={member} fallbackLabel={`Agent ${index + 1}`} />
+          ))
+        : null}
     </div>
   );
 }
@@ -440,8 +488,8 @@ function ExpandedWorkflowSection({
       {group.phases.map((phase) => (
         <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
       ))}
-      {group.unphasedMembers.map((member) => (
-        <AgentRow key={member.id} agent={member} />
+      {group.unphasedMembers.map((member, index) => (
+        <AgentRow key={member.id} agent={member} fallbackLabel={`Agent ${index + 1}`} />
       ))}
       {group.phases.length === 0 && group.unphasedMembers.length === 0 ? (
         <AgentRow agent={group.workflow} />
@@ -488,7 +536,7 @@ function CollapsedWorkflowSection({
         <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
-          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
+          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tokens</span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
         </span>
@@ -556,11 +604,14 @@ export function AgentsPanel({
           ))}
           {model.directAgents.length > 0 ? (
             <section>
-              <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-                Direct spawns
+              <div className="flex items-center gap-2 px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
+                <span>Direct agents</span>
+                <span className="font-mono normal-case tracking-normal text-muted-foreground/70">
+                  {model.directAgents.length}
+                </span>
               </div>
-              {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
+              {model.directAgents.map((agent, index) => (
+                <AgentRow key={agent.id} agent={agent} fallbackLabel={`Agent ${index + 1}`} />
               ))}
             </section>
           ) : null}
@@ -576,7 +627,9 @@ export function AgentsPanel({
           {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
           {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
         </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        <span className="tabular-nums">
+          Total {formatSubagentTokenCount(model.totalTokens)} tokens
+        </span>
       </footer>
     </div>
   );

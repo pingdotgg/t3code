@@ -15,7 +15,7 @@
 import { assert, describe, it } from "vite-plus/test";
 
 import fixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
-import { routeCodexChildNotification } from "./CodexSessionRuntime.ts";
+import { readCoordinatorAgentNames, routeCodexChildNotification } from "./CodexSessionRuntime.ts";
 
 interface WireNotification {
   readonly method: string;
@@ -61,8 +61,8 @@ describe("codex multi-agent wire capture", () => {
   it("emits child traffic BEFORE the item that registers the child", () => {
     // Ordering hazard: the child's own thread/status/changed arrives before
     // the parent-side subAgentActivity naming it. Registration must tolerate
-    // child-first arrival, so unregistered child traffic passes through
-    // rather than being eaten (no regression vs. pre-feature behavior).
+    // child-first arrival without leaking the child's conversation into the
+    // parent timeline.
     const firstChildTraffic = notifications.findIndex((entry) => {
       const threadId = notificationThreadId(entry);
       return threadId !== undefined && childThreadIds.has(threadId);
@@ -128,11 +128,35 @@ describe("routeCodexChildNotification", () => {
     }
   });
 
+  it("reads coordinator-assigned names from fleet summaries", () => {
+    assert.deepEqual(
+      readCoordinatorAgentNames(
+        "Three agents are running in parallel: Halley, Banach, and Parfit.",
+      ),
+      ["Halley", "Banach", "Parfit"],
+    );
+    assert.deepEqual(
+      readCoordinatorAgentNames(
+        "All three agents completed successfully:\n\n- Halley: generated names\n- Banach: wrote a riddle\n- Parfit: sorted terms",
+      ),
+      ["Halley", "Banach", "Parfit"],
+    );
+    assert.deepEqual(
+      readCoordinatorAgentNames(
+        "Started 3 Luna medium sub-agents:\n\n- Planck\n- Parfit\n- Avicenna",
+      ),
+      ["Planck", "Parfit", "Avicenna"],
+    );
+    assert.deepEqual(readCoordinatorAgentNames("Summary:\n\n- Tests: passed\n- Build: passed"), []);
+  });
+
   it("drops only enumerated child chatter", () => {
     for (const method of [
       "item/agentMessage/delta",
       "item/reasoning/textDelta",
       "item/commandExecution/outputDelta",
+      "item/commandExecution/terminalInteraction",
+      "item/mcpToolCall/progress",
       "turn/plan/updated",
       "thread/name/updated",
     ]) {
