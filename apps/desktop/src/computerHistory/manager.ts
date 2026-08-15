@@ -73,6 +73,7 @@ async function writeUnavailableStatus(root: string, lastError: string): Promise<
   );
 }
 
+// Errors stay in the Effect error channel (never Effect.orDie) so callers can catch/ignore.
 export class ComputerHistoryManager extends Context.Service<
   ComputerHistoryManager,
   {

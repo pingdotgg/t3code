@@ -288,6 +288,7 @@ export function ComputerUseSettings() {
           }
         />
 
+        {/* CollapsibleTrigger provides aria-expanded; panel uses shared CollapsiblePanel transition. */}
         <Collapsible open={moreBrowsersOpen} onOpenChange={setMoreBrowsersOpen}>
           <SettingsRow
             title={<RowTitle icon={<EdgeIcon className="size-5" />}>More browsers</RowTitle>}
