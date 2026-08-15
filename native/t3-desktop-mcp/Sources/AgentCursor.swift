@@ -18,12 +18,16 @@ import Foundation
 // commands ride a Unix socket:
 //
 //     {"x": 400, "y": 260}              move (screen coordinates, top-left origin)
-//     {"x": 400, "y": 260, "press": true}  move and play the click pop/ripple
+//     {"x": 400, "y": 260, "press": true}  move (no click ring)
 //     {"hide": true}                    fade out until the next move
 //
+// Fade is driven by Computer Use tool activity (see noteDesktopTool*),
+// not a wall-clock idle after the last move. The overlay stays up across
+// mid-task pauses; it fades once desktop tools/call traffic stops.
+//
 // The look is the soft translucent bubble (lavender glow, rounded
-// arrow, spring/squash/click pop) — never a system-style pointer, so it
-// cannot be mistaken for the user's own cursor.
+// arrow, spring follow with tilt/squash, idle breathe) — never a
+// system-style pointer. No click ring and no settle wobble.
 
 private let overlayAppName = "T3AgentCursor.app"
 private let overlayExecutableName = "T3AgentCursor"
@@ -40,6 +44,12 @@ final class AgentCursor {
     private var pending: [[String: Any]] = []
     private var process: Process?
     private let lock = NSLock()
+    /// Last Quartz point we told the overlay to visit — used to time clicks
+    /// so the real action waits for the spring animation to land.
+    private var lastPoint: CGPoint?
+    /// Bumped to cancel a pending post-task fade when another tools/call starts.
+    private var taskHideGeneration: UInt64 = 0
+    private var taskHideWork: DispatchWorkItem?
 
     /// Show the agent pointer at a screen point, starting the overlay if needed.
     ///
@@ -47,34 +57,143 @@ final class AgentCursor {
     /// a courtesy, and a missing pointer must never turn a working click into a
     /// failed tool call. Launch problems still go to stderr so they are
     /// diagnosable without poisoning the MCP response.
+    ///
+    /// Blocks until the spring follow would have settled on `point`, so callers
+    /// that click afterward land in sync with the visible pointer.
     func show(at point: CGPoint) {
         guard agentCursorEnabled else { return }
-        send(point: point, press: false)
+        moveAndWait(to: point, press: false)
     }
 
-    /// Move and play the click pop + ripple.
+    /// Move the agent pointer to a screen point, waiting for the animation.
     func press(at point: CGPoint) {
         guard agentCursorEnabled else { return }
-        send(point: point, press: true)
+        moveAndWait(to: point, press: true)
+    }
+
+    /// Non-blocking hop for mid-drag visuals (must not sleep while a button is down).
+    func glide(at point: CGPoint) {
+        guard agentCursorEnabled else { return }
+        moveNoWait(to: point)
     }
 
     func hide() {
         lock.lock()
         defer { lock.unlock() }
+        taskHideGeneration += 1
+        taskHideWork?.cancel()
+        taskHideWork = nil
+        lastPoint = nil
         guard connection != nil || listenerFD >= 0 else { return }
         sendLocked(["hide": true])
     }
 
-    private func send(point: CGPoint, press: Bool) {
+    /// A Computer Use `tools/call` is starting — keep the pointer up.
+    func noteDesktopToolStarted() {
+        guard agentCursorEnabled else { return }
         lock.lock()
-        defer { lock.unlock() }
+        taskHideGeneration += 1
+        taskHideWork?.cancel()
+        taskHideWork = nil
+        lock.unlock()
+    }
+
+    /// A Computer Use `tools/call` finished. If nothing else starts soon, the
+    /// task is done and the pointer should fade — not N seconds after the last
+    /// pixel move while the agent is still working.
+    func noteDesktopToolFinished() {
+        guard agentCursorEnabled else { return }
+        lock.lock()
+        // Only schedule if the pointer was actually used for this task.
+        guard lastPoint != nil else {
+            lock.unlock()
+            return
+        }
+        taskHideGeneration += 1
+        let generation = taskHideGeneration
+        taskHideWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let shouldHide = self.taskHideGeneration == generation
+            self.lock.unlock()
+            if shouldHide { self.hide() }
+        }
+        taskHideWork = work
+        let delay = Self.taskFadeGraceSeconds()
+        lock.unlock()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Brief grace so a follow-up tool in the same turn cancels before fade.
+    /// Override with `T3_DESKTOP_AGENT_CURSOR_TASK_FADE_SECS`.
+    private static func taskFadeGraceSeconds() -> TimeInterval {
+        if let raw = ProcessInfo.processInfo.environment["T3_DESKTOP_AGENT_CURSOR_TASK_FADE_SECS"],
+           let value = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+           value.isFinite, value >= 0, value < 3600
+        {
+            return value
+        }
+        // Long enough to absorb normal model latency between chained desktop
+        // tools; short enough that the pointer does not linger after the turn.
+        return 8.0
+    }
+
+    private func moveAndWait(to point: CGPoint, press: Bool) {
+        guard Self.isRepresentableScreenPoint(point) else { return }
+        let wait: useconds_t
+        var needsStartupSlack = false
+        lock.lock()
+        wait = travelWaitMicros(to: point)
         ensureRunning()
+        needsStartupSlack = connection == nil
         // If the overlay could not start, drop the event instead of queuing
         // forever and growing `pending` for the lifetime of the MCP server.
-        guard connection != nil || listenerFD >= 0 else { return }
-        var message: [String: Any] = ["x": Int(point.x), "y": Int(point.y)]
-        if press { message["press"] = true }
-        sendLocked(message)
+        if connection != nil || listenerFD >= 0 {
+            var message: [String: Any] = ["x": Int(point.x), "y": Int(point.y)]
+            if press { message["press"] = true }
+            sendLocked(message)
+            lastPoint = point
+        }
+        lock.unlock()
+
+        var total = wait
+        if needsStartupSlack { total += 220_000 }
+        if total > 0 { usleep(total) }
+    }
+
+    private func moveNoWait(to point: CGPoint) {
+        guard Self.isRepresentableScreenPoint(point) else { return }
+        lock.lock()
+        ensureRunning()
+        if connection != nil || listenerFD >= 0 {
+            sendLocked(["x": Int(point.x), "y": Int(point.y)])
+            lastPoint = point
+        }
+        lock.unlock()
+    }
+
+    /// Overlay messages use `Int` coordinates — reject non-finite / out-of-range
+    /// values so `Int(point.x)` cannot trap the MCP process.
+    private static func isRepresentableScreenPoint(_ point: CGPoint) -> Bool {
+        let x = Double(point.x)
+        let y = Double(point.y)
+        guard x.isFinite, y.isFinite else { return false }
+        let max = Double(Int.max)
+        let min = Double(Int.min)
+        return x >= min && x <= max && y >= min && y <= max
+    }
+
+    /// Approximate flight time matching OverlayController's cubic path.
+    private func travelWaitMicros(to point: CGPoint) -> useconds_t {
+        guard let from = lastPoint else {
+            return 100_000
+        }
+        let dist = hypot(point.x - from.x, point.y - from.y)
+        if dist < 2 { return 60_000 }
+        // Same duration formula as the overlay flight.
+        let seconds = min(0.85, max(0.28, 0.20 + Double(dist) / 1100.0))
+        return useconds_t((seconds + 0.04) * 1_000_000)
     }
 
     private func ensureRunning() {
@@ -442,17 +561,30 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
     private var socketHandle: FileHandle?
     private var socketBuffer = Data()
     private var animation: Timer?
-    private var hideWork: DispatchWorkItem?
 
-    /// Generous panel so the glow, squash and click ripple all have room.
+    /// Generous panel so the glow, squash and travel lean have room.
     private let side: CGFloat = 112
     /// Distance from the panel's top-left corner to the cursor's hot point.
     fileprivate static let hotspot: CGFloat = 56
 
-    /// Spring state, in Quartz screen coordinates.
+    /// Plane-style cubic flight in Quartz screen coordinates.
+    /// Tip follows path tangent the whole way; path flares upright into the
+    /// target so reorientation happens on approach — not after landing.
     private var current: CGPoint?
     private var target: CGPoint = .zero
     private var velocity: CGVector = .zero
+    private var pathFrom: CGPoint = .zero
+    private var pathC1: CGPoint = .zero
+    private var pathC2: CGPoint = .zero
+    private var pathTo: CGPoint = .zero
+    private var pathElapsed: CFTimeInterval = 0
+    private var pathDuration: CFTimeInterval = 0
+    private var pathActive = false
+    private var arcSign: CGFloat = 1
+    private var lastTickAt: CFTimeInterval?
+    /// Bumped on each fadeOut / begin so a stale fade completion cannot orderOut
+    /// a pointer that already reappeared.
+    private var fadeGeneration: UInt64 = 0
 
     init(socketPath: String) {
         self.socketPath = socketPath
@@ -564,37 +696,80 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
         begin(CGPoint(x: x, y: y), popping: message["press"] as? Bool == true)
     }
 
-    private func begin(_ point: CGPoint, popping: Bool) {
+    private func begin(_ point: CGPoint, popping _: Bool) {
         let panel = ensurePanel()
         target = point
-        // A first appearance should not fly in from a stale position.
-        if current == nil || !panel.isVisible || panel.alphaValue < 0.05 {
+
+        let fresh = current == nil || !panel.isVisible || panel.alphaValue < 0.05
+        if fresh {
+            fadeGeneration &+= 1
             current = point
             velocity = .zero
-        }
-        place(current ?? point)
-
-        // Appear instantly: AppKit's animator is unreliable in an LSUIElement
-        // helper that has no activation. The pointer has to be visible for the
-        // click it is announcing.
-        if !panel.isVisible || panel.alphaValue < 0.05 {
-            panel.alphaValue = 1
+            pathActive = false
+            view?.tilt = 0
+            place(point)
+            // Fade in — never pop to full opacity.
+            panel.alphaValue = 0
             panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.50
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            })
+            startAnimating()
+            return
+        }
+
+        // Cancel any in-flight fade-out / keep fully visible while moving.
+        fadeGeneration &+= 1
+        panel.alphaValue = 1
+        let from = current ?? point
+        let dx = point.x - from.x
+        let dy = point.y - from.y
+        let dist = hypot(dx, dy)
+        if dist < 3 {
+            current = point
+            velocity = .zero
+            pathActive = false
+            view?.tilt = 0
+            place(point)
+            startAnimating()
+            return
+        }
+
+        // Gentle cubic: leave along current facing (or chord), slight bank,
+        // flare upright into the click. Handles stay modest so it never
+        // teleports around the screen.
+        arcSign *= -1
+        let handle = min(72, max(22, dist * 0.18))
+        let nx = -dy / dist
+        let ny = dx / dist
+
+        let startDir: CGVector
+        if let view, abs(view.tilt) > 0.08 {
+            let ang = -view.tilt
+            startDir = CGVector(dx: sin(ang), dy: -cos(ang))
         } else {
-            panel.alphaValue = 1
+            startDir = CGVector(dx: dx / dist, dy: dy / dist)
         }
 
-        if popping {
-            view?.ripple = 0
-            view?.pop = 0
-            view?.wobble = max(view?.wobble ?? 0, 0.9)
-        }
+        pathFrom = from
+        pathTo = point
+        let depart = min(handle, dist * 0.28)
+        pathC1 = CGPoint(
+            x: from.x + startDir.dx * depart + nx * min(36, dist * 0.10) * arcSign,
+            y: from.y + startDir.dy * depart + ny * min(36, dist * 0.10) * arcSign
+        )
+        // Approach from "below" (Quartz Y-down) so final tangent is screen-up
+        // → tip already upright as it arrives.
+        let approach = min(handle * 0.85, max(20, dist * 0.16))
+        pathC2 = CGPoint(x: point.x, y: point.y + approach)
 
-        hideWork?.cancel()
-        // Linger long enough for the spring/tilt settle to finish before fade.
-        let work = DispatchWorkItem { [weak self] in self?.fadeOut() }
-        hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4, execute: work)
+        pathDuration = min(0.85, max(0.28, 0.20 + Double(dist) / 1100.0))
+        pathElapsed = 0
+        pathActive = true
+        velocity = .zero
+        lastTickAt = nil
         startAnimating()
     }
 
@@ -615,47 +790,49 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
         guard let view else { return }
         var busy = false
 
-        if var cur = current {
-            // Spring toward the target: stiffness pulls, damping keeps the
-            // overshoot to a gentle bounce rather than a wobble.
-            let dx = target.x - cur.x, dy = target.y - cur.y
-            velocity.dx = (velocity.dx + dx * 0.34) * 0.62
-            velocity.dy = (velocity.dy + dy * 0.34) * 0.62
-            if abs(dx) < 0.3, abs(dy) < 0.3, abs(velocity.dx) < 0.3, abs(velocity.dy) < 0.3 {
-                cur = target
-                velocity = .zero
-            } else {
-                cur.x += velocity.dx
-                cur.y += velocity.dy
-                busy = true
-            }
+        let now = CACurrentMediaTime()
+        let dt = min(1.0 / 30.0, max(1.0 / 120.0, lastTickAt.map { now - $0 } ?? (1.0 / 60.0)))
+        lastTickAt = now
+
+        if pathActive, var cur = current {
+            pathElapsed += dt
+            let u = min(1.0, pathElapsed / max(0.001, pathDuration))
+            // Ease-in-out along the flight path.
+            let t = u * u * (3 - 2 * u)
+            let pos = Self.cubicBezier(pathFrom, pathC1, pathC2, pathTo, CGFloat(t))
+            let tan = Self.cubicBezierTangent(pathFrom, pathC1, pathC2, pathTo, CGFloat(t))
+            velocity = CGVector(
+                dx: (pos.x - cur.x) / CGFloat(dt),
+                dy: (pos.y - cur.y) / CGFloat(dt)
+            )
+            cur = pos
             current = cur
             view.velocity = velocity
-            let speed = sqrt(velocity.dx * velocity.dx + velocity.dy * velocity.dy)
-            view.wobble = max(view.wobble * 0.88, min(speed / 26, 1.15))
-            view.wobblePhase += 0.78
 
-            // Bank into the travel — lean hard enough that the rotate is obvious
-            // on short Day→Week hops, then ease upright on settle.
-            let targetTilt = max(-0.9, min(0.9, -velocity.dx * 0.032 + velocity.dy * 0.012))
-            view.tilt += (targetTilt - view.tilt) * 0.28
-            if abs(view.tilt) > 0.004 { busy = true } else { view.tilt = 0 }
+            // Tip tracks path tangent continuously — the turn into upright is
+            // the last part of the curve, not a settle spin after arrival.
+            let tanLen = hypot(tan.dx, tan.dy)
+            if tanLen > 0.001 {
+                let desired = -atan2(tan.dx, -tan.dy)
+                var delta = desired - view.tilt
+                while delta > .pi { delta -= 2 * .pi }
+                while delta < -.pi { delta += 2 * .pi }
+                // Slight lag early; tighten on final flare so tip matches path.
+                let follow = min(1, 0.16 + CGFloat(t) * 0.55 + CGFloat(dt) * 7)
+                view.tilt += delta * follow
+            }
 
-            place(cur)
-        }
-
-        if let r = view.ripple {
-            let next = r + (1.0 / 60.0) / 0.5
-            view.ripple = next >= 1 ? nil : next
+            if u >= 1 {
+                current = pathTo
+                velocity = .zero
+                view.velocity = .zero
+                view.tilt = 0
+                pathActive = false
+            }
             busy = true
-        }
-        if let p = view.pop {
-            let next = p + (1.0 / 60.0) / 0.36
-            view.pop = next >= 1 ? nil : next
-            busy = true
+            place(current ?? pathTo)
         }
 
-        if view.wobble > 0.01 { busy = true } else { view.wobble = 0 }
         if panel?.isVisible == true, (panel?.alphaValue ?? 0) > 0.05 {
             view.phase += 0.08
             busy = true
@@ -665,27 +842,59 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
         if !busy {
             animation?.invalidate()
             animation = nil
+            lastTickAt = nil
         }
     }
 
+    private static func cubicBezier(
+        _ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint, _ t: CGFloat
+    ) -> CGPoint {
+        let o = 1 - t
+        let o2 = o * o
+        let t2 = t * t
+        return CGPoint(
+            x: o2 * o * p0.x + 3 * o2 * t * p1.x + 3 * o * t2 * p2.x + t2 * t * p3.x,
+            y: o2 * o * p0.y + 3 * o2 * t * p1.y + 3 * o * t2 * p2.y + t2 * t * p3.y
+        )
+    }
+
+    private static func cubicBezierTangent(
+        _ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint, _ t: CGFloat
+    ) -> CGVector {
+        let o = 1 - t
+        return CGVector(
+            dx: 3 * o * o * (p1.x - p0.x) + 6 * o * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x),
+            dy: 3 * o * o * (p1.y - p0.y) + 6 * o * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y)
+        )
+    }
+
     private func place(_ point: CGPoint) {
-        guard let panel, let mainScreen = NSScreen.screens.first else { return }
-        // Quartz measures y downward from the top of the main display; AppKit
-        // measures it upward from the bottom.
-        let flippedY = mainScreen.frame.maxY - point.y
+        guard let panel else { return }
+        let primary =
+            NSScreen.screens.first(where: { $0.frame.origin == .zero })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let primary else { return }
+        let flippedY = primary.frame.maxY - point.y
         panel.setFrameOrigin(NSPoint(
             x: point.x - OverlayController.hotspot,
             y: flippedY - side + OverlayController.hotspot
         ))
+        panel.orderFrontRegardless()
     }
 
     private func fadeOut() {
         guard let panel, panel.isVisible else { return }
+        pathActive = false
+        fadeGeneration &+= 1
+        let generation = fadeGeneration
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.25
+            ctx.duration = 0.35
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self else { return }
+            // Ignore completions from a fade that was superseded by a new move.
+            guard generation == self.fadeGeneration else { return }
             if panel.alphaValue < 0.05 {
                 panel.orderOut(nil)
                 self.animation?.invalidate()
@@ -695,24 +904,14 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Soft translucent bubble: lavender glow, rounded arrow, squash on travel
-/// and a click ripple. Deliberately not a system pointer.
+/// Soft translucent bubble: lavender glow, rounded arrow, path heading,
+/// idle breathe. No click ring.
 private final class BubbleView: NSView {
-    /// 0…1 while a click ripple plays, nil otherwise.
-    var ripple: CGFloat?
-    /// 0…1 while the bubble pops on click, nil otherwise.
-    var pop: CGFloat?
-    /// Slow idle breathing so a resting cursor still reads as alive.
     var phase: CGFloat = 0
-    /// Current travel, used for squash-and-stretch.
+    /// Unused for drawing now (no squash); kept so motion code can still assign it.
     var velocity: CGVector = .zero
-    /// Lean, in radians. Banks into the direction of travel and eases back
-    /// to upright when the cursor settles.
+    /// Path heading in radians (2D spin only); upright (0) when landed.
     var tilt: CGFloat = 0
-    /// Jelly wobble: amplitude builds with speed and decays after the
-    /// bubble stops, so it keeps jiggling for a moment on arrival.
-    var wobble: CGFloat = 0
-    var wobblePhase: CGFloat = 0
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
@@ -722,17 +921,6 @@ private final class BubbleView: NSView {
         let purple = NSColor(calibratedRed: 0.58, green: 0.52, blue: 0.94, alpha: 1)
         let breathe = 1 + 0.03 * sin(phase)
 
-        // Ripple on click, drawn under everything else.
-        if let ripple {
-            let eased = 1 - pow(1 - ripple, 3)
-            let r = 16 + eased * 26
-            ctx.setStrokeColor(NSColor.white.withAlphaComponent((1 - eased) * 0.55).cgColor)
-            ctx.setLineWidth(3.0 * (1 - eased) + 0.5)
-            ctx.strokeEllipse(in: CGRect(x: tip.x - r, y: tip.y - r, width: r * 2, height: r * 2))
-        }
-
-        // Soft circular wash that fades out with no hard edge — the look that
-        // read best behind the arrow.
         if let wash = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
@@ -755,18 +943,9 @@ private final class BubbleView: NSView {
 
         ctx.saveGState()
         ctx.translateBy(x: tip.x, y: tip.y)
-        let travelX = abs(velocity.dx), travelY = abs(velocity.dy)
-        let wobbleAmount = 0.18 * wobble * sin(wobblePhase)
-        var popScale: CGFloat = 1
-        if let pop { popScale = 1 + 0.22 * sin(pop * .pi * 2) * (1 - pop) }
+        // Pure 2D: rotate in the plane only — never squash/stretch (reads as 3D).
         ctx.rotate(by: tilt)
-        ctx.scaleBy(
-            x: (1 + travelX / 200 - travelY / 400 + wobbleAmount) * popScale,
-            y: (1 + travelY / 200 - travelX / 400 - wobbleAmount) * popScale
-        )
 
-        // Rounded arrowhead — soft enough not to read as a system pointer tip,
-        // but not so pebble-like that the shape blurs.
         let corners = [
             NSPoint(x: 0, y: 0),
             NSPoint(x: 24, y: -11),
@@ -790,8 +969,6 @@ private final class BubbleView: NSView {
         arrow.lineJoinStyle = .round
         arrow.lineCapStyle = .round
 
-        // Dark slate-purple fill — solid enough to read on light wallpapers,
-        // with a slight tip→tail gradient so it isn't a flat hole.
         ctx.saveGState()
         arrow.addClip()
         let deep = NSColor(calibratedRed: 0.22, green: 0.20, blue: 0.38, alpha: 0.96)
@@ -801,7 +978,6 @@ private final class BubbleView: NSView {
         }
         ctx.restoreGState()
 
-        // White rim — mid weight between the thin hairline and the heavy outline.
         ctx.saveGState()
         ctx.setShadow(
             offset: .zero,

@@ -211,9 +211,7 @@ export function SettingResetButton({
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button
-            size="icon-micro"
-            variant="ghost-muted"
+          <SettingIconAction
             aria-label={`Reset ${label} to default`}
             disabled={disabled}
             onClick={(event) => {
@@ -222,12 +220,20 @@ export function SettingResetButton({
             }}
           >
             <Undo2Icon className="size-3" />
-          </Button>
+          </SettingIconAction>
         }
       />
       <TooltipPopup side="top">Reset to default</TooltipPopup>
     </Tooltip>
   );
+}
+
+/** Shared micro icon control used by settings reset/remove actions. */
+export function SettingIconAction({
+  className,
+  ...props
+}: ComponentPropsWithoutRef<typeof Button>) {
+  return <Button size="icon-micro" variant="ghost-muted" className={className} {...props} />;
 }
 
 export function SettingsPageContainer({

@@ -394,7 +394,7 @@ struct WindowTarget {
 
 func makeWindowTarget(pid: pid_t, window: AXUIElement) -> WindowTarget? {
     guard let wid = SkyLight.windowID(window) else { return nil }
-    let origin = axPoint(window, kAXPositionAttribute as String) ?? .zero
+    guard let origin = axPoint(window, kAXPositionAttribute as String) else { return nil }
     let size = axSize(window, kAXSizeAttribute as String) ?? .zero
     return WindowTarget(pid: pid, wid: wid, frame: CGRect(origin: origin, size: size))
 }
@@ -454,8 +454,7 @@ func windowTarget(forPid pid: pid_t) -> WindowTarget? {
 /// anything, so callers need to know when to bypass it and click for real.
 func isInWebContent(_ element: AXUIElement) -> Bool {
     var node: AXUIElement? = element
-    for _ in 0..<14 {
-        guard let current = node else { return false }
+    while let current = node {
         if let role = axString(current, kAXRoleAttribute as String),
            role == "AXWebArea" { return true }
         node = axElement(current, kAXParentAttribute as String)
@@ -623,7 +622,7 @@ func backgroundDrag(_ target: WindowTarget, from start: CGPoint, to end: CGPoint
         let t = Double(i) / Double(steps)
         let step = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
         send(.leftMouseDragged, step, 1, 0)
-        if i % 4 == 0 { CursorOverlay.shared.show(at: step) }
+        if i % 4 == 0 { CursorOverlay.shared.glide(at: step) }
         usleep(15_000)
     }
     usleep(40_000)
@@ -1200,10 +1199,12 @@ enum Chrome {
             let data = try? Data(contentsOf: stateURL),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let windowId = object["windowId"] as? Int,
-            let chromePid = object["chromePid"] as? Int
+            let chromePid = object["chromePid"] as? Int,
+            chromePid >= Int(pid_t.min), chromePid <= Int(pid_t.max)
         else {
             // Legacy plain-integer files from older builds are intentionally
             // discarded: a reused window id after Chrome restart is unsafe.
+            // Out-of-range chromePid would trap on pid_t conversion.
             try? FileManager.default.removeItem(at: stateURL)
             return
         }
@@ -1353,24 +1354,43 @@ enum Chrome {
         return false
     }
 
+    /// Cross-process lock around agent-window state so concurrent MCP servers
+    /// cannot each create a window after both observing a missing one.
+    private static func withStateLock<T>(_ body: () -> T) -> T {
+        let lockPath = stateURL.path + ".lock"
+        let lockFd = open(lockPath, O_CREAT | O_RDWR, 0o600)
+        guard lockFd >= 0 else { return body() }
+        _ = flock(lockFd, LOCK_EX)
+        defer {
+            flock(lockFd, LOCK_UN)
+            close(lockFd)
+        }
+        return body()
+    }
+
     /// Return the agent's window id, creating the window if needed.
     static func ensureAgentWindow() -> WindowOutcome {
-        if let id = liveAgentWindowID() { return .success(id) }
+        withStateLock {
+            // Another MCP process may have created and persisted a window while
+            // this process held a stale in-memory cache — reload under the lock.
+            didLoadState = false
+            if let id = liveAgentWindowID() { return .success(id) }
 
-        let created = run("""
-        tell application "Google Chrome"
-            set w to make new window
-            return id of w as string
-        end tell
-        """)
-        switch created {
-        case .failure(let e): return .failure(e)
-        case .success(let s):
-            guard let id = Int(s.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)) else {
-                return .failure("unexpected window id: \(s)")
+            let created = run("""
+            tell application "Google Chrome"
+                set w to make new window
+                return id of w as string
+            end tell
+            """)
+            switch created {
+            case .failure(let e): return .failure(e)
+            case .success(let s):
+                guard let id = Int(s.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)) else {
+                    return .failure("unexpected window id: \(s)")
+                }
+                agentWindowID = id
+                return .success(id)
             }
-            agentWindowID = id
-            return .success(id)
         }
     }
 
@@ -1956,8 +1976,11 @@ final class CursorOverlay {
     /// Move the agent cursor to a Quartz screen point.
     func show(at point: CGPoint) { AgentCursor.shared.show(at: point) }
 
-    /// Move and play the click pop + ripple.
+    /// Move the agent pointer.
     func press(at point: CGPoint) { AgentCursor.shared.press(at: point) }
+
+    /// Non-blocking hop for mid-drag visuals.
+    func glide(at point: CGPoint) { AgentCursor.shared.glide(at: point) }
 }
 
 // MARK: - JSON-RPC over stdio
@@ -1984,15 +2007,6 @@ func textResult(_ s: String, isError: Bool = false) -> [String: Any] {
 // Chrome launches this same binary as its native messaging host; in that mode
 // it is a relay, not an MCP server.
 if CommandLine.arguments.contains("native-host") { NativeHost.run() }
-// Computer History background recorder (Skysight-style interaction events).
-if CommandLine.arguments.contains("computer-history") {
-    let args = CommandLine.arguments
-    if let flag = args.firstIndex(of: "--root"), args.index(after: flag) < args.endIndex {
-        ComputerHistoryDaemon.run(root: args[args.index(after: flag)])
-    }
-    fputs("t3-desktop-mcp: computer-history requires --root <dir>\n", stderr)
-    exit(2)
-}
 // The agent pointer is a separate LSUIElement .app (see AgentCursor.swift)
 // launched via NSWorkspace with `--socket <path>` for move/hide commands.
 if CommandLine.arguments.contains("cursor-overlay") {
@@ -2039,72 +2053,92 @@ while let line = readLine(strippingNewline: true) {
         respond(id: id ?? NSNull(), result: ["tools": advertisedToolDefs()])
 
     case "tools/call":
-        guard let id else { continue }
-        let params = msg["params"] as? [String: Any] ?? [:]
-        guard let name = params["name"] as? String else {
-            respondError(id: id, code: -32602, message: "missing tool name")
-            continue
-        }
-        let args = params["arguments"] as? [String: Any] ?? [:]
+        // Pointer fade is keyed to Computer Use tool traffic: stay up while
+        // tools are in flight / chained, fade once the task stops calling.
+        do {
+            AgentCursor.shared.noteDesktopToolStarted()
+            defer { AgentCursor.shared.noteDesktopToolFinished() }
 
-        // Handled ahead of the Accessibility check: screen capture is gated by
-        // Screen Recording, a separate permission, so screenshots should still
-        // work if only that one is granted.
-        if name == "screenshot" {
-            if let display = args["display"] as? Int {
-                let maxWidth = (args["max_width"] as? Int) ?? 1400
-                guard let shot = captureDisplayPNG(index: display, maxWidth: maxWidth) else {
+            guard let id else { break }
+            let params = msg["params"] as? [String: Any] ?? [:]
+            guard let name = params["name"] as? String else {
+                respondError(id: id, code: -32602, message: "missing tool name")
+                break
+            }
+            let args = params["arguments"] as? [String: Any] ?? [:]
+
+            // Handled ahead of the Accessibility check: screen capture is gated by
+            // Screen Recording, a separate permission, so screenshots should still
+            // work if only that one is granted.
+            if name == "screenshot" {
+                if let display = args["display"] as? Int {
+                    let maxWidth = (args["max_width"] as? Int) ?? 1400
+                    guard let shot = captureDisplayPNG(index: display, maxWidth: maxWidth) else {
+                        respond(id: id, result: textResult(
+                            "error: could not capture display \(display) — check Screen Recording "
+                            + "permission, or call list_displays for valid indices.", isError: true))
+                        break
+                    }
+                    respond(id: id, result: [
+                        "content": [[
+                            "type": "image", "data": shot.data.base64EncodedString(),
+                            "mimeType": "image/png",
+                        ]],
+                        "isError": false,
+                    ])
+                    break
+                }
+                guard let query = args["app"] as? String, let resolved = resolveApp(query) else {
                     respond(id: id, result: textResult(
-                        "error: could not capture display \(display) — check Screen Recording "
-                        + "permission, or call list_displays for valid indices.", isError: true))
-                    continue
+                        "error: no running app matching \(args["app"] as? String ?? "<missing app argument>")",
+                        isError: true))
+                    break
+                }
+                let maxWidth = (args["max_width"] as? Int) ?? 1400
+                guard let png = captureWindowPNG(pid: resolved.app.processIdentifier, maxWidth: maxWidth) else {
+                    respond(id: id, result: textResult(
+                        "error: screen capture failed. The host app may be missing Screen Recording "
+                        + "permission, or this app may have no on-screen window.",
+                        isError: true))
+                    break
                 }
                 respond(id: id, result: [
                     "content": [[
-                        "type": "image", "data": shot.data.base64EncodedString(),
+                        "type": "image",
+                        "data": png.base64EncodedString(),
                         "mimeType": "image/png",
                     ]],
                     "isError": false,
                 ])
-                continue
+                break
             }
-            guard let query = args["app"] as? String, let resolved = resolveApp(query) else {
-                respond(id: id, result: textResult(
-                    "error: no running app matching \(args["app"] as? String ?? "<missing app argument>")",
-                    isError: true))
-                continue
-            }
-            let maxWidth = (args["max_width"] as? Int) ?? 1400
-            guard let png = captureWindowPNG(pid: resolved.app.processIdentifier, maxWidth: maxWidth) else {
-                respond(id: id, result: textResult(
-                    "error: screen capture failed. The host app may be missing Screen Recording "
-                    + "permission, or this app may have no on-screen window.",
-                    isError: true))
-                continue
-            }
-            respond(id: id, result: [
-                "content": [[
-                    "type": "image",
-                    "data": png.base64EncodedString(),
-                    "mimeType": "image/png",
-                ]],
-                "isError": false,
-            ])
-            continue
-        }
 
-        if !AXIsProcessTrusted() {
-            respond(id: id, result: textResult(
-                "Accessibility permission is not granted to the host app. Enable it in "
-                + "System Settings → Privacy & Security → Accessibility, then restart the app.",
-                isError: true))
-            continue
+            // list_displays / browser_* do not need Accessibility — Screen
+            // Recording / Chrome bridge only. Keep them ahead of the AX gate so
+            // the Screen Recording-only flow can still recover (Bot finding).
+            if name == "list_displays" || name.hasPrefix("browser_") {
+                let out = dispatch(name, args)
+                respond(id: id, result: textResult(out, isError: out.hasPrefix("error:")))
+                break
+            }
+
+            if !AXIsProcessTrusted() {
+                respond(id: id, result: textResult(
+                    "Accessibility permission is not granted to the host app. Enable it in "
+                    + "System Settings → Privacy & Security → Accessibility, then restart the app.",
+                    isError: true))
+                break
+            }
+            let out = dispatch(name, args)
+            respond(id: id, result: textResult(out, isError: out.hasPrefix("error:")))
         }
-        let out = dispatch(name, args)
-        respond(id: id, result: textResult(out, isError: out.hasPrefix("error:")))
 
     case "ping":
         respond(id: id ?? NSNull(), result: [:])
+
+    case "notifications/cancelled":
+        // Host aborted the turn — drop the pointer immediately.
+        AgentCursor.shared.hide()
 
     default:
         // Notifications carry no id and require no reply.
@@ -2112,6 +2146,7 @@ while let line = readLine(strippingNewline: true) {
     }
 }
     // stdin closed: the client is gone, so the process should follow.
+    AgentCursor.shared.hide()
     exit(0)
 }
 

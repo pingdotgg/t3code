@@ -11,7 +11,7 @@ use std::fmt;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub mod agent_cursor;
 #[cfg(windows)]
 pub mod windows;

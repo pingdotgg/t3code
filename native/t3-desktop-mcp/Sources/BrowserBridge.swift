@@ -16,20 +16,22 @@ import Foundation
 // later ones simply fall back to the accessibility path.
 
 let bridgeSocketPath: String = {
-    // Per-uid so concurrent users never share a world-writable /tmp socket.
-    let shortFallback = "/tmp/t3-desktop-mcp-bridge-\(getuid()).sock"
+    // Prefer Application Support; never fall back to world-writable /tmp (another
+    // local user could claim that path). NSTemporaryDirectory() is already per-user.
+    let shortFallback = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("t3-desktop-mcp-bridge.sock").path
     let preferred = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         ?? URL(fileURLWithPath: NSTemporaryDirectory())
     let dir = preferred.appendingPathComponent("t3-desktop-mcp", isDirectory: true)
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     } catch {
-        // Unusable Application Support — bind under /tmp so the Chrome bridge still works.
+        // Unusable Application Support — bind under the user-private temp dir.
         return shortFallback
     }
     let candidate = dir.appendingPathComponent("bridge.sock").path
-    // sockaddr_un.sun_path is ~104 bytes; fall back to a short /tmp path when Application
-    // Support is nested too deep for bind()/connect() to succeed.
+    // sockaddr_un.sun_path is ~104 bytes; fall back to a short private path when
+    // Application Support is nested too deep for bind()/connect() to succeed.
     if candidate.utf8.count > 100 {
         return shortFallback
     }
@@ -273,11 +275,17 @@ final class BrowserBridge {
             }
         }
         lock.lock()
-        clientFD = -1
-        let stranded = pending
-        pending.removeAll()
-        lock.unlock()
-        for (_, resume) in stranded { resume(.failure("the browser extension disconnected")) }
+        // A newer accept may have replaced clientFD; only the active connection
+        // may clear shared pending waiters.
+        if clientFD == fd {
+            clientFD = -1
+            let stranded = pending
+            pending.removeAll()
+            lock.unlock()
+            for (_, resume) in stranded { resume(.failure("the browser extension disconnected")) }
+        } else {
+            lock.unlock()
+        }
         close(fd)
     }
 
