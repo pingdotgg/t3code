@@ -87,6 +87,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           runtime,
           currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
           requestedModelId: resolvedModel,
+          selections: modelSelection.options,
           mapError: (cause) =>
             new TextGenerationError({
               operation,

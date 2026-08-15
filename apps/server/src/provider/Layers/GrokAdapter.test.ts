@@ -33,14 +33,21 @@ const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = process.execPath;
 
-async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
+async function makeMockGrokWrapper(
+  extraEnv?: Record<string, string>,
+  options?: { readonly argvLogPath?: string },
+) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
   const wrapperPath = NodePath.join(dir, "fake-grok.sh");
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
+  const argvLogLine = options?.argvLogPath
+    ? `printf '%s\\n' "$*" >> ${JSON.stringify(options.argvLogPath)}`
+    : "";
   const script = `#!/bin/sh
 ${envExports}
+${argvLogLine}
 exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
 `;
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
@@ -175,6 +182,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         "turn.started",
         "item.started",
         "content.delta",
+        "thread.token-usage.updated",
         "turn.completed",
       ] as const);
 
@@ -184,6 +192,32 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         assert.equal(delta.payload.delta, "hello from mock");
       }
 
+      const usage = runtimeEvents.find((e) => e.type === "thread.token-usage.updated");
+      assert.isDefined(usage);
+      if (usage?.type === "thread.token-usage.updated") {
+        assert.equal(usage.payload.usage.usedTokens, 12_345);
+        assert.equal(usage.payload.usage.inputTokens, 10_000);
+        assert.equal(usage.payload.usage.outputTokens, 2_000);
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("survives unsolicited skills-reload response ids after initialize", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-skills-reload-id");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_SKILLS_RELOAD_ID: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      assert.equal(session.status, "ready");
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -325,6 +359,37 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  it.effect("emits token usage from prompt meta for the context meter", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-usage-context-meter");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const usageSeen =
+        yield* Deferred.make<
+          Extract<ProviderRuntimeEvent, { type: "thread.token-usage.updated" }>
+        >();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "thread.token-usage.updated" && String(event.threadId) === String(threadId)
+          ? Deferred.succeed(usageSeen, event).pipe(Effect.asVoid, Effect.ignore)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "usage please", attachments: [] });
+      const usage = yield* Deferred.await(usageSeen).pipe(Effect.timeout("3 seconds"));
+      assert.equal(usage.payload.usage.usedTokens, 12_345);
+      assert.equal(usage.payload.usage.inputTokens, 10_000);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("completes a Grok turn from xAI prompt completion when the prompt RPC hangs", () =>
@@ -1196,5 +1261,250 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  it.effect("maps session_info_update titles to thread.metadata.updated", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-session-info-title");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_SESSION_INFO: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const metadataUpdated =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "thread.metadata.updated" }>>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "thread.metadata.updated" && String(event.threadId) === String(threadId)
+          ? Deferred.succeed(metadataUpdated, event).pipe(Effect.asVoid, Effect.ignore)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "title me",
+        attachments: [],
+      });
+
+      const event = yield* Deferred.await(metadataUpdated).pipe(Effect.timeout("2 seconds"));
+      assert.equal(event.payload.name, "Mock Grok session title");
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("publishes initialize _meta availableCommands via onAvailableCommands", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-init-commands");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_INIT_AVAILABLE_COMMANDS: "1" }),
+      );
+      const catalog =
+        yield* Deferred.make<
+          ReadonlyArray<{ readonly name: string; readonly description?: string }>
+        >();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        onAvailableCommands: (commands) =>
+          Deferred.succeed(catalog, commands).pipe(Effect.asVoid, Effect.ignore),
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const published = yield* Deferred.await(catalog).pipe(Effect.timeout("2 seconds"));
+      assert.include(
+        published.map((command) => command.name),
+        "compact",
+      );
+      assert.include(
+        published.map((command) => command.name),
+        "session-info",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("publishes present-empty initialize availableCommands so stale catalogs clear", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-init-commands-empty");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_INIT_AVAILABLE_COMMANDS: "empty" }),
+      );
+      const catalog =
+        yield* Deferred.make<
+          ReadonlyArray<{ readonly name: string; readonly description?: string }>
+        >();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        onAvailableCommands: (commands) =>
+          Deferred.succeed(catalog, commands).pipe(Effect.asVoid, Effect.ignore),
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const published = yield* Deferred.await(catalog).pipe(Effect.timeout("2 seconds"));
+      assert.equal(published.length, 0);
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("applies mid-thread effort via session/set_model _meta without process restart", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-effort-set-model-meta");
+      const tmpDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-effort-")),
+      );
+      const argvLogPath = NodePath.join(tmpDir, "argv.log");
+      const requestLogPath = NodePath.join(tmpDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper(
+          {
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          },
+          { argvLogPath },
+        ),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const turnCompleted = yield* Deferred.make<void>();
+      const sessionExited = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (event.type === "turn.completed" && String(event.threadId) === String(threadId)) {
+          return Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore);
+        }
+        if (event.type === "session.exited" && String(event.threadId) === String(threadId)) {
+          return Deferred.succeed(sessionExited, undefined).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
+
+      const instanceId = ProviderInstanceId.make("grok");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId,
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      });
+
+      const firstArgv = yield* waitForFileContent(argvLogPath, 40, "--reasoning-effort high");
+      assert.include(firstArgv, "--reasoning-effort high");
+      assert.include(firstArgv, "--model grok-mock-alt");
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "switch effort mid-thread",
+        attachments: [],
+        modelSelection: {
+          instanceId,
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "low" }],
+        },
+      });
+
+      yield* Deferred.await(turnCompleted);
+
+      // Process must not restart: still a single argv line with the spawn effort.
+      const argvAfter = yield* waitForFileContent(argvLogPath, 10, "--reasoning-effort high");
+      const argvLines = argvAfter
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      assert.equal(argvLines.length, 1);
+      assert.include(argvLines[0] ?? "", "--reasoning-effort high");
+
+      const requestLog = yield* waitForFileContent(requestLogPath, 40, "session/set_model");
+      assert.include(requestLog, "session/set_model");
+      assert.include(requestLog, "reasoningEffort");
+      assert.include(requestLog, "low");
+      assert.notInclude(requestLog, "session/load");
+
+      const exitedRace = yield* Deferred.await(sessionExited).pipe(
+        Effect.timeoutOption("100 millis"),
+      );
+      assert.isTrue(exitedRace._tag === "None");
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("maps /compact session notifications to thread.state.changed compacted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-compact-thread");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: Array<{ type: string; payload?: unknown; raw?: unknown }> = [];
+      const compacted = yield* Deferred.make<void>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "thread.state.changed" && event.payload.state === "compacted"
+              ? Deferred.succeed(compacted, undefined)
+              : event.type === "turn.completed"
+                ? Deferred.succeed(turnCompleted, undefined)
+                : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/compact keep the auth details",
+        attachments: [],
+      });
+
+      yield* Deferred.await(compacted).pipe(Effect.timeout("3 seconds"));
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("3 seconds"));
+
+      const compactEvent = runtimeEvents.find(
+        (event) =>
+          event.type === "thread.state.changed" &&
+          (event.payload as { state?: string } | undefined)?.state === "compacted",
+      );
+      assert.isDefined(compactEvent);
+      if (compactEvent?.type === "thread.state.changed") {
+        assert.deepEqual(compactEvent.payload.detail, {
+          tokensBefore: 12_000,
+          tokensAfter: 4_000,
+        });
+        assert.equal(
+          (compactEvent as { raw?: { method?: string } }).raw?.method,
+          "_x.ai/session_notification",
+        );
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
   );
 });

@@ -80,6 +80,26 @@ export interface AcpPermissionRequest {
   readonly toolCall?: AcpToolCallState;
 }
 
+export type AcpContentStreamKind = "assistant_text" | "reasoning_text";
+
+export interface AcpAvailableCommand {
+  readonly name: string;
+  readonly description?: string;
+  readonly inputHint?: string;
+}
+
+export interface AcpUsageUpdate {
+  readonly used: number;
+  readonly size: number;
+  readonly costAmount?: number;
+  readonly costCurrency?: string;
+}
+
+export interface AcpSessionInfoUpdate {
+  readonly title?: string | null;
+  readonly updatedAt?: string | null;
+}
+
 export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ModeChanged";
@@ -107,6 +127,37 @@ export type AcpParsedSessionEvent =
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
       readonly text: string;
+      readonly streamKind: AcpContentStreamKind;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "AvailableCommandsUpdated";
+      readonly commands: ReadonlyArray<AcpAvailableCommand>;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly usage: AcpUsageUpdate;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "ConfigOptionsUpdated";
+      readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "SessionInfoUpdated";
+      readonly info: AcpSessionInfoUpdate;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UserMessageChunk";
+      readonly text: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UnknownSessionUpdate";
+      readonly sessionUpdate: string;
       readonly rawPayload: unknown;
     };
 
@@ -569,13 +620,111 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         events.push({
           _tag: "ContentDelta",
           text: upd.content.text,
+          streamKind: "assistant_text",
           rawPayload: params,
         });
       }
       break;
     }
-    default:
+    case "agent_thought_chunk": {
+      if (upd.content.type === "text" && upd.content.text.length > 0) {
+        events.push({
+          _tag: "ContentDelta",
+          text: upd.content.text,
+          streamKind: "reasoning_text",
+          rawPayload: params,
+        });
+      }
       break;
+    }
+    case "user_message_chunk": {
+      if (upd.content.type === "text" && upd.content.text.length > 0) {
+        events.push({
+          _tag: "UserMessageChunk",
+          text: upd.content.text,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "available_commands_update": {
+      const commands = upd.availableCommands.flatMap((command): AcpAvailableCommand[] => {
+        const name = command.name.trim();
+        if (!name) {
+          return [];
+        }
+        const description = command.description.trim();
+        const inputHint =
+          command.input && "hint" in command.input && typeof command.input.hint === "string"
+            ? command.input.hint.trim()
+            : undefined;
+        return [
+          {
+            name,
+            ...(description.length > 0 ? { description } : {}),
+            ...(inputHint && inputHint.length > 0 ? { inputHint } : {}),
+          },
+        ];
+      });
+      events.push({
+        _tag: "AvailableCommandsUpdated",
+        commands,
+        rawPayload: params,
+      });
+      break;
+    }
+    case "usage_update": {
+      const used = Number.isFinite(upd.used) && upd.used >= 0 ? Math.trunc(upd.used) : undefined;
+      if (used === undefined) {
+        break;
+      }
+      // Live Grok may omit size; consumers fall back to model totalContextTokens.
+      const size = Number.isFinite(upd.size) && upd.size >= 0 ? Math.trunc(upd.size) : 0;
+      const cost = upd.cost;
+      events.push({
+        _tag: "UsageUpdated",
+        usage: {
+          used,
+          size,
+          ...(cost && typeof cost.amount === "number" && typeof cost.currency === "string"
+            ? { costAmount: cost.amount, costCurrency: cost.currency }
+            : {}),
+        },
+        rawPayload: params,
+      });
+      break;
+    }
+    case "config_option_update": {
+      events.push({
+        _tag: "ConfigOptionsUpdated",
+        configOptions: upd.configOptions,
+        rawPayload: params,
+      });
+      break;
+    }
+    case "session_info_update": {
+      events.push({
+        _tag: "SessionInfoUpdated",
+        info: {
+          ...(upd.title !== undefined ? { title: upd.title } : {}),
+          ...(upd.updatedAt !== undefined ? { updatedAt: upd.updatedAt } : {}),
+        },
+        rawPayload: params,
+      });
+      break;
+    }
+    default: {
+      // Exhaustive against current ACP schema; keep a fallback for forward compatibility.
+      const unknownUpdate = upd as { readonly sessionUpdate?: unknown };
+      const sessionUpdate =
+        typeof unknownUpdate.sessionUpdate === "string" ? unknownUpdate.sessionUpdate : "unknown";
+      events.push({
+        _tag: "UnknownSessionUpdate",
+        sessionUpdate,
+        rawPayload: params,
+      });
+      break;
+    }
   }
 
   return { ...(modeId !== undefined ? { modeId } : {}), events };
