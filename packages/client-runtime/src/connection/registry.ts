@@ -24,12 +24,8 @@ import {
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as Connectivity from "./connectivity.ts";
-import type {
-  ConnectionAttemptError,
-  ConnectionTarget,
-  NetworkStatus,
-  SupervisorConnectionState,
-} from "./model.ts";
+import type { ConnectionAttemptError, NetworkStatus, SupervisorConnectionState } from "./model.ts";
+import { connectionTargetId } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -59,17 +55,41 @@ export class PlatformEnvironmentRemovalError extends Schema.TaggedErrorClass<Pla
   }
 }
 
+export class ConnectionNotRegisteredError extends Schema.TaggedErrorClass<ConnectionNotRegisteredError>()(
+  "ConnectionNotRegisteredError",
+  { connectionId: Schema.String },
+) {
+  override get message(): string {
+    return `Connection ${this.connectionId} is not registered.`;
+  }
+}
+
 export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistry,
   {
     readonly entries: SubscriptionRef.SubscriptionRef<
       ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
     >;
+    readonly connections: SubscriptionRef.SubscriptionRef<
+      ReadonlyMap<string, ConnectionCatalogEntry>
+    >;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
     readonly start: Effect.Effect<void>;
     readonly register: (
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly update: (
+      registration: ConnectionRegistration,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly activate: (
+      connectionId: string,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError | ConnectionNotRegisteredError>;
+    readonly removeConnection: (
+      connectionId: string,
+    ) => Effect.Effect<
+      void,
+      Persistence.ConnectionPersistenceError | ConnectionAttemptError | ConnectionNotRegisteredError
+    >;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -125,6 +145,37 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
+function installSavedConnection(
+  current: ReadonlyMap<string, ConnectionCatalogEntry>,
+  entry: ConnectionCatalogEntry,
+  retainsSiblingRoutes: boolean,
+): ReadonlyMap<string, ConnectionCatalogEntry> {
+  const connectionId = connectionTargetId(entry.target);
+  const next = new Map(current);
+  for (const [candidateId, candidate] of next) {
+    if (
+      candidateId === connectionId ||
+      (candidate.target.environmentId === entry.target.environmentId &&
+        (!retainsSiblingRoutes ||
+          candidate.target._tag === "RelayConnectionTarget" ||
+          entry.target._tag === "RelayConnectionTarget"))
+    ) {
+      next.delete(candidateId);
+    }
+  }
+  next.set(connectionId, entry);
+  return next;
+}
+
+function updateSavedConnection(
+  current: ReadonlyMap<string, ConnectionCatalogEntry>,
+  entry: ConnectionCatalogEntry,
+): ReadonlyMap<string, ConnectionCatalogEntry> {
+  const next = new Map(current);
+  next.set(connectionTargetId(entry.target), entry);
+  return next;
+}
+
 export const make = Effect.gen(function* () {
   const storage = yield* Persistence.ConnectionTargetStore;
   const registrations = yield* Persistence.ConnectionRegistrationStore;
@@ -137,32 +188,34 @@ export const make = Effect.gen(function* () {
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
+  const persistedEntries = yield* Effect.forEach(
+    persistedTargets,
+    Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (target) {
+      const profile =
+        target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
+          ? yield* profiles.get(target.connectionId)
+          : Option.none();
+      return { target, profile } satisfies ConnectionCatalogEntry;
+    }),
+    { concurrency: "unbounded" },
+  );
+  const initialConnections = new Map(
+    persistedEntries.map((entry) => [connectionTargetId(entry.target), entry]),
+  );
+  // Catalog order records the preferred route. Map replacement means the last
+  // saved route for an environment becomes its active runtime entry.
   const initialEntries = new Map(
-    yield* Effect.forEach(
-      persistedTargets,
-      Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (target) {
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
-        return [
-          target.environmentId,
-          { target, profile } satisfies ConnectionCatalogEntry,
-        ] as const;
-      }),
-      { concurrency: "unbounded" },
-    ),
+    persistedEntries.map((entry) => [entry.target.environmentId, entry]),
   );
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
+  const connections =
+    yield* SubscriptionRef.make<ReadonlyMap<string, ConnectionCatalogEntry>>(initialConnections);
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);
   const serviceScopes = yield* SubscriptionRef.make<
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
-  const persistedTargetsByEnvironment = yield* Ref.make<
-    ReadonlyMap<EnvironmentId, ConnectionTarget>
-  >(new Map(persistedTargets.map((target) => [target.environmentId, target])));
   interface LeaseLock {
     readonly semaphore: Semaphore.Semaphore;
     readonly users: number;
@@ -348,9 +401,9 @@ export const make = Effect.gen(function* () {
       return;
     }
     yield* Effect.forEach(
-      persistedTargets,
-      (target) =>
-        acquireSupervisor(target.environmentId).pipe(
+      initialEntries.keys(),
+      (environmentId) =>
+        acquireSupervisor(environmentId).pipe(
           Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
         ),
       {
@@ -398,12 +451,62 @@ export const make = Effect.gen(function* () {
           return;
         }
         yield* registrations.register(registration);
-        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+        yield* SubscriptionRef.update(connections, (current) =>
+          installSavedConnection(current, entry, registrations.retainsSiblingRoutes),
+        );
+        yield* installEntryLocked(entry);
+      }),
+    );
+  });
+
+  const update = Effect.fn("EnvironmentRegistry.update")(function* (
+    registration: ConnectionRegistration,
+  ) {
+    const entry = connectionRegistrationCatalogEntry(registration);
+    const environmentId = entry.target.environmentId;
+    const connectionId = connectionTargetId(entry.target);
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+        const active = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        yield* registrations.register(registration);
+        yield* SubscriptionRef.update(connections, (current) =>
+          updateSavedConnection(current, entry),
+        );
+        if (active !== undefined && connectionTargetId(active.target) !== connectionId) {
+          yield* registrations.activate(active.target);
+        }
+        if (active !== undefined && connectionTargetId(active.target) === connectionId) {
+          yield* installEntryLocked(entry);
+        }
+      }),
+    );
+  });
+
+  const activate = Effect.fn("EnvironmentRegistry.activate")(function* (connectionId: string) {
+    const candidate = (yield* SubscriptionRef.get(connections)).get(connectionId);
+    if (candidate === undefined) {
+      return yield* new ConnectionNotRegisteredError({ connectionId });
+    }
+    const environmentId = candidate.target.environmentId;
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = (yield* SubscriptionRef.get(connections)).get(connectionId);
+        if (entry === undefined || entry.target.environmentId !== environmentId) {
+          return yield* new ConnectionNotRegisteredError({ connectionId });
+        }
+        yield* registrations.activate(entry.target);
+        yield* SubscriptionRef.update(connections, (current) => {
           const next = new Map(current);
-          next.set(environmentId, registration.target);
+          next.delete(connectionId);
+          next.set(connectionId, entry);
           return next;
         });
-        yield* installEntryLocked(entry);
+        if (!(yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
+        }
       }),
     );
   });
@@ -436,30 +539,31 @@ export const make = Effect.gen(function* () {
             );
           }
 
-          const persistedTarget = (yield* Ref.get(persistedTargetsByEnvironment)).get(
-            target.environmentId,
+          // Desktop-managed environments retain their existing ownership
+          // semantics and remove persisted routes that they shadow.
+          const shadowed = [...(yield* SubscriptionRef.get(connections)).entries()].filter(
+            ([, candidate]) => candidate.target.environmentId === target.environmentId,
           );
-          if (persistedTarget !== undefined) {
-            yield* registrations.remove(persistedTarget).pipe(
-              Effect.tap(() =>
-                Ref.update(persistedTargetsByEnvironment, (current) => {
-                  const next = new Map(current);
-                  next.delete(target.environmentId);
-                  return next;
-                }),
-              ),
-              Effect.catch((error) =>
-                Effect.logWarning(
-                  "Could not remove a persisted registration shadowed by a platform environment.",
-                  {
-                    environmentId: target.environmentId,
-                    error,
-                  },
+          yield* Effect.forEach(
+            shadowed,
+            ([connectionId, candidate]) =>
+              registrations.remove(candidate.target).pipe(
+                Effect.tap(() =>
+                  SubscriptionRef.update(connections, (current) => {
+                    const next = new Map(current);
+                    next.delete(connectionId);
+                    return next;
+                  }),
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    "Could not remove a persisted registration shadowed by a platform environment.",
+                    { environmentId: target.environmentId, error },
+                  ),
                 ),
               ),
-            );
-          }
-
+            { discard: true },
+          );
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
         }),
       );
@@ -497,20 +601,32 @@ export const make = Effect.gen(function* () {
               ),
             );
           }
-          yield* Effect.all(
-            [
-              cache.clear(environmentId).pipe(
-                Effect.catch((error) =>
-                  Effect.logWarning("Could not clear cached environment data after removal.", {
-                    environmentId,
-                    error,
-                  }),
-                ),
-              ),
-              ownedDataCleanup.clear(environmentId),
-            ],
-            { concurrency: "unbounded", discard: true },
+          const saved = [...(yield* SubscriptionRef.get(connections)).values()].findLast(
+            (candidate) => candidate.target.environmentId === environmentId,
           );
+          if (saved !== undefined) {
+            yield* installEntryLocked(saved);
+          } else {
+            yield* SubscriptionRef.update(entries, (current) => {
+              const next = new Map(current);
+              next.delete(environmentId);
+              return next;
+            });
+            yield* Effect.all(
+              [
+                cache.clear(environmentId).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("Could not clear cached environment data after removal.", {
+                      environmentId,
+                      error,
+                    }),
+                  ),
+                ),
+                ownedDataCleanup.clear(environmentId),
+              ],
+              { concurrency: "unbounded", discard: true },
+            );
+          }
         }),
       );
     },
@@ -541,63 +657,119 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(platformRegistrations, installPlatformRegistration, { discard: true });
   });
 
+  const clearEnvironmentData = (environmentId: EnvironmentId) =>
+    Effect.all(
+      [
+        cache.clear(environmentId).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not clear cached environment data after removal.", {
+              environmentId,
+              error,
+            }),
+          ),
+        ),
+        ownedDataCleanup.clear(environmentId),
+      ],
+      { concurrency: "unbounded", discard: true },
+    );
+
+  const disconnectSsh = Effect.fn("EnvironmentRegistry.disconnectSsh")(function* (
+    entry: ConnectionCatalogEntry,
+  ) {
+    const target = entry.target;
+    if (target._tag !== "SshConnectionTarget") return;
+    const profile = yield* profiles.get(target.connectionId);
+    if (Option.isNone(profile) || !isSshConnectionProfile(profile.value)) return;
+    yield* ssh.disconnect(profile.value.target).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Could not disconnect the managed SSH environment.", {
+          environmentId: target.environmentId,
+          error,
+        }),
+      ),
+      Effect.ignore,
+    );
+  });
+
+  const removeConnectionLocked = Effect.fn("EnvironmentRegistry.removeConnectionLocked")(function* (
+    connectionId: string,
+    entry: ConnectionCatalogEntry,
+  ) {
+    const environmentId = entry.target.environmentId;
+    const active = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    yield* disconnectSsh(entry);
+    yield* registrations.remove(entry.target);
+    yield* SubscriptionRef.update(connections, (current) => {
+      const next = new Map(current);
+      next.delete(connectionId);
+      return next;
+    });
+
+    if (active === undefined || connectionTargetId(active.target) !== connectionId) return;
+    yield* closeServiceScope(environmentId);
+    const remaining = [...(yield* SubscriptionRef.get(connections)).values()].findLast(
+      (candidate) => candidate.target.environmentId === environmentId,
+    );
+    if (remaining !== undefined) {
+      yield* registrations.activate(remaining.target);
+      yield* installEntryLocked(remaining);
+      return;
+    }
+    yield* SubscriptionRef.update(entries, (current) => {
+      const next = new Map(current);
+      next.delete(environmentId);
+      return next;
+    });
+    yield* clearEnvironmentData(environmentId);
+  });
+
+  const removeConnection = Effect.fn("EnvironmentRegistry.removeConnection")(function* (
+    connectionId: string,
+  ) {
+    const candidate = (yield* SubscriptionRef.get(connections)).get(connectionId);
+    if (candidate === undefined) return yield* new ConnectionNotRegisteredError({ connectionId });
+    const environmentId = candidate.target.environmentId;
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = (yield* SubscriptionRef.get(connections)).get(connectionId);
+        if (entry === undefined || entry.target.environmentId !== environmentId) {
+          return yield* new ConnectionNotRegisteredError({ connectionId });
+        }
+        yield* removeConnectionLocked(connectionId, entry);
+      }),
+    );
+  });
+
   const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
-    return yield* withLeaseLock(
+    yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
-          return yield* new PlatformEnvironmentRemovalError({
-            environmentId,
-          });
+          return yield* new PlatformEnvironmentRemovalError({ environmentId });
         }
-        const target = (yield* getEntry(environmentId)).target;
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
-
-        yield* registrations.remove(target);
-        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
-          const next = new Map(current);
-          next.delete(environmentId);
-          return next;
-        });
-        yield* closeServiceScope(environmentId);
-        yield* SubscriptionRef.update(entries, (current) => {
-          const next = new Map(current);
-          next.delete(environmentId);
-          return next;
-        });
-        yield* Effect.all(
-          [
-            cache.clear(environmentId).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not clear cached environment data after removal.", {
-                  environmentId,
-                  error,
-                }),
-              ),
-            ),
-            ownedDataCleanup.clear(environmentId),
-          ],
-          { concurrency: "unbounded", discard: true },
+        const saved = [...(yield* SubscriptionRef.get(connections)).entries()].filter(
+          ([, entry]) => entry.target.environmentId === environmentId,
         );
-
-        if (
-          target._tag === "SshConnectionTarget" &&
-          Option.isSome(profile) &&
-          isSshConnectionProfile(profile.value)
-        ) {
-          yield* ssh.disconnect(profile.value.target).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("Could not disconnect the managed SSH environment.", {
-                environmentId,
-                error,
-              }),
-            ),
-            Effect.ignore,
-          );
+        if (saved.length === 0) {
+          return yield* new EnvironmentNotRegisteredError({ environmentId });
         }
+        const activeConnectionId = Option.fromUndefinedOr(
+          (yield* SubscriptionRef.get(entries)).get(environmentId),
+        ).pipe(
+          Option.map((entry) => connectionTargetId(entry.target)),
+          Option.getOrNull,
+        );
+        // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
+        const removalOrder = [...saved].sort(
+          ([leftId], [rightId]) =>
+            Number(leftId === activeConnectionId) - Number(rightId === activeConnectionId),
+        );
+        yield* Effect.forEach(
+          removalOrder,
+          ([connectionId, entry]) => removeConnectionLocked(connectionId, entry),
+          { discard: true },
+        );
       }),
     );
   });
@@ -659,9 +831,13 @@ export const make = Effect.gen(function* () {
 
   return EnvironmentRegistry.of({
     entries,
+    connections,
     networkStatus,
     start,
     register,
+    update,
+    activate,
+    removeConnection,
     registerPlatform,
     reconcilePlatform,
     remove,

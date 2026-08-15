@@ -36,6 +36,7 @@ import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  connectionTargetId,
   type ConnectionTarget,
   type PreparedConnection,
   type SupervisorConnectionState,
@@ -138,7 +139,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   },
 ) {
   const storedTargets = yield* Ref.make(
-    new Map(initialTargets.map((target) => [target.environmentId, target])),
+    new Map(initialTargets.map((target) => [connectionTargetId(target), target])),
   );
   const shellCache = yield* Ref.make(new Map([[TARGET.environmentId, CACHED_SNAPSHOT]]));
   const cacheClears = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
@@ -175,12 +176,14 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     list: Ref.get(storedTargets).pipe(Effect.map((targets) => [...targets.values()])),
   });
   const registrationStore = Persistence.ConnectionRegistrationStore.of({
+    retainsSiblingRoutes: true,
     register: (registration) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRegister?.(registration) ?? Effect.void;
         yield* Ref.update(storedTargets, (current) => {
           const next = new Map(current);
-          next.set(registration.target.environmentId, registration.target);
+          next.delete(connectionTargetId(registration.target));
+          next.set(connectionTargetId(registration.target), registration.target);
           return next;
         });
         switch (registration._tag) {
@@ -206,12 +209,19 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             });
         }
       }),
+    activate: (target) =>
+      Ref.update(storedTargets, (current) => {
+        const next = new Map(current);
+        next.delete(connectionTargetId(target));
+        next.set(connectionTargetId(target), target);
+        return next;
+      }),
     remove: (target) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRemove?.(target) ?? Effect.void;
         yield* Ref.update(storedTargets, (current) => {
           const next = new Map(current);
-          next.delete(target.environmentId);
+          next.delete(connectionTargetId(target));
           return next;
         });
         if (target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget") {
@@ -226,11 +236,16 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             return next;
           });
         }
-        yield* Ref.update(storedRemoteTokens, (current) => {
-          const next = new Map(current);
-          next.delete(target.environmentId);
-          return next;
-        });
+        const hasSiblingRoute = [...(yield* Ref.get(storedTargets)).values()].some(
+          (candidate) => candidate.environmentId === target.environmentId,
+        );
+        if (!hasSiblingRoute) {
+          yield* Ref.update(storedRemoteTokens, (current) => {
+            const next = new Map(current);
+            next.delete(target.environmentId);
+            return next;
+          });
+        }
       }),
   });
   const cacheStore = Persistence.EnvironmentCacheStore.of({
@@ -566,7 +581,7 @@ describe("EnvironmentRegistry", () => {
         );
 
         yield* registry.remove(TARGET.environmentId);
-        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(false);
+        expect((yield* Ref.get(harness.storedTargets)).has(connectionTargetId(TARGET))).toBe(false);
         expect((yield* Ref.get(harness.shellCache)).has(TARGET.environmentId)).toBe(false);
         expect(yield* Ref.get(harness.cacheClears)).toEqual([TARGET.environmentId]);
         expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(
@@ -589,11 +604,180 @@ describe("EnvironmentRegistry", () => {
           (state) => state.phase === "connected",
         );
 
-        expect((yield* Ref.get(harness.storedTargets)).get(RELAY_TARGET.environmentId)).toEqual(
-          RELAY_TARGET,
-        );
+        expect(
+          (yield* Ref.get(harness.storedTargets)).get(connectionTargetId(RELAY_TARGET)),
+        ).toEqual(RELAY_TARGET);
         expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("keeps multiple saved routes while running one active environment", () =>
+    Effect.gen(function* () {
+      const secondTarget = new BearerConnectionTarget({
+        environmentId: BEARER_TARGET.environmentId,
+        label: "Bearer environment on office Wi-Fi",
+        connectionId: "bearer-connection-office",
+      });
+      const secondProfile = new BearerConnectionProfile({
+        connectionId: secondTarget.connectionId,
+        environmentId: secondTarget.environmentId,
+        label: secondTarget.label,
+        httpBaseUrl: "http://192.168.50.10:3773",
+        wsBaseUrl: "ws://192.168.50.10:3773",
+      });
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(
+          new BearerConnectionRegistration({
+            target: secondTarget,
+            profile: secondProfile,
+            credential: new BearerConnectionCredential({ token: "office-token" }),
+          }),
+        );
+
+        expect([...(yield* SubscriptionRef.get(registry.connections)).keys()]).toEqual([
+          BEARER_TARGET.connectionId,
+          secondTarget.connectionId,
+        ]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toEqual(secondTarget);
+        expect([...(yield* Ref.get(harness.storedTargets)).values()]).toEqual([
+          BEARER_TARGET,
+          secondTarget,
+        ]);
+
+        yield* registry.activate(BEARER_TARGET.connectionId);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toEqual(BEARER_TARGET);
+        expect([...(yield* Ref.get(harness.storedTargets)).values()]).toEqual([
+          secondTarget,
+          BEARER_TARGET,
+        ]);
+
+        const updatedSecondTarget = new BearerConnectionTarget({
+          ...secondTarget,
+          label: "Renamed office route",
+        });
+        yield* registry.update(
+          new BearerConnectionRegistration({
+            target: updatedSecondTarget,
+            profile: new BearerConnectionProfile({
+              ...secondProfile,
+              label: updatedSecondTarget.label,
+            }),
+            credential: new BearerConnectionCredential({ token: "updated-office-token" }),
+          }),
+        );
+        expect([...(yield* SubscriptionRef.get(registry.connections)).keys()]).toEqual([
+          secondTarget.connectionId,
+          BEARER_TARGET.connectionId,
+        ]);
+        expect([...(yield* Ref.get(harness.storedTargets)).values()]).toEqual([
+          updatedSecondTarget,
+          BEARER_TARGET,
+        ]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toEqual(BEARER_TARGET);
+
+        const updatedHomeTarget = new BearerConnectionTarget({
+          ...BEARER_TARGET,
+          label: "Renamed home route",
+        });
+        yield* registry.update(
+          new BearerConnectionRegistration({
+            target: updatedHomeTarget,
+            profile: new BearerConnectionProfile({
+              ...BEARER_PROFILE,
+              label: updatedHomeTarget.label,
+            }),
+            credential: BEARER_CREDENTIAL,
+          }),
+        );
+        expect([...(yield* SubscriptionRef.get(registry.connections)).keys()]).toEqual([
+          secondTarget.connectionId,
+          BEARER_TARGET.connectionId,
+        ]);
+        expect([...(yield* Ref.get(harness.storedTargets)).values()]).toEqual([
+          updatedSecondTarget,
+          updatedHomeTarget,
+        ]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toEqual(updatedHomeTarget);
+
+        yield* registry.removeConnection(secondTarget.connectionId);
+        expect(
+          (yield* SubscriptionRef.get(registry.connections)).has(secondTarget.connectionId),
+        ).toBe(false);
+        expect([...(yield* Ref.get(harness.storedTargets)).values()]).toEqual([updatedHomeTarget]);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
+
+        yield* registry.removeConnection(BEARER_TARGET.connectionId);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).has(BEARER_TARGET.environmentId),
+        ).toBe(false);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([BEARER_TARGET.environmentId]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("removes every route without connecting to an intermediate failover", () =>
+    Effect.gen(function* () {
+      const secondTarget = new BearerConnectionTarget({
+        environmentId: BEARER_TARGET.environmentId,
+        label: "Second bearer route",
+        connectionId: "bearer-connection-second",
+      });
+      const secondProfile = new BearerConnectionProfile({
+        connectionId: secondTarget.connectionId,
+        environmentId: secondTarget.environmentId,
+        label: secondTarget.label,
+        httpBaseUrl: "http://192.168.50.10:3773",
+        wsBaseUrl: "ws://192.168.50.10:3773",
+      });
+      const harness = yield* makeHarness(
+        [BEARER_TARGET, secondTarget],
+        [BEARER_PROFILE, secondProfile],
+        [
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+          [secondTarget.connectionId, new BearerConnectionCredential({ token: "second-token" })],
+        ],
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.activate(BEARER_TARGET.connectionId);
+        const sessionsBeforeRemoval = (yield* Ref.get(harness.sessions)).length;
+
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() => {
+            const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+            Reflect.deleteProperty(Array.prototype, "toSorted");
+            return descriptor;
+          }),
+          () => registry.remove(BEARER_TARGET.environmentId),
+          (descriptor) =>
+            Effect.sync(() => {
+              if (descriptor !== undefined) {
+                Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
+              }
+            }),
+        );
+
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(sessionsBeforeRemoval);
+        expect((yield* Ref.get(harness.storedTargets)).size).toBe(0);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([BEARER_TARGET.environmentId]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
 
@@ -677,9 +861,9 @@ describe("EnvironmentRegistry", () => {
         yield* registry.removeRelayEnvironments();
 
         const targets = yield* Ref.get(harness.storedTargets);
-        expect(targets.has(RELAY_TARGET.environmentId)).toBe(false);
-        expect(targets.has(SECOND_RELAY_TARGET.environmentId)).toBe(false);
-        expect(targets.get(BEARER_TARGET.environmentId)).toEqual(BEARER_TARGET);
+        expect(targets.has(connectionTargetId(RELAY_TARGET))).toBe(false);
+        expect(targets.has(connectionTargetId(SECOND_RELAY_TARGET))).toBe(false);
+        expect(targets.get(connectionTargetId(BEARER_TARGET))).toEqual(BEARER_TARGET);
         expect(yield* Ref.get(harness.cacheClears)).toEqual(
           expect.arrayContaining([RELAY_TARGET.environmentId, SECOND_RELAY_TARGET.environmentId]),
         );
@@ -721,7 +905,9 @@ describe("EnvironmentRegistry", () => {
         expect((yield* SubscriptionRef.get(registry.entries)).has(RELAY_TARGET.environmentId)).toBe(
           true,
         );
-        expect((yield* Ref.get(harness.storedTargets)).has(RELAY_TARGET.environmentId)).toBe(true);
+        expect((yield* Ref.get(harness.storedTargets)).has(connectionTargetId(RELAY_TARGET))).toBe(
+          true,
+        );
         expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
         expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
@@ -771,7 +957,7 @@ describe("EnvironmentRegistry", () => {
           (state) => state.phase === "connected",
         );
 
-        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(false);
+        expect((yield* Ref.get(harness.storedTargets)).has(connectionTargetId(TARGET))).toBe(false);
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);
@@ -800,14 +986,14 @@ describe("EnvironmentRegistry", () => {
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);
-        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(false);
+        expect((yield* Ref.get(harness.storedTargets)).has(connectionTargetId(TARGET))).toBe(false);
 
         yield* registry.register(new RelayConnectionRegistration({ target: shadowedTarget }));
 
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);
-        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(false);
+        expect((yield* Ref.get(harness.storedTargets)).has(connectionTargetId(TARGET))).toBe(false);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

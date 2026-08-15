@@ -50,6 +50,27 @@ export function createEnvironmentCatalogAtoms<R, E>(
     Option.getOrElse(AsyncResult.value(get(catalogAtom)), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
   ).pipe(Atom.withLabel("environment-catalog-value"));
 
+  const connectionsAtom = runtime.atom(
+    Stream.unwrap(
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.map((registry) => SubscriptionRef.changes(registry.connections)),
+      ),
+    ),
+    {
+      initialValue: new Map<string, ConnectionCatalogEntry>() as ReadonlyMap<
+        string,
+        ConnectionCatalogEntry
+      >,
+    },
+  );
+
+  const connectionsValueAtom = Atom.make((get) =>
+    Option.getOrElse(
+      AsyncResult.value(get(connectionsAtom)),
+      () => new Map<string, ConnectionCatalogEntry>(),
+    ),
+  ).pipe(Atom.withLabel("environment-connections-value"));
+
   const networkStatusAtom = runtime.atom(
     Stream.unwrap(
       EnvironmentRegistry.EnvironmentRegistry.pipe(
@@ -97,6 +118,24 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.remove(environmentId)),
       ),
   });
+  const activate = createRuntimeCommand(runtime, {
+    label: "environment-catalog:activate",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (connectionId: string) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.activate(connectionId)),
+      ),
+  });
+  const removeConnection = createRuntimeCommand(runtime, {
+    label: "environment-catalog:remove-connection",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (connectionId: string) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.removeConnection(connectionId)),
+      ),
+  });
   const removeRelayEnvironments = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,
@@ -115,16 +154,33 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.retryNow(environmentId)),
       ),
   });
+  const retryConnection = createRuntimeCommand(runtime, {
+    label: "environment-catalog:retry-connection",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (connectionId: string) =>
+      Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.activate(connectionId);
+        const entry = (yield* SubscriptionRef.get(registry.connections)).get(connectionId);
+        if (entry !== undefined) yield* registry.retryNow(entry.target.environmentId);
+      }),
+  });
 
   return {
     catalogAtom,
     catalogValueAtom,
+    connectionsAtom,
+    connectionsValueAtom,
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
     register,
     remove,
+    activate,
+    removeConnection,
     removeRelayEnvironments,
     retryNow,
+    retryConnection,
   };
 }

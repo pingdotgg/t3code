@@ -1,7 +1,6 @@
 import { SymbolView } from "../../components/AppSymbol";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
@@ -16,6 +15,7 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
+  if (!environment.isActive) return "Saved route";
   return connectionStatusText({
     phase: environment.connectionState,
     error: environment.connectionError,
@@ -27,10 +27,10 @@ export function ConnectionEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly expanded: boolean;
   readonly onToggle: () => void;
-  readonly onReconnect: (environmentId: EnvironmentId) => void;
-  readonly onRemove: (environmentId: EnvironmentId) => void;
+  readonly onReconnect: (connectionId: string) => void;
+  readonly onRemove: (connectionId: string) => void;
   readonly onUpdate: (
-    environmentId: EnvironmentId,
+    connectionId: string,
     updates: { readonly label: string; readonly displayUrl: string },
   ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
@@ -47,7 +47,7 @@ export function ConnectionEnvironmentRow(props: {
     props.environment.connectionState === "connecting" ||
     props.environment.connectionState === "reconnecting";
   const handleSave = useCallback(async () => {
-    const result = await props.onUpdate(props.environment.environmentId, {
+    const result = await props.onUpdate(props.environment.connectionId, {
       label: label.trim(),
       displayUrl: url.trim(),
     });
@@ -183,7 +183,7 @@ export function ConnectionEnvironmentRow(props: {
 
             <Pressable
               className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70"
-              onPress={() => props.onReconnect(props.environment.environmentId)}
+              onPress={() => props.onReconnect(props.environment.connectionId)}
             >
               <SymbolView
                 name="arrow.clockwise"
@@ -195,7 +195,7 @@ export function ConnectionEnvironmentRow(props: {
 
             <Pressable
               className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-danger-border bg-danger active:opacity-70"
-              onPress={() => props.onRemove(props.environment.environmentId)}
+              onPress={() => props.onRemove(props.environment.connectionId)}
             >
               <SymbolView name="trash" size={14} tintColor={dangerFg} type="monochrome" />
             </Pressable>

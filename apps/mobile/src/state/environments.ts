@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
+  connectionTargetId,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -15,6 +16,11 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly label: string;
   readonly displayUrl: string | null;
   readonly relayManaged: boolean;
+}
+
+export interface EnvironmentConnectionPresentation extends EnvironmentPresentation {
+  readonly connectionId: string;
+  readonly isActive: boolean;
 }
 
 export function projectEnvironmentPresentation(
@@ -49,6 +55,33 @@ export function useEnvironments() {
     environments,
     presentationById,
   };
+}
+
+export function useEnvironmentConnections() {
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const connections = useAtomValue(environmentCatalog.connectionsValueAtom);
+  const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+
+  const environments = useMemo(
+    () =>
+      [...connections.entries()].flatMap(([connectionId, entry]) => {
+        const active = presentationById.get(entry.target.environmentId);
+        if (active === undefined) return [];
+        return [
+          {
+            ...projectEnvironmentPresentation(entry.target.environmentId, {
+              ...active,
+              entry,
+            }),
+            connectionId,
+            isActive: connectionTargetId(active.entry.target) === connectionId,
+          } satisfies EnvironmentConnectionPresentation,
+        ];
+      }),
+    [connections, presentationById],
+  );
+
+  return { isReady: catalog.isReady, environments };
 }
 
 export function useEnvironmentConnectionState(environmentId: EnvironmentId) {

@@ -2,6 +2,7 @@ import {
   ConnectionPersistenceError,
   ConnectionRegistrationStore,
   ConnectionTargetStore,
+  activateConnectionInCatalog,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   removeCatalogValue,
@@ -40,9 +41,14 @@ export const connectionStorageLayer = Layer.effectContext(
       ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
+      retainsSiblingRoutes: true,
       register: (registration) =>
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
+          .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
+      activate: (target) =>
+        catalog
+          .update((document) => activateConnectionInCatalog(document, target))
           .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
       remove: (target) =>
         catalog

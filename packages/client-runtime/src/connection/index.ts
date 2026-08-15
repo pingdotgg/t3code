@@ -24,6 +24,7 @@ export {
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
 export {
+  ConnectionNotRegisteredError,
   EnvironmentNotRegisteredError,
   EnvironmentRegistry,
   PlatformEnvironmentRemovalError,

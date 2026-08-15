@@ -11,6 +11,8 @@ function connectedEnvironment(
   },
 ): ConnectedEnvironmentSummary {
   return {
+    connectionId: input.connectionId ?? `connection:${input.environmentId}`,
+    isActive: input.isActive ?? true,
     environmentId: EnvironmentId.make(input.environmentId),
     environmentLabel: input.environmentLabel ?? input.environmentId,
     displayUrl: input.displayUrl ?? `https://${input.environmentId}.example.test/`,

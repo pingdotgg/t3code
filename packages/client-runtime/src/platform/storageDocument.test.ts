@@ -17,7 +17,9 @@ import {
 } from "../connection/model.ts";
 import {
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  activateConnectionInCatalog,
   registerConnectionInCatalog,
+  replaceEnvironmentConnectionInCatalog,
   removeConnectionFromCatalog,
 } from "./storageDocument.ts";
 
@@ -70,6 +72,96 @@ describe("ConnectionCatalogDocument", () => {
         credential: BEARER_CREDENTIAL,
       },
     ]);
+  });
+
+  it("retains multiple bearer routes to the same environment", () => {
+    const secondTarget = new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote on office Wi-Fi",
+      connectionId: "bearer-2",
+    });
+    const secondProfile = new BearerConnectionProfile({
+      connectionId: secondTarget.connectionId,
+      environmentId: ENVIRONMENT_ID,
+      label: secondTarget.label,
+      httpBaseUrl: "http://192.168.50.10:3773",
+      wsBaseUrl: "ws://192.168.50.10:3773",
+    });
+    const secondCredential = new BearerConnectionCredential({ token: "bearer-token-2" });
+    const first = registerConnectionInCatalog(
+      { ...EMPTY_CONNECTION_CATALOG_DOCUMENT, remoteDpopTokens: [REMOTE_TOKEN] },
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    const both = registerConnectionInCatalog(
+      first,
+      new BearerConnectionRegistration({
+        target: secondTarget,
+        profile: secondProfile,
+        credential: secondCredential,
+      }),
+    );
+
+    expect(both.targets).toEqual([BEARER_TARGET, secondTarget]);
+    expect(both.profiles).toEqual([BEARER_PROFILE, secondProfile]);
+    expect(both.credentials).toEqual([
+      { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
+      { connectionId: secondTarget.connectionId, credential: secondCredential },
+    ]);
+
+    const firstActive = activateConnectionInCatalog(both, BEARER_TARGET);
+    expect(firstActive.targets).toEqual([secondTarget, BEARER_TARGET]);
+
+    const remaining = removeConnectionFromCatalog(firstActive, BEARER_TARGET);
+    expect(remaining.targets).toEqual([secondTarget]);
+    expect(remaining.profiles).toEqual([secondProfile]);
+    expect(remaining.credentials).toEqual([
+      { connectionId: secondTarget.connectionId, credential: secondCredential },
+    ]);
+    expect(remaining.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
+
+    expect(removeConnectionFromCatalog(remaining, secondTarget)).toEqual(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+    );
+  });
+
+  it("supports clients that retain one route per environment", () => {
+    const replacementTarget = new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote on another network",
+      connectionId: "bearer-replacement",
+    });
+    const replacementProfile = new BearerConnectionProfile({
+      connectionId: replacementTarget.connectionId,
+      environmentId: ENVIRONMENT_ID,
+      label: replacementTarget.label,
+      httpBaseUrl: "http://192.168.50.10:3773",
+      wsBaseUrl: "ws://192.168.50.10:3773",
+    });
+    const first = registerConnectionInCatalog(
+      { ...EMPTY_CONNECTION_CATALOG_DOCUMENT, remoteDpopTokens: [REMOTE_TOKEN] },
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    const replaced = replaceEnvironmentConnectionInCatalog(
+      first,
+      new BearerConnectionRegistration({
+        target: replacementTarget,
+        profile: replacementProfile,
+        credential: new BearerConnectionCredential({ token: "replacement-token" }),
+      }),
+    );
+
+    expect(replaced.targets).toEqual([replacementTarget]);
+    expect(replaced.profiles).toEqual([replacementProfile]);
+    expect(replaced.credentials).toHaveLength(1);
+    expect(replaced.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
   });
 
   it("replaces obsolete connection metadata without discarding a reusable DPoP token", () => {

@@ -1,29 +1,46 @@
 import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  BearerConnectionRegistration,
+} from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
+  reuseSavedPairingRoute,
 } from "./onboarding.ts";
 
-const CLIENT_PRESENTATION_LAYER = Layer.succeed(
-  ClientPresentation,
-  ClientPresentation.of({
-    metadata: {
-      label: "T3 Code Test",
-      deviceType: "desktop",
-      os: "Test OS",
-    },
-    scopes: AuthStandardClientScopes,
-  }),
+let nextCryptoByte = 0;
+
+const CLIENT_PRESENTATION_LAYER = Layer.merge(
+  Layer.succeed(
+    ClientPresentation,
+    ClientPresentation.of({
+      metadata: {
+        label: "T3 Code Test",
+        deviceType: "desktop",
+        os: "Test OS",
+      },
+      scopes: AuthStandardClientScopes,
+    }),
+  ),
+  Layer.succeed(
+    Crypto.Crypto,
+    Crypto.make({
+      randomBytes: (size) => new Uint8Array(size).fill((nextCryptoByte += 1) % 256),
+      digest: (_algorithm, data) => Effect.succeed(data),
+    }),
+  ),
 );
 
 function pairingHttpLayer(
@@ -88,12 +105,12 @@ describe("connection onboarding", () => {
         target: {
           environmentId: "environment-paired",
           label: "Paired environment",
-          connectionId: "bearer:environment-paired",
+          connectionId: expect.stringMatching(/^bearer:environment-paired:/),
         },
         profile: {
           environmentId: "environment-paired",
           label: "Paired environment",
-          connectionId: "bearer:environment-paired",
+          connectionId: expect.stringMatching(/^bearer:environment-paired:/),
           httpBaseUrl: "https://remote.example.test/",
           wsBaseUrl: "wss://remote.example.test/",
         },
@@ -141,6 +158,102 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("uses distinct route identities for different addresses of one environment", () =>
+    Effect.gen(function* () {
+      const home = yield* preparePairingRegistration({
+        host: "http://192.168.1.10:3773",
+        pairingCode: "home-token",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer([]))));
+      const office = yield* preparePairingRegistration({
+        host: "http://192.168.50.10:3773",
+        pairingCode: "office-token",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer([]))));
+
+      expect(home.target.environmentId).toBe(office.target.environmentId);
+      expect(home.target.connectionId).not.toBe(office.target.connectionId);
+      expect(home.profile.httpBaseUrl).toBe("http://192.168.1.10:3773/");
+      expect(office.profile.httpBaseUrl).toBe("http://192.168.50.10:3773/");
+    }),
+  );
+
+  it.effect("does not reuse a route identity derived from its previous address", () =>
+    Effect.gen(function* () {
+      const first = yield* preparePairingRegistration({
+        host: "http://192.168.1.10:3773",
+        pairingCode: "first-token",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer([]))));
+      const edited = {
+        target: first.target,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            ...first.profile,
+            httpBaseUrl: "http://192.168.50.10:3773/",
+            wsBaseUrl: "ws://192.168.50.10:3773/",
+          }),
+        ),
+      };
+      const pairedAgain = yield* preparePairingRegistration({
+        host: "http://192.168.1.10:3773",
+        pairingCode: "second-token",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer([]))));
+      const resolved = reuseSavedPairingRoute(
+        pairedAgain,
+        new Map([[first.target.connectionId, edited]]),
+      );
+
+      expect(resolved.target.connectionId).not.toBe(first.target.connectionId);
+      expect(resolved.profile.httpBaseUrl).toBe(first.profile.httpBaseUrl);
+    }),
+  );
+
+  it("reuses a legacy route identity when re-pairing the same address", () => {
+    const environmentId = EnvironmentId.make("environment-paired");
+    const target = new BearerConnectionTarget({
+      environmentId,
+      label: "Paired environment",
+      connectionId: "bearer:environment-paired:new-route",
+    });
+    const registration = new BearerConnectionRegistration({
+      target,
+      profile: new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId,
+        label: target.label,
+        httpBaseUrl: "http://192.168.1.10:3773/",
+        wsBaseUrl: "ws://192.168.1.10:3773/",
+      }),
+      credential: new BearerConnectionCredential({ token: "new-token" }),
+    });
+    const legacyConnectionId = "bearer:environment-paired";
+    const resolved = reuseSavedPairingRoute(
+      registration,
+      new Map([
+        [
+          legacyConnectionId,
+          {
+            target: new BearerConnectionTarget({
+              environmentId,
+              label: target.label,
+              connectionId: legacyConnectionId,
+            }),
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: legacyConnectionId,
+                environmentId,
+                label: target.label,
+                httpBaseUrl: registration.profile.httpBaseUrl,
+                wsBaseUrl: registration.profile.wsBaseUrl,
+              }),
+            ),
+          },
+        ],
+      ]),
+    );
+
+    expect(resolved.target.connectionId).toBe(legacyConnectionId);
+    expect(resolved.credential.token).toBe("new-token");
+  });
+
   it.effect("rejects invalid pairing details before making a request", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
@@ -166,7 +279,7 @@ describe("connection onboarding", () => {
       const environmentId = EnvironmentId.make("environment-paired");
       const registration = yield* prepareBearerConnectionUpdate({
         input: {
-          environmentId,
+          connectionId: "bearer:environment-paired",
           label: "  Renamed environment  ",
           httpBaseUrl: "http://100.65.180.100:3773/path",
         },

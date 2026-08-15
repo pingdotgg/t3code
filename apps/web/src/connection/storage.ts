@@ -4,9 +4,10 @@ import {
   ConnectionPersistenceError,
   ConnectionRegistrationStore,
   ConnectionTargetStore,
+  activateConnectionInCatalog,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
-  registerConnectionInCatalog,
+  replaceEnvironmentConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
   replaceCatalogValue,
@@ -377,9 +378,14 @@ export const connectionStorageLayer = Layer.effectContext(
       ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
+      retainsSiblingRoutes: false,
       register: (registration) =>
         catalog
-          .update((document) => registerConnectionInCatalog(document, registration))
+          .update((document) => replaceEnvironmentConnectionInCatalog(document, registration))
+          .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
+      activate: (target) =>
+        catalog
+          .update((document) => activateConnectionInCatalog(document, target))
           .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
       remove: (target) =>
         catalog

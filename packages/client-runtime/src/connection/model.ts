@@ -55,6 +55,24 @@ export type PersistedConnectionTarget = typeof PersistedConnectionTarget.Type;
 
 export type ConnectionTargetKind = ConnectionTarget["_tag"];
 
+/**
+ * Stable client-side identity for one saved route to an environment. An
+ * environment may be reachable through several bearer routes (for example,
+ * the same laptop on home and office LANs), while relay and primary targets
+ * have one implicit route each.
+ */
+export function connectionTargetId(target: ConnectionTarget): string {
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return `primary:${target.environmentId}`;
+    case "RelayConnectionTarget":
+      return `relay:${target.environmentId}`;
+    case "BearerConnectionTarget":
+    case "SshConnectionTarget":
+      return target.connectionId;
+  }
+}
+
 export type NetworkStatus = "unknown" | "offline" | "online";
 
 export const ConnectionTransientReason = Schema.Literals([

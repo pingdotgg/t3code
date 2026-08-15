@@ -5,7 +5,11 @@ import {
   ConnectionCredential,
   ConnectionProfile,
 } from "../connection/catalog.ts";
-import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import {
+  type ConnectionTarget,
+  PersistedConnectionTarget,
+  connectionTargetId,
+} from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
@@ -65,13 +69,17 @@ function removeConnectionMetadata(
   removeRemoteToken: boolean,
 ): ConnectionCatalogDocument {
   const connectionId = connectionIdOf(target);
+  const targets = removeCatalogValue(
+    document.targets,
+    connectionTargetId,
+    connectionTargetId(target),
+  );
+  const hasSiblingRoute = targets.some(
+    (candidate) => candidate.environmentId === target.environmentId,
+  );
   return {
     ...document,
-    targets: removeCatalogValue(
-      document.targets,
-      (value) => value.environmentId,
-      target.environmentId,
-    ),
+    targets,
     profiles:
       connectionId === null
         ? document.profiles
@@ -80,13 +88,14 @@ function removeConnectionMetadata(
       connectionId === null
         ? document.credentials
         : removeCatalogValue(document.credentials, (value) => value.connectionId, connectionId),
-    remoteDpopTokens: removeRemoteToken
-      ? removeCatalogValue(
-          document.remoteDpopTokens,
-          (value) => value.environmentId,
-          target.environmentId,
-        )
-      : document.remoteDpopTokens,
+    remoteDpopTokens:
+      removeRemoteToken && !hasSiblingRoute
+        ? removeCatalogValue(
+            document.remoteDpopTokens,
+            (value) => value.environmentId,
+            target.environmentId,
+          )
+        : document.remoteDpopTokens,
   };
 }
 
@@ -95,14 +104,19 @@ export function registerConnectionInCatalog(
   registration: ConnectionRegistration,
 ): ConnectionCatalogDocument {
   const target = registration.target;
-  const previous = document.targets.find(
-    (candidate) => candidate.environmentId === target.environmentId,
+  const replaced = document.targets.filter(
+    (candidate) =>
+      connectionTargetId(candidate) === connectionTargetId(target) ||
+      (candidate.environmentId === target.environmentId &&
+        (candidate._tag === "RelayConnectionTarget" || target._tag === "RelayConnectionTarget")),
   );
-  const cleaned =
-    previous === undefined ? document : removeConnectionMetadata(document, previous, false);
+  const cleaned = replaced.reduce(
+    (current, previous) => removeConnectionMetadata(current, previous, false),
+    document,
+  );
   const next: ConnectionCatalogDocument = {
     ...cleaned,
-    targets: replaceCatalogValue(cleaned.targets, (value) => value.environmentId, target),
+    targets: replaceCatalogValue(cleaned.targets, connectionTargetId, target),
   };
 
   switch (registration._tag) {
@@ -131,6 +145,38 @@ export function registerConnectionInCatalog(
         ),
       };
   }
+}
+
+/**
+ * Register one route while retaining the legacy single-route-per-environment
+ * policy used by clients that do not expose route management UI.
+ */
+export function replaceEnvironmentConnectionInCatalog(
+  document: ConnectionCatalogDocument,
+  registration: ConnectionRegistration,
+): ConnectionCatalogDocument {
+  const cleaned = document.targets
+    .filter((target) => target.environmentId === registration.target.environmentId)
+    .reduce((current, target) => removeConnectionMetadata(current, target, false), document);
+  return registerConnectionInCatalog(cleaned, registration);
+}
+
+export function activateConnectionInCatalog(
+  document: ConnectionCatalogDocument,
+  target: ConnectionTarget,
+): ConnectionCatalogDocument {
+  const targetId = connectionTargetId(target);
+  const saved = document.targets.find((candidate) => connectionTargetId(candidate) === targetId);
+  if (saved === undefined) {
+    return document;
+  }
+  return {
+    ...document,
+    targets: [
+      ...document.targets.filter((candidate) => connectionTargetId(candidate) !== targetId),
+      saved,
+    ],
+  };
 }
 
 export function removeConnectionFromCatalog(

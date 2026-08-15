@@ -48,8 +48,12 @@ export class ConnectionTargetStore extends Context.Service<
 export class ConnectionRegistrationStore extends Context.Service<
   ConnectionRegistrationStore,
   {
+    readonly retainsSiblingRoutes: boolean;
     readonly register: (
       registration: ConnectionRegistration,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    readonly activate: (
+      target: ConnectionTarget,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly remove: (target: ConnectionTarget) => Effect.Effect<void, ConnectionPersistenceError>;
   }

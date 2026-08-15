@@ -133,6 +133,8 @@ export function useRemoteConnectionStatus() {
   const connectedEnvironments = useMemo<ReadonlyArray<ConnectedEnvironmentSummary>>(
     () =>
       workspace.environments.map((environment) => ({
+        connectionId: `environment:${environment.environmentId}`,
+        isActive: true,
         environmentId: environment.environmentId,
         environmentLabel: environment.environmentLabel,
         displayUrl: environment.displayUrl,
@@ -155,7 +157,8 @@ export function useRemoteConnections() {
   const controller = useConnectionController();
   const connectionPairingUrl = useAtomValue(connectionPairingUrlAtom);
   const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
-  const { connectedEnvironments, connectionError, connectionState } = useRemoteConnectionStatus();
+  const { connectionError, connectionState } = useRemoteConnectionStatus();
+  const connectedEnvironments = controller.connectedEnvironments;
 
   const onChangeConnectionPairingUrl = useCallback((pairingUrl: string) => {
     appAtomRegistry.set(connectionPairingUrlAtom, pairingUrl);
@@ -179,36 +182,38 @@ export function useRemoteConnections() {
     [connectionPairingUrl, controller],
   );
 
+  const onReconnectConnection = useCallback(
+    (connectionId: string) => controller.retryConnection(connectionId),
+    [controller],
+  );
   const onReconnectEnvironment = useCallback(
     (environmentId: EnvironmentId) => controller.retryEnvironment(environmentId),
     [controller],
   );
   const onUpdateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) => controller.updateEnvironment(environmentId, updates),
+    (connectionId: string, updates: { readonly label: string; readonly displayUrl: string }) =>
+      controller.updateEnvironment(connectionId, updates),
     [controller],
   );
 
   const onRemoveEnvironmentPress = useCallback(
-    (environmentId: EnvironmentId) => {
+    (connectionId: string) => {
       const environment = connectedEnvironments.find(
-        (candidate) => candidate.environmentId === environmentId,
+        (candidate) => candidate.connectionId === connectionId,
       );
       if (!environment) {
         return;
       }
       Alert.alert(
-        "Remove environment?",
-        `Disconnect and forget ${environment.environmentLabel} on this device.`,
+        "Remove saved address?",
+        `Forget ${environment.displayUrl || environment.environmentLabel} on this device.`,
         [
           { text: "Cancel", style: "cancel" },
           {
             text: "Remove",
             style: "destructive",
             onPress: () => {
-              void controller.removeEnvironment(environmentId);
+              void controller.removeConnection(connectionId);
             },
           },
         ],
@@ -226,6 +231,7 @@ export function useRemoteConnections() {
     connectedEnvironmentCount: connectedEnvironments.length,
     onChangeConnectionPairingUrl,
     onConnectPress,
+    onReconnectConnection,
     onReconnectEnvironment,
     onUpdateEnvironment,
     onRemoveEnvironmentPress,

@@ -16,10 +16,10 @@ import {
   connectPairingUrl as connectPairingUrlAtom,
   updateBearerConnection,
 } from "../../connection/onboarding";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironmentConnections } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { projectWorkspaceEnvironment, type WorkspaceEnvironment } from "../../state/workspaceModel";
+import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 
 export interface RelayEnvironmentView {
   readonly environment: RelayClientEnvironmentRecord;
@@ -30,7 +30,7 @@ export interface RelayEnvironmentView {
 }
 
 export function useConnectionController() {
-  const { environments } = useEnvironments();
+  const { environments } = useEnvironmentConnections();
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const connectPairingUrlMutation = useAtomCommand(connectPairingUrlAtom, {
     reportFailure: false,
@@ -38,14 +38,33 @@ export function useConnectionController() {
   const updateBearer = useAtomCommand(updateBearerConnection, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, "environment register");
   const removeEnvironmentMutation = useAtomCommand(environmentCatalog.remove, "environment remove");
+  const removeConnectionMutation = useAtomCommand(
+    environmentCatalog.removeConnection,
+    "connection remove",
+  );
   const retryEnvironmentMutation = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const retryConnectionMutation = useAtomCommand(
+    environmentCatalog.retryConnection,
+    "connection retry",
+  );
   const refreshRelayEnvironments = useAtomCommand(
     relayEnvironmentDiscovery.refresh,
     "relay environment refresh",
   );
 
-  const connectedEnvironments = useMemo<ReadonlyArray<WorkspaceEnvironment>>(
-    () => environments.map(projectWorkspaceEnvironment),
+  const connectedEnvironments = useMemo<ReadonlyArray<ConnectedEnvironmentSummary>>(
+    () =>
+      environments.map((environment) => ({
+        connectionId: environment.connectionId,
+        isActive: environment.isActive,
+        environmentId: environment.environmentId,
+        environmentLabel: environment.label,
+        displayUrl: environment.displayUrl ?? "",
+        isRelayManaged: environment.relayManaged,
+        connectionState: environment.isActive ? environment.connection.phase : "available",
+        connectionError: environment.isActive ? environment.connection.error : null,
+        connectionErrorTraceId: environment.isActive ? environment.connection.traceId : null,
+      })),
     [environments],
   );
   const registeredIds = useMemo(
@@ -88,17 +107,22 @@ export function useConnectionController() {
     (environmentId: EnvironmentId) => removeEnvironmentMutation(environmentId),
     [removeEnvironmentMutation],
   );
+  const removeConnection = useCallback(
+    (connectionId: string) => removeConnectionMutation(connectionId),
+    [removeConnectionMutation],
+  );
   const retryEnvironment = useCallback(
     (environmentId: EnvironmentId) => retryEnvironmentMutation(environmentId),
     [retryEnvironmentMutation],
   );
+  const retryConnection = useCallback(
+    (connectionId: string) => retryConnectionMutation(connectionId),
+    [retryConnectionMutation],
+  );
   const updateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) =>
+    (connectionId: string, updates: { readonly label: string; readonly displayUrl: string }) =>
       updateBearer({
-        environmentId,
+        connectionId,
         label: updates.label,
         httpBaseUrl: updates.displayUrl,
       }),
@@ -118,7 +142,9 @@ export function useConnectionController() {
     connectPairingUrl,
     connectRelayEnvironment,
     removeEnvironment,
+    removeConnection,
     retryEnvironment,
+    retryConnection,
     updateEnvironment,
     refreshRelayEnvironments,
   };
