@@ -201,6 +201,7 @@ export function useSyncedClientPreferences(): void {
           shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
       })),
       now: new Date().toISOString(),
+      normalizeThemeId,
     });
     if (reconciliation.localPatch !== null) {
       savePreferences({

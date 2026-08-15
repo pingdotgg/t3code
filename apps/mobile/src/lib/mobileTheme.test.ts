@@ -305,8 +305,8 @@ describe("mobile theme color helpers", () => {
     expect(() => withAlpha("rgb(0, 0, 0)", "1f")).toThrow(/6- or 8-digit hex/i);
   });
 
-  it("replaces an existing hex alpha for imported colors", () => {
-    expect(withAlpha("#11223380", "1f")).toBe("#1122331f");
+  it("combines an existing hex alpha for imported colors", () => {
+    expect(withAlpha("#00000014", "cc")).toBe("#00000010");
   });
 });
 

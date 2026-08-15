@@ -579,7 +579,10 @@ export function withAlpha(color: string, alpha: string): string {
   if (!/^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(color) || !/^[\da-f]{2}$/i.test(alpha)) {
     throw new Error(`Expected a 6- or 8-digit hex color and 2-digit alpha, received ${color}`);
   }
-  return `${color.slice(0, 7)}${alpha}`;
+  const existingAlpha = color.length === 9 ? Number.parseInt(color.slice(7), 16) : 255;
+  const requestedAlpha = Number.parseInt(alpha, 16);
+  const combinedAlpha = Math.round((existingAlpha * requestedAlpha) / 255);
+  return `${color.slice(0, 7)}${combinedAlpha.toString(16).padStart(2, "0")}`;
 }
 
 const T3_CODE_MARKDOWN_VARIABLES = {

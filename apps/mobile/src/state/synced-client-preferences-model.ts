@@ -489,6 +489,7 @@ export function reconcileSyncedClientPreferences(input: {
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
   readonly fields?: ReadonlyArray<SyncedClientPreferenceField>;
+  readonly normalizeThemeId?: (themeId: string) => string;
 }) {
   if (input.environments.length === 0) {
     return { localPatch: null, environmentPatches: [] };
@@ -503,12 +504,19 @@ export function reconcileSyncedClientPreferences(input: {
   const hasPatchableEnvironment = input.environments.some(
     (environment) => environment.canPatch !== false,
   );
+  const normalizePreferenceValue = (
+    field: SyncedClientPreferenceField,
+    value: SyncedClientPreferencesPatch[SyncedClientPreferenceField] | undefined,
+  ) =>
+    field === "themeId" && typeof value === "string"
+      ? (input.normalizeThemeId?.(value) ?? value)
+      : value;
 
   for (const field of input.fields ?? SYNCED_CLIENT_PREFERENCE_FIELDS) {
-    const localValue = input.local.values[field];
+    const localValue = normalizePreferenceValue(field, input.local.values[field]);
     const localUpdatedAt = localPreferenceUpdatedAt(input.local, field);
     const environmentCandidates = input.environments.flatMap((environment) => {
-      const value = environment.preferences?.[field];
+      const value = normalizePreferenceValue(field, environment.preferences?.[field]);
       const updatedAt = getSyncedClientPreferenceUpdatedAt(environment.preferences, field);
       return value === undefined ||
         updatedAt === undefined ||
@@ -549,7 +557,7 @@ export function reconcileSyncedClientPreferences(input: {
     for (const environment of input.environments) {
       if (environment.canPatch === false) continue;
       if (
-        environment.preferences?.[field] === value &&
+        normalizePreferenceValue(field, environment.preferences?.[field]) === value &&
         getSyncedClientPreferenceUpdatedAt(environment.preferences, field) === updatedAt
       ) {
         continue;

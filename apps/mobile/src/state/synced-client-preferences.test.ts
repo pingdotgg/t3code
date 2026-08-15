@@ -873,6 +873,43 @@ describe("synced client preferences", () => {
     ]);
   });
 
+  it("stabilizes unavailable remote theme ids at the local fallback", () => {
+    const environment = {
+      environmentId: environmentId("environment-1"),
+      preferences: {
+        themeId: "remote-custom-theme",
+        updatedAtByField: { themeId: "2026-08-14T13:00:00.000Z" },
+        updatedAt: "2026-08-14T13:00:00.000Z",
+      },
+    } as const;
+    const normalizeThemeId = () => "t3-code";
+    const first = reconcileSyncedClientPreferences({
+      local: {
+        values: { themeId: "t3-code" },
+        updatedAtByField: { themeId: "2026-08-14T12:00:00.000Z" },
+      },
+      environments: [environment],
+      now: "2026-08-14T14:00:00.000Z",
+      normalizeThemeId,
+    });
+    const second = reconcileSyncedClientPreferences({
+      local: {
+        values: first.localPatch?.values ?? {},
+        updatedAtByField: first.localPatch?.updatedAtByField,
+      },
+      environments: [environment],
+      now: "2026-08-14T14:00:00.000Z",
+      normalizeThemeId,
+    });
+
+    expect(first.localPatch).toEqual({
+      values: { themeId: "t3-code" },
+      updatedAtByField: { themeId: "2026-08-14T13:00:00.000Z" },
+    });
+    expect(second.localPatch).toBeNull();
+    expect(second.environmentPatches).toEqual([]);
+  });
+
   it("patches only stale environments after a peer converges", () => {
     const reconciliation = reconcilePlanModePreferences({
       localPlanModeEnabled: true,
