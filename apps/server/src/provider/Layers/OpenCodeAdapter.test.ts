@@ -1191,6 +1191,73 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("passes the thread title to session.create when provided", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-title-provided");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        title: "Investigate reconnect failures",
+      });
+
+      NodeAssert.equal(runtimeMock.state.sessionCreateInputs.length, 1);
+      NodeAssert.equal(
+        runtimeMock.state.sessionCreateInputs[0]?.title,
+        "Investigate reconnect failures",
+      );
+    }),
+  );
+
+  it.effect("does not mirror OpenCode's default placeholder session titles", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-placeholder-title");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.updated",
+          properties: {
+            info: {
+              id: "http://127.0.0.1:9999/session",
+              title: "New session - 2026-08-09T10:20:30.456Z",
+            },
+          },
+        },
+        {
+          type: "session.updated",
+          properties: {
+            info: {
+              id: "http://127.0.0.1:9999/session",
+              title: "Investigate reconnect failures",
+            },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const metadataUpdated = events.filter((event) => event.type === "thread.metadata.updated");
+      NodeAssert.equal(metadataUpdated.length, 1);
+      if (metadataUpdated[0]?.type === "thread.metadata.updated") {
+        NodeAssert.equal(metadataUpdated[0].payload.name, "Investigate reconnect failures");
+      }
+    }),
+  );
+
   it.effect("writes provider-native observability records using the session thread id", () =>
     Effect.gen(function* () {
       const nativeEvents: Array<{
