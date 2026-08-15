@@ -569,6 +569,11 @@ export const OrchestrationSubscribeShellInput = Schema.Struct({
    * snapshot or catch-up replay and before it begins emitting live events.
    */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Opts into `client-preferences-updated` stream items. Older clients use a
+   * closed output union and must not receive that newer variant.
+   */
+  clientPreferencesStreamItem: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
 

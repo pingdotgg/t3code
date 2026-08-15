@@ -5986,7 +5986,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("streams a client preference patch incrementally instead of replacing the shell", () =>
+  it.effect("gates incremental client preference patches for legacy shell subscribers", () =>
     Effect.gen(function* () {
       const canonicalPreferences = {
         planModeEnabled: true,
@@ -6038,22 +6038,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
-      const items = yield* Effect.scoped(
+      const legacyItems = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.subscribeShell]({
             afterSequence: 0,
             requestCompletionMarker: true,
+          }).pipe(Stream.take(1), Stream.runCollect),
+        ),
+      );
+      const capableItems = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+            afterSequence: 0,
+            requestCompletionMarker: true,
+            clientPreferencesStreamItem: true,
           }).pipe(Stream.take(2), Stream.runCollect),
         ),
       );
 
       assert.deepEqual(ack, canonicalPreferences);
-      assert.deepEqual(items[0], {
+      assert.deepEqual(legacyItems, [{ kind: "synchronized" }]);
+      assert.deepEqual(capableItems[0], {
         kind: "client-preferences-updated",
         sequence: 1,
         preferences: canonicalPreferences,
       });
-      assert.deepEqual(items[1], { kind: "synchronized" });
+      assert.deepEqual(capableItems[1], { kind: "synchronized" });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

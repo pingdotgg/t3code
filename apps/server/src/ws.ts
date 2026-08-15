@@ -1234,6 +1234,14 @@ const makeWsRpcLayer = (
                 { startImmediately: true },
               );
               const bufferedLiveStream = coalesceShellLiveStream(Stream.fromQueue(liveBuffer));
+              const compatibleShellStream = <E, R>(
+                stream: Stream.Stream<OrchestrationShellStreamItem, E, R>,
+              ): Stream.Stream<OrchestrationShellStreamItem, E, R> =>
+                input.clientPreferencesStreamItem === true
+                  ? stream
+                  : stream.pipe(
+                      Stream.filter((item) => item.kind !== "client-preferences-updated"),
+                    );
 
               const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
@@ -1282,9 +1290,11 @@ const makeWsRpcLayer = (
                 // no-afterSequence path does.
                 if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
                   const snapshot = yield* loadSnapshot;
-                  return Stream.concat(
-                    Stream.make({ kind: "snapshot" as const, snapshot }),
-                    synchronizedThenLive,
+                  return compatibleShellStream(
+                    Stream.concat(
+                      Stream.make({ kind: "snapshot" as const, snapshot }),
+                      synchronizedThenLive,
+                    ),
                   );
                 }
                 const catchUpStream = coalesceShellStream(
@@ -1302,16 +1312,18 @@ const makeWsRpcLayer = (
                       }),
                   ),
                 );
-                return Stream.concat(catchUpStream, synchronizedThenLive);
+                return compatibleShellStream(Stream.concat(catchUpStream, synchronizedThenLive));
               }
 
               const snapshot = yield* loadSnapshot;
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshot,
-                }),
-                synchronizedThenLive,
+              return compatibleShellStream(
+                Stream.concat(
+                  Stream.make({
+                    kind: "snapshot" as const,
+                    snapshot,
+                  }),
+                  synchronizedThenLive,
+                ),
               );
             }),
             { "rpc.aggregate": "orchestration" },

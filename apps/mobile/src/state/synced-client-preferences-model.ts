@@ -8,6 +8,14 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { Preferences } from "../persistence/mobile-preferences";
 
 const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
+const PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS = 3;
+
+type PlanModePreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
+
+const schedulePlanModePreferenceRetry: PlanModePreferenceRetryScheduler = (retry, delayMs) => {
+  const timer = setTimeout(retry, delayMs);
+  return () => clearTimeout(timer);
+};
 
 export interface EnvironmentPreferenceState {
   readonly environmentId: EnvironmentId;
@@ -18,6 +26,121 @@ export interface EnvironmentPreferenceState {
 export interface PlanModePreferencePatchTarget {
   readonly environmentId: EnvironmentId;
   readonly input: PatchSyncedClientPreferencesRequest;
+}
+
+export function createPlanModePreferenceReconciliationController(
+  scheduleRetry: PlanModePreferenceRetryScheduler = schedulePlanModePreferenceRetry,
+) {
+  interface Reconciliation {
+    readonly target: PlanModePreferencePatchTarget;
+    attempt: number;
+    patch: () => Promise<SyncedClientPreferences | null>;
+    persist: (patch: Partial<Preferences>) => void;
+    cancelRetry?: () => void;
+  }
+
+  let activeEnvironmentIds = new Set<EnvironmentId>();
+  const reconciliationByEnvironment = new Map<EnvironmentId, Reconciliation>();
+  const settledUpdatedAtByEnvironment = new Map<EnvironmentId, string>();
+  const cancel = (environmentId: EnvironmentId) => {
+    reconciliationByEnvironment.get(environmentId)?.cancelRetry?.();
+    reconciliationByEnvironment.delete(environmentId);
+  };
+  const settleFailure = (reconciliation: Reconciliation) => {
+    const { environmentId } = reconciliation.target;
+    if (reconciliationByEnvironment.get(environmentId) !== reconciliation) return;
+    if (reconciliation.attempt >= PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS) {
+      reconciliationByEnvironment.delete(environmentId);
+      settledUpdatedAtByEnvironment.set(environmentId, reconciliation.target.input.updatedAt);
+      return;
+    }
+    const delayMs = 1_000 * 2 ** (reconciliation.attempt - 1);
+    reconciliation.cancelRetry = scheduleRetry(() => {
+      reconciliation.cancelRetry = undefined;
+      if (
+        activeEnvironmentIds.has(environmentId) &&
+        reconciliationByEnvironment.get(environmentId) === reconciliation
+      ) {
+        dispatch(reconciliation);
+      }
+    }, delayMs);
+  };
+  const dispatch = (reconciliation: Reconciliation) => {
+    reconciliation.attempt += 1;
+    void reconciliation.patch().then(
+      (preferences) => {
+        const { environmentId } = reconciliation.target;
+        if (reconciliationByEnvironment.get(environmentId) !== reconciliation) return;
+        if (preferences === null) {
+          settleFailure(reconciliation);
+          return;
+        }
+        reconciliationByEnvironment.delete(environmentId);
+        settledUpdatedAtByEnvironment.set(environmentId, reconciliation.target.input.updatedAt);
+        const localPatch = canonicalPlanModePreferencePatch(preferences);
+        if (localPatch !== null) reconciliation.persist(localPatch);
+      },
+      () => settleFailure(reconciliation),
+    );
+  };
+
+  return {
+    setActiveEnvironmentIds(environmentIds: ReadonlyArray<EnvironmentId>) {
+      const nextEnvironmentIds = new Set(environmentIds);
+      for (const environmentId of activeEnvironmentIds) {
+        if (nextEnvironmentIds.has(environmentId)) continue;
+        cancel(environmentId);
+        settledUpdatedAtByEnvironment.delete(environmentId);
+      }
+      activeEnvironmentIds = nextEnvironmentIds;
+    },
+    observe(environmentId: EnvironmentId, updatedAt: string | undefined) {
+      const reconciliation = reconciliationByEnvironment.get(environmentId);
+      if (reconciliation?.target.input.updatedAt === updatedAt) cancel(environmentId);
+    },
+    reconcile<E>(input: {
+      readonly target: PlanModePreferencePatchTarget;
+      readonly patch: (
+        target: PlanModePreferencePatchTarget,
+      ) => Promise<AtomCommandResult<SyncedClientPreferences, E>>;
+      readonly persist: (patch: Partial<Preferences>) => void;
+    }) {
+      const { environmentId } = input.target;
+      if (
+        !activeEnvironmentIds.has(environmentId) ||
+        settledUpdatedAtByEnvironment.get(environmentId) === input.target.input.updatedAt
+      ) {
+        return;
+      }
+      const current = reconciliationByEnvironment.get(environmentId);
+      if (current?.target.input.updatedAt === input.target.input.updatedAt) {
+        current.patch = async () => {
+          const result = await input.patch(input.target);
+          return result._tag === "Success" ? result.value : null;
+        };
+        current.persist = input.persist;
+        return;
+      }
+      if (current !== undefined) cancel(environmentId);
+      settledUpdatedAtByEnvironment.delete(environmentId);
+      const reconciliation: Reconciliation = {
+        target: input.target,
+        attempt: 0,
+        patch: async () => {
+          const result = await input.patch(input.target);
+          return result._tag === "Success" ? result.value : null;
+        },
+        persist: input.persist,
+      };
+      reconciliationByEnvironment.set(environmentId, reconciliation);
+      dispatch(reconciliation);
+    },
+    reset() {
+      for (const environmentId of reconciliationByEnvironment.keys()) cancel(environmentId);
+      activeEnvironmentIds.clear();
+      settledUpdatedAtByEnvironment.clear();
+    },
+  };
 }
 
 export async function fanOutPlanModePreferencePatches(

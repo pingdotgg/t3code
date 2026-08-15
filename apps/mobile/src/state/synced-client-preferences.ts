@@ -1,7 +1,7 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { environmentShell } from "./shell";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
@@ -10,10 +10,10 @@ import { environmentSession } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 import {
+  createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWriteController,
   fanOutPlanModePreferencePatches,
   reconcilePlanModePreferences,
-  settlePendingPlanModePreferencePatch,
 } from "./synced-client-preferences-model";
 
 function useConnectedEnvironmentPreferenceStates() {
@@ -59,23 +59,26 @@ export function useSyncedClientPreferences(): void {
     label: "synced client preferences reconciliation",
     reportFailure: false,
   });
-  const pendingByEnvironment = useRef(new Map<EnvironmentId, string>());
+  const reconciliationController = useMemo(
+    () => createPlanModePreferenceReconciliationController(),
+    [],
+  );
+
+  useEffect(() => () => reconciliationController.reset(), [reconciliationController]);
 
   useEffect(() => {
-    if (!AsyncResult.isSuccess(preferencesResult)) {
-      return;
-    }
     const liveStates = states.filter(({ shell }) => shell.status === "live");
-    if (liveStates.length === 0) return;
+    reconciliationController.setActiveEnvironmentIds(
+      liveStates.filter(({ canPatch }) => canPatch).map(({ environmentId }) => environmentId),
+    );
     for (const { environmentId, shell } of liveStates) {
       const updatedAt =
         shell.snapshot._tag === "Some"
           ? shell.snapshot.value.syncedClientPreferences?.updatedAt
           : undefined;
-      if (updatedAt === pendingByEnvironment.current.get(environmentId)) {
-        pendingByEnvironment.current.delete(environmentId);
-      }
+      reconciliationController.observe(environmentId, updatedAt);
     }
+    if (!AsyncResult.isSuccess(preferencesResult) || liveStates.length === 0) return;
     const reconciliation = reconcilePlanModePreferences({
       localPlanModeEnabled: preferencesResult.value.planModeEnabled,
       localUpdatedAt: preferencesResult.value.syncedClientPreferencesUpdatedAt,
@@ -89,20 +92,13 @@ export function useSyncedClientPreferences(): void {
     });
     if (reconciliation.localPatch !== null) savePreferences(reconciliation.localPatch);
     for (const target of reconciliation.environmentPatches) {
-      if (pendingByEnvironment.current.get(target.environmentId) === target.input.updatedAt) {
-        continue;
-      }
-      pendingByEnvironment.current.set(target.environmentId, target.input.updatedAt);
-      void patchPreferences(target).then((result) => {
-        const localPatch = settlePendingPlanModePreferencePatch({
-          pendingByEnvironment: pendingByEnvironment.current,
-          target,
-          result,
-        });
-        if (localPatch !== null) savePreferences(localPatch);
+      reconciliationController.reconcile({
+        target,
+        patch: patchPreferences,
+        persist: savePreferences,
       });
     }
-  }, [patchPreferences, preferencesResult, savePreferences, states]);
+  }, [patchPreferences, preferencesResult, reconciliationController, savePreferences, states]);
 }
 
 export function useUpdatePlanModePreference() {
