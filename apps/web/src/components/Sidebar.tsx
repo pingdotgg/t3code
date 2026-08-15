@@ -2912,23 +2912,23 @@ export default function Sidebar() {
       // Asked once for the whole batch. Left to itself each deleteThread call
       // opens its own worktree confirmation, so a ten-row selection meant ten
       // prompts with a round trip of deletion work between them.
-      const orphanedWorktreePaths = collectOrphanedWorktreePathsForThreads(
+      const orphanedWorktreePathKeys = collectOrphanedWorktreePathsForThreads(
         deleteTargets.map(({ threadRef }) => threadRef),
       );
       // The answer travels with the exact paths it was given for, so a worktree
       // that only becomes orphaned mid-batch still gets its own prompt.
-      let worktreeBatch: { decision: "delete" | "keep"; paths: ReadonlySet<string> } = {
+      let worktreeBatch: { decision: "delete" | "keep"; pathKeys: ReadonlySet<string> } = {
         decision: "keep",
-        paths: orphanedWorktreePaths,
+        pathKeys: orphanedWorktreePathKeys,
       };
-      if (orphanedWorktreePaths.size > 0) {
+      if (orphanedWorktreePathKeys.size > 0) {
         const confirmedWorktrees = await settlePromise(() =>
           api.dialogs.confirm(
             [
               "Delete the worktrees too?",
-              orphanedWorktreePaths.size === 1
+              orphanedWorktreePathKeys.size === 1
                 ? "There is 1 worktree linked only to the threads you're deleting."
-                : `There are ${orphanedWorktreePaths.size} worktrees linked only to the threads you're deleting.`,
+                : `There are ${orphanedWorktreePathKeys.size} worktrees linked only to the threads you're deleting.`,
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -2936,7 +2936,7 @@ export default function Sidebar() {
         if (confirmedWorktrees._tag === "Failure") return;
         worktreeBatch = {
           decision: confirmedWorktrees.value ? "delete" : "keep",
-          paths: orphanedWorktreePaths,
+          pathKeys: orphanedWorktreePathKeys,
         };
       }
       // Grown as deletions actually land, never seeded with the whole batch:

@@ -38,6 +38,7 @@ import {
   formatWorktreePathForDisplay,
   getOrphanedWorktreePathForThread,
   getOrphanedWorktreePathsForThreads,
+  scopedWorktreePathKey,
 } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
@@ -273,9 +274,10 @@ export function useThreadActions() {
     [unarchiveThreadMutation],
   );
 
-  /** The worktrees deleting `targets` as one batch would orphan. Callers use it
-      to ask the worktree question once up front and hand the answer, along with
-      these exact paths, to every `deleteThread` call via `worktreeBatch`. */
+  /** The worktrees deleting `targets` as one batch would orphan, as
+      environment-scoped path keys. Callers use it to ask the worktree question
+      once up front and hand the answer, along with these exact keys, to every
+      `deleteThread` call via `worktreeBatch`. */
   const collectOrphanedWorktreePathsForThreads = useCallback(
     (targets: ReadonlyArray<ScopedThreadRef>) => {
       const threadIdsByEnvironment = new Map<EnvironmentId, Set<ThreadId>>();
@@ -288,7 +290,7 @@ export function useThreadActions() {
         }
       }
 
-      const paths = new Set<string>();
+      const pathKeys = new Set<string>();
       for (const [environmentId, threadIds] of threadIdsByEnvironment) {
         const threads = readEnvironmentThreadRefs(environmentId).flatMap((ref) => {
           const shell = readThreadShell(ref);
@@ -305,10 +307,10 @@ export function useThreadActions() {
           ),
         );
         for (const path of getOrphanedWorktreePathsForThreads(threads, removableThreadIds)) {
-          paths.add(path);
+          pathKeys.add(scopedWorktreePathKey(environmentId, path));
         }
       }
-      return paths;
+      return pathKeys;
     },
     [],
   );
@@ -320,12 +322,12 @@ export function useThreadActions() {
         deletedThreadKeys?: ReadonlySet<string>;
         /** Pre-answer for the orphaned-worktree prompt, so a multi-thread
             delete opens one dialog instead of one per thread. It only covers
-            `paths`, the worktrees counted when that dialog was shown: anything
-            orphaned later — say another client deletes the thread that was
-            holding a worktree while this batch runs — was never part of what
-            the user agreed to, so it falls back to its own prompt. Unset for
-            single deletes, which keep asking. */
-        worktreeBatch?: { decision: "delete" | "keep"; paths: ReadonlySet<string> };
+            `pathKeys`, the environment-scoped worktrees counted when that
+            dialog was shown: anything orphaned later — say another client
+            deletes the thread that was holding a worktree while this batch
+            runs — was never part of what the user agreed to, so it falls back
+            to its own prompt. Unset for single deletes, which keep asking. */
+        worktreeBatch?: { decision: "delete" | "keep"; pathKeys: ReadonlySet<string> };
       } = {},
     ) => {
       const resolved = resolveThreadTarget(target);
@@ -373,7 +375,10 @@ export function useThreadActions() {
       const localApi = readLocalApi();
       const batchAnswered =
         orphanedWorktreePath !== null &&
-        (opts.worktreeBatch?.paths.has(orphanedWorktreePath) ?? false);
+        (opts.worktreeBatch?.pathKeys.has(
+          scopedWorktreePathKey(threadRef.environmentId, orphanedWorktreePath),
+        ) ??
+          false);
       let shouldDeleteWorktree = false;
       if (canDeleteWorktree && batchAnswered) {
         shouldDeleteWorktree = opts.worktreeBatch?.decision === "delete";

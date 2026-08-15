@@ -6,6 +6,7 @@ import {
   formatWorktreePathForDisplay,
   getOrphanedWorktreePathForThread,
   getOrphanedWorktreePathsForThreads,
+  scopedWorktreePathKey,
 } from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -175,5 +176,19 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("scopedWorktreePathKey", () => {
+  it("keeps the same path in different environments apart", () => {
+    const local = scopedWorktreePathKey("local", "/tmp/repo/worktrees/a");
+    const remote = scopedWorktreePathKey("remote", "/tmp/repo/worktrees/a");
+    expect(local).not.toBe(remote);
+  });
+
+  it("is stable for the same environment and path", () => {
+    expect(scopedWorktreePathKey("local", "/tmp/repo/worktrees/a")).toBe(
+      scopedWorktreePathKey("local", "/tmp/repo/worktrees/a"),
+    );
   });
 });

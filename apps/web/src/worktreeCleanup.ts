@@ -70,6 +70,16 @@ export function getOrphanedWorktreePathsForThreads(
   return orphaned;
 }
 
+/**
+ * Batch key for a worktree path. The same path string means different
+ * worktrees in different environments, so the batch answer has to be scoped —
+ * otherwise env B's mid-batch orphan would inherit env A's delete/keep answer.
+ * Built only, never parsed, so a path containing ":" is harmless.
+ */
+export function scopedWorktreePathKey(environmentId: string, worktreePath: string): string {
+  return `${environmentId}:${worktreePath}`;
+}
+
 export function formatWorktreePathForDisplay(worktreePath: string): string {
   const trimmed = worktreePath.trim();
   if (!trimmed) {
