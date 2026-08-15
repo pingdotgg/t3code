@@ -210,3 +210,18 @@ it.effect("fetchIssues continues when one selected issue is missing", () => {
     assert.strictEqual(issues[0]?.identifier, "ENG-1");
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("fetchIssues fails when Linear returns an issue together with errors", () => {
+  const { layer } = makeLayer({
+    response: () =>
+      graphqlResponse({
+        data: { issue: issueNode },
+        errors: [{ message: "Comments connection timed out" }],
+      }),
+  });
+  return Effect.gen(function* () {
+    const linear = yield* LinearApi.LinearApi;
+    const error = yield* linear.fetchIssues({ ids: ["issue-1"] }).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "LinearRequestError");
+  }).pipe(Effect.provide(layer));
+});

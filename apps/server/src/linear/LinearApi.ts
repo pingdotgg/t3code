@@ -579,16 +579,16 @@ export const make = Effect.gen(function* () {
       issueEnvelope,
     ).pipe(
       Effect.flatMap((envelope) => {
-        const issue = envelope.data?.issue ?? null;
-        if (issue !== null) {
-          return Effect.succeed(toDetail(issue));
-        }
         if (envelope.errors !== undefined && envelope.errors.length > 0) {
           const message = firstGraphQlErrorMessage(envelope.errors);
           if (isNotFoundMessage(message)) {
             return Effect.succeed(null);
           }
           return failFromGraphQlErrors("fetchIssues", envelope.errors);
+        }
+        const issue = envelope.data?.issue ?? null;
+        if (issue !== null) {
+          return Effect.succeed(toDetail(issue));
         }
         return Effect.succeed(null);
       }),

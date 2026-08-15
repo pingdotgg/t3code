@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { LinearImportMode } from "@t3tools/client-runtime/linear-format";
 import { LINEAR_FETCH_MAX_IDS, type LinearIssueSummary } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLinearImport } from "../../hooks/useLinearImport";
 import { onOpenLinearImport } from "../../linearImportBus";
@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -42,6 +43,7 @@ export function LinearImportDialog() {
   const [mode, setMode] = useState<LinearImportMode>("combine");
   const [targetProjectId, setTargetProjectId] = useState<string>("");
   const [importing, setImporting] = useState(false);
+  const importingRef = useRef(false);
 
   const destinationProjects = useMemo(
     () =>
@@ -64,12 +66,15 @@ export function LinearImportDialog() {
     setDebouncedQuery("");
     setSelectedIdSet(new Set());
     setMode("combine");
+  }, [open]);
+
+  useEffect(() => {
     setTargetProjectId((current) =>
       destinationProjects.some((project) => project.id === current)
         ? current
         : (destinationProjects[0]?.id ?? ""),
     );
-  }, [destinationProjects, open]);
+  }, [destinationProjects]);
 
   const authQuery = useEnvironmentQuery(
     !open || environmentId === null
@@ -103,7 +108,7 @@ export function LinearImportDialog() {
   }, []);
 
   const handleImport = useCallback(async () => {
-    if (environmentId === null || importing) return;
+    if (environmentId === null || importingRef.current) return;
     const target = destinationProjects.find((project) => project.id === targetProjectId);
     if (target === undefined) {
       toastManager.add({ type: "error", title: "Pick a folder for the new thread." });
@@ -114,6 +119,7 @@ export function LinearImportDialog() {
       toastManager.add({ type: "error", title: "Select at least one issue to import." });
       return;
     }
+    importingRef.current = true;
     setImporting(true);
     try {
       const result = await importIssues({
@@ -141,17 +147,10 @@ export function LinearImportDialog() {
       }
       setOpen(false);
     } finally {
+      importingRef.current = false;
       setImporting(false);
     }
-  }, [
-    destinationProjects,
-    environmentId,
-    importIssues,
-    importing,
-    mode,
-    selectedIdSet,
-    targetProjectId,
-  ]);
+  }, [destinationProjects, environmentId, importIssues, mode, selectedIdSet, targetProjectId]);
 
   const selectedFolderTitle =
     destinationProjects.find((project) => project.id === targetProjectId)?.title ?? "Folder";
@@ -236,29 +235,26 @@ export function LinearImportDialog() {
                   Subtasks
                 </Toggle>
               </ToggleGroup>
-              <div
-                className="max-h-72 space-y-1 overflow-y-auto"
-                role="listbox"
-                aria-label="Linear issues"
-                aria-multiselectable="true"
-              >
-                {searchQuery.error ? (
-                  <p className="text-sm text-destructive">Couldn&apos;t load Linear issues.</p>
-                ) : searchQuery.isPending ? (
-                  <p className="text-sm text-muted-foreground">Loading issues…</p>
-                ) : issues.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No issues match that search.</p>
-                ) : (
-                  issues.map((issue) => (
-                    <IssueRow
-                      key={issue.id}
-                      issue={issue}
-                      selected={selectedIdSet.has(issue.id)}
-                      onToggle={() => toggleIssue(issue.id)}
-                    />
-                  ))
-                )}
-              </div>
+              <ScrollArea scrollFade className="max-h-72">
+                <div className="space-y-1" aria-label="Linear issues">
+                  {searchQuery.error ? (
+                    <p className="text-sm text-destructive">Couldn&apos;t load Linear issues.</p>
+                  ) : searchQuery.isPending ? (
+                    <p className="text-sm text-muted-foreground">Loading issues…</p>
+                  ) : issues.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No issues match that search.</p>
+                  ) : (
+                    issues.map((issue) => (
+                      <IssueRow
+                        key={issue.id}
+                        issue={issue}
+                        selected={selectedIdSet.has(issue.id)}
+                        onToggle={() => toggleIssue(issue.id)}
+                      />
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
             </>
           )}
         </DialogPanel>
@@ -292,20 +288,14 @@ function IssueRow({
   readonly onToggle: () => void;
 }) {
   return (
-    <div
-      role="option"
-      aria-selected={selected}
-      tabIndex={0}
-      onClick={onToggle}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggle();
-        }
-      }}
-      className="flex w-full cursor-pointer items-start gap-3 rounded-md px-2 py-2 text-left hover:bg-accent/60"
-    >
-      <Checkbox checked={selected} tabIndex={-1} className="mt-0.5" />
+    <label className="flex w-full cursor-pointer items-start gap-3 rounded-md px-2 py-2 text-left hover:bg-accent/60">
+      <Checkbox
+        checked={selected}
+        className="mt-0.5"
+        onCheckedChange={(checked) => {
+          if (Boolean(checked) !== selected) onToggle();
+        }}
+      />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
           {issue.identifier}: {issue.title}
@@ -314,6 +304,6 @@ function IssueRow({
           {[issue.teamKey, issue.stateName, issue.assigneeName].filter(Boolean).join(" · ")}
         </span>
       </span>
-    </div>
+    </label>
   );
 }
