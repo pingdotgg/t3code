@@ -718,7 +718,7 @@ export function normalizeMobileThemeColorLiteral(value: unknown): string | null 
       : `#${hex}`;
   }
 
-  const functional = input.match(/^([a-z]+)\((.*)\)$/);
+  const functional = input.match(/^([a-z]+)\(([\s\S]*)\)$/);
   if (!functional) return null;
   const [, name, body] = functional;
   if (name === "rgb" || name === "rgba") return parseRgbColor(body);

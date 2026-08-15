@@ -78,6 +78,15 @@ describe("parseMobileThemeFile", () => {
     });
   });
 
+  it("matches web parsing of newline-separated functional color components", () => {
+    const parsed = parseMobileThemeFile({
+      ...themeFile(),
+      colors: { canvas: "rgb(15\n23\n42)" },
+    });
+
+    expect(parsed.colors.canvas).toBe("#0f172a");
+  });
+
   it.each([
     { input: "rgb(none 20 30)", expected: "#00141e" },
     { input: "rgb(255 0 0 / 200%)", expected: "#ff0000" },
