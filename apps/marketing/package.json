@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
+    "dev": "npm run prepare:assets && astro dev",
+    "build": "npm run prepare:assets && astro build",
+    "prepare:assets": "npm run build:sidebar-demo",
+    "build:sidebar-demo": "npm run --prefix ../web build:sidebar-demo && node scripts/capture-demo-screenshots.mjs",
     "preview": "astro preview",
     "typecheck": "astro check"
   },
@@ -16,6 +18,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.7",
     "@vercel/config": "^0.3.0",
+    "playwright-core": "1.60.0",
     "typescript": "catalog:"
   }
 }

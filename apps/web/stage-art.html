@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <script>
+      // Keep the real app artwork in the same appearance as the page that
+      // embeds it, including live OS theme changes.
+      const colorScheme = window.matchMedia("(prefers-color-scheme: dark)");
+      const applyColorScheme = () => {
+        document.documentElement.classList.toggle("dark", colorScheme.matches);
+      };
+      applyColorScheme();
+      colorScheme.addEventListener("change", applyColorScheme);
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+    </style>
+    <title>T3 Code stage art</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/demo/stageArt.tsx"></script>
+  </body>
+</html>

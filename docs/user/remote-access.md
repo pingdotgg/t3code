@@ -2,6 +2,11 @@
 
 Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
 
+Install the native mobile client from the
+[App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) for iPhone and
+iPad, or from [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code&pli=1)
+for Android phones and tablets.
+
 ## Quick Pairing for a Running Server
 
 If a server is already running on this machine, mint a fresh pairing token and QR code without restarting anything:

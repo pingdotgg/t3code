@@ -442,6 +442,14 @@ export function projectServerWelcome(
   return [Option.some(welcome), [welcome]];
 }
 
+/** True when versions match or only differ by a nightly/dev channel suffix. */
+export function isSameServerReleaseLine(left: string, right: string): boolean {
+  if (left === right) return true;
+  const stripChannel = (version: string) =>
+    version.replace(/-nightly\.\d{8}(\.\d+)?$/, "").replace(/-dev(\.\d+)?$/, "");
+  return stripChannel(left) === stripChannel(right);
+}
+
 export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
@@ -449,7 +457,10 @@ export function resolveServerConfigValue(
   if (
     projection?.source === "live" &&
     (initialConfig === null ||
-      projection.config.environment.serverVersion === initialConfig.environment.serverVersion)
+      isSameServerReleaseLine(
+        projection.config.environment.serverVersion,
+        initialConfig.environment.serverVersion,
+      ))
   ) {
     return projection.config;
   }

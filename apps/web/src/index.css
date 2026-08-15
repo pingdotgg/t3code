@@ -412,6 +412,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
   mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
   -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+  animation: sidebar-stage-backdrop-enter var(--demo-stage-transition-duration, 900ms)
+    cubic-bezier(0.22, 1, 0.36, 1) both;
 
   &::after {
     content: "";
@@ -428,6 +430,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       color-mix(in srgb, var(--stage-fade) 96%, transparent) 85%,
       var(--stage-fade) 93%
     );
+  }
+}
+
+@keyframes sidebar-stage-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-stage-backdrop {
+    animation: none;
   }
 }
 

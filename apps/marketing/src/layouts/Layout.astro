@@ -1,60 +1,155 @@
 ---
-import {
-  ANDROID_PLAY_STORE_URL,
-  GITHUB_REPOSITORY_URL,
-  IOS_APP_STORE_URL,
-  MARKETING_STATS,
-} from "../lib/site";
+import devAppIcon from "../assets/t3-dev-384.webp?url";
+import nightlyAppIcon from "../assets/t3-nightly-384.webp?url";
+import stableAppIcon from "../assets/t3-latest-384.webp?url";
+import { GITHUB_REPOSITORY_URL } from "../lib/site";
 
 interface Props {
   title?: string;
   description?: string;
   pageClass?: string;
+  favicon?: string;
+  socialImage?: string;
+  socialImageAlt?: string;
 }
 
 const {
   title = "T3 Code",
   description = "T3 Code — The open-source control plane for coding agents.",
   pageClass,
+  favicon = stableAppIcon,
+  socialImage = "/og-image.png",
+  socialImageAlt = "T3 Code model picker shown in cinematic perspective",
 } = Astro.props;
+
+const siteUrl = Astro.site ?? Astro.url;
+const canonicalUrl = new URL(Astro.url.pathname, siteUrl);
+const socialImageUrl = new URL(socialImage, siteUrl);
 ---
 
-<html lang="en">
+<html lang="en" data-stage="latest">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
     <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="T3 Code" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={socialImageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={socialImageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImageUrl} />
+    <meta name="twitter:image:alt" content={socialImageAlt} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
-    <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16" />
+    <link
+      id="stage-favicon"
+      rel="icon"
+      href={favicon}
+      sizes="any"
+      data-stage-icon-latest={stableAppIcon}
+      data-stage-icon-nightly={nightlyAppIcon}
+      data-stage-icon-dev={devAppIcon}
+    />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>{title}</title>
+    <script is:inline>
+      (() => {
+        try {
+          const stage = localStorage.getItem("t3code:marketing-stage");
+          if (stage === "latest" || stage === "nightly" || stage === "dev") {
+            document.documentElement.dataset.stage = stage;
+          }
+        } catch {
+          // Storage can be unavailable in privacy-restricted browsing contexts.
+        }
+
+        const preview = new URLSearchParams(window.location.search).get("platform-preview");
+        if (preview) document.documentElement.dataset.stage = "latest";
+        const userAgent = navigator.userAgent;
+        let platform;
+        if (preview && preview !== "auto") {
+          platform = preview === "android" ? "android" : "ios";
+        } else if (/Android/i.test(userAgent)) {
+          platform = "android";
+        } else if (
+          /iPad|iPhone|iPod/i.test(userAgent) ||
+          (/Mac/i.test(userAgent) && navigator.maxTouchPoints > 1)
+        ) {
+          platform = "ios";
+        } else if (/Win/i.test(userAgent)) {
+          platform = "win";
+        } else if (/Mac/i.test(userAgent)) {
+          platform = "mac";
+        } else if (/Linux/i.test(userAgent)) {
+          platform = "linux";
+        }
+        if (platform) document.documentElement.dataset.platform = platform;
+      })();
+    </script>
   </head>
   <body>
     <div class:list={["page", pageClass]}>
       <nav class="nav">
+        <div class="nav-blur" aria-hidden="true">
+          <span class="nav-blur-layer nav-blur-layer--32"></span>
+          <span class="nav-blur-layer nav-blur-layer--16"></span>
+          <span class="nav-blur-layer nav-blur-layer--8"></span>
+          <span class="nav-blur-layer nav-blur-layer--4"></span>
+          <span class="nav-blur-layer nav-blur-layer--2"></span>
+          <span class="nav-blur-layer nav-blur-layer--1"></span>
+          <span class="nav-blur-layer nav-blur-layer--half"></span>
+        </div>
         <div class="nav-inner">
           <a href="/" class="nav-brand" aria-label="T3 Code home">
-            <span class="nav-brand-name">T3 Code</span>
+            <svg
+              class="nav-brand-mark"
+              viewBox="15.5309 37 94.3941 56.96"
+              aria-hidden="true"
+            >
+              <path
+                d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
+                fill="currentColor"
+              />
+            </svg>
+            <span class="nav-brand-name">Code</span>
           </a>
           <div class="nav-right">
+            <div class="nav-download">
+              <button
+                class="site-stage-trigger"
+                type="button"
+                aria-label="Release channel: Latest. Switch to Nightly"
+                data-site-stage-trigger
+              >
+                <img src={stableAppIcon} alt="" width="16" height="16" data-site-stage-icon />
+              </button>
+              <a class="nav-link" href="/download">Download</a>
+            </div>
             <a
               class="nav-stars"
               href={GITHUB_REPOSITORY_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`Star T3 Code on GitHub — ${MARKETING_STATS.githubStars} stars`}
+              aria-label="View T3 Code on GitHub"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 2.3l2.9 5.88 6.49.94-4.7 4.58 1.11 6.47L12 17.12l-5.8 3.05 1.11-6.47-4.7-4.58 6.49-.94L12 2.3z"/>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.4-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.94 10.94 0 0 1 5.75 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.71 5.38-5.29 5.67.42.36.79 1.06.79 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/>
               </svg>
-              <span><strong>{MARKETING_STATS.githubStars}</strong> GitHub stars</span>
+              <span>GitHub</span>
             </a>
           </div>
         </div>
@@ -65,41 +160,143 @@ const {
       </main>
 
       <footer class="footer">
+        <div class="footer-ambient" aria-hidden="true"></div>
         <div class="footer-inner">
-          <div class="footer-brand">
-            <img src="/icon.webp" alt="" />
-            <span>&copy; {new Date().getFullYear()} T3 Tools Inc · MIT licensed</span>
-          </div>
-          <div class="footer-links">
-            <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
-            <a href="/download">Download</a>
-            <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">iOS app</a>
-            <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Android app</a>
-            <a href="/terms-of-service">Terms</a>
-            <a href="/privacy-policy">Privacy</a>
-            <a href="/security-policy">Security</a>
+          <nav class="footer-columns" aria-label="Footer navigation">
+            <div class="footer-column">
+              <p class="footer-column-title">Product</p>
+              <a href="/download">Download</a>
+              <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a
+                href={`${GITHUB_REPOSITORY_URL}/releases`}
+                target="_blank"
+                rel="noopener noreferrer">Releases</a
+              >
+            </div>
+            <div class="footer-column">
+              <p class="footer-column-title">Community</p>
+              <a
+                href="https://discord.gg/jn4EGJjrvv"
+                target="_blank"
+                rel="noopener noreferrer">Discord</a
+              >
+              <a
+                href={`${GITHUB_REPOSITORY_URL}/issues`}
+                target="_blank"
+                rel="noopener noreferrer">Issues</a
+              >
+              <a
+                href={`${GITHUB_REPOSITORY_URL}/fork`}
+                target="_blank"
+                rel="noopener noreferrer">Fork</a
+              >
+            </div>
+            <div class="footer-column">
+              <p class="footer-column-title">Legal</p>
+              <a href="/terms-of-service">Terms</a>
+              <a href="/privacy-policy">Privacy</a>
+              <a href="/security-policy">Security</a>
+            </div>
+          </nav>
+
+          <div class="footer-credit">
+            <a href="/" class="footer-credit-brand" aria-label="T3 Code home">T3 Code</a>
+            <span class="footer-credit-separator" aria-hidden="true"></span>
+            <span>&copy; {new Date().getFullYear()} T3 Tools Inc</span>
+            <span class="footer-credit-separator" aria-hidden="true"></span>
+            <a
+              href={`${GITHUB_REPOSITORY_URL}/blob/main/LICENSE`}
+              target="_blank"
+              rel="noopener noreferrer">MIT licensed</a
+            >
+            <span class="footer-credit-separator" aria-hidden="true"></span>
+            <span>
+              Landing page inspired by{" "}
+              <a href="https://helium.computer" target="_blank" rel="noopener noreferrer"
+                >Helium</a
+              >
+            </span>
           </div>
         </div>
       </footer>
     </div>
 
     <script>
-      const nav = document.querySelector(".nav");
-      const onScroll = () => {
-        if (!nav) return;
-        if (window.scrollY > 12) nav.classList.add("is-scrolled");
-        else nav.classList.remove("is-scrolled");
+      type Stage = "latest" | "nightly" | "dev";
+
+      const STORAGE_KEY = "t3code:marketing-stage";
+      const stageLabels: Record<Stage, string> = {
+        latest: "Latest",
+        nightly: "Nightly",
+        dev: "Dev",
       };
-      window.addEventListener("scroll", onScroll, { passive: true });
-      onScroll();
+      const stageOrder: ReadonlyArray<Stage> = ["latest", "nightly", "dev"];
+
+      function isStage(value: unknown): value is Stage {
+        return value === "latest" || value === "nightly" || value === "dev";
+      }
+
+      function setSiteStage(stage: Stage, persist: boolean, notify: boolean) {
+        document.documentElement.dataset.stage = stage;
+
+        const favicon = document.getElementById("stage-favicon") as HTMLLinkElement | null;
+        const faviconUrl = favicon?.dataset[
+          `stageIcon${stage[0]?.toUpperCase()}${stage.slice(1)}`
+        ];
+        if (favicon && faviconUrl) favicon.href = faviconUrl;
+
+        const nextStage = stageOrder[(stageOrder.indexOf(stage) + 1) % stageOrder.length] ?? "latest";
+        for (const trigger of document.querySelectorAll<HTMLButtonElement>(
+          "[data-site-stage-trigger]",
+        )) {
+          trigger.setAttribute(
+            "aria-label",
+            `Release channel: ${stageLabels[stage]}. Switch to ${stageLabels[nextStage]}`,
+          );
+          trigger.title = `${stageLabels[stage]} channel — click to switch`;
+        }
+
+        for (const icon of document.querySelectorAll<HTMLImageElement>("[data-site-stage-icon]")) {
+          if (faviconUrl) icon.src = faviconUrl;
+        }
+
+        if (persist) {
+          try {
+            localStorage.setItem(STORAGE_KEY, stage);
+          } catch {
+            // The selected channel still applies for this page when storage is unavailable.
+          }
+        }
+
+        if (notify) {
+          document.dispatchEvent(
+            new CustomEvent("t3-marketing-stage-change", { detail: { stage } }),
+          );
+        }
+      }
+
+      const trigger = document.querySelector<HTMLButtonElement>("[data-site-stage-trigger]");
+      trigger?.addEventListener("click", () => {
+        const currentStage = document.documentElement.dataset.stage;
+        const currentIndex = isStage(currentStage) ? stageOrder.indexOf(currentStage) : 0;
+        const nextStage = stageOrder[(currentIndex + 1) % stageOrder.length] ?? "latest";
+        setSiteStage(nextStage, true, true);
+      });
+
+      document.addEventListener("t3-marketing-stage-request", (event) => {
+        const stage = (event as CustomEvent<{ stage?: unknown }>).detail?.stage;
+        if (isStage(stage)) setSiteStage(stage, true, true);
+      });
+
+      const initialStage = document.documentElement.dataset.stage;
+      setSiteStage(isStage(initialStage) ? initialStage : "latest", false, false);
     </script>
   </body>
 </html>
 
 <style is:global>
   :root {
-    --bg: #09090b;
+    --bg: #000;
     --bg-elev: #0c0c0e;
     --bg-card: #111113;
     --fg: #fafafa;
@@ -113,6 +310,15 @@ const {
     --accent-dim: oklch(0.68 0.17 var(--accent-h) / 0.15);
     --ok: oklch(0.72 0.16 150);
     --warn: oklch(0.76 0.15 75);
+    --button-bg: var(--fg);
+    --button-fg: #09090b;
+    --button-hover: #fff;
+    --surface-subtle: rgba(255, 255, 255, 0.025);
+    --surface-hover: rgba(255, 255, 255, 0.05);
+    --tile-highlight: rgba(255, 255, 255, 0.015);
+    --nav-scrim-start: rgba(0, 0, 0, 0.5);
+    --nav-scrim-mid: rgba(0, 0, 0, 0.12);
+    --noise-opacity: 0.035;
     --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     --radius: 12px;
@@ -128,7 +334,53 @@ const {
 
   html {
     color-scheme: dark;
+    overscroll-behavior-y: none;
     scroll-behavior: smooth;
+  }
+
+  html[data-stage="nightly"] {
+    --accent-h: 292;
+  }
+
+  html[data-stage="dev"] {
+    --accent-h: 240;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fafafa;
+      --bg-elev: #fff;
+      --bg-card: #f1f1f3;
+      --fg: #18181b;
+      --fg-muted: #52525b;
+      --fg-dim: #71717a;
+      --fg-faint: #a1a1aa;
+      --border: rgba(24, 24, 27, 0.09);
+      --border-strong: rgba(24, 24, 27, 0.16);
+      --accent: oklch(0.56 0.19 var(--accent-h));
+      --accent-dim: oklch(0.56 0.19 var(--accent-h) / 0.11);
+      --ok: oklch(0.52 0.15 150);
+      --warn: oklch(0.56 0.15 75);
+      --button-bg: #18181b;
+      --button-fg: #fff;
+      --button-hover: #27272a;
+      --surface-subtle: rgba(24, 24, 27, 0.025);
+      --surface-hover: rgba(24, 24, 27, 0.055);
+      --tile-highlight: rgba(255, 255, 255, 0.72);
+      --nav-scrim-start: rgba(250, 250, 250, 0.82);
+      --nav-scrim-mid: rgba(250, 250, 250, 0.34);
+      --noise-opacity: 0.018;
+    }
+
+    html {
+      color-scheme: light;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
   }
 
   body {
@@ -139,6 +391,7 @@ const {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     min-height: 100vh;
+    overscroll-behavior-y: none;
     overflow-x: hidden;
     line-height: 1.5;
   }
@@ -148,7 +401,7 @@ const {
     position: fixed;
     inset: 0;
     pointer-events: none;
-    opacity: 0.035;
+    opacity: var(--noise-opacity);
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     background-repeat: repeat;
     background-size: 256px 256px;
@@ -211,14 +464,14 @@ const {
   }
 
   .btn-primary {
-    background: var(--fg);
-    color: #09090b;
+    background: var(--button-bg);
+    color: var(--button-fg);
     font-weight: 600;
   }
 
   .btn-primary:hover {
     transform: translateY(-1px);
-    background: #fff;
+    background: var(--button-hover);
   }
 
   .btn-primary:active {
@@ -227,14 +480,12 @@ const {
 
   .btn-ghost {
     color: var(--fg-muted);
-    border: 1px solid var(--border);
     background: transparent;
   }
 
   .btn-ghost:hover {
     color: var(--fg);
-    border-color: var(--border-strong);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-hover);
   }
 
   .btn-lg {
@@ -247,7 +498,7 @@ const {
     position: relative;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0));
+    background: linear-gradient(180deg, var(--tile-highlight), transparent);
     overflow: hidden;
   }
 
@@ -276,14 +527,6 @@ const {
     to { transform: rotate(360deg); }
   }
 
-  @keyframes floatDrift {
-    0%, 100% { translate: 0 0; }
-    50%      { translate: 0 -10px; }
-  }
-
-  @keyframes blink {
-    50% { opacity: 0; }
-  }
 </style>
 
 <style>
@@ -294,22 +537,101 @@ const {
     overflow-x: clip;
   }
 
+  /* Layered backdrop filters create a progressive blur: strongest directly
+     behind the navigation, then dissolving into the page without a hard edge. */
   .nav {
     position: sticky;
     top: 0;
     z-index: 50;
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    background: color-mix(in srgb, var(--bg) 75%, transparent);
-    border-bottom: 1px solid transparent;
-    transition: border-color 0.3s ease;
+    isolation: isolate;
+    background: transparent;
   }
 
-  .nav.is-scrolled {
-    border-bottom-color: var(--border);
+  .page.marketing-home .nav,
+  .page.marketing-downloads .nav,
+  .page.legal-simple-page .nav {
+    position: fixed;
+    right: 0;
+    left: 0;
+  }
+
+  .nav-blur {
+    position: absolute;
+    inset: 0 0 -64px;
+    z-index: -1;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .nav-blur::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to bottom,
+      var(--nav-scrim-start),
+      var(--nav-scrim-mid) 52%,
+      transparent
+    );
+  }
+
+  .nav-blur-layer {
+    position: absolute;
+    inset: 0;
+  }
+
+  .nav-blur-layer--32 {
+    -webkit-backdrop-filter: blur(32px);
+    backdrop-filter: blur(32px);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 12.5%, transparent 25%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 12.5%, transparent 25%);
+  }
+
+  .nav-blur-layer--16 {
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 12.5%, #000 25%, transparent 37.5%);
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 12.5%, #000 25%, transparent 37.5%);
+  }
+
+  .nav-blur-layer--8 {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 12.5%, #000 25%, #000 37.5%, transparent 50%);
+    mask-image: linear-gradient(to bottom, transparent 12.5%, #000 25%, #000 37.5%, transparent 50%);
+  }
+
+  .nav-blur-layer--4 {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 25%, #000 37.5%, #000 50%, transparent 62.5%);
+    mask-image: linear-gradient(to bottom, transparent 25%, #000 37.5%, #000 50%, transparent 62.5%);
+  }
+
+  .nav-blur-layer--2 {
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 37.5%, #000 50%, #000 62.5%, transparent 75%);
+    mask-image: linear-gradient(to bottom, transparent 37.5%, #000 50%, #000 62.5%, transparent 75%);
+  }
+
+  .nav-blur-layer--1 {
+    -webkit-backdrop-filter: blur(1px);
+    backdrop-filter: blur(1px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 50%, #000 62.5%, #000 75%, transparent 87.5%);
+    mask-image: linear-gradient(to bottom, transparent 50%, #000 62.5%, #000 75%, transparent 87.5%);
+  }
+
+  .nav-blur-layer--half {
+    -webkit-backdrop-filter: blur(0.5px);
+    backdrop-filter: blur(0.5px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 62.5%, #000 75%, #000 87.5%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 62.5%, #000 75%, #000 87.5%, transparent 100%);
   }
 
   .nav-inner {
+    position: relative;
+    z-index: 1;
     max-width: 1240px;
     margin: 0 auto;
     padding: 12px 32px;
@@ -322,25 +644,78 @@ const {
   .nav-brand {
     display: inline-flex;
     align-items: center;
+    gap: 4px;
     color: var(--fg);
     transition: color 0.2s ease;
   }
 
   .nav-brand:hover {
-    color: #fff;
+    color: var(--fg);
+  }
+
+  .nav-brand-mark {
+    display: block;
+    width: auto;
+    height: 11px;
+    flex-shrink: 0;
   }
 
   .nav-brand-name {
-    font-size: 16px;
-    font-weight: 650;
-    letter-spacing: -0.025em;
+    color: var(--fg-muted);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
     line-height: 1;
+    transition: color 0.2s ease;
+  }
+
+  .nav-brand:hover .nav-brand-name {
+    color: var(--fg);
   }
 
   .nav-right {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 20px;
+  }
+
+  .nav-download {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+
+  .site-stage-trigger {
+    display: inline-flex;
+    width: 30px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0.84;
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s ease;
+  }
+
+  .site-stage-trigger:hover {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+
+  .site-stage-trigger img {
+    flex: 0 0 auto;
+    border-radius: 4px;
+  }
+
+  .nav-link {
+    color: var(--fg-muted);
+    font-size: 13px;
+    transition: color 0.18s ease;
+  }
+
+  .nav-link:hover {
+    color: var(--fg);
   }
 
   .nav-stars {
@@ -348,21 +723,18 @@ const {
     align-items: center;
     gap: 7px;
     height: 36px;
-    padding: 0 14px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.02);
+    padding: 0;
+    border: 0;
+    background: transparent;
     color: var(--fg-muted);
     font-size: 13px;
     letter-spacing: -0.01em;
     white-space: nowrap;
-    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    transition: color 0.18s ease;
   }
 
   .nav-stars:hover {
     color: var(--fg);
-    border-color: var(--border-strong);
-    background: rgba(255, 255, 255, 0.04);
   }
 
   .nav-stars strong {
@@ -371,7 +743,8 @@ const {
   }
 
   .nav-stars svg {
-    color: var(--warn);
+    color: var(--fg);
+    fill: var(--fg);
     flex-shrink: 0;
   }
 
@@ -382,81 +755,218 @@ const {
   }
 
   .footer {
+    --footer-accent: var(--fg-faint);
+    --footer-hover: var(--fg);
+    --footer-ambient-primary: rgba(255, 255, 255, 0.14);
+    --footer-ambient-secondary: rgba(255, 255, 255, 0.055);
+    position: relative;
+    isolation: isolate;
     margin-top: auto;
-    border-top: 1px solid var(--border);
-    padding: 40px 0 32px;
+    padding: 80px 0 36px;
+    overflow: hidden;
+  }
+
+  html[data-stage="nightly"] .footer {
+    --footer-accent: rgba(139, 129, 255, 0.5);
+    --footer-hover: rgb(179, 172, 255);
+    --footer-ambient-primary: rgba(180, 116, 255, 0.34);
+    --footer-ambient-secondary: rgba(91, 78, 224, 0.18);
+  }
+
+  html[data-stage="dev"] .footer {
+    --footer-accent: rgba(133, 187, 255, 0.55);
+    --footer-hover: rgb(159, 202, 255);
+    --footer-ambient-primary: rgba(105, 180, 255, 0.34);
+    --footer-ambient-secondary: rgba(43, 105, 225, 0.18);
+  }
+
+  @media (prefers-color-scheme: light) {
+    .footer {
+      --footer-accent: rgba(63, 63, 70, 0.3);
+      --footer-ambient-primary: rgba(113, 113, 122, 0.1);
+      --footer-ambient-secondary: rgba(161, 161, 170, 0.07);
+    }
+
+    html[data-stage="nightly"] .footer {
+      --footer-accent: rgba(112, 82, 174, 0.42);
+      --footer-hover: rgb(93, 59, 160);
+      --footer-ambient-primary: rgba(174, 126, 234, 0.2);
+      --footer-ambient-secondary: rgba(123, 104, 207, 0.11);
+    }
+
+    html[data-stage="dev"] .footer {
+      --footer-accent: rgba(54, 115, 181, 0.42);
+      --footer-hover: rgb(42, 99, 164);
+      --footer-ambient-primary: rgba(102, 174, 231, 0.2);
+      --footer-ambient-secondary: rgba(69, 126, 202, 0.11);
+    }
+  }
+
+  .footer-ambient {
+    position: absolute;
+    z-index: -1;
+    inset: 6% -6% -34%;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        ellipse at 15% 100%,
+        var(--footer-ambient-secondary) 0,
+        transparent 48%
+      ),
+      radial-gradient(
+        ellipse at 50% 108%,
+        var(--footer-ambient-primary) 0,
+        transparent 54%
+      ),
+      radial-gradient(
+        ellipse at 85% 100%,
+        var(--footer-ambient-secondary) 0,
+        transparent 48%
+      );
+    filter: blur(26px);
+    opacity: 0.92;
+    transform: scale(1.05);
+    transform-origin: bottom center;
+    transition:
+      background 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+    -webkit-mask-image: linear-gradient(
+      to top,
+      #000,
+      rgba(0, 0, 0, 0.72) 48%,
+      transparent 92%
+    );
+    mask-image: linear-gradient(to top, #000, rgba(0, 0, 0, 0.72) 48%, transparent 92%);
   }
 
   .footer-inner {
+    position: relative;
+    z-index: 1;
     max-width: 1240px;
     margin: 0 auto;
     padding: 0 32px;
     display: flex;
-    flex-wrap: wrap;
-    gap: 24px;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
+    gap: 52px;
   }
 
-  .footer-brand {
+  .footer-columns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: min(100%, 660px);
+    gap: clamp(24px, 6vw, 72px);
+  }
+
+  .footer-column {
     display: flex;
+    min-width: 0;
+    flex-direction: column;
     align-items: center;
     gap: 10px;
-    font-size: 13px;
-    color: var(--fg-dim);
+    text-align: center;
   }
 
-  .footer-brand img {
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
-  }
-
-  .footer-links {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 20px;
-  }
-
-  .footer-links a {
-    font-size: 13px;
-    color: var(--fg-dim);
-    transition: color 0.2s ease;
-  }
-
-  .footer-links a:hover {
+  .footer-column-title {
+    margin-bottom: 3px;
     color: var(--fg);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .footer-column a,
+  .footer-credit a {
+    color: var(--fg-dim);
+    text-decoration: none;
+    transition: color 0.18s ease;
+  }
+
+  .footer-column a {
+    width: fit-content;
+    font-size: 14px;
+  }
+
+  .footer-column a:hover,
+  .footer-credit a:hover {
+    color: var(--footer-hover);
+  }
+
+  .footer-credit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    color: var(--fg-dim);
+    font-size: 13px;
+  }
+
+  .footer-credit-brand {
+    display: inline-flex;
+    align-items: center;
+    color: var(--fg) !important;
+    font-weight: 500;
+  }
+
+  .footer-credit-separator {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--footer-accent);
+    transition: background-color 0.9s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   @media (max-width: 820px) {
+    .nav-blur {
+      bottom: -28px;
+    }
+
     .nav-inner,
     .footer-inner {
       padding-left: 20px;
       padding-right: 20px;
     }
 
-    .legal-document-page .nav {
+    .footer {
+      padding-top: 64px;
+      padding-bottom: max(36px, env(safe-area-inset-bottom));
+    }
+
+    .footer-inner {
+      gap: 48px;
+    }
+
+    .footer-columns {
+      gap: 24px;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .nav-link {
+      display: none;
+    }
+
+    .nav-stars span {
       display: none;
     }
 
     .footer {
-      padding-bottom: max(32px, env(safe-area-inset-bottom));
+      padding-top: 56px;
     }
 
-    .footer-inner {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 28px;
+    .footer-columns {
+      gap: 12px;
     }
 
-    .footer-links {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      width: 100%;
-      gap: 14px 20px;
-      justify-content: initial;
+    .footer-column a {
+      font-size: 13px;
     }
+
+    .footer-credit {
+      max-width: 290px;
+      gap: 8px;
+    }
+
   }
 
   @media (max-width: 420px) {
@@ -467,8 +977,8 @@ const {
     .nav-stars {
       height: 34px;
       gap: 6px;
-      padding: 0 12px;
       font-size: 12px;
     }
+
   }
 </style>

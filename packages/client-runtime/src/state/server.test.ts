@@ -312,6 +312,8 @@ describe("server state projection", () => {
     const staleLive = config("stale-live", "0.0.29");
     const initial = config("session", "0.0.30");
     const live = config("live", "0.0.30");
+    const channelLive = config("channel-live", "0.0.30-nightly.20260701.1");
+    const dateOnlyNightly = config("date-only-nightly", "0.0.30-nightly.20260701");
 
     expect(
       resolveServerConfigValue(
@@ -343,6 +345,26 @@ describe("server state projection", () => {
         initial,
       ),
     ).toBe(live);
+    expect(
+      resolveServerConfigValue(
+        {
+          config: channelLive,
+          latestEvent: snapshotEvent(channelLive),
+          source: "live",
+        },
+        initial,
+      ),
+    ).toBe(channelLive);
+    expect(
+      resolveServerConfigValue(
+        {
+          config: dateOnlyNightly,
+          latestEvent: snapshotEvent(dateOnlyNightly),
+          source: "live",
+        },
+        initial,
+      ),
+    ).toBe(dateOnlyNightly);
   });
 
   it.effect("starts from cached configuration and persists the live projection", () =>

@@ -54,7 +54,9 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         isElectron && "drag-region",
       )}
     >
-      {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      {backdropVariant ? (
+        <SidebarStageBackdrop key={backdropVariant} variant={backdropVariant} />
+      ) : null}
       <SidebarTrigger
         className={cn(
           "relative z-10 md:hidden",

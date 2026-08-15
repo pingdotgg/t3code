@@ -38,7 +38,6 @@ import {
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
-import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { shellEnvironment } from "../state/shell";
@@ -310,7 +309,10 @@ function errorDetails(error: unknown): string {
 
 function AuthenticatedTracingBootstrap() {
   useEffect(() => {
-    void configureClientTracing();
+    if (import.meta.env.VITE_T3CODE_DEMO === "true") return;
+    void import("../observability/clientTracing").then(({ configureClientTracing }) =>
+      configureClientTracing(),
+    );
   }, []);
 
   return null;
