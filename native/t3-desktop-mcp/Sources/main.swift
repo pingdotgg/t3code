@@ -841,12 +841,15 @@ func toolClick(_ args: [String: Any]) -> String {
     }
 
     if let x = args["x"] as? Double, let y = args["y"] as? Double {
+        guard Int(exactly: x.rounded(.towardZero)) != nil,
+              Int(exactly: y.rounded(.towardZero)) != nil else {
+            return "error: coordinates must be finite and representable as integers"
+        }
         let point = CGPoint(x: x, y: y)
         AgentCursor.shared.press(at: point)
-        // Prefer the app the caller named, then whatever window actually sits
-        // under the point. Without the second lookup a caller who omits `app`
-        // falls through to the shared cursor, which is exactly what desktop
-        // control should avoid.
+        // Prefer the window under the point so backgroundClick uses the correct
+        // window ID/origin even when `app` resolves to that app's first AX window.
+        // Fall back to the named app only when nothing sits under the point.
         let target = windowTarget(under: point) ?? resolveTargetPid(args).flatMap(windowTarget(forPid:))
         if let target, backgroundClick(target, at: point, clickCount: clickCount) {
             return "clicked at (\(Int(x)), \(Int(y))) in background"
