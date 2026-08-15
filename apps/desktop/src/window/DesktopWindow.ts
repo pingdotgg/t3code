@@ -855,6 +855,10 @@ export const make = Effect.gen(function* () {
       webContents.setZoomLevel(
         direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
       );
+      // Chromium pushes the new level down to embedded guests, which would zoom
+      // the previewed page along with the app UI. The preview browser keeps its
+      // own zoom, so put each guest back where the preview left it.
+      yield* previewManager.reapplyZoom();
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
