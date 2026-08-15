@@ -562,7 +562,7 @@ fn host_matches(haystack: &str, needle: &str) -> bool {
 
 fn path_needle_matches(page: &str, raw_needle: &str) -> bool {
     let needle = raw_needle.trim().to_lowercase();
-    // Full URL needles: https://example.com/private
+    // Full URL needles: https://example.com/private  or origin https://example.com
     if needle.contains("://") {
         let filter_page = strip_query_and_fragment(&needle).to_lowercase();
         let Some(want_host) = extract_hosts(&filter_page).into_iter().next() else {
@@ -574,15 +574,19 @@ fn path_needle_matches(page: &str, raw_needle: &str) -> bool {
         if !(have_host == want_host || have_host.ends_with(&format!(".{want_host}"))) {
             return false;
         }
-        return path_prefix_match(&page_path(page), &page_path(&filter_page));
+        let want_path = normalize_path(&page_path(&filter_page));
+        // Origin-only filters (no meaningful path) match every page on the host.
+        if want_path == "/" {
+            return true;
+        }
+        return path_prefix_match(&normalize_path(&page_path(page)), &want_path);
     }
     // Absolute path needles: /private
     if needle.starts_with('/') {
-        let want = needle.trim_end_matches('/');
-        let want = if want.is_empty() { "/" } else { want };
-        return path_prefix_match(&page_path(page), want);
+        let want = normalize_path(&needle);
+        return path_prefix_match(&normalize_path(&page_path(page)), &want);
     }
-    // Host-qualified: localhost/admin, trusted.example/path, [::1]/x
+    // Host-qualified: localhost/admin, trusted.example/path, example.com/
     if let Some((host_part, path_part)) = needle.split_once('/') {
         if !host_part.is_empty() {
             let Some(host) = extract_hosts(page).into_iter().next() else {
@@ -592,20 +596,30 @@ fn path_needle_matches(page: &str, raw_needle: &str) -> bool {
             if !host_ok {
                 return false;
             }
-            let want = if path_part.is_empty() {
-                "/".to_string()
-            } else {
-                format!("/{}", path_part.trim_end_matches('/'))
-            };
-            return path_prefix_match(&page_path(page), &want);
+            let path_part = path_part.trim_matches('/');
+            // `example.com/` → whole host.
+            if path_part.is_empty() {
+                return true;
+            }
+            let want = format!("/{path_part}");
+            return path_prefix_match(&normalize_path(&page_path(page)), &want);
         }
     }
     false
 }
 
+fn normalize_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn path_prefix_match(path: &str, want: &str) -> bool {
-    let path = if path.is_empty() { "/" } else { path };
-    let want = if want.is_empty() { "/" } else { want };
+    let path = normalize_path(path);
+    let want = normalize_path(want);
     // Segment boundary only — `/account` must not match `/accounting`.
     path == want || path.starts_with(&format!("{want}/"))
 }
@@ -1008,5 +1022,13 @@ mod tests {
             "https://example.com/private"
         ));
         assert!(host_matches("http://localhost/admin", "localhost/admin"));
+        assert!(host_matches("https://example.com/private/x", "https://example.com"));
+        assert!(host_matches("https://example.com/private", "https://example.com/private/"));
+        assert!(host_matches("https://example.com/other", "example.com/"));
+    }
+
+    #[test]
+    fn origin_filter_matches_whole_host() {
+        assert!(host_matches("https://example.com/deep/page", "https://example.com/"));
     }
 }

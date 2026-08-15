@@ -304,12 +304,12 @@ private final class DaemonState {
         return false
       }
       guard haveHost == wantHost || haveHost.hasSuffix(".\(wantHost)") else { return false }
-      return pathPrefixMatch(pagePath(page), pagePath(filterPage))
+      let wantPath = normalizePath(pagePath(filterPage))
+      if wantPath == "/" { return true }
+      return pathPrefixMatch(normalizePath(pagePath(page)), wantPath)
     }
     if needle.hasPrefix("/") {
-      let want = needle.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-      let wantPath = want.isEmpty ? "/" : "/\(want)"
-      return pathPrefixMatch(pagePath(page), wantPath)
+      return pathPrefixMatch(normalizePath(pagePath(page)), normalizePath(needle))
     }
     if let slash = needle.firstIndex(of: "/") {
       let hostPart = String(needle[..<slash])
@@ -317,15 +317,20 @@ private final class DaemonState {
         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
       guard !hostPart.isEmpty, let host = urlHosts(page).first else { return false }
       guard host == hostPart || host.hasSuffix(".\(hostPart)") else { return false }
-      let want = pathPart.isEmpty ? "/" : "/\(pathPart)"
-      return pathPrefixMatch(pagePath(page), want)
+      if pathPart.isEmpty { return true }
+      return pathPrefixMatch(normalizePath(pagePath(page)), "/\(pathPart)")
     }
     return false
   }
 
+  private static func normalizePath(_ path: String) -> String {
+    let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    return trimmed.isEmpty ? "/" : "/\(trimmed)"
+  }
+
   private static func pathPrefixMatch(_ path: String, _ want: String) -> Bool {
-    let path = path.isEmpty ? "/" : path
-    let want = want.isEmpty ? "/" : want
+    let path = normalizePath(path)
+    let want = normalizePath(want)
     return path == want || path.hasPrefix("\(want)/")
   }
 
