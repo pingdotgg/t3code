@@ -122,42 +122,34 @@ export function createNativeReviewDiffTheme(
 ): NativeReviewDiffTheme {
   const terminalTheme = getPierreTerminalTheme(scheme);
   const [, terminalRed, , , terminalBlue] = terminalTheme.palette;
-  const theme: NativeReviewDiffTheme =
+  const background = scheme === "dark" ? "#0e0e0e" : "#f2f2f7";
+  const schemeColors =
     scheme === "dark"
       ? {
-          // Match the app surface (--color-sheet) so code views blend with the rest of
-          // the app instead of using a distinct code-editor background.
-          background: "#0e0e0e",
-          text: terminalTheme.foreground,
-          mutedText: terminalTheme.mutedForeground,
-          headerBackground: "#0e0e0e",
-          border: terminalTheme.border,
           hunkBackground: "#071f28",
-          hunkText: terminalBlue ?? "#009fff",
           addBackground: "#0d2f28",
           deleteBackground: "#391415",
-          addBar: "#00cab1",
-          deleteBar: terminalRed ?? "#ff2e3f",
           addText: "#5ECC71",
           deleteText: "#FF6762",
         }
       : {
-          // Match the app surface (--color-sheet) so code views blend with the rest of the
-          // app instead of using a distinct code-editor background.
-          background: "#f2f2f7",
-          text: "#070707",
-          mutedText: terminalTheme.mutedForeground,
-          headerBackground: "#f2f2f7",
-          border: terminalTheme.border,
           hunkBackground: "#e0f2ff",
-          hunkText: terminalBlue ?? "#009fff",
           addBackground: "#e5f8f5",
           deleteBackground: "#ffe6e7",
-          addBar: "#00cab1",
-          deleteBar: terminalRed ?? "#ff2e3f",
           addText: "#199F43",
           deleteText: "#D52C36",
         };
+  const theme: NativeReviewDiffTheme = {
+    background,
+    text: scheme === "dark" ? terminalTheme.foreground : "#070707",
+    mutedText: terminalTheme.mutedForeground,
+    headerBackground: background,
+    border: terminalTheme.border,
+    hunkText: terminalBlue ?? "#009fff",
+    addBar: "#00cab1",
+    deleteBar: terminalRed ?? "#ff2e3f",
+    ...schemeColors,
+  };
   return overrides
     ? {
         ...theme,

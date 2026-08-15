@@ -15,24 +15,18 @@ import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 function ThemePreview(props: { readonly theme: MobileThemePickerOption }) {
   return (
     <View className="h-10 flex-row overflow-hidden rounded-xl">
-      <View
-        className="flex-1 items-center justify-center"
-        style={{ backgroundColor: props.theme.light.canvas }}
-      >
+      {(["light", "dark"] as const).map((appearance) => (
         <View
-          className="size-4 rounded-full"
-          style={{ backgroundColor: props.theme.light.accent }}
-        />
-      </View>
-      <View
-        className="flex-1 items-center justify-center"
-        style={{ backgroundColor: props.theme.dark.canvas }}
-      >
-        <View
-          className="size-4 rounded-full"
-          style={{ backgroundColor: props.theme.dark.accent }}
-        />
-      </View>
+          key={appearance}
+          className="flex-1 items-center justify-center"
+          style={{ backgroundColor: props.theme[appearance].canvas }}
+        >
+          <View
+            className="size-4 rounded-full"
+            style={{ backgroundColor: props.theme[appearance].accent }}
+          />
+        </View>
+      ))}
     </View>
   );
 }

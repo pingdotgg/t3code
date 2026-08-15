@@ -60,15 +60,6 @@ export function createSyncedClientPreferenceWrite<
   } as const;
 }
 
-export function createSyncedPlanModeWrite(
-  input: Omit<Parameters<typeof createSyncedClientPreferenceWrite<"planModeEnabled">>[0], "field">,
-) {
-  return {
-    clientPatch: { planModeEnabled: input.value },
-    ...createSyncedClientPreferenceWrite({ ...input, field: "planModeEnabled" }),
-  } as const;
-}
-
 type SyncedClientPreferencePatchTarget = {
   readonly environmentId: EnvironmentId;
   readonly input: PatchSyncedClientPreferencesRequest;
@@ -151,25 +142,6 @@ export function resolveSyncedClientPreferenceHydrationAction<
     value: input.clientValue,
     updatedAt: nextSyncedClientPreferencesUpdatedAt([serverUpdatedAt], input.now),
   };
-}
-
-export type SyncedPlanModeHydrationInput<E> = SyncedClientPreferenceHydrationInput<
-  "planModeEnabled",
-  E
->;
-export type SyncedPlanModeHydrationAction =
-  SyncedClientPreferenceHydrationAction<"planModeEnabled">;
-
-export function resolveSyncedPlanModeHydrationAction(
-  input: Omit<
-    Parameters<typeof resolveSyncedClientPreferenceHydrationAction<"planModeEnabled">>[0],
-    "field"
-  >,
-): SyncedPlanModeHydrationAction {
-  return resolveSyncedClientPreferenceHydrationAction({
-    ...input,
-    field: "planModeEnabled",
-  });
 }
 
 const SYNCED_CLIENT_PREFERENCE_RETRY_DELAY_MS = 1_000;
@@ -493,12 +465,6 @@ export function createSyncedClientPreferenceHydrationController<
   };
 }
 
-export function createSyncedPlanModeHydrationController(
-  scheduleRetry?: SyncedClientPreferenceRetryScheduler,
-) {
-  return createSyncedClientPreferenceHydrationController("planModeEnabled", scheduleRetry);
-}
-
 export function useSyncedClientPreferenceHydrationEffect<
   Field extends SyncedClientPreferenceField,
   E,
@@ -523,11 +489,4 @@ export function useSyncedClientPreferenceHydrationEffect<
       synchronizationOwner,
     ],
   );
-}
-
-export function useSyncedPlanModeHydrationEffect<E>(
-  controller: ReturnType<typeof createSyncedPlanModeHydrationController>,
-  input: SyncedPlanModeHydrationInput<E>,
-): void {
-  useSyncedClientPreferenceHydrationEffect(controller, input);
 }

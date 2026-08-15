@@ -144,13 +144,13 @@ const T3_CODE_COLORS: Readonly<Record<MobileThemeAppearance, MobileCoreThemeColo
 };
 
 function normalizeMobileThemeColors(colors: MobileCoreThemeColors): MobileCoreThemeColors {
-  return Object.fromEntries(
-    Object.entries(colors).map(([role, color]) => {
-      const normalized = normalizeMobileThemeColorLiteral(color);
-      if (!normalized) throw new Error(`Invalid T3 Code fallback color for "${role}": ${color}`);
-      return [role, normalized];
-    }),
-  ) as unknown as MobileCoreThemeColors;
+  const normalizedColors = { ...colors };
+  for (const role of Object.keys(normalizedColors) as Array<keyof MobileCoreThemeColors>) {
+    const color = normalizeMobileThemeColorLiteral(normalizedColors[role]);
+    if (!color) throw new Error(`Invalid T3 Code fallback color for "${role}": ${colors[role]}`);
+    normalizedColors[role] = color;
+  }
+  return normalizedColors;
 }
 
 const NORMALIZED_T3_CODE_COLORS: Readonly<Record<MobileThemeAppearance, MobileCoreThemeColors>> = {

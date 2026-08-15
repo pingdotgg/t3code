@@ -310,9 +310,7 @@ const syncedPlanModeHydrationController =
   createSyncedClientPreferenceHydrationController("planModeEnabled");
 const syncedAppearanceModeHydrationController =
   createSyncedClientPreferenceHydrationController("appearanceMode");
-const syncedThemeIdHydrationController =
-  createSyncedClientPreferenceHydrationController("themeId");
-
+const syncedThemeIdHydrationController = createSyncedClientPreferenceHydrationController("themeId");
 
 function useEnvironmentSyncedClientPreferences(environmentId: EnvironmentId | null) {
   const preferences = useAtomValue(

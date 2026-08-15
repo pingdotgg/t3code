@@ -310,33 +310,33 @@ function parseCssNumber(value: string): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function parseClampedAlpha(value: string | undefined): number | null {
-  if (value === undefined) return 1;
+function parseCssComponent(
+  value: string,
+): { readonly number: number; readonly percent: boolean } | null {
   const token = value.trim().toLowerCase();
-  if (token === "") return null;
-  if (token === "none") return 0;
+  if (token === "none") return { number: 0, percent: false };
   const percent = token.endsWith("%");
   const number = parseCssNumber(percent ? token.slice(0, -1) : token);
-  if (number === null) return null;
-  return Math.min(1, Math.max(0, percent ? number / 100 : number));
+  return number === null ? null : { number, percent };
+}
+
+function parseClampedAlpha(value: string | undefined): number | null {
+  if (value === undefined) return 1;
+  const component = parseCssComponent(value);
+  if (!component) return null;
+  return Math.min(1, Math.max(0, component.percent ? component.number / 100 : component.number));
 }
 
 function parseScaledComponent(value: string, percentageScale: number): number | null {
-  const token = value.trim().toLowerCase();
-  if (token === "none") return 0;
-  const percent = token.endsWith("%");
-  const number = parseCssNumber(percent ? token.slice(0, -1) : token);
-  if (number === null) return null;
-  return percent ? (number * percentageScale) / 100 : number;
+  const component = parseCssComponent(value);
+  if (!component) return null;
+  return component.percent ? (component.number * percentageScale) / 100 : component.number;
 }
 
 function parseRgbChannel(value: string): number | null {
-  const token = value.trim().toLowerCase();
-  if (token === "none") return 0;
-  const percent = token.endsWith("%");
-  const number = parseCssNumber(percent ? token.slice(0, -1) : token);
-  if (number === null) return null;
-  return percent ? (number / 100) * 255 : number;
+  const component = parseCssComponent(value);
+  if (!component) return null;
+  return component.percent ? (component.number / 100) * 255 : component.number;
 }
 
 function parseAngle(value: string): number | null {
@@ -420,10 +420,10 @@ function hslToRgb(hue: number, saturation: number, lightness: number): [number, 
 }
 
 function parsePercentage(value: string): number | null {
-  const token = value.trim();
-  if (!token.endsWith("%")) return null;
-  const number = parseCssNumber(token.slice(0, -1));
-  return number !== null && number >= 0 && number <= 100 ? number / 100 : null;
+  const component = parseCssComponent(value);
+  return component?.percent && component.number >= 0 && component.number <= 100
+    ? component.number / 100
+    : null;
 }
 
 function parseHslColor(body: string): string | null {

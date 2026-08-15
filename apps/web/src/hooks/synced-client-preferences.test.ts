@@ -11,12 +11,8 @@ import {
   createSyncedClientPreferenceHydrationController,
   createSyncedClientPreferenceWrite,
   createSyncedClientPreferencesSliceAtom,
-  createSyncedPlanModeHydrationController,
-  createSyncedPlanModeWrite,
   resolveSyncedClientPreferenceHydrationAction,
-  resolveSyncedPlanModeHydrationAction,
   type SyncedClientPreferenceHydrationInput,
-  type SyncedPlanModeHydrationInput,
   useSyncedClientPreferenceHydrationEffect,
 } from "./synced-client-preferences";
 
@@ -61,7 +57,8 @@ function createHookTestRoot() {
 describe("synced client preferences", () => {
   it("adopts an environment value over the local cache", () => {
     expect(
-      resolveSyncedPlanModeHydrationAction({
+      resolveSyncedClientPreferenceHydrationAction({
+        field: "planModeEnabled",
         clientHydrated: true,
         clientValue: false,
         serverPreferences: {
@@ -80,7 +77,8 @@ describe("synced client preferences", () => {
 
   it("seeds a missing environment value once from the local cache", () => {
     expect(
-      resolveSyncedPlanModeHydrationAction({
+      resolveSyncedClientPreferenceHydrationAction({
+        field: "planModeEnabled",
         clientHydrated: true,
         clientValue: true,
         serverPreferences: {
@@ -96,7 +94,8 @@ describe("synced client preferences", () => {
       updatedAt: "2026-08-14T11:00:00.000Z",
     });
     expect(
-      resolveSyncedPlanModeHydrationAction({
+      resolveSyncedClientPreferenceHydrationAction({
+        field: "planModeEnabled",
         clientHydrated: true,
         clientValue: true,
         serverPreferences: undefined,
@@ -108,26 +107,25 @@ describe("synced client preferences", () => {
 
   it("writes one stamped value to the local and environment stores", () => {
     expect(
-      createSyncedPlanModeWrite({
+      createSyncedClientPreferenceWrite({
+        field: "planModeEnabled",
         value: false,
         serverPreferences: {
           planModeEnabled: true,
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
         now: "2026-08-14T12:01:00.000Z",
-      }),
+      }).request,
     ).toEqual({
-      clientPatch: { planModeEnabled: false },
-      request: {
-        patch: { planModeEnabled: false },
-        updatedAt: "2026-08-14T12:01:00.000Z",
-      },
+      patch: { planModeEnabled: false },
+      updatedAt: "2026-08-14T12:01:00.000Z",
     });
   });
 
   it("advances writes from the plan clock instead of a newer appearance clock", () => {
     expect(
-      createSyncedPlanModeWrite({
+      createSyncedClientPreferenceWrite({
+        field: "planModeEnabled",
         value: false,
         serverPreferences: {
           planModeEnabled: true,
@@ -139,15 +137,14 @@ describe("synced client preferences", () => {
           updatedAt: "2026-08-14T13:00:00.000Z",
         },
         now: "2026-08-14T12:30:00.000Z",
-      }),
-    ).toMatchObject({
-      request: { updatedAt: "2026-08-14T12:30:00.000Z" },
-    });
+      }).request,
+    ).toMatchObject({ updatedAt: "2026-08-14T12:30:00.000Z" });
   });
 
   it("preserves an opaque server theme across an unrelated plan write", () => {
     expect(
-      createSyncedPlanModeWrite({
+      createSyncedClientPreferenceWrite({
+        field: "planModeEnabled",
         value: true,
         serverPreferences: {
           planModeEnabled: false,
@@ -217,7 +214,8 @@ describe("synced client preferences", () => {
 
   it("does not re-adopt stale server state while a local write is pending", () => {
     expect(
-      resolveSyncedPlanModeHydrationAction({
+      resolveSyncedClientPreferenceHydrationAction({
+        field: "planModeEnabled",
         clientHydrated: true,
         clientValue: false,
         serverPreferences: {
@@ -237,7 +235,7 @@ describe("synced client preferences", () => {
   it("keeps divergent values stable across primary and secondary synchronization", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const secondaryEnvironmentId = EnvironmentId.make("secondary");
-    const controller = createSyncedPlanModeHydrationController();
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
     const persisted: boolean[] = [];
     let localValue = false;
     const persist = (value: boolean) => {
@@ -302,7 +300,7 @@ describe("synced client preferences", () => {
 
   it("settles a pending write from an older canonical ack without re-patching", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
-    const controller = createSyncedPlanModeHydrationController();
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
     let localValue = false;
     const persist = (value: boolean) => {
       localValue = value;
@@ -375,7 +373,7 @@ describe("synced client preferences", () => {
 
   it("does not seed preferences without orchestration operate scope", () => {
     const primaryEnvironmentId = EnvironmentId.make("read-only");
-    const controller = createSyncedPlanModeHydrationController();
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
     const patch = vi.fn(async () =>
       AsyncResult.success({
         planModeEnabled: false,
@@ -412,7 +410,7 @@ describe("synced client preferences", () => {
 
   it("keeps the local fallback when server preferences are read-only", () => {
     const primaryEnvironmentId = EnvironmentId.make("read-only");
-    const controller = createSyncedPlanModeHydrationController();
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
     const persist = vi.fn();
     const patch = vi.fn();
 
@@ -438,7 +436,7 @@ describe("synced client preferences", () => {
 
   it("uploads an offline write when patch access becomes available", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
-    const controller = createSyncedPlanModeHydrationController();
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
     const previous = {
       planModeEnabled: false,
       updatedAt: "2026-08-14T12:00:00.000Z",
@@ -485,10 +483,13 @@ describe("synced client preferences", () => {
   it.each(["write", "seed"] as const)("retries a failed %s patch", async (kind) => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const scheduledRetries: Array<() => void> = [];
-    const controller = createSyncedPlanModeHydrationController((retry) => {
-      scheduledRetries.push(retry);
-      return vi.fn();
-    });
+    const controller = createSyncedClientPreferenceHydrationController(
+      "planModeEnabled",
+      (retry) => {
+        scheduledRetries.push(retry);
+        return vi.fn();
+      },
+    );
     const previous = {
       planModeEnabled: false,
       updatedAt: "2026-08-14T12:00:00.000Z",
@@ -513,7 +514,7 @@ describe("synced client preferences", () => {
       now: "2026-08-14T12:01:00.000Z",
       patch,
       persist: vi.fn(),
-    } satisfies SyncedPlanModeHydrationInput<string>;
+    } satisfies SyncedClientPreferenceHydrationInput<"planModeEnabled", string>;
 
     controller.synchronize(hydrationInput);
     if (kind === "write") {
@@ -653,17 +654,20 @@ describe("synced client preferences", () => {
     const previousPrimaryEnvironmentId = EnvironmentId.make("previous-primary");
     const nextPrimaryEnvironmentId = EnvironmentId.make("next-primary");
     const scheduledRetries: Array<() => void> = [];
-    const controller = createSyncedPlanModeHydrationController((retry) => {
-      let cancelled = false;
-      scheduledRetries.push(() => {
-        if (!cancelled) retry();
-      });
-      return () => {
-        cancelled = true;
-      };
-    });
+    const controller = createSyncedClientPreferenceHydrationController(
+      "planModeEnabled",
+      (retry) => {
+        let cancelled = false;
+        scheduledRetries.push(() => {
+          if (!cancelled) retry();
+        });
+        return () => {
+          cancelled = true;
+        };
+      },
+    );
     const patch = vi
-      .fn<SyncedPlanModeHydrationInput<string>["patch"]>()
+      .fn<SyncedClientPreferenceHydrationInput<"planModeEnabled", string>["patch"]>()
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
       .mockResolvedValue(
         AsyncResult.success({
@@ -683,7 +687,7 @@ describe("synced client preferences", () => {
       now: "2026-08-14T12:00:00.000Z",
       patch,
       persist,
-    } satisfies SyncedPlanModeHydrationInput<string>;
+    } satisfies SyncedClientPreferenceHydrationInput<"planModeEnabled", string>;
     const owner = Symbol();
     const deactivate = controller.synchronize(input, owner);
     await Promise.resolve();
@@ -717,11 +721,13 @@ describe("synced client preferences", () => {
     async ({ switchPrimary, expectedPersisted }) => {
       const previousPrimaryEnvironmentId = EnvironmentId.make("previous-primary");
       const nextPrimaryEnvironmentId = EnvironmentId.make("next-primary");
-      const controller = createSyncedPlanModeHydrationController();
+      const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
       let resolvePatch!: (
-        result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>,
+        result: Awaited<
+          ReturnType<SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"]>
+        >,
       ) => void;
-      const patch = vi.fn<SyncedPlanModeHydrationInput<never>["patch"]>(
+      const patch = vi.fn<SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"]>(
         () =>
           new Promise((resolve) => {
             resolvePatch = resolve;
@@ -740,7 +746,7 @@ describe("synced client preferences", () => {
         now: "2026-08-14T12:00:00.000Z",
         patch,
         persist,
-      } satisfies SyncedPlanModeHydrationInput<never>;
+      } satisfies SyncedClientPreferenceHydrationInput<"planModeEnabled", never>;
       const owner = Symbol();
       const deactivate = controller.synchronize(input, owner);
       expect(patch).toHaveBeenCalledOnce();
@@ -885,16 +891,24 @@ describe("synced client preferences", () => {
 
   it("keeps the latest rapid toggle when responses settle out of order", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
-    const controller = createSyncedPlanModeHydrationController();
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
     const previous = {
       planModeEnabled: false,
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
-    const targets: Array<Parameters<SyncedPlanModeHydrationInput<never>["patch"]>[0]> = [];
-    const resolvePatches: Array<
-      (result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>) => void
+    const targets: Array<
+      Parameters<SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"]>[0]
     > = [];
-    const patch: SyncedPlanModeHydrationInput<never>["patch"] = (target) =>
+    const resolvePatches: Array<
+      (
+        result: Awaited<
+          ReturnType<SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"]>
+        >,
+      ) => void
+    > = [];
+    const patch: SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"] = (
+      target,
+    ) =>
       new Promise((resolve) => {
         targets.push(target);
         resolvePatches.push(resolve);
@@ -951,12 +965,20 @@ describe("synced client preferences", () => {
 
   it("ignores a seed acknowledgement after a newer write is queued", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
-    const controller = createSyncedPlanModeHydrationController();
-    const targets: Array<Parameters<SyncedPlanModeHydrationInput<never>["patch"]>[0]> = [];
-    const resolvePatches: Array<
-      (result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>) => void
+    const controller = createSyncedClientPreferenceHydrationController("planModeEnabled");
+    const targets: Array<
+      Parameters<SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"]>[0]
     > = [];
-    const patch: SyncedPlanModeHydrationInput<never>["patch"] = (target) =>
+    const resolvePatches: Array<
+      (
+        result: Awaited<
+          ReturnType<SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"]>
+        >,
+      ) => void
+    > = [];
+    const patch: SyncedClientPreferenceHydrationInput<"planModeEnabled", never>["patch"] = (
+      target,
+    ) =>
       new Promise((resolve) => {
         targets.push(target);
         resolvePatches.push(resolve);
