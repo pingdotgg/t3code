@@ -679,6 +679,22 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("resolves a custom right panel maximize binding", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("m", { shiftKey: true }),
+        command: "rightPanel.toggleMaximized",
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "m", metaKey: true, shiftKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "rightPanel.toggleMaximized",
+    );
+  });
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(

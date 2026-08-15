@@ -47,6 +47,9 @@ Use **Inspect** to pick an element in the app and reveal its color token. Inspec
 successful pick; its hover glow and badge preview the element and token that click will select.
 **Cancel** or `Escape` exits Inspect and clears its selection and spotlight.
 
+`rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
+so add one in **Settings** → **Keybindings** if you want to use it.
+
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
 keeping the thread's project, branch, and machine context visible. Message search begins after two
