@@ -369,7 +369,8 @@ fn key_sequence(key: &str, modifiers: &[String]) -> String {
         "tab" => "{tab}".to_string(),
         "escape" | "esc" => "{esc}".to_string(),
         "space" => " ".to_string(),
-        "backspace" | "delete" => "{backspace}".to_string(),
+        "backspace" => "{backspace}".to_string(),
+        "delete" => "{delete}".to_string(),
         "up" => "{up}".to_string(),
         "down" => "{down}".to_string(),
         "left" => "{left}".to_string(),
@@ -391,6 +392,9 @@ impl Desktop for WindowsDesktop {
     }
 
     fn get_app_state(&mut self, app: &str, max_depth: usize, max_elements: usize) -> Result<String> {
+        // Ids are per-snapshot, so previous handles must not resolve — clear
+        // before resolve_pid so a failed lookup cannot leave stale ids.
+        self.registry.clear();
         let pid = apps::resolve_pid(app)?;
         let windows = Self::top_level_windows(pid);
         if windows.is_empty() {
@@ -399,8 +403,6 @@ impl Desktop for WindowsDesktop {
             )));
         }
 
-        // Ids are per-snapshot, so previous handles must not resolve.
-        self.registry.clear();
         let mut next_id = 0u32;
         let mut lines = vec![format!("{app} (pid {pid}), {} window(s)", windows.len())];
         // One shared element budget across every window — recreating the walk

@@ -102,7 +102,10 @@ impl AgentCursor {
         if !ENABLED.load(Ordering::Relaxed) {
             return;
         }
-        TASK_HIDE_GEN.fetch_add(1, Ordering::Relaxed);
+        // Cancel any armed fade before bumping the generation so an expired
+        // watcher cannot hide after this call.
+        FADE_DEADLINE_MS.store(0, Ordering::SeqCst);
+        TASK_HIDE_GEN.fetch_add(1, Ordering::SeqCst);
     }
 
     /// A Computer Use `tools/call` finished. Fade once tools stop for this task.
@@ -117,12 +120,12 @@ impl AgentCursor {
         if !used {
             return;
         }
-        let generation = TASK_HIDE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+        let generation = TASK_HIDE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
         let delay = task_fade_grace();
-        FADE_TARGET_GEN.store(generation, Ordering::Relaxed);
+        FADE_TARGET_GEN.store(generation, Ordering::SeqCst);
         FADE_DEADLINE_MS.store(
             now_unix_ms().saturating_add(delay.as_millis() as u64),
-            Ordering::Relaxed,
+            Ordering::SeqCst,
         );
         ensure_fade_watcher();
     }
@@ -148,18 +151,20 @@ fn ensure_fade_watcher() {
         .spawn(|| {
             loop {
                 thread::sleep(Duration::from_millis(50));
-                let deadline = FADE_DEADLINE_MS.load(Ordering::Relaxed);
+                let deadline = FADE_DEADLINE_MS.load(Ordering::SeqCst);
                 if deadline == 0 || now_unix_ms() < deadline {
                     continue;
                 }
-                let target = FADE_TARGET_GEN.load(Ordering::Relaxed);
+                let target = FADE_TARGET_GEN.load(Ordering::SeqCst);
                 if FADE_DEADLINE_MS
-                    .compare_exchange(deadline, 0, Ordering::Relaxed, Ordering::Relaxed)
+                    .compare_exchange(deadline, 0, Ordering::SeqCst, Ordering::SeqCst)
                     .is_err()
                 {
                     continue;
                 }
-                if TASK_HIDE_GEN.load(Ordering::Relaxed) == target {
+                // Re-check after disarming: `note_desktop_tool_started` may have
+                // bumped the generation between the load and the CAS.
+                if TASK_HIDE_GEN.load(Ordering::SeqCst) == target {
                     AgentCursor::shared().hide();
                 }
             }
@@ -286,6 +291,8 @@ struct Overlay {
     /// True when depth is 32 and unused bits can carry alpha.
     argb: bool,
     byte_order: ImageOrder,
+    bitmap_bit_order: ImageOrder,
+    bitmap_scanline_pad: u8,
     bits_per_pixel: u8,
     mapped: bool,
     /// Premultiplied BGRA scratch (same layout as Windows).
@@ -433,6 +440,8 @@ fn ui_thread(rx: Receiver<Cmd>) {
         visual,
         argb,
         byte_order,
+        bitmap_bit_order: setup.bitmap_format_bit_order,
+        bitmap_scanline_pad: setup.bitmap_format_scanline_pad,
         bits_per_pixel,
         mapped: false,
         pixels: vec![0u8; (SIDE * SIDE * 4) as usize],
@@ -723,7 +732,9 @@ fn tick(overlay: &mut Overlay, state: &mut Anim) -> bool {
 
 fn present(overlay: &mut Overlay, alpha: f64) {
     let a_scale = alpha.clamp(0.0, 1.0);
-    let bpp = (overlay.bits_per_pixel as usize).div_ceil(8).max(3);
+    // Match the server pixmap format exactly — 15/16-bit displays use 2 bytes/pixel.
+    // Do not force a minimum of 3; PutImage size must match bits_per_pixel.
+    let bpp = (overlay.bits_per_pixel as usize).div_ceil(8).max(1);
     let n = (SIDE * SIDE) as usize;
     overlay.put_buf.resize(n * bpp, 0);
 
@@ -757,7 +768,84 @@ fn present(overlay: &mut Overlay, alpha: f64) {
         overlay.depth,
         &overlay.put_buf,
     );
+
+    // Without an ARGB visual, opaque PutImage paints a black square. Clip the
+    // window to non-transparent pixels via the Shape extension (already required
+    // for ShapeInput click-through).
+    if !overlay.argb {
+        apply_alpha_bounding_shape(overlay, a_scale);
+    }
+
     let _ = overlay.conn.flush();
+}
+
+fn apply_alpha_bounding_shape(overlay: &mut Overlay, a_scale: f64) {
+    let Ok(pixmap) = overlay.conn.generate_id() else {
+        return;
+    };
+    let Ok(mask_gc) = overlay.conn.generate_id() else {
+        return;
+    };
+    if overlay
+        .conn
+        .create_pixmap(1, pixmap, overlay.win, SIDE as u16, SIDE as u16)
+        .is_err()
+    {
+        return;
+    }
+    if overlay
+        .conn
+        .create_gc(mask_gc, pixmap, &CreateGCAux::new().graphics_exposures(0))
+        .is_err()
+    {
+        let _ = overlay.conn.free_pixmap(pixmap);
+        return;
+    }
+
+    let width = SIDE as usize;
+    let height = SIDE as usize;
+    // XYBitmap scanlines are padded to bitmap_format_scanline_pad bits.
+    let pad_bits = usize::from(overlay.bitmap_scanline_pad).max(8);
+    let stride = width.div_ceil(pad_bits) * (pad_bits / 8);
+    let mut bits = vec![0u8; stride * height];
+    let msb_first = overlay.bitmap_bit_order == ImageOrder::MSB_FIRST;
+    for y in 0..height {
+        for x in 0..width {
+            let a = overlay.pixels[(y * width + x) * 4 + 3] as f64 * a_scale;
+            if a < 8.0 {
+                continue;
+            }
+            let bit = if msb_first {
+                7 - (x % 8)
+            } else {
+                x % 8
+            };
+            bits[y * stride + x / 8] |= 1 << bit;
+        }
+    }
+
+    let _ = overlay.conn.put_image(
+        ImageFormat::XY_BITMAP,
+        pixmap,
+        mask_gc,
+        SIDE as u16,
+        SIDE as u16,
+        0,
+        0,
+        0,
+        1,
+        &bits,
+    );
+    let _ = overlay.conn.shape_mask(
+        SO::SET,
+        SK::BOUNDING,
+        overlay.win,
+        0,
+        0,
+        pixmap,
+    );
+    let _ = overlay.conn.free_gc(mask_gc);
+    let _ = overlay.conn.free_pixmap(pixmap);
 }
 
 fn place_component(component: u8, mask: u32) -> u32 {

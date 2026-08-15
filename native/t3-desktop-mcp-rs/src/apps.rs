@@ -19,6 +19,8 @@ struct Group {
 }
 
 fn grouped_windows() -> Result<Vec<Group>> {
+    // xcap's `Window::all` enumerates via X11/`xcb` when `DISPLAY` is set — no
+    // process-wide `WAYLAND_DISPLAY` mutation needed (that is UB with threads).
     // Same panic hazard as capture: xcap aborts on compositors it cannot read.
     let windows = std::panic::catch_unwind(Window::all)
         .map_err(|_| DesktopError::new("window enumeration is not supported by this display server"))?

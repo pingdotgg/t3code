@@ -179,9 +179,12 @@ final class AgentCursor {
         let x = Double(point.x)
         let y = Double(point.y)
         guard x.isFinite, y.isFinite else { return false }
-        let max = Double(Int.max)
-        let min = Double(Int.min)
-        return x >= min && x <= max && y >= min && y <= max
+        // `Double(Int.max)` is not exact, so an inclusive `<= Double(Int.max)`
+        // bound can still accept values that trap on `Int(...)`. Require the
+        // truncated coordinate to round-trip through `Int(exactly:)`.
+        let ix = x.rounded(.towardZero)
+        let iy = y.rounded(.towardZero)
+        return Int(exactly: ix) != nil && Int(exactly: iy) != nil
     }
 
     /// Approximate flight time matching OverlayController's cubic path.
