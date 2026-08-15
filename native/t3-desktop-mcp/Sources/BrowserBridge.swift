@@ -128,16 +128,33 @@ func bridgeAddress() -> sockaddr_un {
 /// The socket file outlives the process that made it, so its presence proves
 /// nothing — only a successful connect distinguishes a live owner from a stale
 /// file left behind by a crash.
-func bridgeSocketIsLive() -> Bool {
-    guard FileManager.default.fileExists(atPath: bridgeSocketPath) else { return false }
+enum BridgeSocketProbe {
+    case live
+    case stale
+    case unknown
+}
+
+func probeBridgeSocket() -> BridgeSocketProbe {
+    guard FileManager.default.fileExists(atPath: bridgeSocketPath) else { return .stale }
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard fd >= 0 else { return false }
+    guard fd >= 0 else { return .unknown }
     defer { close(fd) }
     var addr = bridgeAddress()
     let size = socklen_t(MemoryLayout<sockaddr_un>.size)
-    return withUnsafePointer(to: &addr) {
+    let result = withUnsafePointer(to: &addr) {
         $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
-    } == 0
+    }
+    if result == 0 { return .live }
+    switch errno {
+    case ENOENT, ECONNREFUSED:
+        return .stale
+    default:
+        return .unknown
+    }
+}
+
+func bridgeSocketIsLive() -> Bool {
+    probeBridgeSocket() == .live
 }
 
 // MARK: - Host mode
@@ -194,6 +211,7 @@ final class BrowserBridge {
     private var listenFD: Int32 = -1
     private var ownershipLockFD: Int32 = -1
     private var clientFD: Int32 = -1
+    private var connectionGeneration = 0
     private let lock = NSLock()
     private var nextID = 0
     private var pending: [Int: (BridgeOutcome) -> Void] = [:]
@@ -217,12 +235,18 @@ final class BrowserBridge {
             return
         }
 
-        if bridgeSocketIsLive() {
+        switch probeBridgeSocket() {
+        case .live:
             flock(lockFd, LOCK_UN)
             close(lockFd)
             return
+        case .unknown:
+            flock(lockFd, LOCK_UN)
+            close(lockFd)
+            return
+        case .stale:
+            unlink(bridgeSocketPath)
         }
-        unlink(bridgeSocketPath)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
             flock(lockFd, LOCK_UN)
@@ -261,7 +285,10 @@ final class BrowserBridge {
     }
 
     private func serve(_ fd: Int32) {
-        lock.lock(); clientFD = fd; lock.unlock()
+        lock.lock()
+        clientFD = fd
+        connectionGeneration += 1
+        lock.unlock()
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 65536)
         while true {
@@ -318,6 +345,7 @@ final class BrowserBridge {
         nextID += 1
         let id = nextID
         let fd = clientFD
+        let generation = connectionGeneration
         let payload: [String: Any] = ["id": id, "command": command, "params": params]
         guard var data = try? JSONSerialization.data(withJSONObject: payload) else {
             lock.unlock()
@@ -334,7 +362,9 @@ final class BrowserBridge {
 
         if !writeAll(fd, data) {
             lock.lock()
-            pending.removeValue(forKey: id)
+            if clientFD == fd && connectionGeneration == generation {
+                pending.removeValue(forKey: id)
+            }
             lock.unlock()
             return .failure("the browser extension disconnected")
         }

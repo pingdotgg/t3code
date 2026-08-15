@@ -211,6 +211,50 @@ impl Default for BrowserBridge {
     }
 }
 
+/// Whether a Unix bridge socket path is owned by a live listener.
+#[cfg(unix)]
+fn bridge_socket_is_live(path: &std::path::Path) -> Result<bool, ()> {
+    use std::os::unix::net::UnixStream;
+    if !path.exists() {
+        return Ok(false);
+    }
+    match UnixStream::connect(path) {
+        Ok(_) => Ok(true),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::ConnectionRefused =>
+        {
+            Ok(false)
+        }
+        Err(error) if error.raw_os_error() == Some(107) =>
+        {
+            // ECONNREFUSED on platforms that map it oddly.
+            Ok(false)
+        }
+        Err(_) => Err(()),
+    }
+}
+
+#[cfg(unix)]
+fn unlink_stale_bridge_socket(path: &std::path::Path) {
+    match bridge_socket_is_live(path) {
+        Ok(false) => {
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(true) | Err(()) => {}
+    }
+}
+
+#[cfg(unix)]
+struct BridgeSocketCleanup(std::path::PathBuf);
+
+#[cfg(unix)]
+impl Drop for BridgeSocketCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Accept the native host and pump its replies onto `sender`.
 fn spawn_listener(
     outgoing: Arc<Mutex<Option<SendHalf>>>,
@@ -220,6 +264,12 @@ fn spawn_listener(
     std::thread::spawn(move || {
         #[cfg(unix)]
         let path = bridge_socket_path();
+        #[cfg(unix)]
+        let _cleanup = BridgeSocketCleanup(path.clone());
+        #[cfg(unix)]
+        {
+            unlink_stale_bridge_socket(&path);
+        }
         #[cfg(unix)]
         let name = match path.as_os_str().to_fs_name::<GenericFilePath>() {
             Ok(name) => name,
