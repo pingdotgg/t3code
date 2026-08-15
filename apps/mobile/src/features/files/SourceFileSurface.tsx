@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
+  RefreshControl,
   ScrollView,
   Text as NativeText,
   useColorScheme,
@@ -51,7 +52,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
 }) {
   return (
     <View
-      className={cn("flex-row", props.highlighted && "bg-primary/10")}
+      className={cn("flex-row items-start", props.highlighted && "bg-primary/10")}
       style={{ minHeight: props.codeSurface.rowHeight }}
     >
       <NativeText
@@ -65,51 +66,55 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       >
         {props.index + 1}
       </NativeText>
-      <NativeText
-        selectable
-        numberOfLines={props.wordBreak ? undefined : 1}
-        className="flex-1 font-normal text-foreground"
-        style={{
-          fontFamily: REVIEW_MONO_FONT_FAMILY,
-          fontSize: props.codeSurface.fontSize,
-          lineHeight: props.codeSurface.rowHeight,
-          minWidth: props.wordBreak ? undefined : 320,
-        }}
+      <View
+        className={props.wordBreak ? "min-w-0 flex-1" : undefined}
+        style={props.wordBreak ? undefined : { minWidth: 320 }}
       >
-        {props.tokens && props.tokens.length > 0
-          ? (() => {
-              let offset = 0;
-              return props.tokens.map((token) => {
-                const start = offset;
-                offset += token.content.length;
+        <NativeText
+          selectable
+          numberOfLines={props.wordBreak ? undefined : 1}
+          className="font-normal text-foreground"
+          style={{
+            fontFamily: REVIEW_MONO_FONT_FAMILY,
+            fontSize: props.codeSurface.fontSize,
+            lineHeight: props.codeSurface.rowHeight,
+          }}
+        >
+          {props.tokens && props.tokens.length > 0
+            ? (() => {
+                let offset = 0;
+                return props.tokens.map((token) => {
+                  const start = offset;
+                  offset += token.content.length;
 
-                const fontWeight =
-                  token.fontStyle !== null && (token.fontStyle & 2) === 2
-                    ? ("700" as const)
-                    : ("400" as const);
-                const fontStyle =
-                  token.fontStyle !== null && (token.fontStyle & 1) === 1
-                    ? ("italic" as const)
-                    : ("normal" as const);
+                  const fontWeight =
+                    token.fontStyle !== null && (token.fontStyle & 2) === 2
+                      ? ("700" as const)
+                      : ("400" as const);
+                  const fontStyle =
+                    token.fontStyle !== null && (token.fontStyle & 1) === 1
+                      ? ("italic" as const)
+                      : ("normal" as const);
 
-                return (
-                  <NativeText
-                    key={`${start}:${token.content.length}:${token.color ?? ""}`}
-                    selectable
-                    style={{
-                      color: token.color ?? undefined,
-                      fontFamily: REVIEW_MONO_FONT_FAMILY,
-                      fontWeight,
-                      fontStyle,
-                    }}
-                  >
-                    {token.content.length > 0 ? renderVisibleWhitespace(token.content) : " "}
-                  </NativeText>
-                );
-              });
-            })()
-          : renderVisibleWhitespace(props.line || " ")}
-      </NativeText>
+                  return (
+                    <NativeText
+                      key={`${start}:${token.content.length}:${token.color ?? ""}`}
+                      selectable
+                      style={{
+                        color: token.color ?? undefined,
+                        fontFamily: REVIEW_MONO_FONT_FAMILY,
+                        fontWeight,
+                        fontStyle,
+                      }}
+                    >
+                      {token.content.length > 0 ? renderVisibleWhitespace(token.content) : " "}
+                    </NativeText>
+                  );
+                });
+              })()
+            : renderVisibleWhitespace(props.line || " ")}
+        </NativeText>
+      </View>
     </View>
   );
 });
@@ -213,19 +218,57 @@ function NativeSourceFileSurface(
 }
 
 function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+  const { onRefresh } = props;
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const listRef = useRef<FlatList<string>>(null);
+  const scrollRetryCountRef = useRef(0);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const handlePullToRefresh = useCallback(async () => {
+    if (!onRefresh) {
+      return;
+    }
+    setIsPullRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setIsPullRefreshing(false);
+    }
+  }, [onRefresh]);
+
+  const scrollToLine = useCallback((index: number) => {
+    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.3 });
+  }, []);
 
   useEffect(() => {
     if (targetIndex === null) {
       return;
     }
+    scrollRetryCountRef.current = 0;
     const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
+      scrollToLine(targetIndex);
     });
     return () => cancelAnimationFrame(frame);
-  }, [props.path, targetIndex]);
+  }, [props.path, scrollToLine, targetIndex]);
+
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      if (scrollRetryCountRef.current >= 5) {
+        return;
+      }
+      scrollRetryCountRef.current += 1;
+      const itemLength =
+        info.averageItemLength > 0 ? info.averageItemLength : codeSurface.rowHeight;
+      listRef.current?.scrollToOffset({
+        offset: info.index * itemLength,
+        animated: false,
+      });
+      requestAnimationFrame(() => {
+        scrollToLine(info.index);
+      });
+    },
+    [codeSurface.rowHeight, scrollToLine],
+  );
 
   const renderLine = useCallback(
     ({ item, index }: { item: string; index: number }) => (
@@ -264,6 +307,15 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
+      refreshControl={
+        onRefresh ? (
+          <RefreshControl
+            refreshing={isPullRefreshing}
+            onRefresh={() => void handlePullToRefresh()}
+          />
+        ) : undefined
+      }
     />
   );
 
@@ -283,7 +335,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
   const NativeView = resolveNativeReviewDiffView();
-  return NativeView ? (
+  const { codeWordBreak } = useAppearanceCodeSurface();
+  return NativeView && !codeWordBreak ? (
     <NativeSourceFileSurface {...props} NativeView={NativeView} />
   ) : (
     <JavaScriptSourceFileSurface {...props} />
