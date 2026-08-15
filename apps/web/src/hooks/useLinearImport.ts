@@ -25,6 +25,7 @@ export function useLinearImport() {
 
   return useCallback(
     async (input: {
+      readonly sourceEnvironmentId: EnvironmentId;
       readonly target: LinearImportTarget;
       readonly ids: ReadonlyArray<string>;
       readonly mode: LinearImportMode;
@@ -34,7 +35,7 @@ export function useLinearImport() {
       }
 
       const result = await fetchIssues({
-        environmentId: input.target.environmentId,
+        environmentId: input.sourceEnvironmentId,
         input: { ids: [...input.ids] },
       });
       if (result._tag !== "Success") {

@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { LinearImportMode } from "@t3tools/client-runtime/linear-format";
-import type { EnvironmentId, LinearIssueSummary, ProjectId } from "@t3tools/contracts";
+import { LINEAR_FETCH_MAX_IDS, type LinearIssueSummary } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useLinearImport } from "../../hooks/useLinearImport";
@@ -22,19 +22,17 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const SEARCH_LIMIT = 25;
 const SEARCH_DEBOUNCE_MS = 250;
 
-function projectKey(environmentId: EnvironmentId, projectId: ProjectId): string {
-  return `${environmentId}:${projectId}`;
-}
-
 export function LinearImportDialog() {
   const navigate = useNavigate();
   const projects = useProjects();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environmentId = usePrimaryEnvironmentId();
   const importIssues = useLinearImport();
 
   const [open, setOpen] = useState(false);
@@ -42,8 +40,16 @@ export function LinearImportDialog() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedIdSet, setSelectedIdSet] = useState<ReadonlySet<string>>(new Set());
   const [mode, setMode] = useState<LinearImportMode>("combine");
-  const [targetKey, setTargetKey] = useState<string>("");
+  const [targetProjectId, setTargetProjectId] = useState<string>("");
   const [importing, setImporting] = useState(false);
+
+  const destinationProjects = useMemo(
+    () =>
+      environmentId === null
+        ? []
+        : projects.filter((project) => project.environmentId === environmentId),
+    [environmentId, projects],
+  );
 
   useEffect(() => onOpenLinearImport(() => setOpen(true)), []);
 
@@ -52,28 +58,26 @@ export function LinearImportDialog() {
     return () => window.clearTimeout(handle);
   }, [query]);
 
-  const defaultTargetKey = useMemo(() => {
-    const preferred =
-      projects.find((project) => project.environmentId === primaryEnvironmentId) ?? projects[0];
-    return preferred ? projectKey(preferred.environmentId, preferred.id) : "";
-  }, [primaryEnvironmentId, projects]);
-
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setDebouncedQuery("");
     setSelectedIdSet(new Set());
     setMode("combine");
-    setTargetKey((current) => current || defaultTargetKey);
-  }, [defaultTargetKey, open]);
+    setTargetProjectId((current) =>
+      destinationProjects.some((project) => project.id === current)
+        ? current
+        : (destinationProjects[0]?.id ?? ""),
+    );
+  }, [destinationProjects, open]);
 
-  const environmentId = primaryEnvironmentId;
   const authQuery = useEnvironmentQuery(
     !open || environmentId === null
       ? null
       : linearEnvironment.authStatus({ environmentId, input: {} }),
   );
-  const connected = authQuery.data?.status === "authenticated";
+  const authStatus = authQuery.data?.status;
+  const connected = authStatus === "authenticated";
   const searchQuery = useEnvironmentQuery(
     !open || environmentId === null || !connected
       ? null
@@ -86,25 +90,38 @@ export function LinearImportDialog() {
   const issues = searchQuery.data?.issues ?? [];
   const visibleIds = useMemo(() => new Set(issues.map((issue) => issue.id)), [issues]);
 
+  useEffect(() => {
+    setSelectedIdSet((current) => {
+      if (current.size === 0) return current;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (visibleIds.has(id)) next.add(id);
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [visibleIds]);
+
   const toggleIssue = useCallback((issueId: string) => {
     setSelectedIdSet((current) => {
       const next = new Set(current);
-      if (next.has(issueId)) next.delete(issueId);
-      else next.add(issueId);
+      if (next.has(issueId)) {
+        next.delete(issueId);
+        return next;
+      }
+      if (next.size >= LINEAR_FETCH_MAX_IDS) return current;
+      next.add(issueId);
       return next;
     });
   }, []);
 
   const handleImport = useCallback(async () => {
     if (environmentId === null || importing) return;
-    const target = projects.find(
-      (project) => projectKey(project.environmentId, project.id) === targetKey,
-    );
+    const target = destinationProjects.find((project) => project.id === targetProjectId);
     if (target === undefined) {
       toastManager.add({ type: "error", title: "Pick a folder for the new thread." });
       return;
     }
-    const ids = [...selectedIdSet].filter((id) => visibleIds.has(id));
+    const ids = [...selectedIdSet];
     if (ids.length === 0) {
       toastManager.add({ type: "error", title: "Select at least one issue to import." });
       return;
@@ -112,7 +129,8 @@ export function LinearImportDialog() {
     setImporting(true);
     try {
       const result = await importIssues({
-        target: { environmentId: target.environmentId, projectId: target.id },
+        sourceEnvironmentId: environmentId,
+        target: { environmentId, projectId: target.id },
         ids,
         mode,
       });
@@ -138,15 +156,17 @@ export function LinearImportDialog() {
       setImporting(false);
     }
   }, [
+    destinationProjects,
     environmentId,
     importIssues,
     importing,
     mode,
-    projects,
     selectedIdSet,
-    targetKey,
-    visibleIds,
+    targetProjectId,
   ]);
+
+  const selectedFolderTitle =
+    destinationProjects.find((project) => project.id === targetProjectId)?.title ?? "Folder";
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -161,7 +181,7 @@ export function LinearImportDialog() {
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
-          {authQuery.error ? (
+          {authQuery.error || authStatus === "unverified" ? (
             <p className="text-sm text-destructive">
               Couldn&apos;t reach Linear. Try again in a moment.
             </p>
@@ -191,46 +211,48 @@ export function LinearImportDialog() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
-              {projects.length > 1 ? (
-                <label className="flex flex-col gap-1.5 text-sm">
+              {destinationProjects.length > 1 ? (
+                <div className="flex flex-col gap-1.5 text-sm">
                   <span className="text-muted-foreground">Folder</span>
-                  <select
-                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                    value={targetKey}
-                    onChange={(event) => setTargetKey(event.target.value)}
-                    aria-label="Destination folder"
+                  <Select
+                    value={targetProjectId}
+                    onValueChange={(value) => setTargetProjectId(String(value))}
                   >
-                    {projects.map((project) => (
-                      <option
-                        key={projectKey(project.environmentId, project.id)}
-                        value={projectKey(project.environmentId, project.id)}
-                      >
-                        {project.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <SelectTrigger aria-label="Destination folder">
+                      <SelectValue>{selectedFolderTitle}</SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {destinationProjects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.title}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </div>
               ) : null}
-              <div className="flex gap-2 text-sm">
-                <Button
-                  size="sm"
-                  variant={mode === "combine" ? "default" : "outline"}
-                  onClick={() => setMode("combine")}
-                >
+              <ToggleGroup
+                size="sm"
+                value={[mode]}
+                onValueChange={(value) => {
+                  const next = value[0];
+                  if (next === "combine" || next === "subtasks") {
+                    setMode(next);
+                  }
+                }}
+              >
+                <Toggle aria-label="Combine issues into one task" value="combine">
                   Combine
-                </Button>
-                <Button
-                  size="sm"
-                  variant={mode === "subtasks" ? "default" : "outline"}
-                  onClick={() => setMode("subtasks")}
-                >
+                </Toggle>
+                <Toggle aria-label="Import issues as subtasks" value="subtasks">
                   Subtasks
-                </Button>
-              </div>
+                </Toggle>
+              </ToggleGroup>
               <div
                 className="max-h-72 space-y-1 overflow-y-auto"
                 role="listbox"
                 aria-label="Linear issues"
+                aria-multiselectable="true"
               >
                 {searchQuery.error ? (
                   <p className="text-sm text-destructive">Couldn&apos;t load Linear issues.</p>
@@ -258,7 +280,7 @@ export function LinearImportDialog() {
               Cancel
             </Button>
             <Button
-              disabled={importing || selectedIdSet.size === 0 || projects.length === 0}
+              disabled={importing || selectedIdSet.size === 0 || destinationProjects.length === 0}
               onClick={() => void handleImport()}
             >
               {importing

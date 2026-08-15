@@ -27,6 +27,8 @@ export function LinearSettingsPanel() {
 
   const status = authQuery.data;
   const connected = status?.status === "authenticated";
+  const unverified = status?.status === "unverified";
+  const hasStoredAccess = connected || unverified;
   const reachabilityError = authQuery.error;
 
   const handleSave = useCallback(async () => {
@@ -79,7 +81,24 @@ export function LinearSettingsPanel() {
         return;
       }
       authQuery.refresh();
-      toastManager.add({ type: "success", title: "Linear disconnected" });
+      if (result.value.status === "authenticated") {
+        toastManager.add({
+          type: "warning",
+          title: "Linear still connected",
+          description:
+            result.value.detail ??
+            "The saved token was removed, but Linear remains connected via the server environment configuration.",
+        });
+      } else if (result.value.status === "unverified") {
+        toastManager.add({
+          type: "warning",
+          title: "Token removed",
+          description:
+            result.value.detail ?? "The saved token was removed, but Linear could not be reached.",
+        });
+      } else {
+        toastManager.add({ type: "success", title: "Linear disconnected" });
+      }
     } finally {
       setBusy(false);
     }
@@ -87,8 +106,12 @@ export function LinearSettingsPanel() {
 
   const statusBadge = authQuery.isPending ? (
     <Badge variant="outline">Checking…</Badge>
+  ) : reachabilityError ? (
+    <Badge variant="outline">Unavailable</Badge>
   ) : connected ? (
     <Badge variant="success">Connected</Badge>
+  ) : unverified ? (
+    <Badge variant="warning">Unverified</Badge>
   ) : (
     <Badge variant="outline">Not connected</Badge>
   );
@@ -104,13 +127,15 @@ export function LinearSettingsPanel() {
               ? `Authenticated as ${status.account.name}${
                   status.account.email ? ` (${status.account.email})` : ""
                 }.`
-              : "Connect Linear with a personal API key to import issues into new threads."
+              : unverified
+                ? (status?.detail ?? "A token is saved, but Linear could not be reached.")
+                : "Connect Linear with a personal API key to import issues into new threads."
           }
-          status={reachabilityError ?? status?.detail ?? null}
+          status={reachabilityError ?? (connected ? null : (status?.detail ?? null))}
           control={
             <div className="flex items-center gap-2">
               {statusBadge}
-              {connected ? (
+              {hasStoredAccess ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -123,7 +148,7 @@ export function LinearSettingsPanel() {
             </div>
           }
         >
-          {connected ? null : (
+          {hasStoredAccess ? null : (
             <div className="flex flex-col gap-2 pt-3 pb-3.5">
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Input

@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
+  LINEAR_FETCH_MAX_IDS,
   LinearAuthError,
   LinearRequestError,
   LinearTokenStoreError,
@@ -25,7 +26,6 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 const DEFAULT_API_BASE_URL = "https://api.linear.app/graphql";
 const ISSUE_RELATION_LIMIT = 50;
 const FETCH_ISSUE_CONCURRENCY = 4;
-const MAX_FETCH_IDS = 20;
 const MAX_DESCRIPTION_CHARS = 3000;
 const MAX_COMMENTS = 8;
 const MAX_COMMENT_CHARS = 800;
@@ -313,6 +313,12 @@ function isAuthMessage(message: string | undefined): boolean {
   );
 }
 
+function isNotFoundMessage(message: string | undefined): boolean {
+  if (message === undefined) return false;
+  const lowered = message.toLowerCase();
+  return lowered.includes("not found") || lowered.includes("could not find");
+}
+
 export class LinearApi extends Context.Service<
   LinearApi,
   {
@@ -439,12 +445,14 @@ export const make = Effect.gen(function* () {
     errors: ReadonlyArray<typeof GraphQlErrorEntry.Type> | undefined,
   ): Effect.Effect<never, LinearAuthError | LinearRequestError> => {
     const message = firstGraphQlErrorMessage(errors);
+    const cause = message === undefined ? undefined : new Error(message);
     return isAuthMessage(message)
-      ? Effect.fail(new LinearAuthError({ operation, ...(message ? { detail: message } : {}) }))
+      ? Effect.fail(new LinearAuthError({ operation, detail: "Linear rejected the API token." }))
       : Effect.fail(
           new LinearRequestError({
             operation,
-            detail: message ?? "Linear reported an error for the request.",
+            detail: "Linear reported an error for the request.",
+            ...(cause === undefined ? {} : { cause }),
           }),
         );
   };
@@ -462,25 +470,32 @@ export const make = Effect.gen(function* () {
             Effect.flatMap((envelope): Effect.Effect<LinearAuthStatus, LinearRequestError> => {
               if (envelope.errors !== undefined && envelope.errors.length > 0) {
                 const message = firstGraphQlErrorMessage(envelope.errors);
-                return isAuthMessage(message)
-                  ? Effect.succeed<LinearAuthStatus>({
-                      status: "unauthenticated",
-                      detail: "The stored Linear token was rejected.",
-                    })
-                  : Effect.fail(
-                      new LinearRequestError({
-                        operation: "probeAuth",
-                        detail: message ?? "Linear reported an error for the request.",
-                      }),
-                    );
+                if (isAuthMessage(message)) {
+                  return Effect.succeed<LinearAuthStatus>({
+                    status: "unauthenticated",
+                    detail: "The stored Linear token was rejected.",
+                  });
+                }
+                return Effect.fail(
+                  new LinearRequestError({
+                    operation: "probeAuth",
+                    detail: "Linear reported an error for the request.",
+                    ...(message === undefined ? {} : { cause: new Error(message) }),
+                  }),
+                );
               }
               const viewer = envelope.data?.viewer ?? undefined;
-              const name = clean(viewer?.name);
+              if (viewer === undefined) {
+                return Effect.succeed<LinearAuthStatus>({
+                  status: "unauthenticated",
+                  detail: "Linear did not return an account for this token.",
+                });
+              }
               return Effect.succeed<LinearAuthStatus>({
                 status: "authenticated",
                 account: {
-                  name: name ?? "Linear account",
-                  ...(clean(viewer?.email) ? { email: clean(viewer?.email) } : {}),
+                  name: clean(viewer.name) ?? "Linear account",
+                  ...(clean(viewer.email) ? { email: clean(viewer.email) } : {}),
                 },
               });
             }),
@@ -542,11 +557,18 @@ export const make = Effect.gen(function* () {
       issueEnvelope,
     ).pipe(
       Effect.flatMap((envelope) => {
+        const issue = envelope.data?.issue ?? null;
+        if (issue !== null) {
+          return Effect.succeed(toDetail(issue));
+        }
         if (envelope.errors !== undefined && envelope.errors.length > 0) {
+          const message = firstGraphQlErrorMessage(envelope.errors);
+          if (isNotFoundMessage(message)) {
+            return Effect.succeed(null);
+          }
           return failFromGraphQlErrors("fetchIssues", envelope.errors);
         }
-        const issue = envelope.data?.issue ?? null;
-        return Effect.succeed(issue === null ? null : toDetail(issue));
+        return Effect.succeed(null);
       }),
     );
 
@@ -558,7 +580,7 @@ export const make = Effect.gen(function* () {
       if (trimmed.length === 0 || seen.has(trimmed)) continue;
       seen.add(trimmed);
       ids.push(trimmed);
-      if (ids.length >= MAX_FETCH_IDS) break;
+      if (ids.length >= LINEAR_FETCH_MAX_IDS) break;
     }
     return requireToken("fetchIssues").pipe(
       Effect.flatMap((token) =>
@@ -591,7 +613,7 @@ export const make = Effect.gen(function* () {
     Effect.catchTags({
       LinearRequestError: () =>
         Effect.succeed<LinearAuthStatus>({
-          status: "unauthenticated",
+          status: "unverified",
           detail: "Saved, but couldn't reach Linear to verify the token.",
         }),
     }),

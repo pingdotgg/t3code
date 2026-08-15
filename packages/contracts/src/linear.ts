@@ -4,8 +4,13 @@ import { PositiveInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas
 const LINEAR_SEARCH_MAX_LIMIT = 50;
 const LINEAR_SEARCH_QUERY_MAX_LENGTH = 256;
 const LINEAR_TOKEN_MAX_LENGTH = 512;
+export const LINEAR_FETCH_MAX_IDS = 20;
 
-export const LinearAuthStatusValue = Schema.Literals(["authenticated", "unauthenticated"]);
+export const LinearAuthStatusValue = Schema.Literals([
+  "authenticated",
+  "unauthenticated",
+  "unverified",
+]);
 export type LinearAuthStatusValue = typeof LinearAuthStatusValue.Type;
 
 export const LinearAccount = Schema.Struct({
@@ -104,7 +109,7 @@ export const LinearSearchIssuesResult = Schema.Struct({
 export type LinearSearchIssuesResult = typeof LinearSearchIssuesResult.Type;
 
 export const LinearFetchIssuesInput = Schema.Struct({
-  ids: Schema.Array(TrimmedNonEmptyString),
+  ids: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(LINEAR_FETCH_MAX_IDS)),
 });
 export type LinearFetchIssuesInput = typeof LinearFetchIssuesInput.Type;
 
@@ -156,7 +161,7 @@ export class LinearTokenStoreError extends Schema.TaggedErrorClass<LinearTokenSt
   {
     operation: LinearApiOperation,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
