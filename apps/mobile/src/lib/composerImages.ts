@@ -1,4 +1,5 @@
 import {
+  isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type UploadChatImageAttachment,
@@ -96,6 +97,10 @@ export async function pickComposerImages(input: { readonly existingCount: number
     const mimeType = asset.mimeType?.toLowerCase();
     if (!mimeType?.startsWith("image/")) {
       error = `Unsupported file type for '${asset.fileName ?? "image"}'.`;
+      continue;
+    }
+    if (!isProviderSendTurnSupportedImageMimeType(mimeType)) {
+      error = `'${asset.fileName ?? "image"}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
       continue;
     }
 

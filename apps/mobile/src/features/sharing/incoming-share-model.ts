@@ -1,4 +1,5 @@
 import {
+  isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
@@ -159,6 +160,13 @@ export async function buildIncomingShareDraft(input: {
     const mimeType = (resolved?.contentMimeType ?? payload.mimeType ?? "image/png").toLowerCase();
     if (!uri || !mimeType.startsWith("image/")) {
       warnings.push("One shared item was not a supported image.");
+      await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
+      continue;
+    }
+    if (!isProviderSendTurnSupportedImageMimeType(mimeType)) {
+      warnings.push(
+        `'${resolved?.originalName ?? fallbackName(uri, index, mimeType)}' is not a supported image type.`,
+      );
       await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
       continue;
     }
