@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   removeImportedMobileTheme,
   resolveColorSchemeOverride,
+  resolveMobileFormSheetBackground,
   resolveMobileThemePickerOptions,
   resolveMobileThemeColors,
   resolveMobileNativeSurfaceColors,
@@ -38,6 +39,8 @@ describe("mobile theme preferences", () => {
     });
     expect(resolveMobileNativeSurfaceColors("t3-code", "light")).toBeNull();
     expect(resolveMobileNativeSurfaceColors("t3-code", "dark")).toBeNull();
+    expect(resolveMobileFormSheetBackground("t3-code", "light")).toBe("#f2f2f7");
+    expect(resolveMobileFormSheetBackground("t3-code", "dark")).toBe("#0e0e0e");
   });
 
   it("drops unknown stored values", () => {
@@ -137,6 +140,8 @@ describe("mobile theme palette resolution", () => {
       canvas: "#17212b",
       accent: "#70b9ee",
     });
+    expect(resolveMobileFormSheetBackground("ocean", "light")).toBe("#f5f7f8fa");
+    expect(resolveMobileFormSheetBackground("ocean", "dark")).toBe("#17212bfa");
   });
 
   it("falls back to T3 Code for stale theme ids", () => {

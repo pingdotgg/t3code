@@ -15,14 +15,6 @@ export const NATIVE_SHEET_SURFACE_CONTENT_STYLE: ViewStyle | undefined =
     ? undefined
     : { backgroundColor: NATIVE_SHEET_SURFACE_COLOR };
 
-/**
- * Paint the adaptive background on the presented screen itself. Nested stacks
- * can stay transparent over this single surface, so a push never exposes an
- * unpainted form-sheet host behind the moving child view controllers.
- */
 export const FORM_SHEET_PRESENTATION_OPTIONS = {
   presentation: "formSheet" as const,
-  ...(NATIVE_SHEET_SURFACE_CONTENT_STYLE === undefined
-    ? null
-    : { contentStyle: NATIVE_SHEET_SURFACE_CONTENT_STYLE }),
 };

@@ -588,6 +588,16 @@ export function resolveMobileNativeSurfaceColors(
   };
 }
 
+/** Keeps the shipped T3 Code sheet bytes while resolving selected-theme surfaces. */
+export function resolveMobileFormSheetBackground(
+  themeId: string,
+  appearance: MobileThemeAppearance,
+  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
+): string {
+  const nativeSurfaceColors = resolveMobileNativeSurfaceColors(themeId, appearance, importedThemes);
+  return nativeSurfaceColors?.sheetBackground ?? (appearance === "dark" ? "#0e0e0e" : "#f2f2f7");
+}
+
 export function withAlpha(color: string, alpha: string): string {
   if (!/^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(color) || !/^[\da-f]{2}$/i.test(alpha)) {
     throw new Error(`Expected a 6- or 8-digit hex color and 2-digit alpha, received ${color}`);

@@ -21,7 +21,9 @@ import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
+import { DEFAULT_MOBILE_THEME_ID, resolveMobileFormSheetBackground } from "./lib/mobileTheme";
 import { useThemeColor } from "./lib/useThemeColor";
+import { NATIVE_SHEET_SURFACE_COLOR } from "./native/sheet-surface";
 
 import "../global.css";
 
@@ -58,7 +60,8 @@ function SplashScreenCoordinator() {
 }
 
 function ThemedApp() {
-  const { effectiveColorScheme } = useAppearancePreferences();
+  const { appearanceMode, effectiveColorScheme, importedThemes, themeId } =
+    useAppearancePreferences();
   const statusBarBg = useThemeColor("--color-status-bar");
   const navigationBackground = String(useThemeColor("--color-screen"));
   const navigationCard = String(useThemeColor("--color-sheet"));
@@ -69,6 +72,12 @@ function ThemedApp() {
     const base = effectiveColorScheme === "dark" ? DarkTheme : DefaultTheme;
     return {
       ...base,
+      formSheetBackground:
+        appearanceMode === "system" &&
+        themeId === DEFAULT_MOBILE_THEME_ID &&
+        NATIVE_SHEET_SURFACE_COLOR !== undefined
+          ? NATIVE_SHEET_SURFACE_COLOR
+          : resolveMobileFormSheetBackground(themeId, effectiveColorScheme, importedThemes),
       colors: {
         ...base.colors,
         background: navigationBackground,
@@ -79,12 +88,15 @@ function ThemedApp() {
       },
     };
   }, [
+    appearanceMode,
     effectiveColorScheme,
+    importedThemes,
     navigationBackground,
     navigationBorder,
     navigationCard,
     navigationPrimary,
     navigationText,
+    themeId,
   ]);
 
   return (

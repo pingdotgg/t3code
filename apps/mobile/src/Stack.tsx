@@ -11,7 +11,7 @@ import {
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useEffect, useRef } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, type ColorValue } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
@@ -80,6 +80,16 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
 };
+
+type AppNavigationTheme = ReactNavigation.Theme & {
+  readonly formSheetBackground: ColorValue;
+};
+
+function themedFormSheetContentStyle(theme: ReactNavigation.Theme) {
+  return {
+    backgroundColor: (theme as AppNavigationTheme).formSheetBackground,
+  };
+}
 
 // Shared header presets. Screens only override genuinely dynamic values (titles,
 // subtitles, toolbar items, search callbacks) via NativeStackScreenOptions.
@@ -239,18 +249,23 @@ const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 // in-sheet pushes come from this nested stack).
 const NewTaskSheetStack = createNativeStackNavigator({
   initialRouteName: "NewTask",
-  screenOptions: {
+  screenOptions: ({ route, theme }) => ({
     ...SHEET_GLASS_HEADER_OPTIONS,
     // The form-sheet host owns the one opaque adaptive surface. Child screens
     // and the navigation bar stay transparent over it, avoiding visible color
     // slabs as view controllers move horizontally.
-    contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
+    contentStyle:
+      Platform.OS === "ios"
+        ? route.name === "ThreadSettings"
+          ? themedFormSheetContentStyle(theme)
+          : { backgroundColor: "transparent" }
+        : undefined,
     // UIKit's default push adds a dimming shadow and independently transitions
     // the navigation bar. Both read as mismatched sheet backgrounds here.
     // simple_push retains native push/pop gestures without either artifact.
     animation: Platform.OS === "ios" ? "simple_push" : undefined,
     animationDuration: Platform.OS === "ios" ? 350 : undefined,
-  },
+  }),
   screens: {
     NewTask: createNativeStackScreen({
       screen: NewTaskRouteScreen,
@@ -450,12 +465,29 @@ function NotFoundScreen() {
   );
 }
 
+const ROOT_FORM_SHEET_ROUTES = new Set([
+  "ConnectOnboarding",
+  "Connections",
+  "ConnectionsNew",
+  "GitBranches",
+  "GitCommit",
+  "GitConfirm",
+  "GitOverview",
+  "NewTaskSheet",
+  "SettingsSheet",
+  "ThreadReviewComment",
+  "ThreadSettingsSheet",
+]);
+
 export const RootStack = createNativeStackNavigator({
   initialRouteName: "Home",
   layout: RootStackLayout,
-  screenOptions: {
+  screenOptions: ({ route, theme }) => ({
     headerShown: false,
-  },
+    ...(Platform.OS === "ios" && ROOT_FORM_SHEET_ROUTES.has(route.name)
+      ? { contentStyle: themedFormSheetContentStyle(theme) }
+      : null),
+  }),
   screens: {
     Home: createNativeStackScreen({
       screen: HomeRouteScreen,
