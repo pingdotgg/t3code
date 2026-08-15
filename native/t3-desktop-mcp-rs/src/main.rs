@@ -27,6 +27,26 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "t3-desktop";
 const SERVER_VERSION: &str = "0.1.0";
 
+/// Keeps the agent pointer up for the duration of a `tools/call`, then
+/// schedules a fade once Computer Use tools stop for the task.
+#[cfg(any(windows, target_os = "linux"))]
+struct DesktopToolGuard;
+
+#[cfg(any(windows, target_os = "linux"))]
+impl DesktopToolGuard {
+    fn enter() -> Self {
+        platform::agent_cursor::AgentCursor::shared().note_desktop_tool_started();
+        Self
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl Drop for DesktopToolGuard {
+    fn drop(&mut self) {
+        platform::agent_cursor::AgentCursor::shared().note_desktop_tool_finished();
+    }
+}
+
 fn main() {
     // Chrome spawns this same binary as its native messaging host; in that mode
     // the process is a relay, not a server.
@@ -92,16 +112,24 @@ fn main() {
             }
         };
 
-        // Notifications carry no id and must never be answered.
-        let Some(id) = request.get("id").cloned() else {
-            continue;
-        };
         let method = request
             .get("method")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
+
+        // Notifications carry no id and must never be answered.
+        let Some(id) = request.get("id").cloned() else {
+            if method == "notifications/cancelled" {
+                #[cfg(any(windows, target_os = "linux"))]
+                platform::agent_cursor::AgentCursor::shared().hide();
+            }
+            continue;
+        };
         let params = request.get("params").cloned().unwrap_or(json!({}));
+
+        #[cfg(any(windows, target_os = "linux"))]
+        let _tool_guard = (method == "tools/call").then(|| DesktopToolGuard::enter());
 
         let outcome = dispatch(&method, &params, desktop.as_deref_mut(), &mut browser);
         let response = match outcome {
@@ -117,6 +145,9 @@ fn main() {
             break;
         }
     }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    platform::agent_cursor::AgentCursor::shared().hide();
 }
 
 /// A JSON-RPC level failure: the request itself was unusable.

@@ -443,12 +443,14 @@ impl Desktop for WindowsDesktop {
             && click_count == 1
             && let Ok(element) = self.element(id)
             && let Ok(invoke) = element.get_pattern::<UIInvokePattern>()
-            && invoke.invoke().is_ok()
         {
+            // Wait for the agent pointer to land before invoking, matching Mac.
             if let Ok((x, y)) = Self::center(element) {
                 AgentCursor::shared().press(x, y);
             }
-            return Ok(format!("pressed e{id}"));
+            if invoke.invoke().is_ok() {
+                return Ok(format!("pressed e{id}"));
+            }
         }
 
         let (x, y) = self.point_coordinates(target)?;

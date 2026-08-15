@@ -1956,7 +1956,7 @@ final class CursorOverlay {
     /// Move the agent cursor to a Quartz screen point.
     func show(at point: CGPoint) { AgentCursor.shared.show(at: point) }
 
-    /// Move and play the click pop + ripple.
+    /// Move the agent pointer.
     func press(at point: CGPoint) { AgentCursor.shared.press(at: point) }
 }
 
@@ -2039,72 +2039,83 @@ while let line = readLine(strippingNewline: true) {
         respond(id: id ?? NSNull(), result: ["tools": advertisedToolDefs()])
 
     case "tools/call":
-        guard let id else { continue }
-        let params = msg["params"] as? [String: Any] ?? [:]
-        guard let name = params["name"] as? String else {
-            respondError(id: id, code: -32602, message: "missing tool name")
-            continue
-        }
-        let args = params["arguments"] as? [String: Any] ?? [:]
+        // Pointer fade is keyed to Computer Use tool traffic: stay up while
+        // tools are in flight / chained, fade once the task stops calling.
+        do {
+            AgentCursor.shared.noteDesktopToolStarted()
+            defer { AgentCursor.shared.noteDesktopToolFinished() }
 
-        // Handled ahead of the Accessibility check: screen capture is gated by
-        // Screen Recording, a separate permission, so screenshots should still
-        // work if only that one is granted.
-        if name == "screenshot" {
-            if let display = args["display"] as? Int {
-                let maxWidth = (args["max_width"] as? Int) ?? 1400
-                guard let shot = captureDisplayPNG(index: display, maxWidth: maxWidth) else {
+            guard let id else { break }
+            let params = msg["params"] as? [String: Any] ?? [:]
+            guard let name = params["name"] as? String else {
+                respondError(id: id, code: -32602, message: "missing tool name")
+                break
+            }
+            let args = params["arguments"] as? [String: Any] ?? [:]
+
+            // Handled ahead of the Accessibility check: screen capture is gated by
+            // Screen Recording, a separate permission, so screenshots should still
+            // work if only that one is granted.
+            if name == "screenshot" {
+                if let display = args["display"] as? Int {
+                    let maxWidth = (args["max_width"] as? Int) ?? 1400
+                    guard let shot = captureDisplayPNG(index: display, maxWidth: maxWidth) else {
+                        respond(id: id, result: textResult(
+                            "error: could not capture display \(display) — check Screen Recording "
+                            + "permission, or call list_displays for valid indices.", isError: true))
+                        break
+                    }
+                    respond(id: id, result: [
+                        "content": [[
+                            "type": "image", "data": shot.data.base64EncodedString(),
+                            "mimeType": "image/png",
+                        ]],
+                        "isError": false,
+                    ])
+                    break
+                }
+                guard let query = args["app"] as? String, let resolved = resolveApp(query) else {
                     respond(id: id, result: textResult(
-                        "error: could not capture display \(display) — check Screen Recording "
-                        + "permission, or call list_displays for valid indices.", isError: true))
-                    continue
+                        "error: no running app matching \(args["app"] as? String ?? "<missing app argument>")",
+                        isError: true))
+                    break
+                }
+                let maxWidth = (args["max_width"] as? Int) ?? 1400
+                guard let png = captureWindowPNG(pid: resolved.app.processIdentifier, maxWidth: maxWidth) else {
+                    respond(id: id, result: textResult(
+                        "error: screen capture failed. The host app may be missing Screen Recording "
+                        + "permission, or this app may have no on-screen window.",
+                        isError: true))
+                    break
                 }
                 respond(id: id, result: [
                     "content": [[
-                        "type": "image", "data": shot.data.base64EncodedString(),
+                        "type": "image",
+                        "data": png.base64EncodedString(),
                         "mimeType": "image/png",
                     ]],
                     "isError": false,
                 ])
-                continue
+                break
             }
-            guard let query = args["app"] as? String, let resolved = resolveApp(query) else {
-                respond(id: id, result: textResult(
-                    "error: no running app matching \(args["app"] as? String ?? "<missing app argument>")",
-                    isError: true))
-                continue
-            }
-            let maxWidth = (args["max_width"] as? Int) ?? 1400
-            guard let png = captureWindowPNG(pid: resolved.app.processIdentifier, maxWidth: maxWidth) else {
-                respond(id: id, result: textResult(
-                    "error: screen capture failed. The host app may be missing Screen Recording "
-                    + "permission, or this app may have no on-screen window.",
-                    isError: true))
-                continue
-            }
-            respond(id: id, result: [
-                "content": [[
-                    "type": "image",
-                    "data": png.base64EncodedString(),
-                    "mimeType": "image/png",
-                ]],
-                "isError": false,
-            ])
-            continue
-        }
 
-        if !AXIsProcessTrusted() {
-            respond(id: id, result: textResult(
-                "Accessibility permission is not granted to the host app. Enable it in "
-                + "System Settings → Privacy & Security → Accessibility, then restart the app.",
-                isError: true))
-            continue
+            if !AXIsProcessTrusted() {
+                respond(id: id, result: textResult(
+                    "Accessibility permission is not granted to the host app. Enable it in "
+                    + "System Settings → Privacy & Security → Accessibility, then restart the app.",
+                    isError: true))
+                break
+            }
+            let out = dispatch(name, args)
+            respond(id: id, result: textResult(out, isError: out.hasPrefix("error:")))
         }
-        let out = dispatch(name, args)
-        respond(id: id, result: textResult(out, isError: out.hasPrefix("error:")))
 
     case "ping":
         respond(id: id ?? NSNull(), result: [:])
+
+    case "notifications/cancelled":
+        // Host aborted the turn — drop the pointer immediately.
+        AgentCursor.shared.hide()
 
     default:
         // Notifications carry no id and require no reply.
@@ -2112,6 +2123,7 @@ while let line = readLine(strippingNewline: true) {
     }
 }
     // stdin closed: the client is gone, so the process should follow.
+    AgentCursor.shared.hide()
     exit(0)
 }
 

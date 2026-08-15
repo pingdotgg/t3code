@@ -24,6 +24,7 @@ use x11rb::rust_connection::RustConnection;
 use xcap::Window;
 
 use super::{Desktop, DesktopError, Point, Result, ScrollDirection, format_app_list};
+use super::agent_cursor::AgentCursor;
 use crate::apps;
 
 /// X11 button numbers.
@@ -904,8 +905,14 @@ impl Desktop for LinuxDesktop {
         // Windows backend does with the Invoke pattern.
         if let Point::Element(id) = target {
             let reference = self.element(id)?;
-            if click_count <= 1 && self.invoke(&reference).is_ok() {
-                return Ok(format!("pressed e{id}"));
+            if click_count <= 1 {
+                // Wait for the agent pointer to land before invoking, matching Win/Mac.
+                if let Ok((x, y)) = self.center(&reference) {
+                    AgentCursor::shared().press(x, y);
+                }
+                if self.invoke(&reference).is_ok() {
+                    return Ok(format!("pressed e{id}"));
+                }
             }
             // Native Wayland clients report window-relative geometry; XTEST
             // clicks would land on the wrong place. Refuse the coordinate
@@ -920,6 +927,7 @@ impl Desktop for LinuxDesktop {
         }
 
         let (x, y) = self.point_coordinates(target)?;
+        AgentCursor::shared().press(x, y);
         self.move_pointer(x, y)?;
         for _ in 0..click_count.max(1) {
             self.tap_button(BUTTON_LEFT)?;
@@ -936,6 +944,7 @@ impl Desktop for LinuxDesktop {
 
     fn right_click(&mut self, target: Point) -> Result<String> {
         let (x, y) = self.point_coordinates(target)?;
+        AgentCursor::shared().press(x, y);
         self.move_pointer(x, y)?;
         self.tap_button(BUTTON_RIGHT)?;
         Ok(format!("right-clicked at ({x:.0}, {y:.0})"))
@@ -944,11 +953,13 @@ impl Desktop for LinuxDesktop {
     fn drag(&mut self, from: Point, to: Point) -> Result<String> {
         let (from_x, from_y) = self.point_coordinates(from)?;
         let (to_x, to_y) = self.point_coordinates(to)?;
+        AgentCursor::shared().show(from_x, from_y);
         self.move_pointer(from_x, from_y)?;
         self.button(BUTTON_LEFT, true)?;
         // A single jump can read as a click to apps that track motion, so step.
         // Release the button before propagating any motion error, or the
         // session is left mid-drag.
+        AgentCursor::shared().press(to_x, to_y);
         let motion = (|| -> Result<()> {
             for step in 1..=10 {
                 let progress = f64::from(step) / 10.0;
@@ -1108,6 +1119,7 @@ impl Desktop for LinuxDesktop {
             // Route through point_coordinates so Wayland refuses window-relative
             // AT-SPI bounds the same way click / right_click / drag do.
             let (x, y) = self.point_coordinates(Point::Element(id))?;
+            AgentCursor::shared().show(x, y);
             self.move_pointer(x, y)?;
         }
         let button = match direction {
