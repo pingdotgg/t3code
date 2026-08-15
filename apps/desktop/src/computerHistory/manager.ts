@@ -357,4 +357,7 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ComputerHistoryManager, make);
+export const layer: Layer.Layer<ComputerHistoryManager> = Layer.effect(
+  ComputerHistoryManager,
+  make,
+);
