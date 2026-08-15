@@ -66,6 +66,7 @@ import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { sendThreadComposerMessage } from "./thread-composer-send";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -75,12 +76,13 @@ import {
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 import {
+  canSubmitExistingThreadDraft,
   getBuiltInComposerSlashCommands,
   replaceCurrentComposerTrigger,
   resolveComposerSubmitInteractionMode,
   resolveSlashCommandInteractionMode,
 } from "./plan-mode";
-import { usePlanModeEnabled } from "./use-plan-mode-enabled";
+import { usePlanModePreferenceState } from "./use-plan-mode-enabled";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -294,8 +296,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // Opening and presentation count as active so the composer stays expanded
   // while focus moves between its native editor and the settings picker.
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
-  const canSend = hasContent;
-
   // Notify the parent from the derived value, not focus events: the parent
   // sizes the feed inset from this, and blur-during-sheet would otherwise
   // report collapsed while the composer still renders expanded.
@@ -336,7 +336,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
-  const planModeEnabled = usePlanModeEnabled();
+  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } =
+    usePlanModePreferenceState();
+  const canSend = canSubmitExistingThreadDraft({ hasContent, planModePreferenceLoaded });
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -515,6 +517,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
+    if (!canSend) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     const draft = getComposerDraftSnapshot(threadKey);
     const submitInteractionMode = resolveComposerSubmitInteractionMode({
@@ -532,20 +535,25 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
     try {
-      await onSendMessage();
-      // Sending a prompt starts agent work: arm the lock-screen card while the
-      // app is foregrounded and the activity token can be registered. Armed
-      // after the send so its preference read and native Activity start don't
-      // contend with the queued-message feedback on the tap frame.
-      armAgentAwarenessLiveActivityForLocalWork({
-        environmentId: props.environmentId,
-        threadTitle: props.selectedThread.title,
-        projectTitle: props.environmentLabel ?? "T3 Code",
+      await sendThreadComposerMessage({
+        onSendMessage,
+        onSent: () => {
+          // Sending a prompt starts agent work: arm the lock-screen card while the
+          // app is foregrounded and the activity token can be registered. Armed
+          // after the send so its preference read and native Activity start don't
+          // contend with the queued-message feedback on the tap frame.
+          armAgentAwarenessLiveActivityForLocalWork({
+            environmentId: props.environmentId,
+            threadTitle: props.selectedThread.title,
+            projectTitle: props.environmentLabel ?? "T3 Code",
+          });
+        },
       });
     } finally {
       inFlightThreadIdsRef.current.delete(threadKey);
     }
   }, [
+    canSend,
     onChangeDraftMessage,
     onSendMessage,
     onUpdateInteractionMode,

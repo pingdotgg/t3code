@@ -123,6 +123,13 @@ export function resolveComposerInteractionMode(input: {
     : DEFAULT_PROVIDER_INTERACTION_MODE;
 }
 
+export function canSubmitExistingThreadDraft(input: {
+  readonly hasContent: boolean;
+  readonly planModePreferenceLoaded: boolean;
+}): boolean {
+  return input.hasContent && input.planModePreferenceLoaded;
+}
+
 export function resolveComposerEnqueueInteractionMode(input: {
   readonly interactionMode: ProviderInteractionMode | null | undefined;
   readonly planModeEnabled: boolean;

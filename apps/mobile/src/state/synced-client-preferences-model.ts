@@ -430,10 +430,14 @@ export function reconcileSyncedClientPreferences(input: {
   );
 
   for (const field of input.fields ?? SYNCED_CLIENT_PREFERENCE_FIELDS) {
+    const localValue = input.local.values[field];
+    const localUpdatedAt = localPreferenceUpdatedAt(input.local, field);
     const environmentCandidates = input.environments.flatMap((environment) => {
       const value = environment.preferences?.[field];
       const updatedAt = getSyncedClientPreferenceUpdatedAt(environment.preferences, field);
-      return value === undefined || updatedAt === undefined
+      return value === undefined ||
+        updatedAt === undefined ||
+        (environment.canPatch === false && localUpdatedAt !== undefined)
         ? []
         : [{ source: environment.environmentId, value, updatedAt }];
     });
@@ -443,8 +447,6 @@ export function reconcileSyncedClientPreferences(input: {
     );
     const latestEnvironment = environmentCandidates.at(-1);
     const latestObservedEnvironmentUpdatedAt = latestEnvironment?.updatedAt;
-    const localValue = input.local.values[field];
-    const localUpdatedAt = localPreferenceUpdatedAt(input.local, field);
     const boundedLocalUpdatedAt =
       hasPatchableEnvironment &&
       localUpdatedAt !== undefined &&

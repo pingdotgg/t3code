@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canSubmitExistingThreadDraft,
   getBuiltInComposerSlashCommands,
   getPlanModeComposerSlashCommands,
   replaceCurrentComposerTrigger,
@@ -84,6 +85,21 @@ describe("mobile plan mode", () => {
   });
 
   describe("existing-thread submit parsing", () => {
+    it("blocks submission until the plan mode preference is hydrated", () => {
+      expect(
+        canSubmitExistingThreadDraft({
+          hasContent: true,
+          planModePreferenceLoaded: false,
+        }),
+      ).toBe(false);
+      expect(
+        canSubmitExistingThreadDraft({
+          hasContent: true,
+          planModePreferenceLoaded: true,
+        }),
+      ).toBe(true);
+    });
+
     it("switches modes for standalone commands while enabled", () => {
       expect(
         resolveComposerSubmitInteractionMode({

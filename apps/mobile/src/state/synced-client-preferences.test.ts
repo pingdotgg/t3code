@@ -330,6 +330,26 @@ describe("synced client preferences", () => {
     });
   });
 
+  it("keeps a stamped device preference when a newer environment is read-only", () => {
+    expect(
+      reconcilePlanModePreferences({
+        localPlanModeEnabled: false,
+        localUpdatedAt: "2026-08-14T11:00:00.000Z",
+        environments: [
+          {
+            environmentId: environmentId("read-only"),
+            canPatch: false,
+            preferences: {
+              planModeEnabled: true,
+              updatedAt: "2026-08-14T12:00:00.000Z",
+            },
+          },
+        ],
+        now: "2026-08-14T12:01:00.000Z",
+      }),
+    ).toEqual({ localPatch: null, environmentPatches: [] });
+  });
+
   it("fans a mobile toggle out to every connected environment", () => {
     const write = createPlanModePreferenceWrite({
       value: true,
