@@ -18,15 +18,18 @@ import type {
   RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
+  applyAgentPanelClearedAt,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  hasClearableAgents,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
+import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
 
@@ -524,20 +527,45 @@ export function AgentsPanel({
   model,
   environmentId = null,
   threadId = null,
+  clearedAt = null,
+  onClearInactive,
+  onShowAll,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  clearedAt?: string | null;
+  onClearInactive?: () => void;
+  onShowAll?: () => void;
 }) {
-  if (!model.hasAgents) {
+  const { model: visibleModel, hiddenCount } = useMemo(
+    () => applyAgentPanelClearedAt(model, clearedAt),
+    [clearedAt, model],
+  );
+  const canClearInactive = hasClearableAgents(visibleModel);
+
+  if (!visibleModel.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <Bot aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No agents yet</p>
-        <p className="max-w-56 text-xs text-muted-foreground">
-          When this thread spawns subagents or runs a workflow, they show up here with live status,
-          activity, and token usage.
+        <p className="text-sm font-medium">
+          {hiddenCount > 0 ? "No active agents" : "No agents yet"}
         </p>
+        <p className="max-w-56 text-xs text-muted-foreground">
+          {hiddenCount > 0
+            ? `${hiddenCount} cleared ${hiddenCount === 1 ? "agent is" : "agents are"} hidden. New spawns still show up here.`
+            : "When this thread spawns subagents or runs a workflow, they show up here with live status, activity, and token usage."}
+        </p>
+        {hiddenCount > 0 && onShowAll ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={onShowAll}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Show all
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -546,7 +574,7 @@ export function AgentsPanel({
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 p-2">
-          {model.workflows.map((group) => (
+          {visibleModel.workflows.map((group) => (
             <WorkflowSection
               key={group.workflow.id}
               group={group}
@@ -554,29 +582,54 @@ export function AgentsPanel({
               threadId={threadId}
             />
           ))}
-          {model.directAgents.length > 0 ? (
+          {visibleModel.directAgents.length > 0 ? (
             <section>
               <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
                 Direct spawns
               </div>
-              {model.directAgents.map((agent) => (
+              {visibleModel.directAgents.map((agent) => (
                 <AgentRow key={agent.id} agent={agent} />
               ))}
             </section>
           ) : null}
         </div>
       </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
-        <span className="flex items-center gap-2">
-          {model.runningCount + model.waitingCount > 0 ? (
+      <footer className="flex items-center justify-between gap-2 border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-2">
+          {visibleModel.runningCount + visibleModel.waitingCount > 0 ? (
             <span className="text-info-foreground">
-              ● {model.runningCount + model.waitingCount} working
+              ● {visibleModel.runningCount + visibleModel.waitingCount} working
             </span>
           ) : null}
-          {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
-          {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
+          {visibleModel.idleCount > 0 ? <span>{visibleModel.idleCount} idle</span> : null}
+          {visibleModel.settledCount > 0 ? <span>{visibleModel.settledCount} settled</span> : null}
+          {hiddenCount > 0 && onShowAll ? (
+            <button
+              type="button"
+              onClick={onShowAll}
+              className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {hiddenCount} hidden · Show all
+            </button>
+          ) : null}
         </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {onClearInactive ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={!canClearInactive}
+              onClick={onClearInactive}
+              title="Hide agents that are no longer working"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              Clear inactive
+            </Button>
+          ) : null}
+          <span className="tabular-nums">
+            Σ {formatSubagentTokenCount(visibleModel.totalTokens)} tok
+          </span>
+        </span>
       </footer>
     </div>
   );

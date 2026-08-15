@@ -104,6 +104,20 @@ export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
+/**
+ * Later of two ISO timestamps, unparseable-tolerant. Status transitions must
+ * never stamp updatedAt in the past: the Agents panel's clear cutoff hides
+ * rows by updatedAt, so a backwards stamp retroactively hides a row that just
+ * changed.
+ */
+function laterTimestamp(current: string, candidate: string): string {
+  const currentAt = Date.parse(current);
+  const candidateAt = Date.parse(candidate);
+  if (Number.isNaN(candidateAt)) return current;
+  if (Number.isNaN(currentAt)) return candidate;
+  return candidateAt > currentAt ? candidate : current;
+}
+
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
 const ROSTER_LIMIT = 100;
@@ -455,12 +469,18 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
  * restart, crash) must not read as running forever (review finding: a dead
  * session left a panel full of "Working" agents while the sidebar showed
  * nothing). Idle is preserved — a resumable Codex child stays resumable.
+ * sessionUpdatedAt stamps that derived transition: it is when the session
+ * record entered its dead state, the only timestamp the interruption has.
  */
 export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-  options?: { readonly sessionLive?: boolean },
+  options?: {
+    readonly sessionLive?: boolean | undefined;
+    readonly sessionUpdatedAt?: string | undefined;
+  },
 ): ReadonlyArray<RuntimeSubagent> {
   const agents = new Map<string, MutableAgent>();
+  let latestActivityAt = "";
 
   for (const activity of activities) {
     if (typeof activity.payload !== "object" || activity.payload === null) {
@@ -468,6 +488,7 @@ export function foldSubagentActivities(
     }
     const payload = activity.payload as Record<string, unknown>;
     const at = activity.createdAt;
+    latestActivityAt = laterTimestamp(latestActivityAt, at);
 
     switch (activity.kind) {
       case "task.started": {
@@ -592,6 +613,10 @@ export function foldSubagentActivities(
             }
           }
           agent.usage = mergeUsageMax(agent.usage, asUsage(payload.typedUsage));
+          // Status and completedAt stay frozen, but the row did change: the
+          // Agents panel clear cutoff hides by updatedAt, and a row cleared
+          // before its result arrived would otherwise stay hidden forever.
+          agent.updatedAt = laterTimestamp(agent.updatedAt, at);
           break;
         }
         const status = TASK_COMPLETED_STATUS.get(asString(payload.status) ?? "") ?? "completed";
@@ -644,7 +669,9 @@ export function foldSubagentActivities(
       }
       member.status = agent.status === "completed" ? "completed" : "interrupted";
       member.completedAt = member.completedAt ?? agent.completedAt ?? agent.updatedAt;
-      member.updatedAt = agent.updatedAt;
+      // The cascade is a status transition: it may only move the member's
+      // stamp forward, never back to an older coordinator timestamp.
+      member.updatedAt = laterTimestamp(member.updatedAt, agent.updatedAt);
     }
   }
 
@@ -652,10 +679,16 @@ export function foldSubagentActivities(
   // them. Mirrors the server-side liveness registry clearing on
   // session.exited, so panel and sidebar can never disagree.
   if (options?.sessionLive === false) {
+    // The session's own timestamp dates the death; the newest activity is the
+    // fallback when the caller has no session record. Either way the stamp
+    // advances, so a clear issued while the agent was still working cannot
+    // retroactively hide the interruption (review finding).
+    const interruptedAt = options.sessionUpdatedAt ?? latestActivityAt;
     for (const agent of agents.values()) {
       if (isActiveSubagentStatus(agent.status)) {
         agent.status = "interrupted";
         agent.completedAt = agent.completedAt ?? agent.updatedAt;
+        agent.updatedAt = laterTimestamp(agent.updatedAt, interruptedAt);
       }
     }
   }
@@ -852,6 +885,99 @@ export function deriveAgentPanelModel({
     hasAgents: true,
     liveCount: runningCount + waitingCount,
   };
+}
+
+function workflowGroupEntries(group: AgentPanelWorkflowGroup): ReadonlyArray<RuntimeSubagent> {
+  return [
+    group.workflow,
+    ...group.phases.flatMap((phase) => phase.members),
+    ...group.unphasedMembers,
+  ];
+}
+
+/**
+ * Clearable = not actively working. Terminal rows are plainly done, and an
+ * idle row is resting-but-resumable — it piles up in the panel exactly like
+ * terminal history, which is the thing the user wants gone. Only
+ * pending/running/waiting survive a clear.
+ */
+function isClearableSubagent(agent: RuntimeSubagent): boolean {
+  return !isActiveSubagentStatus(agent.status);
+}
+
+function clearedByCutoff(agent: RuntimeSubagent, cutoff: number): boolean {
+  if (!isClearableSubagent(agent)) {
+    return false;
+  }
+  const updatedAt = Date.parse(agent.updatedAt);
+  // An undateable row cannot be shown to postdate the cutoff, and keeping it
+  // would latch the clear affordance on with nothing left to clear.
+  return Number.isNaN(updatedAt) || updatedAt <= cutoff;
+}
+
+export interface ClearedAgentPanelModel {
+  readonly model: AgentPanelModel;
+  /** Rows the cutoff hid, for the "N hidden · Show all" affordance. */
+  readonly hiddenCount: number;
+}
+
+/**
+ * Presentation-only history cutoff. Workflows stay atomic: any still-working
+ * or newer row preserves its entire coordinator/member group.
+ */
+export function applyAgentPanelClearedAt(
+  model: AgentPanelModel,
+  clearedAt: string | null,
+): ClearedAgentPanelModel {
+  if (clearedAt === null) {
+    return { model, hiddenCount: 0 };
+  }
+  const cutoff = Date.parse(clearedAt);
+  if (Number.isNaN(cutoff)) {
+    return { model, hiddenCount: 0 };
+  }
+
+  const groupEntries = model.workflows.map(workflowGroupEntries);
+  const totalCount =
+    groupEntries.reduce((sum, entries) => sum + entries.length, 0) + model.directAgents.length;
+  const visibleAgents = [
+    ...groupEntries.flatMap((entries) =>
+      entries.every((agent) => clearedByCutoff(agent, cutoff)) ? [] : entries,
+    ),
+    ...model.directAgents.filter((agent) => !clearedByCutoff(agent, cutoff)),
+  ];
+  const hiddenCount = totalCount - visibleAgents.length;
+
+  // Nothing hidden: hand back the same reference so the panel skips a re-derive.
+  return {
+    model: hiddenCount === 0 ? model : deriveAgentPanelModel({ agents: visibleAgents }),
+    hiddenCount,
+  };
+}
+
+/**
+ * Newest updatedAt on screen, or null when the panel holds no dateable row.
+ * The clear cutoff comes from here rather than the client clock: updatedAt is
+ * server-stamped, and a client running ahead of the server would hide rows
+ * that settle after the clear. Because the cutoff test is `<=`, this hides
+ * exactly the rows visible now and nothing stamped later.
+ */
+export function latestAgentActivityAt(model: AgentPanelModel): string | null {
+  let latest: string | null = null;
+  const agents = [...model.workflows.flatMap(workflowGroupEntries), ...model.directAgents];
+  for (const agent of agents) {
+    if (Number.isNaN(Date.parse(agent.updatedAt))) continue;
+    latest = latest === null ? agent.updatedAt : laterTimestamp(latest, agent.updatedAt);
+  }
+  return latest;
+}
+
+/** Whether clearing now would hide anything. */
+export function hasClearableAgents(model: AgentPanelModel): boolean {
+  return (
+    model.directAgents.some(isClearableSubagent) ||
+    model.workflows.some((group) => workflowGroupEntries(group).every(isClearableSubagent))
+  );
 }
 
 /**

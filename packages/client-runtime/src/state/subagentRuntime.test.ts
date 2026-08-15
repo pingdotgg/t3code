@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import {
+  applyAgentPanelClearedAt,
   deriveAgentPanelModel,
+  emptyAgentPanelModel,
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  hasClearableAgents,
+  latestAgentActivityAt,
   isAgentAttributedToolActivity,
   isSubagentActivityKind,
   isTimelineBypassActivity,
@@ -479,6 +483,491 @@ describe("deriveAgentPanelModel", () => {
     const model = deriveAgentPanelModel({ agents: orphans });
     expect(model.workflows).toHaveLength(0);
     expect(model.directAgents.map((agent) => agent.id)).toEqual(["gone:wf:0"]);
+  });
+});
+
+describe("cleared agent panel models", () => {
+  const cutoff = "2026-08-02T00:00:00.000Z";
+
+  it("hides old inactive direct agents — idle included — while retaining working and newer rows with recalculated totals", () => {
+    const model = deriveAgentPanelModel({
+      agents: fold([
+        activity(
+          "task.started",
+          { taskId: "old-completed", taskType: "local_agent" },
+          "2026-08-01T08:00:00.000Z",
+        ),
+        activity(
+          "task.completed",
+          { taskId: "old-completed", status: "completed", typedUsage: { totalTokens: 1 } },
+          "2026-08-01T08:01:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "old-failed", taskType: "local_agent" },
+          "2026-08-01T08:02:00.000Z",
+        ),
+        activity(
+          "task.updated",
+          { taskId: "old-failed", status: "failed" },
+          "2026-08-01T08:03:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "old-cancelled", taskType: "local_agent" },
+          "2026-08-01T08:04:00.000Z",
+        ),
+        activity(
+          "task.updated",
+          { taskId: "old-cancelled", status: "cancelled" },
+          "2026-08-01T08:05:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "old-interrupted", taskType: "local_agent" },
+          "2026-08-01T08:06:00.000Z",
+        ),
+        activity(
+          "task.updated",
+          { taskId: "old-interrupted", status: "interrupted" },
+          "2026-08-01T08:07:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "running", taskType: "local_agent", typedUsage: { totalTokens: 5 } },
+          "2026-08-01T08:08:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          { taskId: "running", status: "running", typedUsage: { totalTokens: 5 } },
+          "2026-08-01T08:09:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "pending", taskType: "local_agent", typedUsage: { totalTokens: 6 } },
+          "2026-08-01T08:10:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          { taskId: "pending", status: "pending", typedUsage: { totalTokens: 6 } },
+          "2026-08-01T08:11:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "waiting", taskType: "local_agent", typedUsage: { totalTokens: 7 } },
+          "2026-08-01T08:12:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          { taskId: "waiting", status: "waiting", typedUsage: { totalTokens: 7 } },
+          "2026-08-01T08:13:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "idle", taskType: "local_agent", typedUsage: { totalTokens: 8 } },
+          "2026-08-01T08:14:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          { taskId: "idle", status: "idle", typedUsage: { totalTokens: 8 } },
+          "2026-08-01T08:15:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "reactivated", taskType: "local_agent", typedUsage: { totalTokens: 9 } },
+          "2026-08-01T08:16:00.000Z",
+        ),
+        activity(
+          "task.completed",
+          { taskId: "reactivated", status: "completed" },
+          "2026-08-01T08:17:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          { taskId: "reactivated", status: "running", typedUsage: { totalTokens: 9 } },
+          "2026-08-03T08:18:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "newly-completed", taskType: "local_agent", typedUsage: { totalTokens: 10 } },
+          "2026-08-01T08:19:00.000Z",
+        ),
+        activity(
+          "task.completed",
+          { taskId: "newly-completed", status: "completed", typedUsage: { totalTokens: 10 } },
+          "2026-08-03T08:20:00.000Z",
+        ),
+      ]),
+    });
+
+    const { model: visible, hiddenCount } = applyAgentPanelClearedAt(model, cutoff);
+
+    expect(visible.directAgents.map((agent) => agent.id)).toEqual([
+      "running",
+      "pending",
+      "waiting",
+      "reactivated",
+      "newly-completed",
+    ]);
+    expect(hiddenCount).toBe(5);
+    expect(visible.runningCount).toBe(3);
+    expect(visible.waitingCount).toBe(1);
+    expect(visible.idleCount).toBe(0);
+    expect(visible.settledCount).toBe(1);
+    expect(visible.totalTokens).toBe(37);
+    // newly-completed postdates the cutoff, so a second clear still has work.
+    expect(hasClearableAgents(visible)).toBe(true);
+  });
+
+  it("fails open for an invalid cutoff and clears rows with an undateable timestamp", () => {
+    const model = deriveAgentPanelModel({
+      agents: fold([
+        activity(
+          "task.started",
+          { taskId: "old", taskType: "local_agent" },
+          "2026-08-01T09:00:00.000Z",
+        ),
+        activity(
+          "task.completed",
+          { taskId: "old", status: "completed" },
+          "2026-08-01T09:01:00.000Z",
+        ),
+      ]),
+    });
+    const undateableModel = deriveAgentPanelModel({
+      agents: [{ ...model.directAgents[0]!, updatedAt: "not-a-timestamp" }],
+    });
+
+    // A bad cutoff leaves the model untouched, by reference.
+    expect(applyAgentPanelClearedAt(model, "not-a-timestamp").model).toBe(model);
+    expect(applyAgentPanelClearedAt(model, "not-a-timestamp").hiddenCount).toBe(0);
+    expect(applyAgentPanelClearedAt(model, null).model).toBe(model);
+    // A row we cannot date is still inactive: clear it rather than latch the
+    // affordance on forever.
+    expect(applyAgentPanelClearedAt(undateableModel, cutoff).model.hasAgents).toBe(false);
+    expect(applyAgentPanelClearedAt(undateableModel, cutoff).hiddenCount).toBe(1);
+  });
+
+  it("returns the same model reference when the cutoff hides nothing", () => {
+    const model = deriveAgentPanelModel({
+      agents: fold([
+        activity(
+          "task.started",
+          { taskId: "live", taskType: "local_agent" },
+          "2026-08-01T09:00:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          { taskId: "live", status: "running" },
+          "2026-08-01T09:01:00.000Z",
+        ),
+      ]),
+    });
+
+    const cleared = applyAgentPanelClearedAt(model, cutoff);
+
+    expect(cleared.model).toBe(model);
+    expect(cleared.hiddenCount).toBe(0);
+  });
+
+  it("treats every non-working status as clearable and keeps workflows atomic", () => {
+    const directModel = deriveAgentPanelModel({
+      agents: fold([
+        activity(
+          "task.started",
+          { taskId: "old-direct", taskType: "local_agent" },
+          "2026-08-01T09:10:00.000Z",
+        ),
+        activity(
+          "task.completed",
+          { taskId: "old-direct", status: "completed" },
+          "2026-08-01T09:11:00.000Z",
+        ),
+      ]),
+    });
+    const idleDirectModel = deriveAgentPanelModel({
+      agents: [{ ...directModel.directAgents[0]!, status: "idle" }],
+    });
+    const runningDirectModel = deriveAgentPanelModel({
+      agents: [{ ...directModel.directAgents[0]!, status: "running" }],
+    });
+    const waitingDirectModel = deriveAgentPanelModel({
+      agents: [{ ...directModel.directAgents[0]!, status: "waiting" }],
+    });
+    const workflowModel = deriveAgentPanelModel({
+      agents: fold([
+        activity(
+          "task.started",
+          { taskId: "old-workflow", taskType: "local_workflow" },
+          "2026-08-01T09:20:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          { taskId: "old-workflow:member", parentAgentId: "old-workflow", status: "completed" },
+          "2026-08-01T09:21:00.000Z",
+        ),
+        activity(
+          "task.completed",
+          { taskId: "old-workflow", taskType: "local_workflow", status: "completed" },
+          "2026-08-01T09:22:00.000Z",
+        ),
+      ]),
+    });
+    const workflow = workflowModel.workflows[0]!;
+    const idleMemberWorkflowModel = deriveAgentPanelModel({
+      agents: [workflow.workflow, { ...workflow.unphasedMembers[0]!, status: "idle" }],
+    });
+    const runningMemberWorkflowModel = deriveAgentPanelModel({
+      agents: [workflow.workflow, { ...workflow.unphasedMembers[0]!, status: "running" }],
+    });
+
+    expect(hasClearableAgents(directModel)).toBe(true);
+    // The regression this fixes: a resting Codex child used to be unclearable.
+    expect(hasClearableAgents(idleDirectModel)).toBe(true);
+    expect(hasClearableAgents(runningDirectModel)).toBe(false);
+    expect(hasClearableAgents(waitingDirectModel)).toBe(false);
+    expect(hasClearableAgents(workflowModel)).toBe(true);
+    expect(hasClearableAgents(idleMemberWorkflowModel)).toBe(true);
+    // One working member pins the whole group.
+    expect(hasClearableAgents(runningMemberWorkflowModel)).toBe(false);
+    // Offset-form cutoffs parse the same as Z-form.
+    expect(applyAgentPanelClearedAt(directModel, "2026-08-02T00:00:00+00:00").hiddenCount).toBe(1);
+  });
+
+  it("preserves a working workflow atomically and hides a fully inactive old workflow", () => {
+    const model = deriveAgentPanelModel({
+      agents: fold([
+        activity(
+          "task.started",
+          { taskId: "active-workflow", taskType: "local_workflow" },
+          "2026-08-01T10:00:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          {
+            taskId: "active-workflow:old-member",
+            parentAgentId: "active-workflow",
+            status: "completed",
+            typedUsage: { totalTokens: 11 },
+          },
+          "2026-08-01T10:01:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          {
+            taskId: "active-workflow:running-member",
+            parentAgentId: "active-workflow",
+            status: "running",
+            typedUsage: { totalTokens: 12 },
+          },
+          "2026-08-03T10:02:00.000Z",
+        ),
+        activity(
+          "task.started",
+          { taskId: "settled-workflow", taskType: "local_workflow" },
+          "2026-08-01T10:03:00.000Z",
+        ),
+        activity(
+          "task.progress",
+          {
+            taskId: "settled-workflow:member",
+            parentAgentId: "settled-workflow",
+            status: "completed",
+            typedUsage: { totalTokens: 13 },
+          },
+          "2026-08-01T10:04:00.000Z",
+        ),
+        activity(
+          "task.completed",
+          { taskId: "settled-workflow", taskType: "local_workflow", status: "completed" },
+          "2026-08-01T10:05:00.000Z",
+        ),
+      ]),
+    });
+
+    const { model: visible, hiddenCount } = applyAgentPanelClearedAt(model, cutoff);
+    const active = visible.workflows[0]!;
+
+    expect(visible.workflows.map((group) => group.workflow.id)).toEqual(["active-workflow"]);
+    expect(active.workflow.id).toBe("active-workflow");
+    // The settled member rides along: its group still has work in flight.
+    expect(
+      [...active.phases.flatMap((phase) => phase.members), ...active.unphasedMembers].map(
+        (member) => member.id,
+      ),
+    ).toEqual(["active-workflow:old-member", "active-workflow:running-member"]);
+    expect(hiddenCount).toBe(2);
+    expect(hasClearableAgents(model)).toBe(true);
+    expect(hasClearableAgents(visible)).toBe(false);
+  });
+
+  it("advances updatedAt when a late completion enriches an already-terminal row", () => {
+    const [agent] = fold([
+      activity(
+        "task.started",
+        { taskId: "late", taskType: "local_agent" },
+        "2026-08-01T09:00:00.000Z",
+      ),
+      activity("task.updated", { taskId: "late", status: "completed" }, "2026-08-01T09:01:00.000Z"),
+      activity(
+        "task.completed",
+        { taskId: "late", status: "completed", summary: "done", typedUsage: { totalTokens: 4 } },
+        "2026-08-03T09:02:00.000Z",
+      ),
+    ]);
+
+    expect(agent!.result).toBe("done");
+    // Frozen: the enrichment is not a transition.
+    expect(agent!.completedAt).toBe("2026-08-01T09:01:00.000Z");
+    // Advanced: a row cleared before its result landed must come back with it.
+    expect(agent!.updatedAt).toBe("2026-08-03T09:02:00.000Z");
+    expect(
+      applyAgentPanelClearedAt(deriveAgentPanelModel({ agents: [agent!] }), cutoff).hiddenCount,
+    ).toBe(0);
+  });
+
+  it("stamps session-derived interruption at the session timestamp so a cleared-while-working row returns", () => {
+    const rows = [
+      activity(
+        "task.started",
+        { taskId: "working", taskType: "local_agent" },
+        "2026-08-01T09:00:00.000Z",
+      ),
+      activity(
+        "task.progress",
+        { taskId: "working", status: "running" },
+        "2026-08-01T09:01:00.000Z",
+      ),
+    ];
+
+    const agents = foldSubagentActivities(rows, {
+      sessionLive: false,
+      sessionUpdatedAt: "2026-08-03T09:05:00.000Z",
+    });
+
+    expect(agents[0]!.status).toBe("interrupted");
+    expect(agents[0]!.updatedAt).toBe("2026-08-03T09:05:00.000Z");
+    expect(agents[0]!.completedAt).toBe("2026-08-01T09:01:00.000Z");
+    // Cleared while it was working (active rows survive a clear), then killed
+    // by session death after the cutoff: it must stay visible.
+    expect(applyAgentPanelClearedAt(deriveAgentPanelModel({ agents }), cutoff).hiddenCount).toBe(0);
+  });
+
+  it("falls back to the newest activity for session death and never stamps backwards", () => {
+    const rows = [
+      activity(
+        "task.started",
+        { taskId: "working", taskType: "local_agent" },
+        "2026-08-01T09:00:00.000Z",
+      ),
+      activity(
+        "task.progress",
+        { taskId: "working", status: "running" },
+        "2026-08-01T09:01:00.000Z",
+      ),
+      activity(
+        "task.started",
+        { taskId: "other", taskType: "local_agent" },
+        "2026-08-01T09:03:00.000Z",
+      ),
+    ];
+
+    expect(foldSubagentActivities(rows, { sessionLive: false })[0]!.updatedAt).toBe(
+      "2026-08-01T09:03:00.000Z",
+    );
+    // A session record older than the row cannot drag the stamp back.
+    expect(
+      foldSubagentActivities(rows, {
+        sessionLive: false,
+        sessionUpdatedAt: "2026-07-01T00:00:00.000Z",
+      })[0]!.updatedAt,
+    ).toBe("2026-08-01T09:01:00.000Z");
+  });
+
+  it("keeps a coordinator cascade from stamping a member in the past", () => {
+    const agents = fold([
+      activity(
+        "task.started",
+        { taskId: "wf", taskType: "local_workflow" },
+        "2026-08-01T10:00:00.000Z",
+      ),
+      activity(
+        "task.completed",
+        { taskId: "wf", taskType: "local_workflow", status: "failed" },
+        "2026-08-01T10:02:00.000Z",
+      ),
+      activity(
+        "task.progress",
+        { taskId: "wf:member", parentAgentId: "wf", status: "running" },
+        "2026-08-01T10:05:00.000Z",
+      ),
+    ]);
+    const member = agents.find((agent) => agent.id === "wf:member")!;
+
+    expect(member.status).toBe("interrupted");
+    expect(member.updatedAt).toBe("2026-08-01T10:05:00.000Z");
+  });
+});
+
+describe("latestAgentActivityAt", () => {
+  const model = (agents: ReadonlyArray<OrchestrationThreadActivity>) =>
+    deriveAgentPanelModel({ agents: fold(agents) });
+
+  it("returns the newest updatedAt across workflows and direct agents", () => {
+    expect(
+      latestAgentActivityAt(
+        model([
+          activity(
+            "task.started",
+            { taskId: "wf", taskType: "local_workflow" },
+            "2026-08-01T11:00:00.000Z",
+          ),
+          activity(
+            "task.progress",
+            { taskId: "wf:member", parentAgentId: "wf", status: "completed" },
+            "2026-08-01T11:04:00.000Z",
+          ),
+          activity(
+            "task.completed",
+            { taskId: "wf", taskType: "local_workflow", status: "completed" },
+            "2026-08-01T11:02:00.000Z",
+          ),
+          activity(
+            "task.started",
+            { taskId: "direct", taskType: "local_agent" },
+            "2026-08-01T11:01:00.000Z",
+          ),
+          activity(
+            "task.progress",
+            { taskId: "direct", status: "running" },
+            "2026-08-01T11:03:00.000Z",
+          ),
+        ]),
+      ),
+    ).toBe("2026-08-01T11:04:00.000Z");
+  });
+
+  it("returns null for an empty panel and skips undateable rows", () => {
+    expect(latestAgentActivityAt(emptyAgentPanelModel())).toBe(null);
+    const dated = model([
+      activity(
+        "task.started",
+        { taskId: "dated", taskType: "local_agent" },
+        "2026-08-01T12:00:00.000Z",
+      ),
+    ]).directAgents[0]!;
+    expect(
+      latestAgentActivityAt(
+        deriveAgentPanelModel({
+          agents: [dated, { ...dated, id: "undateable", updatedAt: "not-a-timestamp" }],
+        }),
+      ),
+    ).toBe("2026-08-01T12:00:00.000Z");
+    expect(
+      latestAgentActivityAt(
+        deriveAgentPanelModel({ agents: [{ ...dated, updatedAt: "not-a-timestamp" }] }),
+      ),
+    ).toBe(null);
   });
 });
 

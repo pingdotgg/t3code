@@ -155,6 +155,7 @@ import { AgentsPanel } from "./AgentsPanel";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  latestAgentActivityAt,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
@@ -306,6 +307,10 @@ import {
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  AGENTS_CLEARED_AT_BY_THREAD_KEY,
+  AgentsClearedAtByThreadSchema,
+  boundAgentsClearedAtByThread,
+  EMPTY_AGENTS_CLEARED_AT_BY_THREAD,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
@@ -1396,6 +1401,11 @@ function ChatViewContent(props: ChatViewProps) {
     {},
     LastInvokedScriptByProjectSchema,
   );
+  const [agentsClearedAtByThreadKey, setAgentsClearedAtByThreadKey] = useLocalStorage(
+    AGENTS_CLEARED_AT_BY_THREAD_KEY,
+    EMPTY_AGENTS_CLEARED_AT_BY_THREAD,
+    AgentsClearedAtByThreadSchema,
+  );
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
@@ -1596,6 +1606,21 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const activeAgentsClearedAt =
+    activeThreadKey === null ? null : (agentsClearedAtByThreadKey[activeThreadKey] ?? null);
+  const handleShowAllAgents = useCallback(() => {
+    if (activeThreadKey === null) {
+      return;
+    }
+    setAgentsClearedAtByThreadKey((current) => {
+      if (current[activeThreadKey] === undefined) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[activeThreadKey];
+      return next;
+    });
+  }, [activeThreadKey, setAgentsClearedAtByThreadKey]);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -2216,15 +2241,31 @@ function ChatViewContent(props: ChatViewProps) {
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
-  // sessionLive derives interruption for agents orphaned by session death.
+  // sessionLive derives interruption for agents orphaned by session death;
+  // the session's updatedAt dates that derived transition.
   const agentSessionLive = phase !== "disconnected";
+  const agentSessionUpdatedAt = activeThread?.session?.updatedAt;
   const agentPanelModel = useMemo(
     () =>
       deriveAgentPanelModel({
-        agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
+        agents: foldSubagentActivities(threadActivities, {
+          sessionLive: agentSessionLive,
+          sessionUpdatedAt: agentSessionUpdatedAt,
+        }),
       }),
-    [agentSessionLive, threadActivities],
+    [agentSessionLive, agentSessionUpdatedAt, threadActivities],
   );
+  const handleClearInactiveAgents = useCallback(() => {
+    if (activeThreadKey === null) {
+      return;
+    }
+    // Cutoff comes from the rows themselves: updatedAt is server-stamped, and
+    // a client clock ahead of the server would hide rows that settle later.
+    const clearedAt = latestAgentActivityAt(agentPanelModel) ?? new Date().toISOString();
+    setAgentsClearedAtByThreadKey((current) =>
+      boundAgentsClearedAtByThread({ ...current, [activeThreadKey]: clearedAt }),
+    );
+  }, [activeThreadKey, agentPanelModel, setAgentsClearedAtByThreadKey]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -6137,6 +6178,9 @@ function ChatViewContent(props: ChatViewProps) {
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+        clearedAt={activeAgentsClearedAt}
+        onClearInactive={handleClearInactiveAgents}
+        onShowAll={handleShowAllAgents}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
