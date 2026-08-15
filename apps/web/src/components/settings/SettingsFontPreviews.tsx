@@ -43,7 +43,7 @@ export function PromptFontPreview() {
         terminalContexts={EMPTY_TERMINAL_CONTEXTS}
         skills={EMPTY_SKILLS}
         disabled={false}
-        placeholder="Ask for follow-up changes or attach images"
+        placeholder="Ask for changes, send follow-ups, or attach images"
         className="max-h-40 min-h-12"
         onRemoveTerminalContext={noop}
         onChange={onChange}
