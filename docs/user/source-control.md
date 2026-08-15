@@ -53,6 +53,13 @@ T3 Code works with the platforms your team already uses:
 - Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
 
+**Let completed reviews leave the inbox**
+
+- T3 Code settles a thread after its PR or MR merges when auto-settle on merge is enabled
+- Pinned threads ignore the inactivity timer and settle automatically only after a merge
+- Closing a PR or MR without merging it does not immediately settle the thread
+- The server owns this state, so web, desktop, and mobile show the same result
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

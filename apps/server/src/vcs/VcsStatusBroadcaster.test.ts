@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -74,7 +75,10 @@ function makeTestLayer(state: {
   remoteStatusCalls: number;
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
+  fullInvalidationCalls?: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
+  localStatusEffect?: (call: number) => Effect.Effect<VcsStatusLocalResult>;
+  remoteStatusEffect?: (call: number) => Effect.Effect<VcsStatusRemoteResult | null>;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -82,15 +86,21 @@ function makeTestLayer(state: {
     Layer.provide(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
         localStatus: () =>
-          Effect.sync(() => {
+          Effect.suspend(() => {
             state.localStatusCalls += 1;
-            return state.currentLocalStatus;
+            return (
+              state.localStatusEffect?.(state.localStatusCalls) ??
+              Effect.succeed(state.currentLocalStatus)
+            );
           }),
         remoteStatus: (_input, options) =>
-          Effect.sync(() => {
+          Effect.suspend(() => {
             state.remoteStatusCalls += 1;
             state.remoteStatusRefreshUpstreamValues?.push(options?.refreshUpstream);
-            return state.currentRemoteStatus;
+            return (
+              state.remoteStatusEffect?.(state.remoteStatusCalls) ??
+              Effect.succeed(state.currentRemoteStatus)
+            );
           }),
         invalidateLocalStatus: () =>
           Effect.sync(() => {
@@ -104,6 +114,9 @@ function makeTestLayer(state: {
           Effect.sync(() => {
             state.localInvalidationCalls += 1;
             state.remoteInvalidationCalls += 1;
+            if (state.fullInvalidationCalls !== undefined) {
+              state.fullInvalidationCalls += 1;
+            }
           }),
       }),
     ),
@@ -166,6 +179,84 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteInvalidationCalls, 0);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
+
+  it.effect("peeks without loading and polls without invalidating the PR cache", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      fullInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      assert.equal(yield* broadcaster.peekStatus({ cwd: "/repo" }), null);
+      assert.equal(state.localStatusCalls, 0);
+      assert.equal(state.remoteStatusCalls, 0);
+
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.deepStrictEqual(yield* broadcaster.peekStatus({ cwd: "/repo" }), baseStatus);
+      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.remoteStatusCalls, 1);
+
+      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 2 };
+      assert.deepStrictEqual(yield* broadcaster.pollStatus("/repo"), {
+        ...baseLocalStatus,
+        ...state.currentRemoteStatus,
+      });
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 1);
+      assert.equal(state.fullInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("serializes full polling with explicit local refreshes", () =>
+    Effect.gen(function* () {
+      const pollReadStarted = yield* Deferred.make<void>();
+      const releasePollRead = yield* Deferred.make<void>();
+      const refreshedLocalStatus = {
+        ...baseLocalStatus,
+        refName: "feature/refreshed-after-poll",
+      };
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        localStatusEffect: (call: number) =>
+          call === 1
+            ? Deferred.succeed(pollReadStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releasePollRead)),
+                Effect.as(baseLocalStatus),
+              )
+            : Effect.succeed(refreshedLocalStatus),
+      };
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const pollFiber = yield* broadcaster.pollStatus("/repo").pipe(Effect.forkChild);
+        yield* Deferred.await(pollReadStarted);
+        const refreshFiber = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        assert.equal(state.localStatusCalls, 1);
+        yield* Deferred.succeed(releasePollRead, undefined);
+        yield* Fiber.join(pollFiber);
+        yield* Fiber.join(refreshFiber);
+
+        assert.deepStrictEqual(yield* broadcaster.peekStatus({ cwd: "/repo" }), {
+          ...refreshedLocalStatus,
+          ...baseRemoteStatus,
+        });
+      }).pipe(Effect.provide(makeTestLayer(state)));
+    }),
+  );
 
   it.effect("refreshes the cached snapshot after explicit invalidation", () => {
     const state = {

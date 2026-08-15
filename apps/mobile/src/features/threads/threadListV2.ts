@@ -1,5 +1,4 @@
 import {
-  effectiveSettled,
   effectiveSnoozed,
   hasQueuedTurnStart,
   QUEUED_TURN_START_GRACE_MS,
@@ -145,17 +144,6 @@ export function resolveThreadListV2Status(
 function parseTimestampMs(isoDate: string): number {
   const parsed = Date.parse(isoDate);
   return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-/** First VALID timestamp wins: a present-yet-malformed string falls through
-    to the next candidate rather than sinking the row to the epoch. */
-function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | undefined>): number {
-  for (const candidate of candidates) {
-    if (candidate == null) continue;
-    const parsed = Date.parse(candidate);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return 0;
 }
 
 /**
@@ -305,9 +293,8 @@ export function buildThreadListV2ListItems(input: {
 }
 
 /**
- * Partitions visible threads into the active card block (creation order) and
- * the settled recency tail, matching the web v2 list. Mobile stores these
- * auto-settle preferences per device.
+ * Partitions visible threads into the active card block and the settled
+ * recency tail. Settlement is persisted server state.
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -318,8 +305,6 @@ export function buildThreadListV2Items(input: {
   }> | null;
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
-  /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
-  readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
@@ -327,8 +312,6 @@ export function buildThreadListV2Items(input: {
   /** Environments whose server supports thread.snooze/unsnooze. Same
       contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
-  readonly autoSettleAfterDays?: number;
-  readonly autoSettleOnMerge?: boolean;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
@@ -348,8 +331,6 @@ export function buildThreadListV2Items(input: {
 }): ThreadListV2Layout {
   const now = input.now ?? new Date().toISOString();
   const snoozeNow = input.snoozeNow ?? now;
-  const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
-  const autoSettleOnMerge = input.autoSettleOnMerge ?? true;
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
@@ -361,8 +342,8 @@ export function buildThreadListV2Items(input: {
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
-    // Callers pass live (unarchived) shells; settled threads are among them
-    // and partition into the tail via effectiveSettled.
+    // Callers pass live (unarchived) shells; settled threads remain among
+    // them and partition into the tail from their projected timestamp.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
@@ -381,8 +362,6 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    const changeRequestState =
-      input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
     // Visibility parity with web: snooze outranks everything, including a
     // pin — a snoozed thread leaves the list until it wakes (or raises its
     // hand). The pin (and its pinOrderKey) survives underneath, so a woken
@@ -398,21 +377,13 @@ export function buildThreadListV2Items(input: {
       }
       continue;
     }
-    // A pin otherwise overrides the lifecycle: pinned threads render above
-    // the inbox and never auto-settle out of sight.
+    // Server commands clear one side of a pin/settle transition atomically;
+    // pin wins here only while the paired projection event catches up.
     if (thread.pinnedAt != null) {
       pinned.push(thread);
       continue;
     }
-    if (
-      supportsSettlement &&
-      effectiveSettled(thread, {
-        now,
-        autoSettleAfterDays,
-        autoSettleOnMerge,
-        changeRequestState,
-      })
-    ) {
+    if (supportsSettlement && thread.settledAt !== null) {
       settled.push(thread);
     } else {
       active.push(thread);
@@ -433,8 +404,7 @@ export function buildThreadListV2Items(input: {
         );
   const orderedSettled = [...settled].sort(
     (left, right) =>
-      firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -
-      firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt),
+      parseTimestampMs(right.settledAt ?? "") - parseTimestampMs(left.settledAt ?? ""),
   );
   const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
   const pagedSettled =

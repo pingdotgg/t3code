@@ -68,11 +68,9 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
+  it("defaults to the current sidebar", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
-    expect(settings.sidebarAutoSettleOnMerge).toBe(true);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -92,24 +90,47 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
-  it("allows auto-settle by inactivity to be disabled", () => {
+  it("drops the former client-only auto-settle settings", () => {
+    const decoded = decodeClientSettings({
+      sidebarAutoSettleAfterDays: null,
+      sidebarAutoSettleOnMerge: false,
+    });
+    const patch = decodeClientSettingsPatch({
+      sidebarAutoSettleAfterDays: 14,
+      sidebarAutoSettleOnMerge: false,
+    });
+
+    expect(decoded).not.toHaveProperty("sidebarAutoSettleAfterDays");
+    expect(decoded).not.toHaveProperty("sidebarAutoSettleOnMerge");
+    expect(patch).not.toHaveProperty("sidebarAutoSettleAfterDays");
+    expect(patch).not.toHaveProperty("sidebarAutoSettleOnMerge");
+  });
+});
+
+describe("ServerSettings thread auto-settle", () => {
+  it("defaults inactivity settlement to three days and can disable it", () => {
+    expect(decodeServerSettings({}).threadAutoSettleAfterDays).toBe(3);
     expect(
-      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
+      decodeServerSettings({ threadAutoSettleAfterDays: null }).threadAutoSettleAfterDays,
+    ).toBe(null);
+    expect(
+      decodeServerSettingsPatch({ threadAutoSettleAfterDays: null }).threadAutoSettleAfterDays,
     ).toBeNull();
   });
 
-  it("allows auto-settle on merge to be disabled", () => {
-    expect(decodeClientSettings({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge).toBe(
+  it("defaults merge settlement on and can disable it", () => {
+    expect(decodeServerSettings({}).threadAutoSettleOnMerge).toBe(true);
+    expect(decodeServerSettings({ threadAutoSettleOnMerge: false }).threadAutoSettleOnMerge).toBe(
       false,
     );
-    expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge,
-    ).toBe(false);
+    expect(decodeServerSettingsPatch({ threadAutoSettleOnMerge: false })).toEqual({
+      threadAutoSettleOnMerge: false,
+    });
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettings({ threadAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ threadAutoSettleAfterDays: value })).toThrow();
   });
 });
 

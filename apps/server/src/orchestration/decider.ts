@@ -25,8 +25,8 @@ import { projectEvent } from "./projector.ts";
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 // Session adoption takes seconds; a user message still unadopted after this
-// window is a failed/stale start, not pending work. Mirrors the client's
-// QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
+// window is a failed/stale start, not pending work. Keep this synchronized
+// with the automatic settlement policy in threadSettlement.ts.
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
 /**
@@ -456,9 +456,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      // Server-side twin of the client's canSettle session check: a stale
-      // or raced client must not settle a thread whose session is coming
-      // alive or working.
+      // The server owns this invariant: a stale or raced client must not
+      // settle a thread whose session is coming alive or working.
       if (thread.session?.status === "starting" || thread.session?.status === "running") {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({

@@ -63,6 +63,7 @@ import {
   type OrchestrationEngineShape,
 } from "../src/orchestration/Services/OrchestrationEngine.ts";
 import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
+import { ThreadSettlementReactor } from "../src/orchestration/ThreadSettlementReactor.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -342,6 +343,8 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(
         Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
+          peekStatus: () => Effect.die("peekStatus should not be called in this test"),
+          pollStatus: () => Effect.die("pollStatus should not be called in this test"),
           refreshLocalStatus: () =>
             Effect.succeed({
               isRepo: true,
@@ -371,6 +374,12 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(checkpointReactorLayer),
       Layer.provideMerge(
         Layer.succeed(ThreadDeletionReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(ThreadSettlementReactor, {
           start: () => Effect.void,
           drain: Effect.void,
         }),

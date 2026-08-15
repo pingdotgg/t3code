@@ -32,9 +32,12 @@ import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import { environmentCatalog } from "../../connection/catalog";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
   type AppUpdateCheckState,
@@ -522,11 +525,35 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const autoSettleOnMerge =
-    !AsyncResult.isSuccess(preferencesResult) ||
-    preferencesResult.value.autoSettleOnMerge !== false;
+  const environmentCatalogState = useAtomValue(environmentCatalog.catalogValueAtom);
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const updateServerSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "server settings update",
+  );
+  const environmentIds = useMemo(
+    () => [...environmentCatalogState.entries.keys()],
+    [environmentCatalogState.entries],
+  );
+  const allServerConfigsAvailable =
+    environmentCatalogState.isReady &&
+    environmentIds.length > 0 &&
+    environmentIds.every((environmentId) => serverConfigs.has(environmentId));
+  const autoSettleOnMerge = environmentIds.every(
+    (environmentId) => serverConfigs.get(environmentId)?.settings.threadAutoSettleOnMerge !== false,
+  );
+  const handleAutoSettleOnMergeChange = useCallback(
+    (value: boolean) => {
+      if (!allServerConfigsAvailable) return;
+      for (const environmentId of environmentIds) {
+        void updateServerSettings({
+          environmentId,
+          input: { patch: { threadAutoSettleOnMerge: value } },
+        });
+      }
+    },
+    [allServerConfigsAvailable, environmentIds, updateServerSettings],
+  );
 
   return (
     <SettingsSection title="General">
@@ -534,8 +561,9 @@ function GeneralSettingsSection() {
       <SettingsSwitchRow
         icon="arrow.triangle.branch"
         label="Auto-settle merged threads"
+        disabled={!allServerConfigsAvailable}
         value={autoSettleOnMerge}
-        onValueChange={(value) => savePreferences({ autoSettleOnMerge: value })}
+        onValueChange={handleAutoSettleOnMergeChange}
       />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
