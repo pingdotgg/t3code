@@ -52,7 +52,7 @@ private final class DaemonState {
   private var lastAppKey: String?
   private var lastFocusKey: String?
   private var paused = false
-  private var enabled = true
+  private var enabled = false
   private var appFilterMode = "exclude"
   private var apps: [String] = []
   private var websiteFilterMode = "exclude"
@@ -199,6 +199,7 @@ private final class DaemonState {
   private struct BrowserContext {
     var url: String?
     var privateSignal: String?
+    var windowTitle: String?
   }
 
   /// Best-effort browser page URL / private-mode signal from AX + window title.
@@ -206,27 +207,32 @@ private final class DaemonState {
     var context = BrowserContext()
     let ax = AXUIElementCreateApplication(app.processIdentifier)
     if let focused = chAxElement(ax, kAXFocusedUIElementAttribute as String) {
+      var focusedWindow = chAxElement(focused, kAXWindowAttribute as String)
       // Prefer document/window URL over the focused element's AXURL — links
       // expose their target as AXURL and would bypass website privacy filters.
       if let doc = chAxString(focused, "AXDocument"), !doc.isEmpty {
         context.url = doc
-      } else if let window = chAxElement(focused, kAXWindowAttribute as String) {
+      } else if let window = focusedWindow {
         if let doc = chAxString(window, "AXDocument"), !doc.isEmpty {
           context.url = doc
         } else if let url = chAxString(window, "AXURL"), !url.isEmpty {
           context.url = url
         }
       }
-      if let title = chAxString(focused, kAXTitleAttribute as String), !title.isEmpty {
-        context.privateSignal = title
+      // Window title carries private-browsing chrome; always prefer it over the
+      // focused element title (often a link label, not the tab chrome).
+      if focusedWindow == nil {
+        focusedWindow = chAxElement(focused, kAXWindowAttribute as String)
       }
-      // Prefer the focused element's own window title (not an unrelated window).
-      if context.privateSignal == nil,
-         let window = chAxElement(focused, kAXWindowAttribute as String),
+      if let window = focusedWindow,
          let title = chAxString(window, kAXTitleAttribute as String),
          !title.isEmpty
       {
         context.privateSignal = title
+        context.windowTitle = title
+      } else if let title = chAxString(focused, kAXTitleAttribute as String), !title.isEmpty {
+        context.privateSignal = title
+        context.windowTitle = title
       }
     }
     // Only pair a window title as the private-mode signal with the URL taken
@@ -239,6 +245,7 @@ private final class DaemonState {
         context.url = url
         if let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty {
           context.privateSignal = title
+          context.windowTitle = title
         }
         break
       }
@@ -322,8 +329,9 @@ private final class DaemonState {
     if let path = app.bundleURL?.path { appPayload["path"] = path }
 
     let ax = AXUIElementCreateApplication(app.processIdentifier)
-    var windowTitle: String?
-    if let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement],
+    var windowTitle = pageContext.windowTitle
+    if windowTitle == nil,
+       let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement],
        let first = windows.first
     {
       windowTitle = chAxString(first, kAXTitleAttribute as String)
@@ -363,8 +371,9 @@ private final class DaemonState {
     let desc = focused.flatMap { chAxString($0, kAXDescriptionAttribute as String) }
       ?? focused.flatMap { chAxString($0, kAXTitleAttribute as String) }
     let value = focused.flatMap { chAxString($0, kAXValueAttribute as String) }
-    var windowTitle: String?
-    if let windows = chAxCopy(axApp, kAXWindowsAttribute as String) as? [AXUIElement],
+    var windowTitle = pageContext.windowTitle
+    if windowTitle == nil,
+       let windows = chAxCopy(axApp, kAXWindowsAttribute as String) as? [AXUIElement],
        let first = windows.first
     {
       windowTitle = chAxString(first, kAXTitleAttribute as String)

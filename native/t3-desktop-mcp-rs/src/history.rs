@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-use crate::platform::{Desktop, DesktopError};
+use crate::platform::{Desktop, DesktopError, unescape_app_field};
 
 #[derive(Clone)]
 struct Control {
@@ -279,13 +279,13 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
 
 /// Parse `Name  [id]  pid=…  windows=…  FRONTMOST` from `format_app_list`.
 fn parse_app_line(line: &str) -> Option<(String, String)> {
-    // Use the "  [" delimiter format_app_list emits so names that contain `[`
-    // are not truncated at the first bracket.
-    let marker = line.find("  [")?;
+    // Use the trailing `  [` delimiter `format_app_list` emits so names that
+    // contain `[` are not truncated at the first bracket.
+    let marker = line.rfind("  [")?;
     let id_start = marker + 3;
     let id_end = line[id_start..].find(']')? + id_start;
-    let name = line[..marker].trim().to_string();
-    let id = line[id_start..id_end].trim().to_string();
+    let name = unescape_app_field(line[..marker].trim());
+    let id = unescape_app_field(line[id_start..id_end].trim());
     if name.is_empty() {
         None
     } else {
@@ -369,8 +369,9 @@ fn app_allowed(app_id: &str, app_name: &str, control: &Control) -> bool {
 }
 
 fn website_allowed(url_or_title: Option<&str>, app_name: &str, control: &Control) -> bool {
+    let include_only = control.website_filter_mode == "includeOnly" && !control.websites.is_empty();
     let Some(raw) = url_or_title else {
-        return true;
+        return !include_only;
     };
     let lowered = raw.to_lowercase();
     let app = app_name.to_lowercase();
@@ -396,7 +397,7 @@ fn website_allowed(url_or_title: Option<&str>, app_name: &str, control: &Control
     }
     // Site include/exclude lists only apply to URL-like haystacks.
     if !looks_url {
-        return true;
+        return !include_only;
     }
     let needles: Vec<String> = control.websites.iter().map(|s| s.to_lowercase()).collect();
     if needles.is_empty() {
@@ -421,7 +422,7 @@ fn try_read_control(root: &Path) -> Result<Control, ()> {
         enabled: value
             .get("enabled")
             .and_then(Value::as_bool)
-            .unwrap_or(true),
+            .unwrap_or(false),
         paused: value
             .get("paused")
             .and_then(Value::as_bool)

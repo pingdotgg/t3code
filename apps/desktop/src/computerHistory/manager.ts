@@ -18,6 +18,7 @@ import {
   deleteMemory,
   ensureComputerHistoryLayout,
   listTimeline,
+  readControlFile,
   readStatusFile,
   resolveComputerHistoryRoot,
   writeControlFile,
@@ -48,6 +49,8 @@ export class ComputerHistoryOperationError extends Schema.TaggedErrorClass<Compu
       "removeMemory",
       "revealMemory",
     ]),
+    root: Schema.String,
+    path: Schema.optionalKey(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
@@ -78,6 +81,11 @@ async function writeUnavailableStatus(root: string, lastError: string): Promise<
 export class ComputerHistoryManager extends Context.Service<
   ComputerHistoryManager,
   {
+    readonly mergePatchSettings: (
+      stateDir: string,
+      persisted: ComputerHistorySettings,
+      patch: Partial<ComputerHistorySettings>,
+    ) => Effect.Effect<ComputerHistorySettings, ComputerHistoryOperationError>;
     readonly ensureDaemon: (
       stateDir: string,
       settings: ComputerHistorySettings,
@@ -110,11 +118,12 @@ export class ComputerHistoryManager extends Context.Service<
 
 const runDaemonOp = (
   operation: "ensureDaemon" | "stopDaemon",
+  root: string,
   run: () => Promise<void>,
 ): Effect.Effect<void, ComputerHistoryOperationError> =>
   Effect.tryPromise({
     try: run,
-    catch: (cause) => new ComputerHistoryOperationError({ operation, cause }),
+    catch: (cause) => new ComputerHistoryOperationError({ operation, root, cause }),
   });
 
 export const make = Effect.gen(function* () {
@@ -264,10 +273,42 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  const mergePatchSettingsImpl = async (
+    stateDir: string,
+    persisted: ComputerHistorySettings,
+    patch: Partial<ComputerHistorySettings>,
+  ): Promise<ComputerHistorySettings> => {
+    const root = resolveComputerHistoryRoot(stateDir);
+    const control = await readControlFile(root);
+    const daemonRunning = Boolean(state.child && !state.child.killed);
+    const enabled =
+      patch.enabled ?? (daemonRunning ? true : undefined) ?? control?.enabled ?? persisted.enabled;
+    return {
+      ...persisted,
+      ...patch,
+      enabled,
+      ...(patch.apps === undefined ? {} : { apps: [...patch.apps] }),
+      ...(patch.websites === undefined ? {} : { websites: [...patch.websites] }),
+    };
+  };
+
   return ComputerHistoryManager.of({
+    mergePatchSettings: (stateDir, persisted, patch) =>
+      Effect.tryPromise({
+        try: () => mergePatchSettingsImpl(stateDir, persisted, patch),
+        catch: (cause) =>
+          new ComputerHistoryOperationError({
+            operation: "ensureDaemon",
+            root: resolveComputerHistoryRoot(stateDir),
+            cause,
+          }),
+      }),
     ensureDaemon: (stateDir, settings) =>
-      runDaemonOp("ensureDaemon", () => enqueueEnsure(() => ensureDaemonImpl(stateDir, settings))),
-    stopDaemon: () => runDaemonOp("stopDaemon", () => enqueueEnsure(() => stopDaemonImpl())),
+      runDaemonOp("ensureDaemon", resolveComputerHistoryRoot(stateDir), () =>
+        enqueueEnsure(() => ensureDaemonImpl(stateDir, settings)),
+      ),
+    stopDaemon: () =>
+      runDaemonOp("stopDaemon", state.rootPath ?? "", () => enqueueEnsure(() => stopDaemonImpl())),
     getStatus: (stateDir, settings) =>
       Effect.tryPromise({
         try: async () => {
@@ -297,6 +338,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "getStatus",
+            root: resolveComputerHistoryRoot(stateDir),
             cause,
           }),
       }),
@@ -306,6 +348,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "getTimeline",
+            root: resolveComputerHistoryRoot(stateDir),
             cause,
           }),
       }),
@@ -318,6 +361,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "clear",
+            root: resolveComputerHistoryRoot(stateDir),
             cause,
           }),
       }),
@@ -330,6 +374,8 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "removeMemory",
+            root: resolveComputerHistoryRoot(stateDir),
+            path,
             cause,
           }),
       }),
@@ -350,6 +396,8 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "revealMemory",
+            root: resolveComputerHistoryRoot(stateDir),
+            path,
             cause,
           }),
       }),
