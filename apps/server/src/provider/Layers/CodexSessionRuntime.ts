@@ -32,6 +32,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import { makeLineFramer } from "effect-codex-app-server/lineFramer";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
@@ -1621,34 +1622,25 @@ export const makeCodexSessionRuntime = (
       Effect.forkIn(runtimeScope),
     );
 
-    const stderrRemainderRef = yield* Ref.make("");
+    const stderrLineFramer = makeLineFramer();
     yield* child.stderr.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        Ref.modify(stderrRemainderRef, (current) => {
-          const combined = current + chunk;
-          const lines = combined.split("\n");
-          const remainder = lines.pop() ?? "";
-          return [lines.map((line) => line.replace(/\r$/, "")), remainder] as const;
-        }).pipe(
-          Effect.flatMap((lines) =>
-            Effect.forEach(
-              lines,
-              (line) => {
-                const classified = classifyCodexStderrLine(line);
-                if (!classified) {
-                  return Effect.void;
-                }
-                return emitEvent({
-                  kind: "notification",
-                  threadId: options.threadId,
-                  method: "process/stderr",
-                  message: classified.message,
-                });
-              },
-              { discard: true },
-            ),
-          ),
+        Effect.forEach(
+          stderrLineFramer.push(chunk),
+          (line) => {
+            const classified = classifyCodexStderrLine(line);
+            if (!classified) {
+              return Effect.void;
+            }
+            return emitEvent({
+              kind: "notification",
+              threadId: options.threadId,
+              method: "process/stderr",
+              message: classified.message,
+            });
+          },
+          { discard: true },
         ),
       ),
       Effect.forkIn(runtimeScope),

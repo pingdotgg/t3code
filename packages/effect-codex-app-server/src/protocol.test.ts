@@ -290,6 +290,29 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
+  it.effect("routes a CRLF-framed message split across arbitrary input chunks", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
+      const notification = yield* transport.incomingNotifications.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const encoded = encoder.encode(
+        `${encodeUnknownJsonString({ method: "thread/started", params: { threadId: "thread-1" } })}\r\n`,
+      );
+
+      yield* Queue.offer(input, encoded.slice(0, 7));
+      yield* Queue.offer(input, encoded.slice(7, -1));
+      yield* Queue.offer(input, encoded.slice(-1));
+
+      assert.deepEqual(yield* Fiber.join(notification), [
+        { method: "thread/started", params: { threadId: "thread-1" } },
+      ]);
+    }),
+  );
+
   it.effect("surfaces JSON encoding failures as protocol parse errors", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
