@@ -188,7 +188,7 @@ it.layer(RevertLivenessTestLayer)("OrchestrationProjectionPipeline revert livene
     }),
   );
 
-  it.effect("reconciles a reverted task against later lifecycle receipts after bootstrap", () =>
+  it.effect("preserves a monitor across bootstrap receipt reconciliation", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-bootstrap-revert-liveness");
       const sql = yield* SqlClient.SqlClient;
@@ -238,10 +238,14 @@ it.layer(RevertLivenessTestLayer)("OrchestrationProjectionPipeline revert livene
             'Kept task started',
             '{"taskId":"bootstrap-kept-task","taskType":"subagent","status":"running"}',
             0, '2026-08-14T13:00:00.500Z'),
+          ('bootstrap-monitor-start', ${threadId}, 'turn-keep', 'info', 'task.started',
+            'Monitor started',
+            '{"taskId":"bootstrap-monitor","taskType":"monitor","status":"running"}',
+            1, '2026-08-14T13:00:00.750Z'),
           ('bootstrap-reverted-task-start', ${threadId}, 'turn-remove', 'info', 'task.started',
             'Reverted task started',
             '{"taskId":"bootstrap-reverted-task","taskType":"subagent","status":"running"}',
-            1, '2026-08-14T13:00:01.500Z')
+            2, '2026-08-14T13:00:01.500Z')
       `;
 
       yield* eventStore.append({
@@ -279,8 +283,36 @@ it.layer(RevertLivenessTestLayer)("OrchestrationProjectionPipeline revert livene
               status: "completed",
             },
             turnId: TurnId.make("turn-keep"),
-            sequence: 2,
+            sequence: 3,
             createdAt: "2026-08-14T13:00:04.000Z",
+          },
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-bootstrap-monitor-updated"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-08-14T13:00:05.000Z",
+        commandId: CommandId.make("cmd-bootstrap-monitor-updated"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-bootstrap-monitor-updated"),
+        metadata: {},
+        payload: {
+          threadId,
+          activity: {
+            id: EventId.make("bootstrap-monitor-updated"),
+            tone: "info",
+            kind: "task.updated",
+            summary: "Monitor updated",
+            payload: {
+              taskId: "bootstrap-monitor",
+              taskType: "monitor",
+              status: "running",
+            },
+            turnId: TurnId.make("turn-keep"),
+            sequence: 4,
+            createdAt: "2026-08-14T13:00:05.000Z",
           },
         },
       });
@@ -290,7 +322,7 @@ it.layer(RevertLivenessTestLayer)("OrchestrationProjectionPipeline revert livene
       const shell = yield* snapshotQuery.getShellSnapshot();
       assert.equal(
         shell.threads.find((thread) => thread.id === threadId)?.backgroundLiveness,
-        null,
+        "monitoring",
       );
       assert.deepEqual([...backgroundLiveness.getThreadLiveAgentIds(threadId)], []);
     }),

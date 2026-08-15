@@ -1764,7 +1764,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         if (
           reconciliation !== undefined &&
           taskId !== null &&
-          threadBackgroundLiveness.getThreadLiveAgentIds(event.payload.threadId).has(taskId)
+          threadBackgroundLiveness.getThreadLiveTaskIds(event.payload.threadId).has(taskId)
         ) {
           reconciliation.latestReceiptActivityIdByTaskId.set(taskId, event.payload.activity.id);
         }
@@ -1825,8 +1825,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         replayedRevertLiveness,
         Effect.fn("reconcileBootstrapRevertLiveness")(function* ([threadId, reconciliation]) {
           const activityIds = new Set(
-            [...threadBackgroundLiveness.getThreadLiveAgentActivityIds(threadId)].map(
-              (activityId) => EventId.make(activityId),
+            [...threadBackgroundLiveness.getThreadLiveTaskActivityIds(threadId)].map((activityId) =>
+              EventId.make(activityId),
             ),
           );
           for (const activityId of reconciliation.latestReceiptActivityIdByTaskId.values()) {

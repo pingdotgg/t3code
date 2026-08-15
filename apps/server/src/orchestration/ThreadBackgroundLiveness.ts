@@ -32,7 +32,7 @@ interface ThreadLivenessState {
       readonly latestUpdatedActivityId?: string;
     }
   >;
-  readonly monitors: Set<string>;
+  readonly monitors: Map<string, string | undefined>;
 }
 
 // Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
@@ -107,6 +107,12 @@ export class ThreadBackgroundLivenessService extends Context.Service<
     /** Indexed lifecycle row IDs retained at constant cost per live agent. */
     readonly getThreadLiveAgentActivityIds: (threadId: string) => ReadonlySet<string>;
 
+    /** Stable copy of all live task IDs for cold-start liveness reconciliation. */
+    readonly getThreadLiveTaskIds: (threadId: string) => ReadonlySet<string>;
+
+    /** Indexed lifecycle row IDs retained at constant cost per live task. */
+    readonly getThreadLiveTaskActivityIds: (threadId: string) => ReadonlySet<string>;
+
     /** Live-agent anchors grouped newest-first for bounded projection reads. */
     readonly getThreadLiveAgentAnchors: (threadId: string) => ReadonlyArray<ThreadLiveAgentAnchors>;
   }
@@ -138,7 +144,7 @@ export function make(
     if (existing) {
       return existing;
     }
-    const created: ThreadLivenessState = { agents: new Map(), monitors: new Set() };
+    const created: ThreadLivenessState = { agents: new Map(), monitors: new Map() };
     stateByThreadId.set(threadId, created);
     return created;
   };
@@ -169,6 +175,9 @@ export function make(
       terminalTombstones.delete(tombstoneKey);
     }
     const previousAgent = stateByThreadId.get(input.threadId)?.agents.get(input.taskId);
+    const previousMonitorActivityId = stateByThreadId
+      .get(input.threadId)
+      ?.monitors.get(input.taskId);
     const terminal =
       input.kind === "completed" ||
       input.status === "idle" ||
@@ -203,7 +212,7 @@ export function make(
     drop(input.threadId, input.taskId);
     const state = stateFor(input.threadId);
     if (taskType !== undefined && MONITOR_TASK_TYPES.has(taskType)) {
-      state.monitors.add(input.taskId);
+      state.monitors.set(input.taskId, input.activityId ?? previousMonitorActivityId);
     } else {
       const startedActivityId =
         previousAgent?.startedActivityId ??
@@ -290,6 +299,24 @@ export function make(
       for (const agent of stateByThreadId.get(threadId)?.agents.values() ?? []) {
         if (agent.startedActivityId) activityIds.add(agent.startedActivityId);
         if (agent.latestUpdatedActivityId) activityIds.add(agent.latestUpdatedActivityId);
+      }
+      return activityIds;
+    },
+
+    getThreadLiveTaskIds: (threadId) => {
+      const state = stateByThreadId.get(threadId);
+      return new Set([...(state?.agents.keys() ?? []), ...(state?.monitors.keys() ?? [])]);
+    },
+
+    getThreadLiveTaskActivityIds: (threadId) => {
+      const activityIds = new Set<string>();
+      const state = stateByThreadId.get(threadId);
+      for (const agent of state?.agents.values() ?? []) {
+        if (agent.startedActivityId) activityIds.add(agent.startedActivityId);
+        if (agent.latestUpdatedActivityId) activityIds.add(agent.latestUpdatedActivityId);
+      }
+      for (const monitorActivityId of state?.monitors.values() ?? []) {
+        if (monitorActivityId) activityIds.add(monitorActivityId);
       }
       return activityIds;
     },
