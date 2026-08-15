@@ -45,6 +45,7 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
+  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -60,11 +61,32 @@ import {
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
+
+/**
+ * Codex's standalone installer drops a `~/.local/bin/codex` symlink pointing
+ * into a versioned release under `~/.codex/packages/standalone/`. Such an
+ * install is owned by `codex update`, not by any package manager, so it is
+ * matched here rather than falling through to the npm-global default.
+ */
+export function isCodexNativeCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.endsWith("/.local/bin/codex") ||
+    normalized.endsWith("/.local/bin/codex.exe") ||
+    normalized.includes("/.codex/packages/standalone/")
+  );
+}
+
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@openai/codex",
   homebrewFormula: "codex",
-  nativeUpdate: null,
+  nativeUpdate: {
+    executable: "codex",
+    args: ["update"],
+    lockKey: "codex-native",
+    isCommandPath: isCodexNativeCommandPath,
+  },
 });
 
 /**
