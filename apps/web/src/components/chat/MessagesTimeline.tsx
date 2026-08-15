@@ -58,6 +58,7 @@ import {
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
+  ShieldIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -1947,6 +1948,7 @@ type WorkEntryIconName =
   | "globe"
   | "hammer"
   | "message-circle"
+  | "shield"
   | "square-pen"
   | "terminal"
   | "wrench"
@@ -1969,6 +1971,8 @@ function WorkEntryIconSvg({ name, className }: { name: WorkEntryIconName; classN
       return <HammerIcon className={className} aria-hidden />;
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
+    case "shield":
+      return <ShieldIcon className={className} aria-hidden />;
     case "square-pen":
       return <SquarePenIcon className={className} aria-hidden />;
     case "terminal":
@@ -2076,6 +2080,8 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (workEntry.requestKind === "command") return "terminal";
   if (workEntry.requestKind === "file-read") return "eye";
   if (workEntry.requestKind === "file-change") return "square-pen";
+  if (workEntry.requestKind === "tool") return "wrench";
+  if (workEntry.requestKind === "permissions") return "shield";
 
   if (workEntry.itemType === "command_execution" || workEntry.command) {
     return "terminal";

@@ -351,18 +351,28 @@ fn truncate(value: &str, limit: usize) -> String {
 ///
 /// `cmd` maps to Win rather than failing: models trained on macOS reach for it
 /// constantly, and Win is the closest analogue.
-fn key_sequence(key: &str, modifiers: &[String]) -> String {
+///
+/// Unknown modifiers are rejected (except `fn`, which has no synthetic
+/// equivalent and is intentionally ignored) so a typo like `ctl` cannot
+/// silently send the bare key while reporting success.
+fn key_sequence(key: &str, modifiers: &[String]) -> Result<String, String> {
     let mut sequence = String::new();
     for modifier in modifiers {
-        sequence.push_str(match modifier.to_lowercase().as_str() {
+        let token = match modifier.to_lowercase().as_str() {
             "cmd" | "command" | "win" | "super" | "meta" => "{win}",
             "ctrl" | "control" => "{ctrl}",
             "alt" | "option" => "{alt}",
             "shift" => "{shift}",
             // `fn` has no synthetic equivalent on Windows; dropping it is better
             // than refusing an otherwise valid chord.
-            _ => "",
-        });
+            "fn" => "",
+            other => {
+                return Err(format!(
+                    "unsupported modifier '{other}' — use ctrl, shift, alt, or cmd"
+                ));
+            }
+        };
+        sequence.push_str(token);
     }
     sequence.push_str(&match key.to_lowercase().as_str() {
         "return" | "enter" => "{enter}".to_string(),
@@ -379,7 +389,7 @@ fn key_sequence(key: &str, modifiers: &[String]) -> String {
         "end" => "{end}".to_string(),
         other => other.to_string(),
     });
-    sequence
+    Ok(sequence)
 }
 
 impl Desktop for WindowsDesktop {
@@ -552,7 +562,7 @@ impl Desktop for WindowsDesktop {
     }
 
     fn press_key(&mut self, key: &str, modifiers: &[String]) -> Result<String> {
-        let sequence = key_sequence(key, modifiers);
+        let sequence = key_sequence(key, modifiers).map_err(DesktopError::new)?;
         Keyboard::default()
             .send_keys(&sequence)
             .map_err(|error| DesktopError::new(format!("key press failed: {error}")))?;
@@ -641,23 +651,33 @@ mod tests {
     fn cmd_is_translated_to_the_windows_key() {
         // Models trained on macOS send cmd constantly; refusing it would make
         // every save and copy fail on Windows.
-        assert_eq!(key_sequence("s", &["cmd".to_string()]), "{win}s");
-        assert_eq!(key_sequence("s", &["ctrl".to_string()]), "{ctrl}s");
+        assert_eq!(key_sequence("s", &["cmd".to_string()]).unwrap(), "{win}s");
+        assert_eq!(key_sequence("s", &["ctrl".to_string()]).unwrap(), "{ctrl}s");
     }
 
     #[test]
     fn named_keys_become_uiautomation_tokens() {
-        assert_eq!(key_sequence("return", &[]), "{enter}");
-        assert_eq!(key_sequence("Escape", &[]), "{esc}");
+        assert_eq!(key_sequence("return", &[]).unwrap(), "{enter}");
+        assert_eq!(key_sequence("Escape", &[]).unwrap(), "{esc}");
         assert_eq!(
-            key_sequence("a", &["ctrl".to_string(), "shift".to_string()]),
+            key_sequence("a", &["ctrl".to_string(), "shift".to_string()]).unwrap(),
             "{ctrl}{shift}a"
         );
     }
 
     #[test]
-    fn an_unknown_modifier_is_dropped_rather_than_breaking_the_chord() {
-        assert_eq!(key_sequence("c", &["fn".to_string(), "ctrl".to_string()]), "{ctrl}c");
+    fn fn_modifier_is_dropped_rather_than_breaking_the_chord() {
+        assert_eq!(
+            key_sequence("c", &["fn".to_string(), "ctrl".to_string()]).unwrap(),
+            "{ctrl}c"
+        );
+    }
+
+    #[test]
+    fn unrecognized_modifiers_are_rejected() {
+        let error = key_sequence("c", &["ctl".to_string()]).unwrap_err();
+        assert!(error.contains("unsupported modifier"));
+        assert!(error.contains("ctl"));
     }
 
     #[test]
