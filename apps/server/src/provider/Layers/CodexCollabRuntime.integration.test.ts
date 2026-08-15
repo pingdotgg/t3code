@@ -25,6 +25,32 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 
+function collabWaitCompletion(input: {
+  readonly id: string;
+  readonly receiverThreadIds?: ReadonlyArray<string>;
+}) {
+  return {
+    method: "item/completed",
+    params: {
+      item: {
+        type: "collabAgentToolCall",
+        id: input.id,
+        tool: "wait",
+        status: "completed",
+        senderThreadId: ROOT,
+        receiverThreadIds: input.receiverThreadIds ?? [],
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+      },
+      threadId: ROOT,
+      turnId: wireFixture.responses.turnStart.turn.id,
+      completedAtMs: 1_785_898_349_931,
+    },
+  } as const;
+}
+
 /**
  * The captured sequence, extended with the shapes the live capture didn't
  * include: a collabAgentToolCall with receiverThreadIds (feeds the legacy
@@ -290,6 +316,214 @@ describe("CodexSessionRuntime collab integration", () => {
         threadId: ROOT,
         turnId: activeTurnId,
       });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("interrupts a turn after three empty collaboration waits", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        notifications: [
+          collabWaitCompletion({ id: "empty-wait-1" }),
+          collabWaitCompletion({ id: "empty-wait-2" }),
+          collabWaitCompletion({ id: "empty-wait-3" }),
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-empty-collab-wait"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const guardEventFiber = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.method === "process/stderr" &&
+            event.message?.includes("three completed collaboration waits") === true,
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "wait without workers" });
+      const guardEvents = yield* Fiber.join(guardEventFiber).pipe(Effect.timeout("2 seconds"));
+      assert.lengthOf(Array.from(guardEvents), 1);
+
+      const interrupted = NodeFS.readFileSync(interruptsPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { threadId?: string });
+      assert.deepEqual(
+        interrupted.map((entry) => entry.threadId),
+        [ROOT],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("recovers when conservative Stop bookkeeping contains stale child turns", () =>
+    Effect.gen(function* () {
+      const captured = wireFixture.notifications;
+      const isTurnStarted = (entry: (typeof captured)[number], child: string) =>
+        entry.method === "turn/started" &&
+        (entry.params as { threadId?: string }).threadId === child;
+      const isRegistration = (entry: (typeof captured)[number], child: string) => {
+        const item = (entry.params as { item?: { type?: string; agentThreadId?: string } }).item;
+        return item?.type === "subAgentActivity" && item.agentThreadId === child;
+      };
+      const unregisteredChildTurn = captured.find((entry) => isTurnStarted(entry, CHILD_A));
+      const registeredChildTurn = captured.find((entry) => isTurnStarted(entry, CHILD_B));
+      const registeredChildActivity = captured.find((entry) => isRegistration(entry, CHILD_B));
+      assert.isDefined(unregisteredChildTurn);
+      assert.isDefined(registeredChildTurn);
+      assert.isDefined(registeredChildActivity);
+      if (
+        unregisteredChildTurn === undefined ||
+        registeredChildTurn === undefined ||
+        registeredChildActivity === undefined
+      ) {
+        return yield* Effect.die(
+          new Error("captured collaboration lifecycle fixture is incomplete"),
+        );
+      }
+      const registeredChildTurnId = (
+        registeredChildTurn.params as { readonly turn: { readonly id: string } }
+      ).turn.id;
+
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        notifications: [
+          // An unregistered foreign turn is remembered so Stop can still
+          // reach it if registration arrives late. Its missing terminal row
+          // must not disable empty-wait recovery forever.
+          unregisteredChildTurn,
+          // A registered child remains a Stop target across retryable errors.
+          // That conservative entry is equally unsuitable as a liveness gate.
+          registeredChildActivity,
+          registeredChildTurn,
+          {
+            method: "error",
+            params: {
+              threadId: CHILD_B,
+              turnId: registeredChildTurnId,
+              error: { message: "Reconnecting... 2/5" },
+              willRetry: true,
+            },
+          },
+          collabWaitCompletion({ id: "empty-wait-after-stale-child-1" }),
+          collabWaitCompletion({ id: "empty-wait-after-stale-child-2" }),
+          collabWaitCompletion({ id: "empty-wait-after-stale-child-3" }),
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-empty-wait-with-stale-children"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const guardEventFiber = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.method === "process/stderr" &&
+            event.message?.includes("three completed collaboration waits") === true,
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "wait after stale child lifecycle" });
+      const guardEvents = yield* Fiber.join(guardEventFiber).pipe(Effect.timeout("2 seconds"));
+      assert.lengthOf(Array.from(guardEvents), 1);
+
+      const interrupted = NodeFS.readFileSync(interruptsPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { threadId?: string });
+      assert.deepEqual(
+        interrupted.map((entry) => entry.threadId),
+        [ROOT],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("resets empty collaboration waits when a receiver appears", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        notifications: [
+          collabWaitCompletion({ id: "empty-wait-1" }),
+          collabWaitCompletion({ id: "empty-wait-2" }),
+          collabWaitCompletion({ id: "receiver-wait", receiverThreadIds: [CHILD_A] }),
+          collabWaitCompletion({ id: "empty-wait-3" }),
+          collabWaitCompletion({ id: "empty-wait-4" }),
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-wait-reset"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const completedFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "turn/completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "wait for a real receiver" });
+      yield* Fiber.join(completedFiber).pipe(Effect.timeout("2 seconds"));
+      assert.isFalse(NodeFS.existsSync(interruptsPath));
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

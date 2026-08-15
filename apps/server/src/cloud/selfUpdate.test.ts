@@ -11,13 +11,14 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
+import { EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL } from "./servicePreflight.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
-  readonly preflight?: "ready" | "blocked";
+  readonly preflight?: "ready" | "blocked" | "unsafe-collab-wait";
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
 }
 
@@ -50,14 +51,18 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           };
         }
         order.push("preflight");
+        const readyResult = {
+          status: "ready",
+          version: "1.1.0",
+          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+          ...(options.preflight === "unsafe-collab-wait"
+            ? {}
+            : { emptyCollabWaitRecoveryProtocol: EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL }),
+        };
         const result =
           options.preflight === "blocked"
             ? { status: "blocked", version: "1.1.0", reason: "local update required" }
-            : {
-                status: "ready",
-                version: "1.1.0",
-                launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-              };
+            : readyResult;
         return {
           // @effect-diagnostics-next-line preferSchemaOverJson:off - fake child-process stdout.
           stdout: JSON.stringify(result),
@@ -130,6 +135,15 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  it.effect("refuses an update that would remove empty collaboration-wait recovery", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ preflight: "unsafe-collab-wait" });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "This T3 Code release does not include the required empty collaboration-wait recovery. The current server was kept running.",
+      );
+      expect(order).toEqual(["install", "preflight"]);
+    }),
+  );
   it.effect("allows only one update at a time", () =>
     Effect.gen(function* () {
       const requested = yield* Deferred.make<void>();
