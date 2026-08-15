@@ -108,6 +108,16 @@ export type BitbucketPullRequestApiError =
   | BitbucketDiffCommitError;
 
 /**
+ * `/user/permissions/repositories` answering CHANGE-2770's removal notice rather than a
+ * permission — Bitbucket sends this for every account now, not only ones it would have refused.
+ */
+function isRepositoryPermissionRemovedError(
+  error: BitbucketPullRequestApiError,
+): error is BitbucketApi.BitbucketResponseError {
+  return error._tag === "BitbucketResponseError" && error.status === 410;
+}
+
+/**
  * Bitbucket's own ceiling. Asking for more does not fail — it answers with an empty page and no
  * error at all, so this is a number to respect rather than to push against.
  */
@@ -553,6 +563,13 @@ export const make = Effect.gen(function* () {
     // Nothing on the repository, the pull request or the workspace states what the credentials
     // may do, so this endpoint is the one request Bitbucket makes unavoidable. It is asked
     // alongside the reads the detail was already making, so it costs no round trip of its own.
+    //
+    // Bitbucket permanently removed this endpoint (CHANGE-2770): every account now gets HTTP 410
+    // in place of an answer, whatever it may do. That is the deprecated-endpoint signal, not a
+    // permission being refused, so it is read the same way an unreachable read already is
+    // elsewhere — as a permission that could not be learned, which grants rather than blocks, and
+    // leaves the actual merge or write to say why if the account may not do it. Any other failure
+    // (a bad token, a network fault, an unreadable body) still fails as it did before.
     getRepositoryPermission: (input) =>
       withRepository(input.repository, () =>
         readPage({
@@ -562,7 +579,7 @@ export const make = Effect.gen(function* () {
           )}`,
           decode: decodeRepositoryPermissionJson,
         }),
-      ),
+      ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
 
     getPullRequestDiff: (input) =>
       input.commit !== undefined && !isCommitSha(input.commit)
