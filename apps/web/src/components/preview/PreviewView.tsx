@@ -19,6 +19,7 @@ import {
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
+import { startAttachmentUpload } from "~/lib/attachmentUploadQueue";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -576,10 +577,18 @@ export function PreviewView({
                 sizeBytes: screenshotFile.size,
                 previewUrl: annotation.screenshot.dataUrl,
                 file: screenshotFile,
+                upload: { status: "uploading", progress: 0 },
               } satisfies ComposerImageAttachment)
             : null;
         if (image) {
           addImage(threadRef, image);
+          // Element-pick screenshots upload exactly like a pasted image: the
+          // chip is live immediately, the bytes follow.
+          startAttachmentUpload({
+            target: threadRef,
+            environmentId: threadRef.environmentId,
+            image,
+          });
         }
         if (submission === "send") {
           onSendAnnotation?.(annotation, image);

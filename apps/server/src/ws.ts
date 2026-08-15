@@ -88,6 +88,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -1844,6 +1845,16 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
+          observeRpcEffect(WS_METHODS.attachmentsCreateUploadUrl, issueAttachmentUploadUrl(input), {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.attachmentsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.attachmentsDelete,
+            deletePendingAttachment(input.attachmentId),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>

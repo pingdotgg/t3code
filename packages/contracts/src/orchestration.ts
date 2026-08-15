@@ -144,7 +144,6 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
@@ -165,21 +164,8 @@ export const ChatImageAttachment = Schema.Struct({
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
-const UploadChatImageAttachment = Schema.Struct({
-  type: Schema.Literal("image"),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
-  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
-  dataUrl: TrimmedNonEmptyString.check(
-    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
-  ),
-});
-export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
-
 export const ChatAttachment = Schema.Union([ChatImageAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
-const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
-export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
 export const ProjectScriptIcon = Schema.Literals([
   "play",
@@ -837,7 +823,10 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
     text: Schema.String,
-    attachments: Schema.Array(UploadChatAttachment),
+    // Id references to attachments already uploaded via the signed upload
+    // URL flow (`attachments.createUploadUrl` + HTTP PUT). Bytes never ride
+    // this command; the Normalizer re-scopes pending ids to the thread.
+    attachments: Schema.Array(ChatAttachment),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),

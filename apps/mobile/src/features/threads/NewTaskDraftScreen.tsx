@@ -54,7 +54,10 @@ import { resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
-import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
+import {
+  setPendingConnectionError,
+  useRemoteConnectionStatus,
+} from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
@@ -607,17 +610,23 @@ export function NewTaskDraftScreen(props: {
     if (result.images.length > 0) {
       flow.appendAttachments(result.images);
     }
+    if (result.error) {
+      setPendingConnectionError(result.error);
+    }
   }
 
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
       try {
-        const images = await convertPastedImagesToAttachments({
+        const pasted = await convertPastedImagesToAttachments({
           uris,
           existingCount: flow.attachments.length,
         });
-        if (images.length > 0) {
-          flow.appendAttachments(images);
+        if (pasted.images.length > 0) {
+          flow.appendAttachments(pasted.images);
+        }
+        if (pasted.error) {
+          setPendingConnectionError(pasted.error);
         }
       } catch (error) {
         console.error("[native paste] error converting images", error);

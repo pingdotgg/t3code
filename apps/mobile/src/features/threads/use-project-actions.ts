@@ -14,7 +14,10 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../../state/threads";
-import type { DraftComposerImageAttachment } from "../../lib/composerImages";
+import {
+  droppedAttachmentsWarning,
+  type DraftComposerImageAttachment,
+} from "../../lib/composerImages";
 import { makeTurnCommandMetadata, type TurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { randomHex } from "../../lib/uuid";
@@ -84,7 +87,11 @@ export function useCreateProjectThread() {
         );
         return AsyncResult.failure(result.cause);
       }
-      setPendingConnectionError(null);
+      // Legacy drafts can still carry data-url images. `thread.turn.start` now
+      // only accepts uploaded attachment ids, which mobile cannot mint yet, so
+      // those images are dropped and the user is told rather than left to
+      // assume they were sent. Null clears the banner when there are none.
+      setPendingConnectionError(droppedAttachmentsWarning(input.initialAttachments.length));
 
       return mapAtomCommandResult(result, () =>
         scopeThreadRef(input.project.environmentId, threadId),

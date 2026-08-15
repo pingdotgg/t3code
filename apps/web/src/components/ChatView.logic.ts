@@ -233,23 +233,6 @@ export interface PullRequestDialogState {
   key: number;
 }
 
-export function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-      reject(new Error("Could not read image data."));
-    });
-    reader.addEventListener("error", () => {
-      reject(reader.error ?? new Error("Failed to read image."));
-    });
-    reader.readAsDataURL(file);
-  });
-}
-
 export function resolveSendEnvMode(input: {
   requestedEnvMode: DraftThreadEnvMode;
   isGitRepo: boolean;
@@ -260,7 +243,7 @@ export function resolveSendEnvMode(input: {
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {
-  if (typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
+  if (!image.file || typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
     return image;
   }
   try {
@@ -275,6 +258,7 @@ export function cloneComposerImageForRetry(
 
 export function deriveComposerSendState(options: {
   prompt: string;
+  /** Uploaded attachments only — an image still in flight is not sendable content. */
   imageCount: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   /**
@@ -283,11 +267,17 @@ export function deriveComposerSendState(options: {
    * contexts do: a prompt of just element chips is still a valid send.
    */
   elementContextCount?: number;
+  /**
+   * Why attachments are blocking the send (uploading or failed), or null.
+   * Sending around an unsettled attachment would silently drop it.
+   */
+  attachmentBlockReason?: string | null;
 }): {
   trimmedPrompt: string;
   sendableTerminalContexts: TerminalContextDraft[];
   expiredTerminalContextCount: number;
   hasSendableContent: boolean;
+  attachmentBlockReason: string | null;
 } {
   const trimmedPrompt = stripInlineTerminalContextPlaceholders(options.prompt).trim();
   const sendableTerminalContexts = filterTerminalContextsWithText(options.terminalContexts);
@@ -303,6 +293,7 @@ export function deriveComposerSendState(options: {
       options.imageCount > 0 ||
       sendableTerminalContexts.length > 0 ||
       elementContextCount > 0,
+    attachmentBlockReason: options.attachmentBlockReason ?? null,
   };
 }
 

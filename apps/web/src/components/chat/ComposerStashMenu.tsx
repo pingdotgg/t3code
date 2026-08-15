@@ -1,4 +1,4 @@
-import { BookmarkIcon, XIcon } from "lucide-react";
+import { BookmarkIcon, ImageIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -121,30 +121,18 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                     onRestore(entry);
                   }}
                 >
+                  {/* Stashed attachments are server-side ids now, so a
+                      thumbnail would need a signed URL per entry per row.
+                      The count carries the same information. */}
                   {entry.attachments.length > 0 ? (
-                    <span className="flex shrink-0 items-center -space-x-1.5">
-                      {entry.attachments.slice(0, 3).map((attachment) => (
-                        <img
-                          key={attachment.id}
-                          src={attachment.dataUrl}
-                          alt=""
-                          aria-hidden="true"
-                          className="size-5 rounded border border-border/70 object-cover"
-                        />
-                      ))}
-                    </span>
+                    <ImageIcon className="size-4 shrink-0 text-icon-muted" />
                   ) : (
                     <BookmarkIcon className="size-4 shrink-0 text-icon-muted" />
                   )}
                   <span className="min-w-0 flex-1 truncate text-sm">
                     {stashEntrySnippet(entry)}
                   </span>
-                  {entry.pendingImageCount ? (
-                    <span className="shrink-0 text-[10px] text-secondary-label">
-                      saving {entry.pendingImageCount} image
-                      {entry.pendingImageCount === 1 ? "" : "s"}…
-                    </span>
-                  ) : missingImageCount(entry) > 0 ? (
+                  {missingImageCount(entry) > 0 ? (
                     <span className="shrink-0 text-[10px] text-warning-foreground">
                       {missingImageCount(entry)} image
                       {missingImageCount(entry) === 1 ? "" : "s"} dropped

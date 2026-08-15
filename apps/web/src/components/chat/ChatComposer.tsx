@@ -41,7 +41,7 @@ import {
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import { deriveComposerSendState } from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -57,13 +57,27 @@ import {
 } from "../../composerDraftStore";
 import {
   MAX_STASH_ENTRIES,
-  partitionStashAttachments,
   usePromptStashStore,
   type PromptStashEntry,
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
-import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
+import { compressImageToByteLimit } from "../../lib/imageCompression";
+import {
+  cancelAttachmentUpload,
+  releaseComposerAttachment,
+  retryAttachmentUpload,
+  startAttachmentUpload,
+} from "../../lib/attachmentUploadQueue";
+import {
+  ATTACHMENT_WRONG_ENVIRONMENT_REASON,
+  attachmentUploadBlockReason,
+  formatAttachmentUploadProgress,
+  isAttachmentInWrongEnvironment,
+  resolveAttachmentEnvironmentAction,
+  summarizeAttachmentUploads,
+} from "../../lib/attachmentUploadState";
+import { useAssetUrls } from "~/assets/assetUrls";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { resolveShortcutCommand } from "../../keybindings";
@@ -666,7 +680,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
   } = props;
-  const isSendDisabled = sendDisabledReason !== null;
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -678,12 +691,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerElementContexts = composerDraft.elementContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
-  const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
+  const setComposerDraftImageUpload = useComposerDraftStore((store) => store.setImageUpload);
   const insertComposerDraftTerminalContext = useComposerDraftStore(
     (store) => store.insertTerminalContext,
   );
@@ -702,16 +715,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const removeComposerDraftReviewComment = useComposerDraftStore(
     (store) => store.removeReviewComment,
   );
-  const clearComposerDraftPersistedAttachments = useComposerDraftStore(
-    (store) => store.clearPersistedAttachments,
-  );
   const clearComposerDraftPromptAndImages = useComposerDraftStore(
     (store) => store.clearComposerPromptAndImages,
   );
-  const syncComposerDraftPersistedAttachments = useComposerDraftStore(
-    (store) => store.syncPersistedAttachments,
-  );
-  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
 
   // ------------------------------------------------------------------
   // Model state
@@ -975,12 +981,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
   /**
-   * Snapshots currently being encoded, keyed by target+prompt+image ids.
-   * Keyed rather than boolean so a genuinely different prompt (or a different
-   * thread) can still be stashed while an earlier encode is running.
-   */
-  const stashInFlightRef = useRef<Set<string>>(new Set());
-  /**
    * Count of pasted images still being compressed, per thread. Reserved
    * against the attachment limit so concurrent pastes can't overshoot it,
    * and checked by `submitComposer` so a send can't race an image into the
@@ -991,26 +991,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Derived: composer send state
   // ------------------------------------------------------------------
+  const attachmentUploadSummary = useMemo(
+    () => summarizeAttachmentUploads(composerImages, environmentId),
+    [composerImages, environmentId],
+  );
   const composerSendState = useMemo(
     () =>
       deriveComposerSendState({
         prompt,
-        imageCount: composerImages.length,
+        imageCount: attachmentUploadSummary.ready,
         terminalContexts: composerTerminalContexts,
         elementContextCount:
           composerElementContexts.length +
           composerPreviewAnnotations.length +
           composerReviewComments.length,
+        attachmentBlockReason: attachmentUploadBlockReason(attachmentUploadSummary),
       }),
     [
+      attachmentUploadSummary,
       composerElementContexts.length,
-      composerImages.length,
       composerPreviewAnnotations.length,
       composerReviewComments.length,
       composerTerminalContexts,
       prompt,
     ],
   );
+  // An unsettled attachment blocks the send just like a loading thread does:
+  // sending around it would silently drop an image the user can see attached.
+  const effectiveSendDisabledReason = sendDisabledReason ?? composerSendState.attachmentBlockReason;
+  const isSendDisabled = effectiveSendDisabledReason !== null;
 
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
@@ -1128,9 +1137,48 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   composerMenuItemsRef.current = composerMenuItems;
   activeComposerMenuItemRef.current = activeComposerMenuItem;
 
-  const nonPersistedComposerImageIdSet = useMemo(
-    () => new Set(nonPersistedComposerImageIds),
-    [nonPersistedComposerImageIds],
+  // Attachments restored from a persisted draft have no blob preview: their
+  // bytes only exist on the server, so the thumbnail comes from a signed
+  // asset URL — the same flow sent-message attachments already use.
+  const restoredAttachmentIds = useMemo(
+    () =>
+      composerImages.flatMap((image) =>
+        image.previewUrl.length === 0 && image.upload.status === "ready"
+          ? [image.upload.attachmentId]
+          : [],
+      ),
+    [composerImages],
+  );
+  const restoredAttachmentResources = useMemo(
+    () =>
+      restoredAttachmentIds.map((attachmentId) => ({
+        _tag: "attachment" as const,
+        attachmentId,
+      })),
+    [restoredAttachmentIds],
+  );
+  const restoredAttachmentUrls = useAssetUrls(environmentId, restoredAttachmentResources);
+  const restoredAttachmentUrlById = useMemo(
+    () =>
+      new Map(
+        restoredAttachmentIds.flatMap((attachmentId, index) => {
+          const url = restoredAttachmentUrls[index];
+          return url ? [[attachmentId, url] as const] : [];
+        }),
+      ),
+    [restoredAttachmentIds, restoredAttachmentUrls],
+  );
+  /** Chips as rendered: local blob preview when we have one, signed URL otherwise. */
+  const displayComposerImages = useMemo(
+    () =>
+      composerImages.map((image) => {
+        if (image.previewUrl.length > 0 || image.upload.status !== "ready") {
+          return image;
+        }
+        const previewUrl = restoredAttachmentUrlById.get(image.upload.attachmentId);
+        return previewUrl ? { ...image, previewUrl } : image;
+      }),
+    [composerImages, restoredAttachmentUrlById],
   );
 
   const isComposerApprovalState = activePendingApproval !== null;
@@ -1450,72 +1498,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [activeThreadId, composerFooterActionLayoutKey, composerFooterHasWideActions]);
 
   // ------------------------------------------------------------------
-  // Image persist effect
+  // Attachment environment retargeting
   // ------------------------------------------------------------------
+  // The bytes live in exactly one environment. When a draft is pointed at a
+  // different one, an attachment we still hold the File for is silently
+  // re-uploaded; the old environment's copy is released only after the new
+  // upload lands (`supersedes`), so a failed re-upload never destroys the
+  // only server copy. One restored after a reload has no File to re-send;
+  // its ready state is left intact and the mismatch is rendered and
+  // send-gated as a derived condition, so switching back recovers it.
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (composerImages.length === 0) {
-        clearComposerDraftPersistedAttachments(composerDraftTarget);
-        return;
-      }
-      const getPersistedAttachmentsForThread = () =>
-        getComposerDraft(composerDraftTarget)?.persistedAttachments ?? [];
-      try {
-        const currentPersistedAttachments = getPersistedAttachmentsForThread();
-        const existingPersistedById = new Map(
-          currentPersistedAttachments.map((attachment) => [attachment.id, attachment]),
-        );
-        const stagedAttachmentById = new Map<string, PersistedComposerImageAttachment>();
-        await Promise.all(
-          composerImages.map(async (image) => {
-            try {
-              const dataUrl = await readFileAsDataUrl(image.file);
-              stagedAttachmentById.set(image.id, {
-                id: image.id,
-                name: image.name,
-                mimeType: image.mimeType,
-                sizeBytes: image.sizeBytes,
-                dataUrl,
-              });
-            } catch {
-              const existingPersisted = existingPersistedById.get(image.id);
-              if (existingPersisted) {
-                stagedAttachmentById.set(image.id, existingPersisted);
+    for (const image of composerImages) {
+      if (resolveAttachmentEnvironmentAction(image, environmentId) === "reupload") {
+        const previousUpload = image.upload;
+        cancelAttachmentUpload(image.id);
+        startAttachmentUpload({
+          target: composerDraftTarget,
+          environmentId,
+          image,
+          ...(previousUpload.status === "ready"
+            ? {
+                supersedes: {
+                  environmentId: previousUpload.environmentId,
+                  attachmentId: previousUpload.attachmentId,
+                },
               }
-            }
-          }),
-        );
-        const serialized = Array.from(stagedAttachmentById.values());
-        if (cancelled) return;
-        syncComposerDraftPersistedAttachments(composerDraftTarget, serialized);
-      } catch {
-        const currentImageIds = new Set(composerImages.map((image) => image.id));
-        const fallbackPersistedAttachments = getPersistedAttachmentsForThread();
-        const fallbackPersistedIds: Array<string> = [];
-        for (const attachment of fallbackPersistedAttachments) {
-          if (currentImageIds.has(attachment.id)) {
-            fallbackPersistedIds.push(attachment.id);
-          }
-        }
-        const fallbackPersistedIdSet = new Set(fallbackPersistedIds);
-        const fallbackAttachments = fallbackPersistedAttachments.filter((attachment) =>
-          fallbackPersistedIdSet.has(attachment.id),
-        );
-        if (cancelled) return;
-        syncComposerDraftPersistedAttachments(composerDraftTarget, fallbackAttachments);
+            : {}),
+        });
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    composerDraftTarget,
-    clearComposerDraftPersistedAttachments,
-    composerImages,
-    getComposerDraft,
-    syncComposerDraftPersistedAttachments,
-  ]);
+    }
+  }, [composerDraftTarget, composerImages, environmentId]);
 
   // ------------------------------------------------------------------
   // Callbacks: prompt change
@@ -1910,7 +1922,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stashQueue = usePromptStashStore((state) => state.entries);
   const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
-  const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
 
   useEffect(() => {
     return () => {
@@ -1967,7 +1978,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
 
       let unrestoredImageNames: string[] = [];
-      if (entry.attachments.length > 0) {
+      // Attachment bytes live in one environment. Restoring into a different
+      // one cannot reach them, so those come back as named drops.
+      const wrongEnvironmentImageNames = entry.attachments
+        .filter((attachment) => attachment.environmentId !== environmentId)
+        .map((attachment) => attachment.name);
+      const restorableAttachments = entry.attachments.filter(
+        (attachment) => attachment.environmentId === environmentId,
+      );
+      if (restorableAttachments.length > 0) {
         const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
         // The draft store also dedupes by mimeType+sizeBytes+name, so filter
         // on the same key here. Counting a duplicate against capacity would
@@ -1982,7 +2001,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           0,
           PROVIDER_SEND_TURN_MAX_ATTACHMENTS - composerImagesRef.current.length,
         );
-        const pending = entry.attachments.filter(
+        const pending = restorableAttachments.filter(
           (attachment) =>
             !existingIds.has(attachment.id) &&
             !existingDedupKeys.has(
@@ -2003,18 +2022,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // prompt across threads and providers, so whatever the composer has
       // selected right now stays selected.
 
-      // Each cause gets its own sentence so "too large" is never blamed for a
-      // file that actually failed to decode, or for one the composer simply
-      // had no room to take back.
+      // Each cause gets its own sentence so "still uploading" is never blamed
+      // for a file that actually failed, or for one the composer simply had no
+      // room to take back.
       const missingImageReasons: string[] = [];
       if (entry.droppedImageNames.length > 0) {
         missingImageReasons.push(
-          `${entry.droppedImageNames.join(", ")} exceeded the stash size limit when this prompt was saved.`,
+          `${entry.droppedImageNames.join(", ")} had not finished uploading when this prompt was saved.`,
         );
       }
       if (entry.unreadableImageNames && entry.unreadableImageNames.length > 0) {
         missingImageReasons.push(
-          `${entry.unreadableImageNames.join(", ")} could not be read when this prompt was saved.`,
+          `${entry.unreadableImageNames.join(", ")} failed to upload when this prompt was saved.`,
+        );
+      }
+      if (wrongEnvironmentImageNames.length > 0) {
+        missingImageReasons.push(
+          `${wrongEnvironmentImageNames.join(", ")} is not available in this environment.`,
         );
       }
       if (unrestoredImageNames.length > 0) {
@@ -2042,6 +2066,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftImages,
       composerDraftTarget,
       composerImagesRef,
+      environmentId,
       promptRef,
       setComposerDraftPrompt,
       takeStashEntry,
@@ -2064,7 +2089,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [takeStashEntry],
   );
 
-  const stashCurrentPrompt = useCallback(async () => {
+  const stashCurrentPrompt = useCallback(() => {
     // Terminal-context placeholders reference live sessions the stash can't
     // round-trip, so they are stripped from the stashed prompt.
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
@@ -2073,149 +2098,111 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setIsStashMenuOpen((open) => !open);
       return;
     }
-    // A repeat ⌘S on the *same* still-unencoded snapshot would stash it
-    // twice. Guard on the snapshot itself rather than a bare boolean: once
-    // the composer has been cleared the user can type something genuinely
-    // new (or switch threads) while encoding continues, and that deserves its
-    // own entry.
-    const snapshotKey = `${String(composerDraftTarget)} ${prompt} ${images
-      .map((image) => image.id)
-      .join(",")}`;
-    if (stashInFlightRef.current.has(snapshotKey)) return;
-    stashInFlightRef.current.add(snapshotKey);
 
+    // Attachments are already on the server, so the entry is a handful of id
+    // references and the whole stash is one synchronous write. Anything that
+    // has not landed yet cannot be referenced and comes back as a named drop.
+    // Nothing is cancelled yet: if the write fails below, the composer (and
+    // its in-flight uploads) must be left exactly as they were.
     const stashTarget = composerDraftTarget;
-    const entryId = randomUUID();
-    try {
-      // Persist the text-only entry *first*, then clear. Ordering matters in
-      // both directions: writing before clearing means a crash or closed tab
-      // mid-encode still leaves the prompt recoverable, while clearing before
-      // the async image work means edits typed during encoding are not wiped.
-      // Images are appended to the stored entry as they finish encoding.
-      const { evicted, written, durable } = stashEntryToQueue({
-        id: entryId,
-        createdAt: new Date().toISOString(),
-        prompt,
-        attachments: [],
-        droppedImageNames: [],
-        unreadableImageNames: [],
-        pendingImageCount: images.length,
-      });
-
-      // Clearing the composer is only safe once the write actually landed.
-      // If it was rejected (quota) the store has already rolled itself back,
-      // so leave the composer untouched rather than making it the second
-      // casualty of a reload.
-      if (!written) {
-        toastManager.add({
-          type: "error",
-          title: "Could not stash this prompt",
-          description:
-            "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
-          data: { hideCopyButton: true },
-        });
-        return;
-      }
-      // Written but only into the in-memory fallback (localStorage blocked):
-      // the entry is visible and restorable this session, so proceed with the
-      // clear, but say it won't survive a reload.
-      if (!durable) {
-        toastManager.add({
-          type: "warning",
-          title: "Stashed prompt will not survive a reload",
-          description:
-            "Browser storage is unavailable, so this stash is kept in memory only for this session.",
-          data: { hideCopyButton: true },
-        });
-      }
-
-      // Only the prompt and images are cleared — terminal/element contexts,
-      // preview annotations, and review comments are not stashable, so
-      // destroying them here would be unrecoverable.
-      promptRef.current = "";
-      clearComposerDraftPromptAndImages(stashTarget);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      pulseStashBadge();
-
-      if (evicted) {
-        toastManager.add({
-          type: "warning",
-          title: "Oldest stashed prompt discarded",
-          description: `The stash holds ${MAX_STASH_ENTRIES} prompts; the oldest was removed to make room.`,
-          data: { hideCopyButton: true },
-        });
-      }
-
-      // Images are re-encoded for the stash rather than stored verbatim: the
-      // composer allows up to 10MB per image, but localStorage gives the whole
-      // origin ~5MB. Only the stashed copy shrinks; the live attachment (and
-      // anything sent without stashing) keeps the original file.
-      const candidateAttachments: PersistedComposerImageAttachment[] = [];
-      const oversizedImageNames: string[] = [];
-      const unreadableImageNames: string[] = [];
-      for (const image of images) {
-        const result = await compressImageForStash(image.file);
-        if (!result.ok) {
-          // "too large" and "could not be read" are distinct outcomes; the
-          // menu and restore toast report them separately.
-          (result.reason === "too-large" ? oversizedImageNames : unreadableImageNames).push(
-            image.name,
-          );
-          continue;
-        }
-        candidateAttachments.push({
+    const attachments: PersistedComposerImageAttachment[] = [];
+    const stillUploadingImages: ComposerImageAttachment[] = [];
+    const failedImageNames: string[] = [];
+    for (const image of images) {
+      if (image.upload.status === "ready") {
+        attachments.push({
           id: image.id,
+          attachmentId: image.upload.attachmentId,
           name: image.name,
-          mimeType: result.image.mimeType,
-          sizeBytes: result.image.sizeBytes,
-          dataUrl: result.image.dataUrl,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          environmentId: image.upload.environmentId,
         });
+        continue;
       }
-      const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
+      if (image.upload.status === "failed") {
+        failedImageNames.push(image.name);
+      } else {
+        stillUploadingImages.push(image);
+      }
+    }
+    const stillUploadingImageNames = stillUploadingImages.map((image) => image.name);
 
-      const { attached, durable: imagesDurable } = finalizeStashEntryImages(entryId, {
-        attachments: kept,
-        droppedImageNames: [...oversizedImageNames, ...droppedNames],
-        unreadableImageNames,
+    const { evicted, written, durable } = stashEntryToQueue({
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      prompt,
+      attachments,
+      droppedImageNames: stillUploadingImageNames,
+      unreadableImageNames: failedImageNames,
+    });
+
+    // Clearing the composer is only safe once the write actually landed.
+    // If it was rejected (quota) the store has already rolled itself back,
+    // so leave the composer untouched rather than making it the second
+    // casualty of a reload.
+    if (!written) {
+      toastManager.add({
+        type: "error",
+        title: "Could not stash this prompt",
+        description:
+          "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
+        data: { hideCopyButton: true },
       });
-      if (attached) {
-        // The second phase can be rejected on its own: the text-only entry
-        // fit, but adding image payloads pushed past the quota. Disk would
-        // then still hold the phase-one entry with pendingImageCount set,
-        // which reads as an orphan after reload — so say so now. Gated on the
-        // entry write having been durable: on the in-memory fallback nothing
-        // is ever durable, and the session-only warning already covered it.
-        if (!imagesDurable && durable && images.length > 0) {
-          toastManager.add({
-            type: "warning",
-            title: "Stashed images were not saved",
-            description:
-              "The prompt was stashed, but browser storage rejected its images. They will be missing if you reload.",
-            data: { hideCopyButton: true },
-          });
-        }
-      } else if (kept.length > 0) {
-        // The entry was restored or deleted before its images finished
-        // encoding, so they have nowhere to land. Say so rather than letting
-        // them evaporate.
-        toastManager.add({
-          type: "warning",
-          title: "Stashed images did not attach",
-          description: `That prompt was restored or deleted before ${kept.length} image${kept.length === 1 ? "" : "s"} finished saving. Re-attach ${kept.length === 1 ? "it" : "them"} if you still need ${kept.length === 1 ? "it" : "them"}.`,
-          data: { hideCopyButton: true },
-        });
-      }
-    } finally {
-      // Must clear on every path: a throw that left this set would wedge this
-      // snapshot's ⌘S until the composer remounts.
-      stashInFlightRef.current.delete(snapshotKey);
+      return;
+    }
+    // Written but only into the in-memory fallback (localStorage blocked):
+    // the entry is visible and restorable this session, so proceed with the
+    // clear, but say it won't survive a reload.
+    if (!durable) {
+      toastManager.add({
+        type: "warning",
+        title: "Stashed prompt will not survive a reload",
+        description:
+          "Browser storage is unavailable, so this stash is kept in memory only for this session.",
+        data: { hideCopyButton: true },
+      });
+    }
+
+    // The write landed, so the composer is being cleared: uploads that could
+    // not be stashed (still in flight) are cancelled now, and failed ones lose
+    // their settled record. Doing this before the write would strand the
+    // chips in `uploading` forever on a rejected write.
+    for (const image of stillUploadingImages) {
+      cancelAttachmentUpload(image.id);
+    }
+
+    // Only the prompt and images are cleared — terminal/element contexts,
+    // preview annotations, and review comments are not stashable, so
+    // destroying them here would be unrecoverable.
+    promptRef.current = "";
+    clearComposerDraftPromptAndImages(stashTarget);
+    setComposerCursor(0);
+    setComposerTrigger(null);
+    pulseStashBadge();
+
+    if (evicted) {
+      toastManager.add({
+        type: "warning",
+        title: "Oldest stashed prompt discarded",
+        description: `The stash holds ${MAX_STASH_ENTRIES} prompts; the oldest was removed to make room.`,
+        data: { hideCopyButton: true },
+      });
+    }
+
+    const unstashedImageNames = [...stillUploadingImageNames, ...failedImageNames];
+    if (unstashedImageNames.length > 0) {
+      toastManager.add({
+        type: "warning",
+        title: "Some images were not stashed",
+        description: `${unstashedImageNames.join(", ")} had not finished uploading, so ${unstashedImageNames.length === 1 ? "it was" : "they were"} not saved with the prompt.`,
+        data: { hideCopyButton: true },
+      });
     }
   }, [
     clearComposerDraftPromptAndImages,
     composerDraftTarget,
     composerImagesRef,
-    finalizeStashEntryImages,
     promptRef,
     pulseStashBadge,
     stashEntryToQueue,
@@ -2339,12 +2326,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           sizeBytes: attachmentFile.size,
           previewUrl,
           file: attachmentFile,
+          upload: { status: "uploading", progress: 0 },
         });
       }
       if (nextImages.length === 1 && nextImages[0]) {
         addComposerImage(nextImages[0]);
       } else if (nextImages.length > 1) {
         addComposerImagesToDraft(nextImages);
+      }
+      // Upload starts on attach, not on send: the URL is minted with the exact
+      // post-compression byte count, so this has to run after the ladder. Only
+      // images the store actually accepted are uploaded — a duplicate paste is
+      // deduped away and must not leave orphaned bytes on the server.
+      const acceptedImageIds = new Set(
+        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.images ?? []).map(
+          (image) => image.id,
+        ),
+      );
+      for (const image of nextImages) {
+        if (!acceptedImageIds.has(image.id)) continue;
+        startAttachmentUpload({ target: composerDraftTarget, environmentId, image });
       }
       // Only failures are reported here. Success must not pass `null`: by
       // now other work (a failed send, an overlapping paste) may have set a
@@ -2364,8 +2365,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
 
-  const removeComposerImage = (imageId: string) => {
-    removeComposerImageFromDraft(imageId);
+  const removeComposerImage = (image: ComposerImageAttachment) => {
+    // Abort an in-flight upload, and hand back an already-uploaded one so the
+    // server does not keep bytes nothing will ever reference.
+    releaseComposerAttachment(image);
+    removeComposerImageFromDraft(image.id);
+  };
+
+  /** Re-runs a failed upload. The File never left memory, so nothing is re-picked. */
+  const retryComposerImageUpload = (image: ComposerImageAttachment) => {
+    if (!image.file) {
+      return;
+    }
+    retryAttachmentUpload({ target: composerDraftTarget, environmentId, image });
   };
 
   // ------------------------------------------------------------------
@@ -2784,7 +2796,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
+                      sendDisabledReason={effectiveSendDisabledReason}
                       isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
@@ -2900,12 +2912,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerPreviewAnnotations.length > 0 && (
                 <ComposerPreviewAnnotationCards
                   annotations={composerPreviewAnnotations}
-                  images={composerImages}
-                  onRemove={(annotationId) =>
-                    removeComposerDraftPreviewAnnotation(composerDraftTarget, annotationId)
-                  }
+                  images={displayComposerImages}
+                  onRemove={(annotationId) => {
+                    // The annotation's screenshot is a composer image with a
+                    // server-side upload behind it; removing the card must
+                    // stop that upload / free those bytes like removing a
+                    // chip does.
+                    const annotationImage = displayComposerImages.find(
+                      (image) => image.id === annotationId,
+                    );
+                    if (annotationImage) {
+                      releaseComposerAttachment(annotationImage);
+                    }
+                    removeComposerDraftPreviewAnnotation(composerDraftTarget, annotationId);
+                  }}
                   onExpandImage={(imageId) => {
-                    const preview = buildExpandedImagePreview(composerImages, imageId);
+                    const preview = buildExpandedImagePreview(displayComposerImages, imageId);
                     if (preview) onExpandImage(preview);
                   }}
                   className="mb-3"
@@ -2941,12 +2963,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {!isComposerCollapsedMobile &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
-              composerImages.some(
+              displayComposerImages.some(
                 (image) =>
                   !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
               ) && (
                 <div className="mb-3 flex flex-wrap gap-2">
-                  {composerImages
+                  {displayComposerImages
                     .filter(
                       (image) =>
                         !composerPreviewAnnotations.some(
@@ -2956,7 +2978,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     .map((image) => (
                       <div
                         key={image.id}
-                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                        className={cn(
+                          "relative h-16 w-16 overflow-hidden rounded-lg border bg-background",
+                          image.upload.status === "failed" ||
+                            isAttachmentInWrongEnvironment(image, environmentId)
+                            ? "border-destructive/70"
+                            : "border-border/80",
+                        )}
                       >
                         {image.previewUrl ? (
                           <button
@@ -2964,7 +2992,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             className="h-full w-full cursor-zoom-in"
                             aria-label={`Preview ${image.name}`}
                             onClick={() => {
-                              const preview = buildExpandedImagePreview(composerImages, image.id);
+                              const preview = buildExpandedImagePreview(
+                                displayComposerImages,
+                                image.id,
+                              );
                               if (!preview) return;
                               onExpandImage(preview);
                             }}
@@ -2972,7 +3003,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             <img
                               src={image.previewUrl}
                               alt={image.name}
-                              className="h-full w-full object-cover"
+                              className={cn(
+                                "h-full w-full object-cover",
+                                image.upload.status === "ready" &&
+                                  !isAttachmentInWrongEnvironment(image, environmentId)
+                                  ? ""
+                                  : "opacity-40",
+                              )}
                             />
                           </button>
                         ) : (
@@ -2980,16 +3017,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             {image.name}
                           </div>
                         )}
-                        {nonPersistedComposerImageIdSet.has(image.id) && (
+                        {/* Progress is text, not a spinner: a chip that repaints
+                            every frame is a real cost on a 120Hz display. */}
+                        {image.upload.status === "uploading" && (
+                          <span
+                            className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 py-0.5 text-center text-[10px] tabular-nums text-secondary-label"
+                            aria-label={`Uploading ${image.name}`}
+                          >
+                            {formatAttachmentUploadProgress(image.upload.progress)}
+                          </span>
+                        )}
+                        {isAttachmentInWrongEnvironment(image, environmentId) && (
                           <Tooltip>
                             <TooltipTrigger
                               render={
-                                <span
-                                  role="img"
-                                  aria-label="Draft attachment may not persist"
-                                  className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                                >
-                                  <CircleAlertIcon className="size-3" />
+                                <span className="pointer-events-auto absolute inset-x-0 bottom-0 truncate bg-background/85 px-1 py-0.5 text-center text-[10px] text-destructive">
+                                  {ATTACHMENT_WRONG_ENVIRONMENT_REASON}
                                 </span>
                               }
                             />
@@ -2997,8 +3040,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               side="top"
                               className="max-w-64 whitespace-normal leading-tight"
                             >
-                              Draft attachment could not be saved locally and may be lost on
-                              navigation.
+                              This image was uploaded to a different environment. Switch back to
+                              send it from there, or remove it.
+                            </TooltipPopup>
+                          </Tooltip>
+                        )}
+                        {image.upload.status === "failed" && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <button
+                                  type="button"
+                                  className="absolute inset-x-0 bottom-0 cursor-pointer truncate bg-background/85 px-1 py-0.5 text-center text-[10px] text-destructive"
+                                  onClick={() => retryComposerImageUpload(image)}
+                                  aria-label={`Retry upload for ${image.name}`}
+                                >
+                                  {image.upload.reason}
+                                </button>
+                              }
+                            />
+                            <TooltipPopup
+                              side="top"
+                              className="max-w-64 whitespace-normal leading-tight"
+                            >
+                              {image.file
+                                ? "Upload failed. Click to try again, or remove the image."
+                                : "This image is not available here. Remove it to send."}
                             </TooltipPopup>
                           </Tooltip>
                         )}
@@ -3006,7 +3073,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           variant="ghost"
                           size="icon-xs"
                           className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                          onClick={() => removeComposerImage(image.id)}
+                          onClick={() => removeComposerImage(image)}
                           aria-label={`Remove ${image.name}`}
                         >
                           <XIcon />
@@ -3067,7 +3134,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showPlanFollowUpPrompt={false}
                     promptHasText={false}
                     isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
+                    sendDisabledReason={effectiveSendDisabledReason}
                     isConnecting={isConnecting}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
@@ -3191,7 +3258,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
                   promptHasText={prompt.trim().length > 0}
                   isSendBusy={isSendBusy}
-                  sendDisabledReason={sendDisabledReason}
+                  sendDisabledReason={effectiveSendDisabledReason}
                   isConnecting={isConnecting}
                   isEnvironmentUnavailable={
                     environmentUnavailable !== null ||

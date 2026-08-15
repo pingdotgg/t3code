@@ -95,12 +95,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
       try {
-        const images = await convertPastedImagesToAttachments({
+        const pasted = await convertPastedImagesToAttachments({
           uris,
           existingCount: attachments.length,
         });
-        if (images.length > 0) {
-          setAttachments((current) => [...current, ...images]);
+        if (pasted.images.length > 0) {
+          setAttachments((current) => [...current, ...pasted.images]);
+        }
+        if (pasted.error) {
+          setPendingConnectionError(pasted.error);
         }
       } catch (error) {
         console.error("[review comment] error converting pasted images", error);

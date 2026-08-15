@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 
 const files = new Map<string, { base64: string; deleted: boolean }>();
 
@@ -38,33 +37,22 @@ vi.mock("./uuid", () => ({
 
 import {
   convertPastedImagesToAttachments,
+  droppedAttachmentsWarning,
   isOwnedPastedImageUri,
-  toUploadChatImageAttachments,
 } from "./composerImages";
 
-describe("toUploadChatImageAttachments", () => {
-  it("strips client draft id and previewUri for the startTurn wire shape", () => {
-    expect(
-      toUploadChatImageAttachments([
-        {
-          id: "client-draft-id",
-          type: "image",
-          name: "pasted-image.png",
-          mimeType: "image/png",
-          sizeBytes: 12,
-          dataUrl: "data:image/png;base64,AA==",
-          previewUri: "file:///tmp/preview.png",
-        },
-      ]),
-    ).toEqual([
-      {
-        type: "image",
-        name: "pasted-image.png",
-        mimeType: "image/png",
-        sizeBytes: 12,
-        dataUrl: "data:image/png;base64,AA==",
-      },
-    ]);
+describe("droppedAttachmentsWarning", () => {
+  it("stays quiet when a message carries no legacy images", () => {
+    expect(droppedAttachmentsWarning(0)).toBeNull();
+  });
+
+  it("names how many legacy images were left behind", () => {
+    expect(droppedAttachmentsWarning(1)).toBe(
+      "1 image was not sent. Image attach needs an app update.",
+    );
+    expect(droppedAttachmentsWarning(3)).toBe(
+      "3 images were not sent. Image attach needs an app update.",
+    );
   });
 });
 
@@ -83,42 +71,24 @@ describe("native pasted image cleanup", () => {
     expect(isOwnedPastedImageUri("https://example.com/t3-composer-paste/id.png")).toBe(false);
   });
 
-  it("converts owned files to data-backed previews and deletes the source", async () => {
-    const uri =
+  // Image attach is off until mobile implements upload-on-attach, so pasted
+  // images produce no attachment. Temp-file cleanup must still happen.
+  it("attaches nothing and deletes owned temp files, leaving user files alone", async () => {
+    const owned =
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
-    files.set(uri, { base64: "aGVsbG8=", deleted: false });
+    const userOwned = "file:///private/var/mobile/photos/library.png";
+    files.set(owned, { base64: "aGVsbG8=", deleted: false });
+    files.set(userOwned, { base64: "aGVsbG8=", deleted: false });
 
-    const attachments = await convertPastedImagesToAttachments({
-      uris: [uri],
+    const pasted = await convertPastedImagesToAttachments({
+      uris: [owned, userOwned],
       existingCount: 0,
     });
 
-    expect(attachments).toEqual([
-      expect.objectContaining({
-        dataUrl: "data:image/png;base64,aGVsbG8=",
-        previewUri: "data:image/png;base64,aGVsbG8=",
-      }),
-    ]);
-    expect(files.get(uri)?.deleted).toBe(true);
-  });
-
-  it("deletes rejected and overflow owned files without deleting user-owned files", async () => {
-    const rejected =
-      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/bad.png";
-    const overflow =
-      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/overflow.png";
-    const userOwned = "file:///private/var/mobile/photos/library.png";
-    files.set(rejected, { base64: "", deleted: false });
-    files.set(overflow, { base64: "aGVsbG8=", deleted: false });
-    files.set(userOwned, { base64: "aGVsbG8=", deleted: false });
-
-    await convertPastedImagesToAttachments({
-      uris: [rejected, overflow, userOwned],
-      existingCount: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1,
-    });
-
-    expect(files.get(rejected)?.deleted).toBe(true);
-    expect(files.get(overflow)?.deleted).toBe(true);
+    expect(pasted.images).toEqual([]);
+    // The drop is surfaced to callers, not just logged.
+    expect(pasted.error).toContain("app update");
+    expect(files.get(owned)?.deleted).toBe(true);
     expect(files.get(userOwned)?.deleted).toBe(false);
   });
 });

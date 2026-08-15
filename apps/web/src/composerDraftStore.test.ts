@@ -4,7 +4,6 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import * as Schema from "effect/Schema";
 import {
   defaultInstanceIdForDriver,
   EnvironmentId,
@@ -66,10 +65,11 @@ import {
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
   type ComposerImageAttachment,
+  hydrateImagesFromPersisted,
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
-import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
+import { removeLocalStorageItem } from "./hooks/useLocalStorage";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   insertInlineTerminalContextPlaceholder,
@@ -84,6 +84,7 @@ function makeImage(input: {
   mimeType?: string;
   sizeBytes?: number;
   lastModified?: number;
+  upload?: ComposerImageAttachment["upload"];
 }): ComposerImageAttachment {
   const name = input.name ?? "image.png";
   const mimeType = input.mimeType ?? "image/png";
@@ -101,6 +102,7 @@ function makeImage(input: {
     sizeBytes: file.size,
     previewUrl: input.previewUrl,
     file,
+    upload: input.upload ?? { status: "uploading", progress: 0 },
   };
 }
 
@@ -345,9 +347,10 @@ describe("composerDraftStore moveComposerPromptAndImages", () => {
   });
 });
 
-describe("composerDraftStore syncPersistedAttachments", () => {
-  const threadId = ThreadId.make("thread-sync-persisted");
+describe("composerDraftStore attachment persistence", () => {
+  const threadId = ThreadId.make("thread-attachment-persistence");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const threadKey = scopedThreadKey(threadRef);
 
   beforeEach(() => {
     removeLocalStorageItem(COMPOSER_DRAFT_STORAGE_KEY);
@@ -364,40 +367,110 @@ describe("composerDraftStore syncPersistedAttachments", () => {
     removeLocalStorageItem(COMPOSER_DRAFT_STORAGE_KEY);
   });
 
-  it("treats malformed persisted draft storage as empty", async () => {
-    const image = makeImage({
-      id: "img-persisted",
-      previewUrl: "blob:persisted",
-    });
-    useComposerDraftStore.getState().addImage(threadRef, image);
-    setLocalStorageItem(
-      COMPOSER_DRAFT_STORAGE_KEY,
-      {
-        version: 2,
-        state: {
-          draftsByThreadId: {
-            [threadId]: {
-              attachments: "not-an-array",
-            },
-          },
+  it("persists only uploaded attachments, as environment-scoped id references", () => {
+    useComposerDraftStore.getState().addImages(threadRef, [
+      makeImage({
+        id: "img-ready",
+        previewUrl: "blob:ready",
+        name: "ready.png",
+        upload: {
+          status: "ready",
+          attachmentId: "pending-ready",
+          environmentId: TEST_ENVIRONMENT_ID,
         },
-      },
-      Schema.Unknown,
-    );
+      }),
+      makeImage({ id: "img-uploading", previewUrl: "blob:uploading", name: "uploading.png" }),
+      makeImage({
+        id: "img-failed",
+        previewUrl: "blob:failed",
+        name: "failed.png",
+        upload: { status: "failed", reason: "Upload failed" },
+      }),
+    ]);
 
-    useComposerDraftStore.getState().syncPersistedAttachments(threadRef, [
+    const partialize = useComposerDraftStore.persist.getOptions().partialize;
+    const persisted = partialize?.(useComposerDraftStore.getState()) as
+      | { draftsByThreadKey: Record<string, { attachments: ReadonlyArray<unknown> }> }
+      | undefined;
+
+    expect(persisted?.draftsByThreadKey[threadKey]?.attachments).toEqual([
       {
-        id: image.id,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: image.previewUrl,
+        id: "img-ready",
+        attachmentId: "pending-ready",
+        name: "ready.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        environmentId: TEST_ENVIRONMENT_ID,
       },
     ]);
-    await Promise.resolve();
+  });
 
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.persistedAttachments).toEqual([]);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.nonPersistedImageIds).toEqual([image.id]);
+  it("rehydrates persisted attachments as ready chips with no local file", () => {
+    const images = hydrateImagesFromPersisted([
+      {
+        id: "img-restored",
+        attachmentId: "pending-restored",
+        name: "restored.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+        environmentId: TEST_ENVIRONMENT_ID,
+      },
+    ]);
+
+    expect(images).toEqual([
+      {
+        type: "image",
+        id: "img-restored",
+        name: "restored.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+        // The bytes only exist on the server: no blob preview, no File.
+        previewUrl: "",
+        file: null,
+        upload: {
+          status: "ready",
+          attachmentId: "pending-restored",
+          environmentId: TEST_ENVIRONMENT_ID,
+        },
+      },
+    ]);
+  });
+
+  it("drops persisted attachments left over from the inline dataUrl shape", async () => {
+    const storage = useComposerDraftStore.persist.getOptions().storage;
+    // Composer writes are debounced, so the seeded payload only reaches the
+    // storage the rehydrate reads from once the timer fires.
+    vi.useFakeTimers();
+    await storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+      // Any pre-v9 payload: its attachments carried bytes inline and were
+      // never uploaded anywhere, so there is nothing to point at.
+      version: 8,
+      state: {
+        draftsByThreadKey: {
+          [threadKey]: {
+            prompt: "with a stale attachment",
+            attachments: [
+              {
+                id: "img-legacy",
+                name: "legacy.png",
+                mimeType: "image/png",
+                sizeBytes: 4,
+                dataUrl: "data:image/png;base64,AAAA",
+              },
+            ],
+          },
+        },
+        draftThreadsByThreadKey: {},
+        logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    await useComposerDraftStore.persist.rehydrate();
+
+    const draft = draftByKey(threadKey);
+    expect(draft?.prompt).toBe("with a stale attachment");
+    expect(draft?.images).toEqual([]);
   });
 });
 

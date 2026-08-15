@@ -234,12 +234,15 @@ export function useThreadComposerState() {
 
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
       try {
-        const images = await convertPastedImagesToAttachments({
+        const pasted = await convertPastedImagesToAttachments({
           uris,
           existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
         });
-        if (images.length > 0) {
-          appendComposerDraftAttachments(threadKey, images);
+        if (pasted.images.length > 0) {
+          appendComposerDraftAttachments(threadKey, pasted.images);
+        }
+        if (pasted.error) {
+          setPendingConnectionError(pasted.error);
         }
       } catch (error) {
         console.error("[native paste] error converting images", {

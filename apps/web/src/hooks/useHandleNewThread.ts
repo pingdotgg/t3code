@@ -15,6 +15,7 @@ import {
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import { retargetAttachmentUploads } from "../lib/attachmentUploadQueue";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
@@ -153,7 +154,13 @@ export function useNewThreadHandler() {
           !composerDraftHasUserContent(getComposerDraft(destinationDraftId)) &&
           composerDraftHasUserContent(getComposerDraft(carryContentSourceDraftId))
         ) {
+          const movedImageIds =
+            getComposerDraft(carryContentSourceDraftId)?.images.map((image) => image.id) ?? [];
           moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
+          // In-flight uploads keep writing to their original target; point
+          // them at the destination or the moved chips never leave
+          // `uploading`.
+          retargetAttachmentUploads(movedImageIds, destinationDraftId);
         }
       };
       const project = projects.find(

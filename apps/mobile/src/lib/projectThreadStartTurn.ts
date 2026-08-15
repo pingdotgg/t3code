@@ -8,7 +8,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 
-import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
+import type { DraftComposerImageAttachment } from "./composerImages";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
   const trimmed = value.trim();
@@ -28,6 +28,11 @@ export interface ProjectThreadStartTurnSpec {
   readonly messageId: string;
   readonly createdAt: string;
   readonly text: string;
+  /**
+   * Legacy data-url drafts only. `thread.turn.start` now takes id references
+   * to uploaded blobs, which mobile cannot mint yet, so these are dropped
+   * rather than sent. Callers surface `droppedAttachmentsWarning` to the user.
+   */
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
@@ -55,7 +60,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       messageId: MessageId.make(spec.messageId),
       role: "user" as const,
       text: spec.text,
-      attachments: toUploadChatImageAttachments(spec.attachments),
+      attachments: [],
     },
     modelSelection: spec.modelSelection,
     titleSeed: title,

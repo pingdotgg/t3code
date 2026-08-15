@@ -4,55 +4,42 @@ import { create } from "zustand";
 import { PersistedComposerImageAttachment } from "./composerDraftStore";
 import { createMemoryStorage, type StateStorage } from "./lib/storage";
 
-export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v2";
+export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v3";
 /**
- * v1 bucketed entries into per-provider-instance queues and stored a model
- * selection with each prompt. The stash is provider-agnostic now, so the old
- * payload is deleted at startup rather than migrated — left behind it would
- * silently hold megabytes of the origin's ~5MB localStorage quota forever.
+ * Superseded payloads, deleted at startup rather than migrated.
+ *
+ * v1 bucketed entries into per-provider-instance queues; v2 stored each image
+ * inline as a base64 data URL. Neither can be rewritten into the current shape
+ * (v3 entries reference already-uploaded attachments by id), and left behind
+ * they would hold megabytes of the origin's ~5MB localStorage quota forever.
  */
-const LEGACY_PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v1";
-const PROMPT_STASH_STORAGE_VERSION = 2;
+const SUPERSEDED_PROMPT_STASH_STORAGE_KEYS = ["t3code:prompt-stash:v1", "t3code:prompt-stash:v2"];
+const PROMPT_STASH_STORAGE_VERSION = 3;
 
 export const MAX_STASH_ENTRIES = 20;
-/**
- * Budget for an entry's serialized attachment payload. localStorage is a
- * ~5MB origin-wide quota shared with the composer draft store, so oversized
- * images are dropped (tracked in `droppedImageNames`) rather than persisted.
- *
- * Sized to hold two images at the per-image compression budget
- * (`MAX_STASH_IMAGE_DATA_URL_CHARS`) so a typical before/after screenshot
- * pair survives intact.
- */
-export const MAX_STASH_ENTRY_ATTACHMENT_CHARS = 2_700_000;
 
 /**
  * A stashed prompt carries only what every provider can accept: text and
  * image attachments. Deliberately no provider instance or model selection —
  * the point of stashing is to move a prompt into a different thread or
  * provider, so restoring must never drag the old model choice along.
+ *
+ * Attachments are id references to bytes already on the server, so writing an
+ * entry is synchronous and costs a few hundred bytes of storage.
  */
 const StashEntrySchema = Schema.Struct({
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
-  /** Names of images that exceeded the attachment budget and were not saved. */
+  /** Names of images that were not uploaded yet, so they could not be stashed. */
   droppedImageNames: Schema.Array(Schema.String),
   /**
-   * Names of images that could not be decoded or re-encoded at all — a
-   * distinct failure from exceeding the size budget, so the menu can explain
-   * which actually happened. Optional: entries written before this field
-   * existed decode without it.
+   * Names of images whose upload had failed outright — a distinct outcome from
+   * "still uploading", so the menu can explain which actually happened.
+   * Optional: entries written before this field existed decode without it.
    */
   unreadableImageNames: Schema.optionalKey(Schema.Array(Schema.String)),
-  /**
-   * Images still being encoded when the entry was written. The entry is
-   * persisted before its images so a crash mid-encode cannot lose the prompt;
-   * this field lets the UI show "N images still saving" until
-   * `finalizeEntryImages` lands, and flags entries orphaned by a reload.
-   */
-  pendingImageCount: Schema.optionalKey(Schema.Number),
 });
 export type PromptStashEntry = typeof StashEntrySchema.Type;
 
@@ -62,61 +49,6 @@ const PersistedPromptStashState = Schema.Struct({
 type PersistedPromptStashState = typeof PersistedPromptStashState.Type;
 
 const decodePersistedPromptStashState = Schema.decodeUnknownSync(PersistedPromptStashState);
-
-/**
- * `pendingImageCount` only has meaning within the session that wrote it: the
- * encode loop that would clear it does not survive a reload. Any entry that
- * comes back from storage still pending was orphaned by a closed tab or a
- * crash mid-encode, so the count is settled here — otherwise the entry would
- * be stuck showing "saving…" and refuse to restore forever.
- *
- * The images are genuinely gone (they were never written), so they are
- * recorded as unreadable to keep the prompt itself restorable.
- */
-function clearOrphanedPendingImages(
-  entries: ReadonlyArray<PromptStashEntry>,
-): ReadonlyArray<PromptStashEntry> {
-  return entries.map((entry) => {
-    if (!entry.pendingImageCount) return entry;
-    const lostCount = entry.pendingImageCount;
-    return {
-      ...entry,
-      pendingImageCount: 0,
-      unreadableImageNames: [
-        ...(entry.unreadableImageNames ?? []),
-        ...Array.from(
-          { length: lostCount },
-          (_, index) => `image ${index + 1} (not saved before reload)`,
-        ),
-      ],
-    };
-  });
-}
-
-/**
- * Splits candidate attachments into a persistable set within the entry
- * budget plus the names of any that had to be dropped. Attachments are
- * admitted in order so the earliest-added images win.
- */
-export function partitionStashAttachments(
-  attachments: ReadonlyArray<PersistedComposerImageAttachment>,
-): {
-  kept: PersistedComposerImageAttachment[];
-  droppedNames: string[];
-} {
-  const kept: PersistedComposerImageAttachment[] = [];
-  const droppedNames: string[] = [];
-  let usedChars = 0;
-  for (const attachment of attachments) {
-    if (usedChars + attachment.dataUrl.length > MAX_STASH_ENTRY_ATTACHMENT_CHARS) {
-      droppedNames.push(attachment.name);
-      continue;
-    }
-    usedChars += attachment.dataUrl.length;
-    kept.push(attachment);
-  }
-  return { kept, droppedNames };
-}
 
 /**
  * Reading the `localStorage` property itself can throw `SecurityError` when
@@ -171,7 +103,6 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   }
 }
 
-/** Reads the persisted queue, settling stale pending counts. */
 function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
   try {
     const raw = baseStashStorage.getItem(PROMPT_STASH_STORAGE_KEY);
@@ -179,7 +110,7 @@ function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
     const parsed: unknown = JSON.parse(raw);
     const state = (parsed as { state?: unknown } | null)?.state;
     if (!state) return null;
-    return clearOrphanedPendingImages(decodePersistedPromptStashState(state).entries);
+    return decodePersistedPromptStashState(state).entries;
   } catch {
     return null;
   }
@@ -207,20 +138,6 @@ interface PromptStashStoreState {
    * reload would resurrect the entry.
    */
   takeEntry: (entryId: string) => { entry: PromptStashEntry | null; durable: boolean };
-  /**
-   * Attaches the encoded images to an entry written earlier by `stashEntry`,
-   * clearing its pending count. Returns attached=false when the entry is gone
-   * (restored or deleted while encoding was still running) so the caller can
-   * tell the user their images did not make it.
-   */
-  finalizeEntryImages: (
-    entryId: string,
-    images: {
-      attachments: ReadonlyArray<PersistedComposerImageAttachment>;
-      droppedImageNames: ReadonlyArray<string>;
-      unreadableImageNames: ReadonlyArray<string>;
-    },
-  ) => { attached: boolean; durable: boolean };
 }
 
 export const usePromptStashStore = create<PromptStashStoreState>()((set, get) => ({
@@ -247,34 +164,18 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     set(() => ({ entries: nextEntries }));
     return { entry, durable };
   },
-  finalizeEntryImages: (entryId, images) => {
-    const entries = get().entries;
-    const index = entries.findIndex((candidate) => candidate.id === entryId);
-    const existing = index === -1 ? undefined : entries[index];
-    // Restored or deleted mid-encode: nothing to attach to.
-    if (!existing) return { attached: false, durable: true };
-    const nextEntries = [...entries];
-    nextEntries[index] = {
-      ...existing,
-      attachments: images.attachments,
-      droppedImageNames: images.droppedImageNames,
-      unreadableImageNames: images.unreadableImageNames,
-      pendingImageCount: 0,
-    };
-    const { durable } = persistEntries(nextEntries);
-    set(() => ({ entries: nextEntries }));
-    return { attached: true, durable };
-  },
 }));
 
 // Hydrate once at startup. Like the app's other persisted stores, tabs are
 // last-write-wins: no cross-tab merging or storage-event syncing.
 {
-  try {
-    baseStashStorage.removeItem(LEGACY_PROMPT_STASH_STORAGE_KEY);
-  } catch {
-    // Purging the v1 payload is best-effort; a storage policy that rejects
-    // the delete must not take down module init.
+  for (const supersededKey of SUPERSEDED_PROMPT_STASH_STORAGE_KEYS) {
+    try {
+      baseStashStorage.removeItem(supersededKey);
+    } catch {
+      // Purging an old payload is best-effort; a storage policy that rejects
+      // the delete must not take down module init.
+    }
   }
   const persisted = readPersistedEntries();
   if (persisted) {

@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
-import { toUploadChatImageAttachments } from "../lib/composerImages";
+import { droppedAttachmentsWarning } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { useProjects, useThreadShells } from "./entities";
@@ -44,7 +44,10 @@ import {
   useThreadOutboxMessages,
   useThreadOutboxShellStatuses,
 } from "./use-thread-outbox";
-import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
+import {
+  setPendingConnectionError,
+  useRemoteConnectionStatus,
+} from "./use-remote-environment-registry";
 
 export const dispatchingQueuedMessageIdAtom = Atom.make<MessageId | null>(null).pipe(
   Atom.keepAlive,
@@ -149,6 +152,14 @@ export function useThreadOutboxDrain(): void {
         return false;
       }
 
+      // Messages queued before the attachment contract change can still hold
+      // data-url images. They are never put on the wire, so tell the user the
+      // text went without them instead of dropping them silently.
+      const droppedWarning = droppedAttachmentsWarning(queuedMessage.attachments.length);
+      if (droppedWarning !== null) {
+        setPendingConnectionError(droppedWarning);
+      }
+
       try {
         await removeThreadOutboxMessage(queuedMessage);
         return true;
@@ -226,7 +237,7 @@ export function useThreadOutboxDrain(): void {
             messageId: queuedMessage.messageId,
             role: "user",
             text: queuedMessage.text,
-            attachments: toUploadChatImageAttachments(queuedMessage.attachments),
+            attachments: [],
           },
           modelSelection: settings.modelSelection,
           runtimeMode: settings.runtimeMode,

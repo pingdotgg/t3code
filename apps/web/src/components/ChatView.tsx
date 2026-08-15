@@ -206,6 +206,8 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import { awaitAttachmentUploads, releaseComposerAttachment } from "../lib/attachmentUploadQueue";
+import { readyAttachmentRefs, summarizeAttachmentUploads } from "../lib/attachmentUploadState";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -308,7 +310,6 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
-  readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
@@ -4968,7 +4969,9 @@ function ChatViewContent(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length,
+      // Only uploaded attachments count: an image still in flight (or failed)
+      // is not sendable content, and the composer blocks the send anyway.
+      imageCount: summarizeAttachmentUploads(composerImages, environmentId).ready,
       terminalContexts: composerTerminalContexts,
       elementContextCount:
         composerElementContexts.length +
@@ -4981,6 +4984,12 @@ function ChatViewContent(props: ChatViewProps) {
         planMarkdown: activeProposedPlan.planMarkdown,
       });
       promptRef.current = "";
+      // The follow-up sends text only; any attached images are being
+      // discarded with the rest of the composer, so their uploads and
+      // server-side bytes are released like a chip removal.
+      for (const image of composerImages) {
+        releaseComposerAttachment(image);
+      }
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
       await onSubmitPlanFollowUp({
@@ -5093,15 +5102,6 @@ function ChatViewContent(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
-    );
     const optimisticAttachments = composerImagesSnapshot.map((image) => ({
       type: "image" as const,
       id: image.id,
@@ -5213,13 +5213,26 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
 
-    const turnAttachmentsResult = await settlePromise(() => turnAttachmentsPromise);
-    if (failure === null && turnAttachmentsResult._tag === "Failure") {
-      failure = turnAttachmentsResult;
-    }
+    // Attachments ride the turn as id references to bytes that uploaded the
+    // moment they were attached. The composer blocks sending while an upload
+    // is in flight, but the preview "pick and send" gesture attaches and sends
+    // in one step, so wait for anything still running here.
+    const settledUploads = await awaitAttachmentUploads(
+      composerImagesSnapshot.map((image) => image.id),
+    );
+    const sendableImages = composerImagesSnapshot.map((image) => {
+      const settledUpload = settledUploads.get(image.id);
+      return settledUpload ? { ...image, upload: settledUpload } : image;
+    });
+    const turnAttachments = readyAttachmentRefs(sendableImages, environmentId);
+    const unsentImageNames = sendableImages
+      .filter(
+        (image) => image.upload.status !== "ready" || image.upload.environmentId !== environmentId,
+      )
+      .map((image) => image.name);
 
     let turnStartSucceeded = false;
-    if (failure === null && turnAttachmentsResult._tag === "Success") {
+    if (failure === null) {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -5259,7 +5272,7 @@ function ChatViewContent(props: ChatViewProps) {
             messageId: messageIdForSend,
             role: "user",
             text: outgoingMessageText,
-            attachments: turnAttachmentsResult.value,
+            attachments: turnAttachments,
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
@@ -5274,6 +5287,15 @@ function ChatViewContent(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         acknowledgeActiveThreadWoke();
+        if (unsentImageNames.length > 0) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "Some images were not attached",
+              description: `${unsentImageNames.join(", ")} did not finish uploading, so the message was sent without them.`,
+            }),
+          );
+        }
       }
     }
 
@@ -5297,7 +5319,10 @@ function ChatViewContent(props: ChatViewProps) {
           return next.length === existing.length ? existing : next;
         });
         promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+        // `sendableImages` carries the settled upload states; the pre-await
+        // snapshot can still say `uploading` for a job that finished during
+        // the await and would restore chips no live job will ever advance.
+        const retryComposerImages = sendableImages.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
