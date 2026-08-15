@@ -131,10 +131,10 @@ export function applyShellStreamEvent(
           event.location === "active"
             ? upsertById(withoutThread(snapshot.threads), event.thread)
             : withoutThread(snapshot.threads),
-        archivedThreads:
-          event.location === "archive"
-            ? upsertById(withoutThread(snapshot.archivedThreads), event.thread)
-            : withoutThread(snapshot.archivedThreads),
+        // The archive has its own bounded query/subscription. Older servers may
+        // still send archive-located deltas here; remove them from the normal
+        // shell instead of growing its persisted cache again.
+        archivedThreads: withoutThread(snapshot.archivedThreads),
         snapshotSequence: event.sequence,
       };
     }
