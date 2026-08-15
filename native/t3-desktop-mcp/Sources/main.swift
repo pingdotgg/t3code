@@ -866,7 +866,11 @@ func toolClick(_ args: [String: Any]) -> String {
         // must not discard a same-desktop under-point window.
         let under = windowTarget(under: point)
         let target: WindowTarget?
-        if args["app"] != nil, let appPid = resolveTargetPid(args) {
+        if let query = args["app"] as? String {
+            guard let resolved = resolveApp(query) else {
+                return "error: no running app matching \(query)"
+            }
+            let appPid = resolved.processIdentifier
             target = under.flatMap { $0.pid == appPid ? $0 : nil } ?? windowTarget(forPid: appPid)
         } else {
             target = under ?? resolveTargetPid(args).flatMap(windowTarget(forPid:))
@@ -1172,19 +1176,22 @@ func toolDrag(_ args: [String: Any]) -> String {
     let target: WindowTarget?
     if let element {
         target = windowTarget(for: element)
-    } else if args["app"] != nil, let appPid = resolveTargetPid(args) {
-        // Explicit app constrains the under-point window; do not fall back to
-        // Registry.targetPid from an earlier get_app_state.
+    } else if let query = args["app"] as? String {
+        // Resolve the named app directly — never fall through to Registry.targetPid.
+        guard let resolved = resolveApp(query) else {
+            return "error: no running app matching \(query)"
+        }
+        let appPid = resolved.processIdentifier
         target = underStart.flatMap { $0.pid == appPid ? $0 : nil } ?? windowTarget(forPid: appPid)
     } else {
         target = underStart
     }
-    if let target, !target.frame.contains(end) {
-        if let dest = windowTarget(under: end), dest.wid != target.wid || dest.pid != target.pid {
-            return "error: cross-window drag is not supported — keep the drag inside one window"
-        }
-        if windowTarget(under: end) == nil {
+    if let target {
+        guard let dest = windowTarget(under: end) else {
             return "error: drag destination is outside the source window"
+        }
+        if dest.wid != target.wid || dest.pid != target.pid {
+            return "error: cross-window drag is not supported — keep the drag inside one window"
         }
     }
     if let target, backgroundDrag(target, from: start, to: end) {
