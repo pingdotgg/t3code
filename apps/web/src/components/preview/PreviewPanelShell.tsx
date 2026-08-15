@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 
 import { isElectron } from "~/env";
 import {
@@ -46,8 +46,10 @@ function PreviewPanelShellFrame(
   const isInline = props.mode === "inline";
   const { width, handlers } = props.inlineSize;
 
+  const hostRef = useRef<HTMLDivElement | null>(null);
   return (
     <div
+      ref={hostRef}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
