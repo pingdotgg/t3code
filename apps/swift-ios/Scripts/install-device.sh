@@ -83,12 +83,18 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
     GIT_COMMIT="${GIT_COMMIT}-dirty"
   fi
 
+  GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
   GIT_REPO_REMOTE="upstream"
+  if [[ "${GIT_BASE_REF}" == */* ]]; then
+    GIT_BASE_REMOTE="${GIT_BASE_REF%%/*}"
+    if git -C "${APP_DIR}" remote get-url "${GIT_BASE_REMOTE}" >/dev/null 2>&1; then
+      GIT_REPO_REMOTE="${GIT_BASE_REMOTE}"
+    fi
+  fi
   if ! git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" >/dev/null 2>&1; then
     GIT_REPO_REMOTE="origin"
   fi
   # Prefer an explicit comparison line, then the public repository's default.
-  GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
   if [[ -z "${GIT_BASE_REF}" ]] || \
      ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
     GIT_TERMINAL_PROMPT=0 git -C "${APP_DIR}" \
