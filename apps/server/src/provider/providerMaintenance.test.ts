@@ -176,7 +176,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       status: "behind_latest",
       currentVersion: "2.1.110",
       latestVersion: "2.1.117",
-      updateCommand: "npm install -g @example/native-package-tool@latest",
+      updateCommand:
+        "npm install -g --allow-scripts=@example/native-package-tool @example/native-package-tool@latest",
       canUpdate: true,
       message: "Install the update now or review provider settings.",
     });
@@ -482,11 +483,17 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         provider: driver("packageTool"),
         packageName: "@example/package-tool",
         update: {
-          command: "npm install -g @example/package-tool@latest",
+          command:
+            "npm install -g --allow-scripts=@example/package-tool @example/package-tool@latest",
 
           executable: "npm",
 
-          args: ["install", "-g", "@example/package-tool@latest"],
+          args: [
+            "install",
+            "-g",
+            "--allow-scripts=@example/package-tool",
+            "@example/package-tool@latest",
+          ],
 
           lockKey: "npm-global",
         },
@@ -540,6 +547,40 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       });
     }),
   );
+
+  it("allows the package's own install scripts in npm global updates", () => {
+    const claudeUpdate = makePackageManagedProviderMaintenanceResolver({
+      provider: driver("claudeAgent"),
+      npmPackageName: "@anthropic-ai/claude-code",
+      homebrewFormula: "claude-code",
+      nativeUpdate: {
+        executable: "claude",
+        args: ["update"],
+        lockKey: "claude-native",
+        isCommandPath: isNativeTestCommandPath("/.local/bin/claude"),
+      },
+    });
+
+    expect(claudeUpdate.resolve()).toEqual({
+      provider: driver("claudeAgent"),
+      packageName: "@anthropic-ai/claude-code",
+      update: {
+        command:
+          "npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@latest",
+
+        executable: "npm",
+
+        args: [
+          "install",
+          "-g",
+          "--allow-scripts=@anthropic-ai/claude-code",
+          "@anthropic-ai/claude-code@latest",
+        ],
+
+        lockKey: "npm-global",
+      },
+    });
+  });
 
   it("disables one-click updates for explicit custom binary paths it cannot safely map", () => {
     expect(
