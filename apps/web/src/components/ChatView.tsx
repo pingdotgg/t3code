@@ -141,6 +141,7 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import { rightPanelWidthStorageKey } from "./preview/rightPanelWidthStorageKey";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
   selectThreadPreviewMiniPlayer,
@@ -6623,6 +6624,9 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          {...(activeThreadKey
+            ? { widthStorageKey: rightPanelWidthStorageKey(activeThreadKey) }
+            : {})}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
