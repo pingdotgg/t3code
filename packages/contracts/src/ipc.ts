@@ -105,6 +105,8 @@ import type {
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
+  /** Shortcut notation displayed alongside the label by menu hosts that support accelerators. */
+  accelerator?: string;
   destructive?: boolean;
   disabled?: boolean;
   /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
@@ -117,6 +119,7 @@ export interface ContextMenuItem<T extends string = string> {
 export interface ContextMenuItemSchemaType {
   readonly id: string;
   readonly label: string;
+  readonly accelerator?: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
   readonly header?: boolean;
@@ -127,6 +130,7 @@ export interface ContextMenuItemSchemaType {
 export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
+  accelerator: Schema.optionalKey(Schema.String),
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
@@ -1195,6 +1199,10 @@ export interface LocalApi {
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
+      options?: {
+        readonly presentation?: "native" | "styled";
+        readonly signal?: AbortSignal;
+      },
     ) => Promise<T | null>;
     close: () => Promise<void>;
   };

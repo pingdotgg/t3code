@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  type ContextMenuItem,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -33,7 +34,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -76,6 +77,37 @@ import {
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
+
+export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+
+export function shouldRestoreTerminalFocusAfterMenuAction(
+  action: TerminalContextMenuAction | null,
+): boolean {
+  return action === "copy" || action === "paste";
+}
+
+interface TerminalSelectionAction {
+  readonly position: { x: number; y: number };
+  readonly clipboardText: string;
+  readonly selection: TerminalContextSelection | null;
+}
+
+export function terminalContextMenuItems(
+  availability: { readonly canAddToChat: boolean; readonly canCopy: boolean },
+  platform = navigator.platform,
+): readonly ContextMenuItem<TerminalContextMenuAction>[] {
+  const isMac = isMacPlatform(platform);
+  return [
+    { id: "add-to-chat", label: "Add to chat", disabled: !availability.canAddToChat },
+    {
+      id: "copy",
+      label: "Copy",
+      accelerator: isMac ? "Command+C" : "Ctrl+Shift+C",
+      disabled: !availability.canCopy,
+    },
+    { id: "paste", label: "Paste", accelerator: isMac ? "Command+V" : "Ctrl+Shift+V" },
+  ];
+}
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -441,6 +473,7 @@ export function TerminalViewport({
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
+        onContextMenu: (event) => handleContextMenu(event),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
       };
@@ -473,8 +506,12 @@ export function TerminalViewport({
       synchronizeTerminalStatus(terminal, latestSession.status);
       if (autoFocus) window.requestAnimationFrame(() => terminal.focus());
 
+      let terminalMenuAbortController: AbortController | null = null;
       const clearSelectionAction = () => {
         selectionActionRequestIdRef.current += 1;
+        terminalMenuAbortController?.abort();
+        terminalMenuAbortController = null;
+        selectionActionMenuOpenRef.current = false;
         if (selectionActionTimerRef.current !== null) {
           window.clearTimeout(selectionActionTimerRef.current);
           selectionActionTimerRef.current = null;
@@ -482,11 +519,7 @@ export function TerminalViewport({
       };
       setupCleanups.push(clearSelectionAction);
 
-      const readSelectionAction = (): {
-        position: { x: number; y: number };
-        clipboardText: string;
-        selection: TerminalContextSelection;
-      } | null => {
+      const readSelectionAction = (): TerminalSelectionAction | null => {
         const activeTerminal = terminalRef.current;
         const mountElement = containerRef.current;
         if (!activeTerminal || !mountElement || !activeTerminal.hasSelection()) {
@@ -495,10 +528,9 @@ export function TerminalViewport({
         const selectionText = activeTerminal.getSelection();
         const selectionPosition = activeTerminal.getSelectionPosition();
         const normalizedText = selectionText.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
-        if (!selectionPosition || normalizedText.length === 0) {
+        if (selectionText.length === 0) {
           return null;
         }
-        const { lineStart, lineEnd } = terminalSelectionLineRange(selectionPosition);
         const bounds = mountElement.getBoundingClientRect();
         const position = resolveTerminalSelectionActionPosition({
           bounds,
@@ -508,21 +540,67 @@ export function TerminalViewport({
         return {
           position,
           clipboardText: selectionText,
-          selection: {
-            terminalId,
-            terminalLabel: readTerminalLabel(),
-            lineStart,
-            lineEnd,
-            text: normalizedText,
-          },
+          selection:
+            selectionPosition && normalizedText.length > 0
+              ? {
+                  terminalId,
+                  terminalLabel: readTerminalLabel(),
+                  ...terminalSelectionLineRange(selectionPosition),
+                  text: normalizedText,
+                }
+              : null,
         };
       };
 
-      const showSelectionAction = async () => {
-        if (!localApi) {
-          clearSelectionAction();
-          return;
+      const performTerminalMenuAction = async (
+        clicked: TerminalContextMenuAction | null,
+        selectionAction: TerminalSelectionAction | null,
+        isCurrent: () => boolean = () => true,
+      ) => {
+        switch (clicked) {
+          case "add-to-chat":
+            if (!selectionAction?.selection || !isCurrent()) return;
+            handleAddTerminalContext(selectionAction.selection);
+            terminalRef.current?.clearSelection();
+            return;
+          case "copy":
+            if (!selectionAction || !isCurrent()) return;
+            try {
+              await writeTextToClipboard(selectionAction.clipboardText, "terminal selection");
+            } catch (error) {
+              if (!isCurrent()) return;
+              const activeTerminal = terminalRef.current;
+              if (activeTerminal) {
+                writeSystemMessage(
+                  activeTerminal,
+                  error instanceof Error ? error.message : "Unable to copy terminal selection",
+                );
+              }
+            }
+            return;
+          case "paste":
+            if (!isCurrent()) return;
+            try {
+              const text = await navigator.clipboard.readText();
+              if (isCurrent()) terminalRef.current?.paste(text);
+            } catch (error) {
+              if (!isCurrent()) return;
+              const activeTerminal = terminalRef.current;
+              if (activeTerminal) {
+                writeSystemMessage(
+                  activeTerminal,
+                  error instanceof Error ? error.message : "Unable to read clipboard text",
+                );
+              }
+            }
+            return;
+          case null:
+            return;
         }
+      };
+
+      const showSelectionAction = async () => {
+        if (!localApi) return;
         if (selectionActionMenuOpenRef.current) {
           return;
         }
@@ -532,46 +610,67 @@ export function TerminalViewport({
           return;
         }
         const requestId = ++selectionActionRequestIdRef.current;
+        terminalMenuAbortController?.abort();
+        const abortController = new AbortController();
+        terminalMenuAbortController = abortController;
         selectionActionMenuOpenRef.current = true;
         const clicked = await localApi.contextMenu
           .show(
-            [
-              { id: "add-to-chat", label: "Add to chat" },
-              { id: "copy", label: "Copy" },
-            ],
+            terminalContextMenuItems({
+              canAddToChat: nextAction.selection !== null,
+              canCopy: true,
+            }),
             nextAction.position,
+            { presentation: "styled", signal: abortController.signal },
           )
           .finally(() => {
-            selectionActionMenuOpenRef.current = false;
+            if (terminalMenuAbortController === abortController) {
+              terminalMenuAbortController = null;
+              selectionActionMenuOpenRef.current = false;
+            }
           });
         if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
           return;
         }
-        switch (clicked) {
-          case "add-to-chat":
-            handleAddTerminalContext(nextAction.selection);
-            terminalRef.current?.clearSelection();
-            terminalRef.current?.focus();
-            return;
-          case "copy":
-            try {
-              await writeTextToClipboard(nextAction.clipboardText, "terminal selection");
-            } catch (error) {
-              if (requestId !== selectionActionRequestIdRef.current) {
-                return;
-              }
-              const activeTerminal = terminalRef.current;
-              if (activeTerminal) {
-                writeSystemMessage(
-                  activeTerminal,
-                  error instanceof Error ? error.message : "Unable to copy terminal selection",
-                );
-              }
+        const isCurrent = () =>
+          requestId === selectionActionRequestIdRef.current && !abortController.signal.aborted;
+        await performTerminalMenuAction(clicked, nextAction, isCurrent);
+        if (shouldRestoreTerminalFocusAfterMenuAction(clicked) && isCurrent()) {
+          terminalRef.current?.focus();
+        }
+      };
+
+      const showTerminalContextMenu = async (event: MouseEvent) => {
+        if (!localApi) return;
+        const selectionAction = readSelectionAction();
+        const requestId = ++selectionActionRequestIdRef.current;
+        terminalMenuAbortController?.abort();
+        const abortController = new AbortController();
+        terminalMenuAbortController = abortController;
+        selectionActionMenuOpenRef.current = true;
+        const clicked = await localApi.contextMenu
+          .show(
+            terminalContextMenuItems({
+              canAddToChat: selectionAction?.selection != null,
+              canCopy: selectionAction !== null,
+            }),
+            {
+              x: event.clientX,
+              y: event.clientY,
+            },
+            { presentation: "styled", signal: abortController.signal },
+          )
+          .finally(() => {
+            if (terminalMenuAbortController === abortController) {
+              terminalMenuAbortController = null;
+              selectionActionMenuOpenRef.current = false;
             }
-            if (requestId === selectionActionRequestIdRef.current) {
-              terminalRef.current?.focus();
-            }
-            return;
+          });
+        const isCurrent = () =>
+          requestId === selectionActionRequestIdRef.current && !abortController.signal.aborted;
+        await performTerminalMenuAction(clicked, selectionAction, isCurrent);
+        if (shouldRestoreTerminalFocusAfterMenuAction(clicked) && isCurrent()) {
+          terminalRef.current?.focus();
         }
       };
 
@@ -668,6 +767,10 @@ export function TerminalViewport({
         })();
       }
 
+      function handleContextMenu(event: MouseEvent): void {
+        clearSelectionAction();
+        void showTerminalContextMenu(event);
+      }
       function handleData(data: string): void {
         void (async () => {
           const result = await writeTerminal(data);

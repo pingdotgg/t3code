@@ -116,6 +116,34 @@ export function dismissContextMenu(): void {
   activeContextMenuDismiss = null;
 }
 
+export function contextMenuAcceleratorAction<T extends string>(
+  items: readonly ContextMenuItem<T>[],
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "isComposing" | "key" | "metaKey" | "shiftKey">,
+): T | null {
+  if (event.isComposing) return null;
+  for (const item of items) {
+    if (item.disabled) continue;
+    if (item.children) {
+      const childAction = contextMenuAcceleratorAction(item.children, event);
+      if (childAction !== null) return childAction;
+    }
+    if (!item.accelerator) continue;
+
+    const parts = item.accelerator.toLowerCase().split("+");
+    const key = parts.at(-1);
+    if (
+      event.key.toLowerCase() === key &&
+      event.altKey === parts.includes("alt") &&
+      event.ctrlKey === parts.includes("ctrl") &&
+      event.metaKey === (parts.includes("command") || parts.includes("cmd")) &&
+      event.shiftKey === parts.includes("shift")
+    ) {
+      return item.id;
+    }
+  }
+  return null;
+}
+
 /**
  * Imperative DOM-based context menu for non-Electron environments.
  * Supports nested submenus and resolves with the clicked leaf item id.
@@ -123,8 +151,13 @@ export function dismissContextMenu(): void {
 export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
+  options?: { readonly signal?: AbortSignal },
 ): Promise<T | null> {
   return new Promise<T | null>((resolve) => {
+    if (options?.signal?.aborted) {
+      resolve(null);
+      return;
+    }
     const menuStack: HTMLDivElement[] = [];
     let isDisposed = false;
     let canDismissFromPointer = false;
@@ -139,19 +172,31 @@ export function showContextMenuFallback<T extends string>(
       if (activeContextMenuDismiss === dismiss) {
         activeContextMenuDismiss = null;
       }
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("contextmenu", onContextMenu, true);
+      document.removeEventListener("wheel", onWheel, true);
+      options?.signal?.removeEventListener("abort", onAbort);
       for (const menu of menuStack) {
         menu.remove();
       }
       resolve(result);
     };
 
+    const onAbort = () => cleanup(null);
+
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) return;
       if (event.key === "Escape") {
         event.preventDefault();
         cleanup(null);
+        return;
+      }
+      const acceleratorAction = contextMenuAcceleratorAction(items, event);
+      if (acceleratorAction !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        cleanup(acceleratorAction);
       }
     };
 
@@ -170,6 +215,13 @@ export function showContextMenuFallback<T extends string>(
       cleanup(null);
     };
 
+    const onWheel = (event: WheelEvent) => {
+      if (isNodeWithinMenuStack(event.target, menuStack)) {
+        return;
+      }
+      cleanup(null);
+    };
+
     const closeMenusFromLevel = (level: number) => {
       while (menuStack.length > level) {
         menuStack.pop()?.remove();
@@ -184,20 +236,27 @@ export function showContextMenuFallback<T extends string>(
     ) => {
       closeMenusFromLevel(level);
 
+      const usesCompactShortcutLayout = entries.some((item) => item.accelerator);
       const menu = document.createElement("div");
-      menu.className =
-        "dropdown-glass fixed z-[10000] min-w-32 max-w-sm overflow-hidden rounded-lg bg-clip-padding text-popover-foreground outline-none";
-      menu.style.cssText =
-        "position:fixed;z-index:10000;min-width:8rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-lg);background-clip:padding-box;color:var(--popover-foreground);outline:none;pointer-events:auto;";
+      menu.className = `dropdown-glass fixed z-[10000] max-w-sm overflow-hidden bg-clip-padding text-popover-foreground outline-none ${
+        usesCompactShortcutLayout ? "min-w-[14.25rem] rounded-[11px]" : "min-w-32 rounded-lg"
+      }`;
+      menu.style.cssText = `position:fixed;z-index:10000;min-width:${
+        usesCompactShortcutLayout ? "min(14.25rem,calc(100vw - 0.75rem))" : "8rem"
+      };max-width:24rem;overflow:hidden;border-radius:${
+        usesCompactShortcutLayout ? "0.6875rem" : "var(--radius-lg)"
+      };background-clip:padding-box;color:var(--popover-foreground);outline:none;pointer-events:auto;`;
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
 
       const inner = document.createElement("div");
       inner.className =
-        "max-h-[min(24rem,70vh)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
-      inner.style.cssText =
-        "max-height:min(24rem,70vh);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
+        "max-h-[min(24rem,70vh)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1 data-[compact=true]:p-[5px]";
+      inner.dataset.compact = String(usesCompactShortcutLayout);
+      inner.style.cssText = `max-height:min(24rem,70vh);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:${
+        usesCompactShortcutLayout ? "0.3125rem" : "0.25rem"
+      };`;
 
       for (const item of entries) {
         if (item.header === true) {
@@ -216,21 +275,31 @@ export function showContextMenuFallback<T extends string>(
         button.type = "button";
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
-        const rowBase =
-          "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
+        const rowBase = usesCompactShortcutLayout
+          ? "flex min-h-[2.125rem] w-full cursor-default select-none items-center gap-[9px] rounded-[7px] px-2 py-1.5 text-left text-xs outline-none transition-colors"
+          : "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
         button.className = isDisabled
-          ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground opacity-64`
+          ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground ${
+              usesCompactShortcutLayout ? "opacity-52" : "opacity-64"
+            }`
           : isLeafDestructive
             ? `${rowBase} text-destructive-foreground hover:bg-destructive/10 hover:text-destructive-foreground`
             : `${rowBase} text-foreground hover:bg-accent hover:text-accent-foreground`;
-        button.style.cssText =
-          "display:flex;width:100%;min-height:1.75rem;align-items:center;gap:0.5rem;border:0;border-radius:var(--radius-sm);background:transparent;padding:0.25rem 0.5rem;color:var(--foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.875rem;line-height:1.25rem;text-align:left;cursor:default;";
+        button.style.cssText = `display:flex;width:100%;min-height:${
+          usesCompactShortcutLayout ? "2.125rem" : "1.75rem"
+        };align-items:center;gap:${usesCompactShortcutLayout ? "0.5625rem" : "0.5rem"};border:0;border-radius:${
+          usesCompactShortcutLayout ? "0.4375rem" : "var(--radius-sm)"
+        };background:transparent;padding:${
+          usesCompactShortcutLayout ? "0.375rem 0.5rem" : "0.25rem 0.5rem"
+        };color:var(--foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:${
+          usesCompactShortcutLayout ? "0.75rem" : "0.875rem"
+        };font-weight:${usesCompactShortcutLayout ? "450" : "400"};line-height:1.25rem;text-align:left;cursor:default;`;
         if (isLeafDestructive) {
           button.style.color = "var(--destructive-foreground)";
         }
         if (isDisabled) {
           button.style.color = "var(--muted-foreground)";
-          button.style.opacity = "0.64";
+          button.style.opacity = usesCompactShortcutLayout ? "0.52" : "0.64";
           button.style.pointerEvents = "none";
         }
 
@@ -245,6 +314,16 @@ export function showContextMenuFallback<T extends string>(
         label.className = "min-w-0 flex-1 truncate";
         label.textContent = item.label;
         button.appendChild(label);
+
+        if (item.accelerator) {
+          const accelerator = document.createElement("kbd");
+          accelerator.className =
+            "ms-auto shrink-0 rounded border border-border/70 bg-muted/70 px-[5px] font-mono text-[10px] text-muted-foreground leading-[1.55]";
+          accelerator.style.cssText =
+            "margin-inline-start:auto;flex-shrink:0;border:1px solid color-mix(in srgb,var(--border) 70%,transparent);border-radius:0.25rem;background:color-mix(in srgb,var(--muted) 70%,transparent);padding:0 0.3125rem;color:var(--muted-foreground);font-family:var(--font-mono,monospace);font-size:0.625rem;line-height:1.55;";
+          accelerator.textContent = item.accelerator.replace(/^Command\+/u, "⌘");
+          button.appendChild(accelerator);
+        }
 
         if (hasChildren) {
           const chevron = document.createElement("span");
@@ -315,9 +394,11 @@ export function showContextMenuFallback<T extends string>(
       });
     };
 
-    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
+    document.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    options?.signal?.addEventListener("abort", onAbort, { once: true });
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
     // Only one fallback menu can be open at a time: a new show must dismiss
     // any prior one, or its DOM and listeners leak and close() can only ever

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
+import {
+  contextMenuAcceleratorAction,
+  dismissContextMenu,
+  showContextMenuFallback,
+} from "./contextMenuFallback";
 
 type FakeListener = (event: FakeDomEvent) => void;
 
@@ -17,6 +21,8 @@ class FakeDomEvent {
   preventDefault() {
     this.defaultPrevented = true;
   }
+
+  stopPropagation() {}
 }
 
 class FakeElement {
@@ -139,6 +145,13 @@ class FakeDocument {
     }
   }
 
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
@@ -196,6 +209,18 @@ describe("showContextMenuFallback", () => {
     await expect(selectionPromise).resolves.toBe("rename");
   });
 
+  it("renders shortcut hints next to menu labels", () => {
+    void showContextMenuFallback([
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
+      { id: "paste", label: "Paste", accelerator: "Command+V" },
+    ]);
+
+    const shortcuts = (document as unknown as FakeDocument)
+      .querySelectorAll("kbd")
+      .map((element) => element.textContent);
+    expect(shortcuts).toEqual(["Ctrl+Shift+C", "⌘V"]);
+  });
+
   it("ignores a click from the gesture that opened the menu", async () => {
     let enablePointerSelection: ((time: number) => void) | undefined;
     vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {
@@ -211,6 +236,40 @@ describe("showContextMenuFallback", () => {
     renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename");
+  });
+
+  it("closes without an action when its owner aborts", async () => {
+    const abortController = new AbortController();
+    const selectionPromise = showContextMenuFallback(
+      [{ id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" }],
+      undefined,
+      { signal: abortController.signal },
+    );
+
+    abortController.abort();
+
+    await expect(selectionPromise).resolves.toBeNull();
+    expect((document as unknown as FakeDocument).querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("closes when the page or terminal is scrolled", async () => {
+    const selectionPromise = showContextMenuFallback([{ id: "copy", label: "Copy" }]);
+
+    (document as unknown as FakeDocument).dispatchEvent(new FakeDomEvent("wheel"));
+
+    await expect(selectionPromise).resolves.toBeNull();
+    expect((document as unknown as FakeDocument).querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("stays open while its own scrollable contents are scrolled", () => {
+    void showContextMenuFallback([{ id: "copy", label: "Copy" }]);
+    const menu = (document as unknown as FakeDocument).body.children[0];
+
+    (document as unknown as FakeDocument).dispatchEvent(
+      new FakeDomEvent("wheel", { target: menu }),
+    );
+
+    expect(findButton("Copy")).toBeTruthy();
   });
 
   it("opens nested submenus and resolves the clicked leaf id", async () => {
@@ -268,5 +327,58 @@ describe("dismissContextMenu", () => {
 
     dismissContextMenu();
     await expect(secondPromise).resolves.toBeNull();
+  });
+});
+
+describe("contextMenuAcceleratorAction", () => {
+  const event = (overrides: Partial<Parameters<typeof contextMenuAcceleratorAction>[1]> = {}) => ({
+    altKey: false,
+    ctrlKey: false,
+    isComposing: false,
+    key: "",
+    metaKey: false,
+    shiftKey: false,
+    ...overrides,
+  });
+
+  it("matches Windows and Linux terminal shortcuts", () => {
+    const items = [
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
+      { id: "paste", label: "Paste", accelerator: "Ctrl+Shift+V" },
+    ] as const;
+    expect(
+      contextMenuAcceleratorAction(items, event({ key: "c", ctrlKey: true, shiftKey: true })),
+    ).toBe("copy");
+    expect(
+      contextMenuAcceleratorAction(items, event({ key: "V", ctrlKey: true, shiftKey: true })),
+    ).toBe("paste");
+  });
+
+  it("matches macOS Command shortcuts", () => {
+    expect(
+      contextMenuAcceleratorAction(
+        [{ id: "copy", label: "Copy", accelerator: "Command+C" }],
+        event({ key: "c", metaKey: true }),
+      ),
+    ).toBe("copy");
+  });
+
+  it("does not activate disabled or partially matched shortcuts", () => {
+    const items = [
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C", disabled: true },
+    ] as const;
+    expect(
+      contextMenuAcceleratorAction(items, event({ key: "c", ctrlKey: true, shiftKey: true })),
+    ).toBeNull();
+    expect(contextMenuAcceleratorAction(items, event({ key: "c", ctrlKey: true }))).toBeNull();
+  });
+
+  it("does not activate shortcuts during IME composition", () => {
+    expect(
+      contextMenuAcceleratorAction(
+        [{ id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" }],
+        event({ key: "c", ctrlKey: true, shiftKey: true, isComposing: true }),
+      ),
+    ).toBeNull();
   });
 });

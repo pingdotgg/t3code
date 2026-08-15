@@ -4,6 +4,7 @@ import type { GhosttyCell, GhosttyRow } from "./core";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
+  GhosttyTerminalSurface,
   advanceTerminalSelectionClickSequence,
   ghosttyMouseButton,
   isTerminalAltGraphText,
@@ -27,6 +28,17 @@ import {
   terminalWheelArrowData,
   terminalWheelDeltaRows,
 } from "./surface";
+
+const terminalSurfaceForPaste = (onData: (data: string) => void) => {
+  const surface = Object.create(GhosttyTerminalSurface.prototype) as GhosttyTerminalSurface;
+  Object.assign(surface, {
+    disposed: false,
+    pasteShortcutToken: 0,
+    options: { onData },
+    core: { encodePaste: (data: string) => `[paste]${data}` },
+  });
+  return surface;
+};
 
 const cell = (text: string): GhosttyCell => ({
   text,
@@ -252,6 +264,18 @@ describe("isTerminalPasteShortcut", () => {
     expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
     );
+  });
+});
+
+describe("GhosttyTerminalSurface paste", () => {
+  it("invalidates an outstanding keyboard clipboard read", () => {
+    const onData = vi.fn();
+    const surface = terminalSurfaceForPaste(onData);
+
+    surface.paste("from context menu");
+
+    expect(onData).toHaveBeenCalledWith("[paste]from context menu");
+    expect((surface as unknown as { pasteShortcutToken: number }).pasteShortcutToken).toBe(1);
   });
 });
 

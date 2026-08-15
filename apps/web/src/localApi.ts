@@ -35,19 +35,24 @@ function createBrowserLocalApi(): LocalApi {
       show: async <T extends string>(
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
+        options?: {
+          readonly presentation?: "native" | "styled";
+          readonly signal?: AbortSignal;
+        },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
+        if (window.desktopBridge && options?.presentation !== "styled") {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
-        return showContextMenuFallback(items, position);
+        return showContextMenuFallback(
+          items,
+          position,
+          options?.signal ? { signal: options.signal } : undefined,
+        );
       },
-      // A native desktop menu blocks keyboard input and closes on outside
-      // interaction, so nothing to do there; the DOM fallback needs an explicit
-      // dismiss when the state behind it goes away.
+      // Native desktop menus close on outside interaction; dismissing the DOM
+      // fallback is still necessary for callers that requested styled presentation.
       close: async () => {
-        if (!window.desktopBridge) {
-          dismissContextMenu();
-        }
+        dismissContextMenu();
       },
     },
     persistence: {

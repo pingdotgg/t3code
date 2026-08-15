@@ -4,9 +4,54 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  shouldRestoreTerminalFocusAfterMenuAction,
+  terminalContextMenuItems,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
 } from "./ThreadTerminalDrawer";
+
+describe("shouldRestoreTerminalFocusAfterMenuAction", () => {
+  it("restores focus only after terminal-local actions", () => {
+    expect(shouldRestoreTerminalFocusAfterMenuAction("copy")).toBe(true);
+    expect(shouldRestoreTerminalFocusAfterMenuAction("paste")).toBe(true);
+    expect(shouldRestoreTerminalFocusAfterMenuAction("add-to-chat")).toBe(false);
+    expect(shouldRestoreTerminalFocusAfterMenuAction(null)).toBe(false);
+  });
+});
+
+describe("terminalContextMenuItems", () => {
+  it("offers terminal actions and disables selection-only actions without a selection", () => {
+    expect(terminalContextMenuItems({ canAddToChat: false, canCopy: false }, "Win32")).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C", disabled: true },
+      { id: "paste", label: "Paste", accelerator: "Ctrl+Shift+V" },
+    ]);
+  });
+
+  it("enables copy and add to chat when terminal text is selected", () => {
+    expect(terminalContextMenuItems({ canAddToChat: true, canCopy: true }, "Win32")).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: false },
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C", disabled: false },
+      { id: "paste", label: "Paste", accelerator: "Ctrl+Shift+V" },
+    ]);
+  });
+
+  it("keeps Copy enabled for selections that cannot be added to chat", () => {
+    expect(terminalContextMenuItems({ canAddToChat: false, canCopy: true }, "Win32")).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C", disabled: false },
+      { id: "paste", label: "Paste", accelerator: "Ctrl+Shift+V" },
+    ]);
+  });
+
+  it("uses native Command shortcuts on macOS", () => {
+    expect(terminalContextMenuItems({ canAddToChat: true, canCopy: true }, "MacIntel")).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: false },
+      { id: "copy", label: "Copy", accelerator: "Command+C", disabled: false },
+      { id: "paste", label: "Paste", accelerator: "Command+V" },
+    ]);
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {

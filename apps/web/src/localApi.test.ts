@@ -11,6 +11,7 @@ const showContextMenuFallbackMock =
     <T extends string>(
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
+      options?: { readonly signal?: AbortSignal },
     ) => Promise<T | null>
   >();
 const dismissContextMenuMock = vi.fn<() => void>();
@@ -84,10 +85,19 @@ describe("LocalApi", () => {
     const items = [{ id: "rename", label: "Rename" }] as const;
 
     await expect(createLocalApi().contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe("rename");
-    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 }, undefined);
   });
 
   it("dismisses an open browser context menu without a desktop bridge", async () => {
+    const { createLocalApi } = await import("./localApi");
+
+    await createLocalApi().contextMenu.close();
+
+    expect(dismissContextMenuMock).toHaveBeenCalledOnce();
+  });
+
+  it("dismisses a styled context menu with a desktop bridge", async () => {
+    testWindow().desktopBridge = {} as DesktopBridge;
     const { createLocalApi } = await import("./localApi");
 
     await createLocalApi().contextMenu.close();
@@ -140,6 +150,55 @@ describe("LocalApi", () => {
     expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp" });
     expect(getClientSettings).toHaveBeenCalledTimes(1);
     expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);
+  });
+
+  it("keeps context menus native on desktop when fallback cancellation is available", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("copy");
+    showContextMenuFallbackMock.mockResolvedValue("paste");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const abortController = new AbortController();
+    const { createLocalApi } = await import("./localApi");
+    const items = [{ id: "paste", label: "Paste", accelerator: "Ctrl+Shift+V" }] as const;
+
+    await expect(
+      createLocalApi().contextMenu.show(
+        items,
+        { x: 4, y: 5 },
+        {
+          signal: abortController.signal,
+        },
+      ),
+    ).resolves.toBe("copy");
+    expect(showContextMenu).toHaveBeenCalledWith(items, { x: 4, y: 5 });
+    expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the styled context menu on desktop when requested", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("copy");
+    showContextMenuFallbackMock.mockResolvedValue("paste");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const abortController = new AbortController();
+    const { createLocalApi } = await import("./localApi");
+    const items = [{ id: "paste", label: "Paste", accelerator: "Ctrl+Shift+V" }] as const;
+
+    await expect(
+      createLocalApi().contextMenu.show(
+        items,
+        { x: 4, y: 5 },
+        {
+          presentation: "styled",
+          signal: abortController.signal,
+        },
+      ),
+    ).resolves.toBe("paste");
+    expect(showContextMenu).not.toHaveBeenCalled();
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
+      items,
+      { x: 4, y: 5 },
+      {
+        signal: abortController.signal,
+      },
+    );
   });
 
   it("persists client settings in browser storage", async () => {
