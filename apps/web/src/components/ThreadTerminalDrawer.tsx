@@ -1559,8 +1559,8 @@ export default function ThreadTerminalDrawer({
                             aria-label={`Close ${displayLabel}`}
                             onClick={() => onCloseTerminal(terminalId)}
                           >
-                            <TerminalSquare className="size-3 shrink-0 group-hover/tab:hidden group-focus-visible/close:hidden" />
-                            <XIcon className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
+                            <TerminalSquare className="size-3 shrink-0 group-hover/tab:hidden group-focus-visible/close:hidden pointer-coarse:hidden" />
+                            <XIcon className="hidden size-3 group-hover/tab:block group-focus-visible/close:block pointer-coarse:block" />
                           </button>
                           {isRenaming ? (
                             <input
