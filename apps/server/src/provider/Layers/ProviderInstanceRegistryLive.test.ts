@@ -135,14 +135,10 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
 });
 
 /** Empty shell for skill workspace resolution during driver health checks. */
+// Skill discovery is the only projection consumer here: it asks for active
+// workspace cwds, and an empty list keeps probes off the filesystem.
 const emptySkillProjectionLayer = Layer.succeed(ProjectionSnapshotQuery, {
-  getShellSnapshot: () =>
-    Effect.succeed({
-      snapshotSequence: 0,
-      projects: [],
-      threads: [],
-      updatedAt: "1970-01-01T00:00:00.000Z",
-    }),
+  getActiveWorkspaceCwds: () => Effect.succeed([]),
 } as never);
 
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {

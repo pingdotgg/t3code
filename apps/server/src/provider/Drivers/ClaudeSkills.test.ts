@@ -311,7 +311,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const workspaceB = path.join(tempDir, "workspace-b");
 
       // Each spawned CLI resolves the relative value against its own cwd, so
-      // both config dirs are real user roots — not just the first workspace's.
+      // both config dirs are real user roots — not just the first workspace's
+      // — and each is tagged so it cannot leak into the other's picker.
       yield* writeSkill(
         path.join(workspaceA, "relative-config", "skills"),
         "skill-a",
@@ -328,11 +329,36 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       });
 
       assert.deepEqual(
-        skills.map((skill) => [skill.name, skill.scope]),
+        skills.map((skill) => [skill.name, skill.scope, skill.sourceCwd]),
         [
-          ["skill-a", "user"],
-          ["skill-b", "user"],
+          ["skill-a", "user", path.resolve(workspaceA)],
+          ["skill-b", "user", path.resolve(workspaceB)],
         ],
+      );
+    }),
+  );
+
+  it.effect("leaves a shared config dir untagged so it stays global", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "shared-tool",
+        ["---", "name: shared-tool", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, [
+        path.join(tempDir, "workspace-a"),
+        path.join(tempDir, "workspace-b"),
+      ]);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.sourceCwd]),
+        [["shared-tool", undefined]],
       );
     }),
   );

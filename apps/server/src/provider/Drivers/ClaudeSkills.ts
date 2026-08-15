@@ -78,18 +78,26 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const projectCwds = normalizeSkillWorkspaceCwds(path, cwd);
 
   // A relative CLAUDE_CONFIG_DIR resolves against each spawned CLI's own cwd,
-  // so every workspace can contribute a distinct user root. Absolute values
-  // (the common case) collapse to a single root here.
-  const configSkillDirs = new Set<string>();
+  // so workspaces can disagree about where user skills live.
+  const configSkillDirByCwd = new Map<string | undefined, string>();
   for (const configCwd of projectCwds.length > 0 ? projectCwds : [undefined]) {
     const configDirPath = yield* resolveClaudeConfigDirPath(config, resolvedEnvironment, configCwd);
-    configSkillDirs.add(path.join(configDirPath, "skills"));
+    configSkillDirByCwd.set(configCwd, path.join(configDirPath, "skills"));
   }
 
-  const roots: SkillDiscoveryRoot[] = [...configSkillDirs].map((directory) => ({
-    directory,
-    scope: "user",
-  }));
+  // One shared config dir (homePath, or any absolute value — the common case)
+  // is genuinely global, so it stays untagged. When workspaces resolve to
+  // different dirs, each root is tagged with the cwd whose CLI would load it;
+  // otherwise one project's config skills would surface in every other chat.
+  const distinctConfigSkillDirs = new Set(configSkillDirByCwd.values());
+  const roots: SkillDiscoveryRoot[] =
+    distinctConfigSkillDirs.size <= 1
+      ? [...distinctConfigSkillDirs].map((directory) => ({ directory, scope: "user" as const }))
+      : [...configSkillDirByCwd].map(([configCwd, directory]) => ({
+          directory,
+          scope: "user" as const,
+          ...(configCwd ? { sourceCwd: configCwd } : {}),
+        }));
 
   for (const projectCwd of projectCwds) {
     const gitRoot = yield* resolveGitRootPath(projectCwd);
