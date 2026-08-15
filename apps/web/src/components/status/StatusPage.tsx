@@ -91,7 +91,7 @@ function RateLimitRow({
         aria-valuenow={percent}
       >
         <div
-          className="h-full rounded-full bg-primary transition-[width]"
+          className="h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none"
           style={{ width: `${percent}%` }}
         />
       </div>
