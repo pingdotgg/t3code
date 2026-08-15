@@ -131,7 +131,7 @@ func resolveApp(_ query: String) -> ResolvedApp? {
     let lowered = query.lowercased()
 
     var matches: [NSRunningApplication]
-    if let pid = Int32(query) {
+    if let pid = Int32(query), running.contains(where: { $0.processIdentifier == pid }) {
         matches = running.filter { $0.processIdentifier == pid }
     } else {
         matches = running.filter { $0.bundleIdentifier?.lowercased() == lowered }
