@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  RuntimeTaskId,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -70,12 +71,19 @@ import {
   extractXAiAskUserQuestions,
   grokPromptCountForTurns,
   grokRewindTargetForTurnCount,
+  grokWorkflowAgentIsTerminal,
+  grokWorkflowAgentStatus,
+  grokWorkflowRunIsTerminal,
+  grokWorkflowRunStatus,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   parseGrokRewindExecute,
   parseGrokRewindPoints,
+  parseXAiWorkflowUpdated,
   promptResponseHasMissingXAiStopReason,
   XAiAskUserQuestionRequest,
+  XAiSessionNotification,
+  type GrokWorkflowUpdated,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -132,6 +140,8 @@ interface GrokSessionContext {
   reasoningEffortMenus: Map<string, ReadonlyArray<string>>;
   maxTokensByModel: Map<string, number>;
   maxTokens: number | undefined;
+  workflowRunIds: Set<string>;
+  workflowAgentIds: Set<string>;
   stopped: boolean;
 }
 
@@ -287,6 +297,179 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+
+    const emitGrokWorkflowRuntimeEvents = (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId | undefined;
+      readonly update: GrokWorkflowUpdated;
+      readonly method: string;
+      readonly payload: unknown;
+    }) =>
+      Effect.gen(function* () {
+        const ctx = sessions.get(input.threadId);
+        if (!ctx) {
+          return;
+        }
+        const stamp = yield* makeEventStamp();
+        const raw = {
+          source: "acp.grok.extension" as const,
+          method: input.method,
+          payload: input.payload,
+        };
+        const phases = input.update.phases.map((phase, index) => ({
+          index,
+          title: phase.title,
+        }));
+        const currentPhaseIndex = input.update.currentPhase
+          ? input.update.phases.findIndex((phase) => phase.title === input.update.currentPhase)
+          : -1;
+        const runStatus = grokWorkflowRunStatus(input.update.status);
+        const runStarted = ctx.workflowRunIds.has(input.update.runId);
+        if (!runStarted) {
+          ctx.workflowRunIds.add(input.update.runId);
+        }
+        const runPayload = {
+          taskId: RuntimeTaskId.make(input.update.runId),
+          description: input.update.objective || input.update.name,
+          taskType: "local_workflow",
+          workflowName: input.update.name,
+          title: input.update.name,
+          ...(phases.length > 0 ? { phases } : {}),
+          ...(currentPhaseIndex >= 0 ? { phaseIndex: currentPhaseIndex } : {}),
+          ...(input.update.currentPhase ? { phaseTitle: input.update.currentPhase } : {}),
+          runHandles: { runId: input.update.runId },
+        };
+        yield* offerRuntimeEvent({
+          type: runStarted ? "task.progress" : "task.started",
+          ...stamp,
+          provider: PROVIDER,
+          threadId: input.threadId,
+          turnId: input.turnId,
+          payload: runStarted
+            ? {
+                ...runPayload,
+                summary:
+                  input.update.currentAgentLabel ??
+                  input.update.currentPhase ??
+                  input.update.status,
+                status: runStatus,
+              }
+            : runPayload,
+          raw,
+        });
+        if (runStarted && grokWorkflowRunIsTerminal(input.update.status)) {
+          yield* offerRuntimeEvent({
+            type: "task.completed",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            turnId: input.turnId,
+            payload: {
+              taskId: RuntimeTaskId.make(input.update.runId),
+              status:
+                input.update.status === "failed"
+                  ? "failed"
+                  : input.update.status === "complete"
+                    ? "completed"
+                    : "stopped",
+              summary:
+                input.update.resultSummary ?? input.update.pauseMessage ?? input.update.status,
+              taskType: "local_workflow",
+              workflowName: input.update.name,
+              title: input.update.name,
+              ...(phases.length > 0 ? { phases } : {}),
+              runHandles: { runId: input.update.runId },
+            },
+            raw,
+          });
+        }
+
+        let workflowTokens = 0;
+        for (const [agentIndex, agent] of input.update.agents.entries()) {
+          workflowTokens += agent.tokensUsed;
+          const agentStarted = ctx.workflowAgentIds.has(agent.agentId);
+          if (!agentStarted) {
+            ctx.workflowAgentIds.add(agent.agentId);
+          }
+          const agentStatus = grokWorkflowAgentStatus(agent.state);
+          const agentPayload = {
+            taskId: RuntimeTaskId.make(agent.agentId),
+            description: agent.label,
+            taskType: "subagent",
+            agentId: input.update.runId,
+            title: agent.label,
+            workflowName: input.update.name,
+            ...(agent.model ? { model: agent.model } : {}),
+            ...(agent.phase ? { phaseTitle: agent.phase } : {}),
+            agentIndex,
+          };
+          yield* offerRuntimeEvent({
+            type: agentStarted ? "task.progress" : "task.started",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            turnId: input.turnId,
+            payload: agentStarted
+              ? {
+                  ...agentPayload,
+                  summary: agent.state,
+                  status: agentStatus,
+                  ...(agent.tokensUsed > 0 || agent.durationMs > 0
+                    ? {
+                        typedUsage: {
+                          totalTokens: agent.tokensUsed,
+                          ...(agent.durationMs > 0 ? { durationMs: agent.durationMs } : {}),
+                        },
+                      }
+                    : {}),
+                }
+              : agentPayload,
+            raw,
+          });
+          if (agentStarted && grokWorkflowAgentIsTerminal(agent.state)) {
+            yield* offerRuntimeEvent({
+              type: "task.completed",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId: input.turnId,
+              payload: {
+                taskId: RuntimeTaskId.make(agent.agentId),
+                status:
+                  agent.state === "failed" || agent.state === "error"
+                    ? "failed"
+                    : agent.state === "cancelled"
+                      ? "stopped"
+                      : "completed",
+                summary: agent.label,
+                taskType: "subagent",
+                agentId: input.update.runId,
+                title: agent.label,
+                workflowName: input.update.name,
+                ...(agent.tokensUsed > 0 ? { typedUsage: { totalTokens: agent.tokensUsed } } : {}),
+              },
+              raw,
+            });
+          }
+        }
+
+        if (workflowTokens > 0) {
+          yield* offerRuntimeEvent({
+            type: "thread.token-usage.updated",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            turnId: input.turnId,
+            payload: {
+              usage: {
+                usedTokens: workflowTokens,
+                lastUsedTokens: workflowTokens,
+              },
+            },
+            raw,
+          });
+        }
+      });
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -683,6 +866,29 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ),
               { discard: true },
             );
+            yield* Effect.forEach(
+              ["x.ai/session_notification", "_x.ai/session_notification"] as const,
+              (method) =>
+                acp.handleExtNotification(method, XAiSessionNotification, (params) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      yield* logNative(input.threadId, method, params);
+                      const update = parseXAiWorkflowUpdated(params);
+                      if (!update) {
+                        return;
+                      }
+                      yield* emitGrokWorkflowRuntimeEvents({
+                        threadId: input.threadId,
+                        turnId: resolveSessionCallbackTurnId(sessions, input.threadId),
+                        update,
+                        method,
+                        payload: params,
+                      });
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
             yield* acp.handleRequestPermission((params) =>
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
@@ -817,6 +1023,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             maxTokens:
               (boundModelId ? maxTokensByModel.get(boundModelId) : undefined) ??
               currentGrokMaxTokensFromSessionSetup(started.sessionSetupResult),
+            workflowRunIds: new Set(),
+            workflowAgentIds: new Set(),
             stopped: false,
           };
 

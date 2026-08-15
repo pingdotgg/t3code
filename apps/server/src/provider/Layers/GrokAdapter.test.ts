@@ -1379,4 +1379,39 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("projects Grok workflow_updated notifications as task events", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-workflow");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_WORKFLOW: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const started = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "task.started" && event.payload.taskType === "local_workflow"
+          ? Deferred.succeed(started, event)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "review this", attachments: [] });
+      const event = yield* Deferred.await(started);
+      assert.equal(event.type, "task.started");
+      if (event.type === "task.started") {
+        assert.equal(event.payload.workflowName, "review-changes");
+        assert.equal(event.payload.taskType, "local_workflow");
+        assert.equal(event.payload.phases?.[0]?.title, "Plan");
+      }
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

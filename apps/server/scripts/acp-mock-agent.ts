@@ -298,6 +298,7 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
 ];
 const enableRewind = process.env.T3_ACP_ENABLE_REWIND === "1";
 const emitUsage = process.env.T3_ACP_EMIT_USAGE === "1";
+const emitWorkflow = process.env.T3_ACP_EMIT_WORKFLOW === "1";
 let rewindPoints: Array<{ prompt_index: number; prompt_preview: string }> = [];
 
 function modelState(): AcpSchema.SessionModelState {
@@ -901,6 +902,38 @@ const program = Effect.gen(function* () {
         rewindPoints.push({
           prompt_index: rewindPoints.length,
           prompt_preview: typeof preview === "string" ? preview : "",
+        });
+      }
+
+      if (emitWorkflow) {
+        writeJsonRpcNotification("x.ai/session_notification", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "workflow_updated",
+            run_id: "wf_review_1",
+            revision: 1,
+            name: "review-changes",
+            objective: "Review the latest diff",
+            status: "active",
+            phases: [
+              { title: "Plan", state: "done" },
+              { title: "Execute", state: "active" },
+            ],
+            current_phase: "Execute",
+            elapsed_ms: 1200,
+            active_agents: 1,
+            agents: [
+              {
+                agent_id: "agent_reviewer",
+                label: "Reviewer",
+                phase: "Execute",
+                model: "grok-4.6",
+                state: "running",
+                tokens_used: 42,
+                duration_ms: 800,
+              },
+            ],
+          },
         });
       }
 

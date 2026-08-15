@@ -13,10 +13,12 @@ import {
   extractXAiAskUserQuestions,
   grokPromptCountForTurns,
   grokRewindTargetForTurnCount,
+  grokWorkflowRunStatus,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
   parseGrokRewindPoints,
+  parseXAiWorkflowUpdated,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -361,5 +363,75 @@ describe("Grok rewind and usage helpers", () => {
       outputTokens: 4,
       reasoningOutputTokens: 3,
     });
+  });
+
+  it("reads Grok Build PromptUsage totals and cache-read tokens", () => {
+    expect(
+      extractGrokTokenUsage({
+        usage: {
+          inputTokens: 20,
+          outputTokens: 5,
+          cached_read_tokens: 8,
+          totals: { inputTokens: 20, outputTokens: 5, cachedReadTokens: 8 },
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: 25,
+      inputTokens: 20,
+      outputTokens: 5,
+      cachedInputTokens: 8,
+    });
+  });
+});
+
+describe("Grok workflow notifications", () => {
+  it("parses the official workflow_updated ACP envelope", () => {
+    const update = parseXAiWorkflowUpdated({
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "workflow_updated",
+        run_id: "wf_review_1",
+        name: "review-changes",
+        objective: "Review the latest diff",
+        status: "active",
+        phases: [
+          { title: "Plan", state: "done" },
+          { title: "Execute", state: "active" },
+        ],
+        current_phase: "Execute",
+        elapsed_ms: 1200,
+        agents: [
+          {
+            agent_id: "agent_reviewer",
+            label: "Reviewer",
+            state: "running",
+            tokens_used: 42,
+            duration_ms: 800,
+          },
+        ],
+      },
+    });
+    expect(update).toMatchObject({
+      runId: "wf_review_1",
+      name: "review-changes",
+      status: "active",
+      currentPhase: "Execute",
+    });
+    expect(update?.phases).toHaveLength(2);
+    expect(update?.agents[0]).toMatchObject({
+      agentId: "agent_reviewer",
+      tokensUsed: 42,
+    });
+    expect(grokWorkflowRunStatus("active")).toBe("running");
+    expect(grokWorkflowRunStatus("complete")).toBe("completed");
+  });
+
+  it("ignores non-workflow session notifications", () => {
+    expect(
+      parseXAiWorkflowUpdated({
+        sessionId: "sess-1",
+        update: { sessionUpdate: "model_changed", model_id: "grok-4.6" },
+      }),
+    ).toBeUndefined();
   });
 });

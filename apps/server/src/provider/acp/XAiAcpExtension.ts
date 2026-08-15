@@ -1,5 +1,6 @@
 import type {
   ProviderUserInputAnswers,
+  RuntimeTaskStatus,
   ThreadTokenUsageSnapshot,
   UserInputQuestion,
 } from "@t3tools/contracts";
@@ -554,16 +555,21 @@ function usageRecordFromUnknown(value: unknown): Record<string, unknown> | undef
     return undefined;
   }
   if (isRecord(record.usage)) {
-    return record.usage;
+    return usageRecordFromUnknown(record.usage);
   }
   if (isRecord(record.tokenUsage)) {
-    return record.tokenUsage;
+    return usageRecordFromUnknown(record.tokenUsage);
   }
   if (isRecord(record.token_usage)) {
-    return record.token_usage;
+    return usageRecordFromUnknown(record.token_usage);
   }
   if (isRecord(record.agentResult)) {
     return usageRecordFromUnknown(record.agentResult);
+  }
+  // Grok Build PromptUsage flattens totals onto the object, but older
+  // envelopes nest them. Merge so both shapes read the same fields.
+  if (isRecord(record.totals)) {
+    return { ...record.totals, ...record };
   }
   return record;
 }
@@ -603,6 +609,8 @@ export function extractGrokTokenUsage(
     usage.cachedInputTokens,
     usage.cache_read_input_tokens,
     usage.cacheReadInputTokens,
+    usage.cached_read_tokens,
+    usage.cachedReadTokens,
   );
   const usedTokens = readTokenCount(
     usage.usedTokens,
@@ -635,4 +643,177 @@ export function extractGrokTokenUsage(
       : {}),
     ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
   };
+}
+
+/**
+ * Grok Build fires workflow progress as `x.ai/session_notification` with
+ * `update.sessionUpdate === "workflow_updated"` (snake_case tag from the
+ * Rust `SessionUpdate` enum). T3 previously dropped the whole extension.
+ */
+export const XAiSessionNotification = Schema.Struct({
+  sessionId: Schema.optional(Schema.Unknown),
+  session_id: Schema.optional(Schema.Unknown),
+  update: Schema.Unknown,
+  _meta: Schema.optional(Schema.Unknown),
+});
+export type XAiSessionNotification = typeof XAiSessionNotification.Type;
+
+export interface GrokWorkflowPhase {
+  readonly title: string;
+  readonly state: string;
+}
+
+export interface GrokWorkflowAgent {
+  readonly agentId: string;
+  readonly label: string;
+  readonly phase: string | undefined;
+  readonly model: string | undefined;
+  readonly state: string;
+  readonly tokensUsed: number;
+  readonly durationMs: number;
+}
+
+export interface GrokWorkflowUpdated {
+  readonly runId: string;
+  readonly revision: number;
+  readonly name: string;
+  readonly objective: string;
+  readonly status: string;
+  readonly phases: ReadonlyArray<GrokWorkflowPhase>;
+  readonly currentPhase: string | undefined;
+  readonly agentBudget: number | undefined;
+  readonly agentsUsed: number | undefined;
+  readonly elapsedMs: number | undefined;
+  readonly activeAgents: number | undefined;
+  readonly currentAgentLabel: string | undefined;
+  readonly agents: ReadonlyArray<GrokWorkflowAgent>;
+  readonly pauseMessage: string | undefined;
+  readonly resultSummary: string | undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+export function parseXAiWorkflowUpdated(payload: unknown): GrokWorkflowUpdated | undefined {
+  const envelope = asRecord(payload);
+  const update = asRecord(envelope?.update) ?? envelope;
+  if (!update) {
+    return undefined;
+  }
+  const tag = readString(update.sessionUpdate) ?? readString(update.session_update);
+  if (tag !== undefined && tag !== "workflow_updated" && tag !== "WorkflowUpdated") {
+    return undefined;
+  }
+  const runId = readString(update.run_id) ?? readString(update.runId);
+  const name = readString(update.name);
+  if (runId === undefined || name === undefined) {
+    return undefined;
+  }
+  const phases = Array.isArray(update.phases)
+    ? update.phases.flatMap((entry): ReadonlyArray<GrokWorkflowPhase> => {
+        const record = asRecord(entry);
+        const title = readString(record?.title);
+        const state = readString(record?.state);
+        return title && state ? [{ title, state }] : [];
+      })
+    : [];
+  const agents = Array.isArray(update.agents)
+    ? update.agents.flatMap((entry): ReadonlyArray<GrokWorkflowAgent> => {
+        const record = asRecord(entry);
+        const agentId = readString(record?.agent_id) ?? readString(record?.agentId);
+        const label = readString(record?.label) ?? agentId;
+        const state = readString(record?.state);
+        if (agentId === undefined || state === undefined) {
+          return [];
+        }
+        return [
+          {
+            agentId,
+            label: label ?? agentId,
+            phase: readString(record?.phase),
+            model: readString(record?.model),
+            state,
+            tokensUsed: nonNegativeInt(record?.tokens_used ?? record?.tokensUsed) ?? 0,
+            durationMs: nonNegativeInt(record?.duration_ms ?? record?.durationMs) ?? 0,
+          },
+        ];
+      })
+    : [];
+  return {
+    runId,
+    revision: nonNegativeInt(update.revision) ?? 0,
+    name,
+    objective: readString(update.objective) ?? "",
+    status: readString(update.status) ?? "active",
+    phases,
+    currentPhase: readString(update.current_phase) ?? readString(update.currentPhase),
+    agentBudget: nonNegativeInt(update.agent_budget ?? update.agentBudget),
+    agentsUsed: nonNegativeInt(update.agents_used ?? update.agentsUsed),
+    elapsedMs: nonNegativeInt(update.elapsed_ms ?? update.elapsedMs),
+    activeAgents: nonNegativeInt(update.active_agents ?? update.activeAgents),
+    currentAgentLabel:
+      readString(update.current_agent_label) ?? readString(update.currentAgentLabel),
+    agents,
+    pauseMessage: readString(update.pause_message) ?? readString(update.pauseMessage),
+    resultSummary: readString(update.result_summary) ?? readString(update.resultSummary),
+  };
+}
+
+export function grokWorkflowRunStatus(status: string): RuntimeTaskStatus {
+  switch (status) {
+    case "active":
+      return "running";
+    case "complete":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+    case "interrupted":
+    case "cleared":
+      return "cancelled";
+    default:
+      return "idle";
+  }
+}
+
+export function grokWorkflowAgentStatus(state: string): RuntimeTaskStatus {
+  switch (state) {
+    case "queued":
+    case "pending":
+      return "pending";
+    case "running":
+    case "start":
+      return "running";
+    case "done":
+    case "completed":
+      return "completed";
+    case "failed":
+    case "error":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "running";
+  }
+}
+
+export function grokWorkflowRunIsTerminal(status: string): boolean {
+  return (
+    status === "complete" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted" ||
+    status === "cleared"
+  );
+}
+
+export function grokWorkflowAgentIsTerminal(state: string): boolean {
+  return (
+    state === "done" ||
+    state === "completed" ||
+    state === "failed" ||
+    state === "error" ||
+    state === "cancelled"
+  );
 }
