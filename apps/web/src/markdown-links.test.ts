@@ -1,11 +1,44 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  normalizeMarkdownFileLinkHrefKey,
+  normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
+
+describe("normalizeMarkdownLinkDestination", () => {
+  it("canonicalizes backslashes in windows drive paths", () => {
+    expect(
+      normalizeMarkdownLinkDestination(
+        "C:\\Users\\mike\\dev-stuff\\t3code\\apps\\web\\src\\markdown-links.ts",
+      ),
+    ).toBe("C:/Users/mike/dev-stuff/t3code/apps/web/src/markdown-links.ts");
+  });
+});
+
+describe("normalizeMarkdownFileLinkHrefKey", () => {
+  it("uses the same key for raw and encoded unicode drive paths", () => {
+    const encodedPath = "C:/Users/mike/dev-stuff/%E6%96%87%E6%A1%A3/apps/web/src/markdown-links.ts";
+
+    expect(
+      normalizeMarkdownFileLinkHrefKey(
+        "C:\\Users\\mike\\dev-stuff\\文档\\apps\\web\\src\\markdown-links.ts",
+      ),
+    ).toBe(encodedPath);
+    expect(normalizeMarkdownFileLinkHrefKey(encodedPath)).toBe(encodedPath);
+  });
+
+  it("preserves existing encoded octets", () => {
+    expect(
+      normalizeMarkdownFileLinkHrefKey(
+        "C:/Users/mike/dev-stuff/t3code/apps/web/src/file%2520name.ts",
+      ),
+    ).toBe("C:/Users/mike/dev-stuff/t3code/apps/web/src/file%2520name.ts");
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
@@ -36,6 +69,14 @@ describe("rewriteMarkdownFileUriHref", () => {
 });
 
 describe("resolveMarkdownFileLinkTarget", () => {
+  it("resolves windows drive paths", () => {
+    expect(
+      resolveMarkdownFileLinkTarget(
+        "C:/Users/mike/dev-stuff/t3code/apps/web/src/markdown-links.ts",
+      ),
+    ).toBe("C:/Users/mike/dev-stuff/t3code/apps/web/src/markdown-links.ts");
+  });
+
   it("resolves absolute posix file paths", () => {
     expect(resolveMarkdownFileLinkTarget("/Users/julius/project/AGENTS.md")).toBe(
       "/Users/julius/project/AGENTS.md",

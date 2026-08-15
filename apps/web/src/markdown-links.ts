@@ -61,7 +61,10 @@ function unwrapMarkdownLinkDestination(value: string): string {
 }
 
 export function normalizeMarkdownLinkDestination(value: string): string {
-  return unwrapMarkdownLinkDestination(value.trim());
+  const normalizedValue = unwrapMarkdownLinkDestination(value.trim());
+  return WINDOWS_DRIVE_PATH_PATTERN.test(normalizedValue)
+    ? normalizedValue.replaceAll("\\", "/")
+    : normalizedValue;
 }
 
 function stripSearchAndHash(value: string): { path: string; hash: string } {
@@ -106,6 +109,43 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   const target = parseFileUrlHref(normalizedHref, { decodePath: false });
   if (!target) return null;
   return `${target.path}${target.hash}`;
+}
+
+export function normalizeMarkdownFileLinkHrefKey(href: string): string {
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  const rewrittenHref = rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+  if (!WINDOWS_DRIVE_PATH_PATTERN.test(rewrittenHref)) return rewrittenHref;
+
+  const target = parseFileUrlHref(`file:///${rewrittenHref}`, { decodePath: false });
+  return target ? `${target.path}${target.hash}` : rewrittenHref;
+}
+
+interface MarkdownLinkNode {
+  type?: string;
+  url?: unknown;
+  children?: MarkdownLinkNode[];
+}
+
+/**
+ * rehype-sanitize reads the drive letter in `C:/path` as a URL scheme and
+ * removes the href before react-markdown's URL transform can normalize it.
+ * Convert only Windows drive-path destinations into the already-allowed file
+ * URI form while the document is still mdast.
+ */
+export function remarkRewriteWindowsFileLinks() {
+  return (tree: MarkdownLinkNode) => {
+    const visit = (node: MarkdownLinkNode) => {
+      if ((node.type === "link" || node.type === "definition") && typeof node.url === "string") {
+        const normalizedUrl = normalizeMarkdownLinkDestination(node.url);
+        if (WINDOWS_DRIVE_PATH_PATTERN.test(normalizedUrl)) {
+          node.url = `file:///${normalizedUrl}`;
+        }
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
 }
 
 function looksLikePosixFilesystemPath(path: string): boolean {
