@@ -2168,7 +2168,7 @@ const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<str
 
 const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
   env: new Set(["-0", "--null", "-i", "--ignore-environment", "--debug"]),
-  sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-n", "-S"]),
+  sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
 };
 
 function commandProgramName(command: string): string | null {
@@ -2199,12 +2199,22 @@ function commandProgramName(command: string): string | null {
         index += 2;
         continue;
       }
-      if (
-        COMMAND_WRAPPER_FLAGS[wrapper].has(token) ||
-        /^--[^=]+=/.test(token) ||
-        (/^-[A-Za-z].+/.test(token) && !token.startsWith("--"))
-      ) {
+      if (COMMAND_WRAPPER_FLAGS[wrapper].has(token) || /^--[^=]+=/.test(token)) {
         index += 1;
+        continue;
+      }
+      if (/^-[A-Za-z].+/.test(token) && !token.startsWith("--")) {
+        let consumesNextToken = false;
+        for (const [optionIndex, option] of token.slice(1).split("").entries()) {
+          const shortOption = `-${option}`;
+          if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(shortOption)) {
+            consumesNextToken = optionIndex === token.length - 2;
+            break;
+          }
+          if (!COMMAND_WRAPPER_FLAGS[wrapper].has(shortOption)) return null;
+        }
+        if (consumesNextToken && tokens[index + 1] === undefined) return null;
+        index += consumesNextToken ? 2 : 1;
         continue;
       }
       return null;

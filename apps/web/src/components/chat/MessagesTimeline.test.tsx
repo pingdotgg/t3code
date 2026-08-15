@@ -580,7 +580,7 @@ describe("MessagesTimeline", () => {
               turnId,
               toolCallId: "call-live-tool",
               label: "Running tests",
-              command: "env -C /tmp sudo -u postgres psql",
+              command: "env -C /tmp sudo -iu postgres psql",
               tone: "tool",
               toolLifecycleStatus: "inProgress",
             },
