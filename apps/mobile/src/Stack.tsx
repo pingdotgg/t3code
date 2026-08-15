@@ -91,6 +91,14 @@ function themedFormSheetContentStyle(theme: ReactNavigation.Theme) {
   };
 }
 
+function themedOpaqueHeaderStyle(theme: ReactNavigation.Theme) {
+  return {
+    // native-stack types this as `string`, but the native side accepts any
+    // ColorValue including DynamicColorIOS.
+    backgroundColor: (theme as AppNavigationTheme).formSheetBackground as unknown as string,
+  };
+}
+
 // Shared header presets. Screens only override genuinely dynamic values (titles,
 // subtitles, toolbar items, search callbacks) via NativeStackScreenOptions.
 //
@@ -103,7 +111,7 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
+  ...(NATIVE_LIQUID_GLASS_SUPPORTED ? { headerStyle: { backgroundColor: "transparent" } } : null),
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
   scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? HEADER_SCROLL_EDGE_EFFECTS : undefined,
@@ -147,11 +155,12 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
 
 const SettingsContentStack = createNativeStackNavigator({
   initialRouteName: "Settings",
-  screenOptions: {
+  screenOptions: ({ theme }) => ({
     ...GLASS_HEADER_OPTIONS,
+    ...(!NATIVE_LIQUID_GLASS_SUPPORTED ? { headerStyle: themedOpaqueHeaderStyle(theme) } : null),
     // Sheets read better with the iOS-default centered title (no editor style).
     unstable_navigationItemStyle: undefined,
-  },
+  }),
   screens: {
     Settings: createNativeStackScreen({
       screen: SettingsRouteScreen,
@@ -251,6 +260,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
   initialRouteName: "NewTask",
   screenOptions: ({ route, theme }) => ({
     ...SHEET_GLASS_HEADER_OPTIONS,
+    ...(!NATIVE_LIQUID_GLASS_SUPPORTED ? { headerStyle: themedOpaqueHeaderStyle(theme) } : null),
     // The form-sheet host owns the one opaque adaptive surface. Child screens
     // and the navigation bar stay transparent over it, avoiding visible color
     // slabs as view controllers move horizontally.
@@ -484,6 +494,7 @@ export const RootStack = createNativeStackNavigator({
   layout: RootStackLayout,
   screenOptions: ({ route, theme }) => ({
     headerShown: false,
+    headerStyle: themedOpaqueHeaderStyle(theme),
     ...(Platform.OS === "ios" && ROOT_FORM_SHEET_ROUTES.has(route.name)
       ? { contentStyle: themedFormSheetContentStyle(theme) }
       : null),
@@ -530,10 +541,11 @@ export const RootStack = createNativeStackNavigator({
     ThreadFiles: createNativeStackScreen({
       screen: ThreadFilesTreeScreen,
       linking: `${THREAD_LINKING_PREFIX}/files`,
-      options: {
+      options: ({ theme }) => ({
         ...GLASS_HEADER_OPTIONS,
+        contentStyle: themedFormSheetContentStyle(theme),
         title: "Files",
-      },
+      }),
     }),
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
