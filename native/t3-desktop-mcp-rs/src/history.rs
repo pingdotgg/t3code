@@ -577,11 +577,36 @@ fn url_candidates(raw: &str) -> Vec<String> {
             .map(|i| i + 1)
             .unwrap_or(0);
         let after = &rest[idx + 3..];
-        let end = after
-            .find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | '"' | '\''))
-            .unwrap_or(after.len());
-        out.push(rest[scheme_start..idx + 3 + end].to_string());
-        rest = &after[end..];
+        let end = if after.starts_with('[') {
+            // IPv6 literals: consume through `]` and optional `:port`.
+            match after.find(']') {
+                Some(br) => {
+                    let after_br = &after[br + 1..];
+                    let more = after_br
+                        .find(|c: char| {
+                            c.is_whitespace()
+                                || matches!(c, '/' | '?' | '#' | ')' | ']' | '>' | '<' | '"' | '\'')
+                        })
+                        .unwrap_or(after_br.len());
+                    br + 1 + more
+                }
+                None => after.len(),
+            }
+        } else {
+            after
+                .find(|c: char| {
+                    c.is_whitespace() || matches!(c, ')' | ']' | '>' | '<' | '"' | '\'')
+                })
+                .unwrap_or(after.len())
+        };
+        let mut cand = rest[scheme_start..idx + 3 + end].to_string();
+        while cand.ends_with('>') || cand.ends_with('<') {
+            cand.pop();
+        }
+        if cand.contains("://") {
+            out.push(cand);
+        }
+        rest = &after[end.min(after.len())..];
     }
     out
 }
@@ -591,17 +616,37 @@ fn extract_hosts(raw: &str) -> Vec<String> {
     let mut rest = raw;
     while let Some(idx) = rest.find("://") {
         let after = &rest[idx + 3..];
-        let end = after.find(['/', '?', '#', ' ', '\n', '\t']).unwrap_or(after.len());
-        let authority = &after[..end];
-        if let Some(host) = authority.rsplit('@').next().and_then(|a| a.split(':').next()) {
-            let host = host.trim().to_lowercase();
-            if !host.is_empty() {
-                hosts.push(host);
+        let end = if after.starts_with('[') {
+            match after.find(']') {
+                Some(br) => {
+                    let after_br = &after[br + 1..];
+                    let more = after_br
+                        .find(['/', '?', '#', ' ', '\n', '\t'])
+                        .unwrap_or(after_br.len());
+                    br + 1 + more
+                }
+                None => after.find(['/', '?', '#', ' ', '\n', '\t']).unwrap_or(after.len()),
             }
+        } else {
+            after.find(['/', '?', '#', ' ', '\n', '\t']).unwrap_or(after.len())
+        };
+        let authority = &after[..end];
+        if let Some(host) = authority_host(authority) {
+            hosts.push(host);
         }
-        rest = &after[end..];
+        rest = &after[end.min(after.len())..];
     }
     hosts
+}
+
+fn authority_host(authority: &str) -> Option<String> {
+    let authority = authority.rsplit('@').next()?.trim();
+    if let Some(rest) = authority.strip_prefix('[') {
+        let end = rest.find(']')?;
+        return Some(format!("[{}]", rest[..end].to_lowercase()));
+    }
+    let host = authority.split(':').next()?.trim().to_lowercase();
+    (!host.is_empty()).then_some(host)
 }
 
 fn try_read_control(root: &Path) -> Result<Control, ()> {
@@ -866,5 +911,11 @@ mod tests {
             "Issue #123 https://untrusted.example/?next=https://trusted.example",
             "trusted.example"
         ));
+    }
+
+    #[test]
+    fn angle_bracket_and_ipv6_hosts_match() {
+        assert!(host_matches("<https://blocked.example>", "blocked.example"));
+        assert!(host_matches("http://[::1]:8080/x", "[::1]"));
     }
 }
