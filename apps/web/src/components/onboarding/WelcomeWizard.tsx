@@ -21,6 +21,7 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
+import { ClipboardApiUnavailableError, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId } from "../../lib/utils";
 import { resolveDefaultProviderModelSelection } from "../../providerInstances";
 import { agentSessionScan } from "../../state/agentSessions";
@@ -1095,24 +1096,32 @@ function CommandBlock({
   readonly className?: string;
   readonly prominent?: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
   // The Clipboard API only exists in secure contexts; the wizard's Direct
-  // path explicitly supports plain-HTTP LAN servers, so fall back to the
-  // selection-based copy there.
-  const copyCommand = () => {
-    if (navigator.clipboard !== undefined) {
-      void navigator.clipboard.writeText(command);
-    } else {
+  // path explicitly supports plain-HTTP LAN servers, so the unavailable-API
+  // error falls back to selection-based copy. Both paths mark copied only on
+  // an actual success.
+  const [fallbackCopied, setFallbackCopied] = useState(false);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: "command",
+    onError: (error) => {
+      if (!(error instanceof ClipboardApiUnavailableError)) return;
       const scratch = document.createElement("textarea");
       scratch.value = command;
       document.body.append(scratch);
       scratch.select();
-      document.execCommand("copy");
+      const didCopy = document.execCommand("copy");
       scratch.remove();
-    }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  };
+      if (didCopy) setFallbackCopied(true);
+    },
+  });
+  useEffect(() => {
+    if (!fallbackCopied) return;
+    const timer = window.setTimeout(() => setFallbackCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [fallbackCopied]);
+  const copied = isCopied || fallbackCopied;
+  const copyCommand = () => copyToClipboard(command, undefined);
   return (
     <div
       className={cn(
