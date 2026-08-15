@@ -632,6 +632,66 @@ describe("synced plan mode", () => {
     expect(patch).toHaveBeenCalledOnce();
   });
 
+  it("adopts a canonical patch response after synchronization resumes", async () => {
+    const environmentId = EnvironmentId.make("primary");
+    const controller = createSyncedPlanModeHydrationController();
+    const previous = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    let resolvePatch!: (
+      result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>,
+    ) => void;
+    const patch = vi.fn<SyncedPlanModeHydrationInput<never>["patch"]>(
+      () =>
+        new Promise((resolve) => {
+          resolvePatch = resolve;
+        }),
+    );
+    let localValue = false;
+    const persisted: boolean[] = [];
+    const persist = (value: boolean) => {
+      localValue = value;
+      persisted.push(value);
+    };
+    const input = {
+      environmentId,
+      primaryEnvironmentId: environmentId,
+      clientHydrated: true,
+      clientValue: localValue,
+      live: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: previous.updatedAt,
+      patch,
+      persist,
+    } satisfies SyncedPlanModeHydrationInput<never>;
+    const deactivate = controller.synchronize(input);
+
+    localValue = true;
+    controller.write({
+      ...input,
+      value: localValue,
+      now: "2026-08-14T12:01:00.000Z",
+    });
+    deactivate?.();
+    resolvePatch(
+      AsyncResult.success({
+        planModeEnabled: false,
+        updatedAt: "2026-08-14T12:02:00.000Z",
+      }),
+    );
+    await Promise.resolve();
+
+    expect(persisted).toEqual([]);
+
+    controller.synchronize({ ...input, clientValue: localValue, now: "2026-08-14T12:03:00.000Z" });
+
+    expect(localValue).toBe(false);
+    expect(persisted).toEqual([false]);
+    expect(patch).toHaveBeenCalledOnce();
+  });
+
   it("keeps the latest rapid toggle when responses settle out of order", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const controller = createSyncedPlanModeHydrationController();

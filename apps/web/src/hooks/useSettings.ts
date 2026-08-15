@@ -14,6 +14,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
+  getSyncedClientPreferenceUpdatedAt,
   type EnvironmentId,
   ServerSettings,
   type ServerSettingsPatch,
@@ -225,13 +226,26 @@ export function mergeEnvironmentSettings(
   clientSettings: ClientSettings,
   syncedClientPreferences?: SyncedClientPreferences,
   syncedPlanModeCanOverrideClient = true,
+  pendingPlanModeWrite?: { readonly value: boolean; readonly updatedAt: string },
 ): UnifiedSettings {
+  const syncedPlanModeUpdatedAt = getSyncedClientPreferenceUpdatedAt(
+    syncedClientPreferences,
+    "planModeEnabled",
+  );
+  const pendingPlanModeIsNewer =
+    pendingPlanModeWrite !== undefined &&
+    (syncedPlanModeUpdatedAt === undefined ||
+      pendingPlanModeWrite.updatedAt > syncedPlanModeUpdatedAt);
   return {
     ...serverSettings,
     ...clientSettings,
-    ...(!syncedPlanModeCanOverrideClient || syncedClientPreferences?.planModeEnabled === undefined
+    ...(!syncedPlanModeCanOverrideClient
       ? {}
-      : { planModeEnabled: syncedClientPreferences.planModeEnabled }),
+      : pendingPlanModeIsNewer
+        ? { planModeEnabled: pendingPlanModeWrite.value }
+        : syncedClientPreferences?.planModeEnabled === undefined
+          ? {}
+          : { planModeEnabled: syncedClientPreferences.planModeEnabled }),
   };
 }
 
@@ -239,6 +253,7 @@ function useMergedSettings<T>(
   serverSettings: ServerSettings,
   syncedClientPreferences: SyncedClientPreferences | undefined,
   syncedPlanModeCanOverrideClient: boolean,
+  pendingPlanModeWrite: { readonly value: boolean; readonly updatedAt: string } | undefined,
   selector: ((settings: UnifiedSettings) => T) | undefined,
 ): T {
   const clientSettings = useClientSettingsValue();
@@ -250,8 +265,15 @@ function useMergedSettings<T>(
         clientSettings,
         syncedClientPreferences,
         syncedPlanModeCanOverrideClient,
+        pendingPlanModeWrite,
       ),
-    [clientSettings, serverSettings, syncedClientPreferences, syncedPlanModeCanOverrideClient],
+    [
+      clientSettings,
+      pendingPlanModeWrite,
+      serverSettings,
+      syncedClientPreferences,
+      syncedPlanModeCanOverrideClient,
+    ],
   );
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
@@ -312,7 +334,11 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
     persist: persistSyncedPlanMode,
   });
 
-  return { ...synced, canPatch } as const;
+  return {
+    ...synced,
+    canPatch,
+    pendingWrite: syncedPlanModeHydrationController.getPendingWrite(environmentId),
+  } as const;
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -382,6 +408,7 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
     serverSettings ?? DEFAULT_SERVER_SETTINGS,
     synced.preferences,
     synced.canPatch,
+    synced.pendingWrite,
     selector,
   );
 }
@@ -396,6 +423,7 @@ export function usePrimarySettings<T = UnifiedSettings>(
     useAtomValue(primaryServerSettingsAtom),
     synced.preferences,
     synced.canPatch,
+    synced.pendingWrite,
     selector,
   );
 }

@@ -54,9 +54,53 @@ it.effect("merges synced preferences by field when a later event is globally sta
       updatedAtByField: {
         planModeEnabled: "2026-08-14T12:00:00.000Z",
         appearanceMode: "2026-08-14T13:00:00.000Z",
+        themeId: "2026-08-14T13:00:00.000Z",
       },
       updatedAt: "2026-08-14T13:00:00.000Z",
     });
     assert.strictEqual(withPlan.updatedAt, "2026-08-14T13:00:00.000Z");
+  }),
+);
+
+it.effect("backfills field clocks before patching legacy synced preferences", () =>
+  Effect.gen(function* () {
+    const legacyUpdatedAt = "2026-08-14T10:00:00.000Z";
+    const legacyModel = {
+      ...createEmptyReadModel(legacyUpdatedAt),
+      syncedClientPreferences: {
+        planModeEnabled: false,
+        appearanceMode: "light" as const,
+        themeId: "legacy-theme",
+        updatedAt: legacyUpdatedAt,
+      },
+    };
+    const withPlan = yield* projectEvent(
+      legacyModel,
+      preferenceEvent({
+        sequence: 1,
+        updatedAt: "2026-08-14T12:00:00.000Z",
+        patch: { planModeEnabled: true },
+      }),
+    );
+    const withAppearance = yield* projectEvent(
+      withPlan,
+      preferenceEvent({
+        sequence: 2,
+        updatedAt: "2026-08-14T11:00:00.000Z",
+        patch: { appearanceMode: "dark" },
+      }),
+    );
+
+    assert.deepEqual(withAppearance.syncedClientPreferences, {
+      planModeEnabled: true,
+      appearanceMode: "dark",
+      themeId: "legacy-theme",
+      updatedAtByField: {
+        planModeEnabled: "2026-08-14T12:00:00.000Z",
+        appearanceMode: "2026-08-14T11:00:00.000Z",
+        themeId: legacyUpdatedAt,
+      },
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    });
   }),
 );

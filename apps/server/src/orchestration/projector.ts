@@ -215,7 +215,23 @@ export function projectEvent(
         "payload",
       ).pipe(
         Effect.map((payload) => {
-          const current = nextBase.syncedClientPreferences;
+          const current =
+            nextBase.syncedClientPreferences === undefined
+              ? undefined
+              : {
+                  ...nextBase.syncedClientPreferences,
+                  updatedAtByField: {
+                    planModeEnabled:
+                      nextBase.syncedClientPreferences.updatedAtByField?.planModeEnabled ??
+                      nextBase.syncedClientPreferences.updatedAt,
+                    appearanceMode:
+                      nextBase.syncedClientPreferences.updatedAtByField?.appearanceMode ??
+                      nextBase.syncedClientPreferences.updatedAt,
+                    themeId:
+                      nextBase.syncedClientPreferences.updatedAtByField?.themeId ??
+                      nextBase.syncedClientPreferences.updatedAt,
+                  },
+                };
           const appliesPlanMode =
             payload.patch.planModeEnabled !== undefined &&
             (getSyncedClientPreferenceUpdatedAt(current, "planModeEnabled") ?? payload.updatedAt) <=

@@ -89,11 +89,16 @@ vi.mock("~/state/use-atom-command", () => ({
     atom === testState.patchPreferencesAtom ? testState.patchPreferences : testState.updateSettings,
 }));
 
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "./useSettings";
+import {
+  __resetClientSettingsPersistenceForTests,
+  useEnvironmentSettings,
+  useUpdateEnvironmentSettings,
+} from "./useSettings";
 
 describe("useUpdateEnvironmentSettings", () => {
   beforeEach(() => {
     hooks.reset();
+    __resetClientSettingsPersistenceForTests();
     testState.patchPreferences.mockReset();
     testState.patchPreferences.mockImplementation(
       async (target: {
@@ -132,5 +137,20 @@ describe("useUpdateEnvironmentSettings", () => {
     useEnvironmentSettings(secondaryEnvironmentId);
 
     expect(testState.sessionEnvironmentIds).toEqual([secondaryEnvironmentId]);
+  });
+
+  it("keeps an optimistic plan mode toggle while the shell is stale", () => {
+    const secondaryEnvironmentId = EnvironmentId.make("secondary");
+    testState.patchPreferences.mockImplementation(() => new Promise(() => undefined));
+    hooks.beginRender();
+    const updateSettings = useUpdateEnvironmentSettings(secondaryEnvironmentId);
+
+    updateSettings({ planModeEnabled: true });
+    hooks.reset();
+    hooks.beginRender();
+
+    expect(
+      useEnvironmentSettings(secondaryEnvironmentId, (settings) => settings.planModeEnabled),
+    ).toBe(true);
   });
 });

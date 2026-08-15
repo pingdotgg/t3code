@@ -130,6 +130,7 @@ export function createSyncedPlanModeHydrationController(
     seedPendingUpdatedAt?: string;
     writePending?: { readonly value: boolean; readonly updatedAt: string };
     writeInFlightUpdatedAt?: string;
+    pendingAdoption?: { readonly value: boolean; readonly updatedAt: string };
     readonly synchronizeAgainByOwner: Map<symbol, () => void>;
     cancelRetry?: () => void;
   }
@@ -208,11 +209,13 @@ export function createSyncedPlanModeHydrationController(
       input.result.value,
       "planModeEnabled",
     );
-    if (resultUpdatedAt !== undefined) markAdopted(state, resultUpdatedAt);
-    if (getSynchronizeAgain(state) === undefined) return;
-    if (input.result.value.planModeEnabled !== undefined) {
-      input.persist(input.result.value.planModeEnabled);
+    const resultValue = input.result.value.planModeEnabled;
+    if (resultUpdatedAt !== undefined && resultValue !== undefined) {
+      state.pendingAdoption = { value: resultValue, updatedAt: resultUpdatedAt };
     }
+    if (getSynchronizeAgain(state) === undefined || state.pendingAdoption === undefined) return;
+    input.persist(state.pendingAdoption.value);
+    markAdopted(state, state.pendingAdoption.updatedAt);
   };
 
   const dispatchPatch = <E>(input: {
@@ -249,6 +252,25 @@ export function createSyncedPlanModeHydrationController(
       input.serverPreferences,
       "planModeEnabled",
     );
+    if (
+      state.pendingAdoption !== undefined &&
+      serverUpdatedAt !== undefined &&
+      serverUpdatedAt >= state.pendingAdoption.updatedAt
+    ) {
+      delete state.pendingAdoption;
+    }
+    if (
+      state.pendingAdoption !== undefined &&
+      input.clientHydrated &&
+      input.canPatch &&
+      (state.adoptedUpdatedAt === undefined ||
+        state.pendingAdoption.updatedAt > state.adoptedUpdatedAt)
+    ) {
+      if (input.clientValue !== state.pendingAdoption.value) {
+        input.persist(state.pendingAdoption.value);
+      }
+      markAdopted(state, state.pendingAdoption.updatedAt);
+    }
     if (
       pendingWrite !== undefined &&
       serverUpdatedAt !== undefined &&
@@ -328,6 +350,7 @@ export function createSyncedPlanModeHydrationController(
       state.seedPendingUpdatedAt,
       state.writePending?.updatedAt,
       state.writeInFlightUpdatedAt,
+      state.pendingAdoption?.updatedAt,
     ].reduce<string | undefined>(
       (latest, candidate) =>
         candidate !== undefined && (latest === undefined || candidate > latest)
@@ -345,6 +368,7 @@ export function createSyncedPlanModeHydrationController(
       value: input.value,
       updatedAt: next.request.updatedAt,
     };
+    delete state.pendingAdoption;
     if (!input.canPatch) return;
     dispatchPatch<E>({
       target: { environmentId, input: next.request },
@@ -356,6 +380,11 @@ export function createSyncedPlanModeHydrationController(
   return {
     synchronize,
     write,
+    getPendingWrite(environmentId: EnvironmentId | null) {
+      if (environmentId === null) return undefined;
+      const state = stateByEnvironment.get(environmentId);
+      return state?.writePending ?? state?.pendingAdoption;
+    },
     reset() {
       for (const state of stateByEnvironment.values()) {
         cancelRetry(state);
