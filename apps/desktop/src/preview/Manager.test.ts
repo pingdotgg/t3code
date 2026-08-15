@@ -2239,6 +2239,69 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("navigates the guest history when the thumb-button ipc fires", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let mouseNavigate: ((event: unknown, payload: unknown) => void) | undefined;
+        const goBack = vi.fn();
+        const goForward = vi.fn();
+        let canGoBack = true;
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof mouseNavigate) => {
+              if (channel === "preview:mouse-navigate") mouseNavigate = listener;
+            }),
+            off: vi.fn(),
+          },
+          send: webviewSend,
+          navigationHistory: {
+            canGoBack: () => canGoBack,
+            canGoForward: () => true,
+            goBack,
+            goForward,
+          },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_nav");
+        yield* manager.registerWebview("tab_nav", 42);
+        expect(mouseNavigate).toBeDefined();
+
+        mouseNavigate?.({}, { direction: "back" });
+        yield* Effect.yieldNow;
+        expect(goBack).toHaveBeenCalledOnce();
+
+        mouseNavigate?.({}, { direction: "forward" });
+        yield* Effect.yieldNow;
+        expect(goForward).toHaveBeenCalledOnce();
+
+        // Ignores unknown payloads and never navigates when history is exhausted.
+        mouseNavigate?.({}, { direction: "sideways" });
+        canGoBack = false;
+        mouseNavigate?.({}, { direction: "back" });
+        yield* Effect.yieldNow;
+        expect(goBack).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
   effectIt.effect("reveals only files inside the configured browser artifact directory", () =>
     withManager((manager) =>
       Effect.gen(function* () {
