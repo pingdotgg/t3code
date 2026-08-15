@@ -100,15 +100,45 @@ enum NativeMessaging {
 /// Fully blocking — safe for `NativeHost`, which shares this socket with a
 /// concurrent reader that must not see `O_NONBLOCK` / `EAGAIN`.
 func writeAll(_ fd: Int32, _ data: Data) -> Bool {
-    data.withUnsafeBytes { rawBuffer -> Bool in
+    writeAll(fd, data, deadline: nil)
+}
+
+/// Non-blocking write that respects `deadline` so a stuck peer cannot hang `call`.
+func writeAll(_ fd: Int32, _ data: Data, deadline: DispatchTime?) -> Bool {
+    let flags = fcntl(fd, F_GETFL)
+    if flags >= 0 {
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+    }
+    defer {
+        if flags >= 0 {
+            _ = fcntl(fd, F_SETFL, flags)
+        }
+    }
+    return data.withUnsafeBytes { rawBuffer -> Bool in
         guard var ptr = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
             return data.isEmpty
         }
         var remaining = data.count
         while remaining > 0 {
+            if let deadline, DispatchTime.now() >= deadline {
+                return false
+            }
             let n = Darwin.write(fd, ptr, remaining)
             if n < 0 {
                 if errno == EINTR { continue }
+                if errno == EAGAIN || errno == EWOULDBLOCK {
+                    var pollFd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                    let waitMs: Int32 = {
+                        guard let deadline else { return 1_000 }
+                        let now = DispatchTime.now().uptimeNanoseconds
+                        let end = deadline.uptimeNanoseconds
+                        if end <= now { return 0 }
+                        return Int32(min((end - now) / 1_000_000, UInt64(Int32.max)))
+                    }()
+                    let ready = poll(&pollFd, 1, waitMs)
+                    if ready <= 0 { return false }
+                    continue
+                }
                 return false
             }
             if n == 0 { return false }

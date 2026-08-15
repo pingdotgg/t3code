@@ -406,6 +406,9 @@ private final class DaemonState {
     try? eventsHandle?.close()
     eventCount = 0
     suppressed = 0
+    // New segment must capture the current activity even if focus is unchanged.
+    lastAppKey = nil
+    lastFocusKey = nil
     segmentStartedAt = Date()
     segmentID = Self.segmentName(for: segmentStartedAt)
     openSegment()
@@ -445,10 +448,9 @@ private final class DaemonState {
     let ax = AXUIElementCreateApplication(app.processIdentifier)
     var windowTitle = pageContext.windowTitle
     if windowTitle == nil,
-       let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement],
-       let first = windows.first
+       let focusedWindow = chAxElement(ax, kAXFocusedWindowAttribute as String)
     {
-      windowTitle = chAxString(first, kAXTitleAttribute as String)
+      windowTitle = chAxString(focusedWindow, kAXTitleAttribute as String)
     }
 
     var record: [String: Any] = [
@@ -488,10 +490,9 @@ private final class DaemonState {
     let value = focused.flatMap { chAxString($0, kAXValueAttribute as String) }
     var windowTitle = pageContext.windowTitle
     if windowTitle == nil,
-       let windows = chAxCopy(axApp, kAXWindowsAttribute as String) as? [AXUIElement],
-       let first = windows.first
+       let focusedWindow = chAxElement(axApp, kAXFocusedWindowAttribute as String)
     {
-      windowTitle = chAxString(first, kAXTitleAttribute as String)
+      windowTitle = chAxString(focusedWindow, kAXTitleAttribute as String)
     }
 
     let focusKey = "\(app.processIdentifier)|\(windowTitle ?? "")|\(role ?? "")|\(desc ?? "")|\(value?.count ?? 0)|\((value ?? "").prefix(200))"

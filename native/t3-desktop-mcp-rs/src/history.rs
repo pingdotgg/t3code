@@ -354,21 +354,19 @@ fn is_private_browsing_context(
     if !is_browser_app(app_name) {
         return false;
     }
-    let mut parts = Vec::new();
-    if let Some(title) = window_title {
-        parts.push(title.to_lowercase());
-    }
-    if let Some(raw) = haystack {
-        parts.push(raw.to_lowercase());
-    }
-    let combined = parts.join("\n");
-    combined.contains("about:privatebrowsing")
-        || combined.contains("private browsing")
-        || combined.contains("(private)")
-        || combined.contains("incognito")
-        || combined.contains("inprivate")
-        || combined.contains("incognito")
-        || combined.contains("inprivate")
+    let combined_title = window_title.map(|title| title.to_lowercase()).unwrap_or_default();
+    let combined_haystack = haystack.map(|raw| raw.to_lowercase()).unwrap_or_default();
+    // Bare "incognito"/"inprivate" tokens appear in ordinary page content and
+    // accessibility outlines — only treat them as private-mode markers in the
+    // window title (or explicit browser chrome phrases in either field).
+    combined_title.contains("about:privatebrowsing")
+        || combined_title.contains("private browsing")
+        || combined_title.contains("(private)")
+        || combined_title.contains("incognito")
+        || combined_title.contains("inprivate")
+        || combined_haystack.contains("about:privatebrowsing")
+        || combined_haystack.contains("private browsing")
+        || combined_haystack.contains("(private)")
 }
 
 /// Parse `Name  [id]  pid=…  windows=…  FRONTMOST` from `format_app_list`.
@@ -393,7 +391,8 @@ fn parse_app_line(line: &str) -> Option<(String, String, u32)> {
     }
 }
 
-/// Prefer a URL-like outline line, else the first non-app-header line.
+/// Prefer a document/address-bar URL from the outline; otherwise the frame title.
+/// Ordinary link rows must not replace the current page URL for privacy filters.
 fn window_title_from_outline(outline: &str, app_name: &str) -> Option<String> {
     let lines: Vec<&str> = outline
         .lines()
@@ -411,15 +410,40 @@ fn window_title_from_outline(outline: &str, app_name: &str) -> Option<String> {
     if body.is_empty() {
         return None;
     }
-    let urlish = body.iter().find(|line| {
+    let document_url = body.iter().find_map(|line| {
         let lowered = line.to_lowercase();
-        lowered.contains("://")
+        let is_documentish = lowered.contains("document")
+            || lowered.contains("address")
+            || lowered.contains("location")
+            || lowered.contains("url bar")
+            || lowered.contains("omnibox");
+        let has_url = lowered.contains("://")
             || lowered.contains("about:")
-            || lowered.starts_with("chrome:")
-            || lowered.starts_with("edge:")
-            || lowered.starts_with("brave:")
+            || lowered.contains("chrome:")
+            || lowered.contains("edge:")
+            || lowered.contains("brave:");
+        if is_documentish && has_url {
+            Some(outline_row_label(line))
+        } else {
+            None
+        }
     });
-    urlish.or(body.first()).map(|line| outline_row_label(line))
+    if document_url.is_some() {
+        return document_url;
+    }
+    // Fall back to the first non-URL row (typically the frame title), not a link.
+    body.iter()
+        .find(|line| {
+            let lowered = line.to_lowercase();
+            !lowered.contains("://")
+                && !lowered.contains("about:")
+                && !lowered.starts_with("chrome:")
+                && !lowered.starts_with("edge:")
+                && !lowered.starts_with("brave:")
+                && !lowered.contains(" link ")
+        })
+        .or(body.first())
+        .map(|line| outline_row_label(line))
 }
 
 fn outline_row_label(line: &str) -> String {
