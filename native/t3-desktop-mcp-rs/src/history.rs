@@ -4,6 +4,7 @@
 //! Samples the frontmost app / focused accessibility node on an interval and
 //! writes Skysight-style segment JSONL under `<root>/segments/`.
 
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -60,6 +61,8 @@ pub fn run(root: PathBuf) -> Result<(), String> {
     // Retain the last successfully parsed control so a truncated mid-write
     // control.json cannot reopen capture with default (enabled, no filters).
     let mut last_good_control: Option<Control> = None;
+    // Firefox private windows can leave about:privatebrowsing while staying private.
+    let mut sticky_private_windows: HashSet<String> = HashSet::new();
 
     write_status(
         &root,
@@ -159,9 +162,19 @@ pub fn run(root: PathBuf) -> Result<(), String> {
 
         match sample_frontmost(&mut *desktop) {
             Ok(sample) => {
-                    let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
+                let haystack = website_haystack(&sample);
+                if is_private_browsing_context(
+                    haystack.as_deref(),
+                    sample.window_title.as_deref(),
+                    &sample.app_name,
+                ) {
+                    sticky_private_windows.insert(private_session_key(&sample));
+                }
+                let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
+                    && !sticky_private_windows.contains(&private_session_key(&sample))
                     && website_allowed(
-                        website_haystack(&sample).as_deref(),
+                        haystack.as_deref(),
+                        sample.window_title.as_deref(),
                         &sample.app_name,
                         &control,
                     );
@@ -228,6 +241,7 @@ pub fn run(root: PathBuf) -> Result<(), String> {
 struct Sample {
     app_id: String,
     app_name: String,
+    pid: u32,
     window_title: Option<String>,
     ax: Option<Value>,
     key: String,
@@ -242,7 +256,7 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
         .lines()
         .find(|line| line.contains("FRONTMOST"))
         .ok_or_else(|| DesktopError::new("no frontmost app"))?;
-    let (app_name, app_id) = parse_app_line(front)
+    let (app_name, app_id, pid) = parse_app_line(front)
         .ok_or_else(|| DesktopError::new(format!("could not parse frontmost app line: {front}")))?;
     // Only report accessibility granted when AT-SPI actually answered.
     let (outline, accessibility_granted) = match desktop.get_app_state(&app_name, 4, 40) {
@@ -270,6 +284,7 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
     Ok(Sample {
         app_id,
         app_name,
+        pid,
         window_title,
         ax,
         key,
@@ -277,8 +292,44 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
     })
 }
 
+fn private_session_key(sample: &Sample) -> String {
+    format!("{}:{}", sample.app_id, sample.pid)
+}
+
+fn is_browser_app(app_name: &str) -> bool {
+    let app = app_name.to_lowercase();
+    ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera"]
+        .iter()
+        .any(|needle| app.contains(needle))
+}
+
+fn is_private_browsing_context(
+    haystack: Option<&str>,
+    window_title: Option<&str>,
+    app_name: &str,
+) -> bool {
+    if !is_browser_app(app_name) {
+        return false;
+    }
+    let mut parts = Vec::new();
+    if let Some(title) = window_title {
+        parts.push(title.to_lowercase());
+    }
+    if let Some(raw) = haystack {
+        parts.push(raw.to_lowercase());
+    }
+    let combined = parts.join("\n");
+    combined.contains("about:privatebrowsing")
+        || combined.contains("private browsing")
+        || combined.contains("chrome://newtab")
+        || combined.contains("edge://newtab")
+        || combined.contains("(private)")
+        || combined.contains("incognito")
+        || combined.contains("inprivate")
+}
+
 /// Parse `Name  [id]  pid=…  windows=…  FRONTMOST` from `format_app_list`.
-fn parse_app_line(line: &str) -> Option<(String, String)> {
+fn parse_app_line(line: &str) -> Option<(String, String, u32)> {
     // Use the trailing `  [` delimiter `format_app_list` emits so names that
     // contain `[` are not truncated at the first bracket.
     let marker = line.rfind("  [")?;
@@ -286,10 +337,15 @@ fn parse_app_line(line: &str) -> Option<(String, String)> {
     let id_end = line[id_start..].find(']')? + id_start;
     let name = unescape_app_field(line[..marker].trim());
     let id = unescape_app_field(line[id_start..id_end].trim());
+    let pid = line
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("pid="))
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(0);
     if name.is_empty() {
         None
     } else {
-        Some((name, id))
+        Some((name, id, pid))
     }
 }
 
@@ -368,33 +424,32 @@ fn app_allowed(app_id: &str, app_name: &str, control: &Control) -> bool {
     }
 }
 
-fn website_allowed(url_or_title: Option<&str>, app_name: &str, control: &Control) -> bool {
+fn website_allowed(
+    url_or_title: Option<&str>,
+    window_title: Option<&str>,
+    app_name: &str,
+    control: &Control,
+) -> bool {
     let include_only = control.website_filter_mode == "includeOnly" && !control.websites.is_empty();
-    let Some(raw) = url_or_title else {
+    let mut haystack_parts = Vec::new();
+    if let Some(title) = window_title {
+        haystack_parts.push(title.to_lowercase());
+    }
+    if let Some(raw) = url_or_title {
+        haystack_parts.push(raw.to_lowercase());
+    }
+    let Some(combined) = (!haystack_parts.is_empty()).then(|| haystack_parts.join("\n")) else {
         return !include_only;
     };
-    let lowered = raw.to_lowercase();
-    let app = app_name.to_lowercase();
-    let is_browser = ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera"]
-        .iter()
-        .any(|needle| app.contains(needle));
+    if is_private_browsing_context(Some(&combined), window_title, app_name) {
+        return false;
+    }
+    let lowered = combined;
     let looks_url = lowered.contains("://")
         || lowered.starts_with("about:")
         || lowered.starts_with("chrome:")
         || lowered.starts_with("edge:")
         || lowered.starts_with("brave:");
-    // Private-browsing markers only apply to browser contexts — never to every
-    // desktop window title that happens to contain "private".
-    if is_browser
-        && (lowered.contains("chrome://newtab")
-            || lowered.contains("about:privatebrowsing")
-            || lowered.contains("edge://newtab")
-            || lowered.contains("(private)")
-            || lowered.contains("incognito")
-            || lowered.contains("inprivate"))
-    {
-        return false;
-    }
     // Site include/exclude lists only apply to URL-like haystacks.
     if !looks_url {
         return !include_only;
@@ -403,12 +458,38 @@ fn website_allowed(url_or_title: Option<&str>, app_name: &str, control: &Control
     if needles.is_empty() {
         return control.website_filter_mode == "exclude";
     }
-    let hit = needles.iter().any(|needle| lowered.contains(needle));
+    let hit = needles.iter().any(|needle| host_matches(&lowered, needle));
     if control.website_filter_mode == "exclude" {
         !hit
     } else {
         hit
     }
+}
+
+fn host_matches(haystack: &str, needle: &str) -> bool {
+    let needle = needle.trim().trim_matches('/').to_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    if haystack.contains("://") {
+        if let Some(host) = extract_host(haystack) {
+            return host == needle || host.ends_with(&format!(".{needle}"));
+        }
+    }
+    // Fallback for non-URL haystacks that still carry a hostname fragment.
+    haystack == needle
+        || haystack.ends_with(&format!(".{needle}"))
+        || haystack.ends_with(&format!("//{needle}"))
+        || haystack.ends_with(&format!("//{needle}/"))
+}
+
+fn extract_host(raw: &str) -> Option<String> {
+    let start = raw.find("://")? + 3;
+    let rest = &raw[start..];
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    let host = authority.rsplit('@').next()?.split(':').next()?;
+    Some(host.trim().to_lowercase())
 }
 
 fn try_read_control(root: &Path) -> Result<Control, ()> {
@@ -612,20 +693,22 @@ mod tests {
 
     #[test]
     fn parses_frontmost_app_line() {
-        let (name, id) = parse_app_line(
+        let (name, id, pid) = parse_app_line(
             "Windows Explorer  [explorer.exe]  pid=1234  windows=2  FRONTMOST",
         )
         .expect("parse");
         assert_eq!(name, "Windows Explorer");
         assert_eq!(id, "explorer.exe");
+        assert_eq!(pid, 1234);
     }
 
     #[test]
     fn parses_app_name_that_contains_brackets() {
-        let (name, id) = parse_app_line("Foo [bar] App  [com.foo]  pid=1  windows=1")
+        let (name, id, pid) = parse_app_line("Foo [bar] App  [com.foo]  pid=1  windows=1")
             .expect("parse");
         assert_eq!(name, "Foo [bar] App");
         assert_eq!(id, "com.foo");
+        assert_eq!(pid, 1);
     }
 
     #[test]
