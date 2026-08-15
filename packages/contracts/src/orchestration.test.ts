@@ -23,9 +23,8 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
-  isProviderSendTurnSupportedImageMimeType,
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
+import { isProviderSendTurnSupportedImageMimeType } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "./providerPolicy.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
