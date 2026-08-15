@@ -133,7 +133,7 @@ export function LinearSettingsPanel() {
                 ? (status?.detail ?? "A token is saved, but Linear could not be reached.")
                 : "Connect Linear with a personal API key to import issues into new threads."
           }
-          status={reachabilityError ?? (connected ? null : (status?.detail ?? null))}
+          status={reachabilityError ?? (connected || unverified ? null : (status?.detail ?? null))}
           control={
             <div className="flex items-center gap-2">
               {statusBadge}
@@ -170,7 +170,6 @@ export function LinearSettingsPanel() {
                   }}
                 />
                 <Button
-                  size="sm"
                   disabled={environmentId === null || busy || token.trim().length === 0}
                   onClick={() => void handleSave()}
                 >
