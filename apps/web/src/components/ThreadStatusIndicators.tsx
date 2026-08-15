@@ -197,7 +197,7 @@ export function setThreadChangeRequestSnapshot(
 /**
  * Authoritative snapshot update from live VCS status.
  * - `undefined`: missing status, or a local checkout retaining a terminal PR — leave the map alone
- * - `null`: no PR (without a retained terminal snapshot), or a worktree mismatch — clear
+ * - `null`: no PR (without a retained terminal snapshot), a cleared branch, or a mismatch without a terminal PR — clear
  * - snapshot: matching branch reports a PR — store/replace
  */
 export function nextThreadChangeRequestSnapshot(input: {
@@ -207,11 +207,18 @@ export function nextThreadChangeRequestSnapshot(input: {
   retainTerminalOnBranchMismatch: boolean;
 }): ThreadChangeRequestSnapshot | null | undefined {
   const { threadBranch, gitStatus, snapshot, retainTerminalOnBranchMismatch } = input;
-  if (threadBranch === null || gitStatus === null) {
+  if (gitStatus === null) {
     return undefined;
   }
+  if (threadBranch === null) {
+    return null;
+  }
   if (gitStatus.refName !== threadBranch) {
-    return retainTerminalOnBranchMismatch ? undefined : null;
+    return retainTerminalOnBranchMismatch &&
+      snapshot != null &&
+      isTerminalChangeRequestState(snapshot.pr.state)
+      ? undefined
+      : null;
   }
   if (gitStatus.pr == null) {
     if (

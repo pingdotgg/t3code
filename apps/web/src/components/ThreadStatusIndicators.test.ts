@@ -202,7 +202,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         snapshot: undefined,
         retainTerminalOnBranchMismatch: true,
       }),
-    ).toBeUndefined();
+    ).toBeNull();
   });
 
   it("does not show a cached open PR across a branch mismatch", () => {
@@ -308,6 +308,32 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: "main",
         gitStatus: status({ refName: "main", pr: null }),
         snapshot: openSnapshot,
+        retainTerminalOnBranchMismatch: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("clears an open snapshot when a local checkout moves to a different branch", () => {
+    const openSnapshot = snapshotFor(featureBranch, { ...mergedPr, state: "open" });
+
+    expect(
+      nextThreadChangeRequestSnapshot({
+        threadBranch: featureBranch,
+        gitStatus: status({ refName: "main", pr: null }),
+        snapshot: openSnapshot,
+        retainTerminalOnBranchMismatch: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("clears a retained snapshot when the thread branch is cleared", () => {
+    const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
+
+    expect(
+      nextThreadChangeRequestSnapshot({
+        threadBranch: null,
+        gitStatus: status({ refName: "main", pr: null }),
+        snapshot: terminalSnapshot,
         retainTerminalOnBranchMismatch: true,
       }),
     ).toBeNull();
