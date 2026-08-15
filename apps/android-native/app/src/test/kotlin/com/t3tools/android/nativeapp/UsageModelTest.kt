@@ -38,6 +38,20 @@ class UsageModelTest {
   }
 
   @Test
+  fun `accepts usage contracts 3 and 4`() {
+    val merged = mergeUsage(
+      listOf(
+        EnvironmentUsageReport("a", "Current", usageSummary(4)),
+        EnvironmentUsageReport("b", "Previous", usageSummary(3, "host-3")),
+        EnvironmentUsageReport("c", "Old", usageSummary(2, "old-host")),
+      ),
+    )
+
+    assertEquals(4.0, merged.costUsd, 0.0)
+    assertEquals(listOf("c"), merged.staleEnvironments)
+  }
+
+  @Test
   fun `builds an inclusive local calendar window`() {
     val window = usageWindow(
       days = 7,
@@ -51,7 +65,7 @@ class UsageModelTest {
   }
 }
 
-private fun usageSummary(contractVersion: Int = 3, hostId: String = "host-1") = UsageSummary(
+private fun usageSummary(contractVersion: Int = 4, hostId: String = "host-1") = UsageSummary(
   contractVersion = contractVersion,
   readAt = "2026-08-10T12:00:00Z",
   timeZone = "Europe/Sarajevo",

@@ -51,6 +51,7 @@ data class AppSettings(
   val terminalFontSizeOverride: Float? = null,
   val codeFontSizeOverride: Float? = null,
   val codeWordBreak: Boolean = false,
+  val autoSettleOnMerge: Boolean = true,
 )
 
 internal fun migrateLegacyAppearanceSettings(

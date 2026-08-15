@@ -8,7 +8,11 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 
-const val USAGE_CONTRACT_VERSION = 3
+const val USAGE_CONTRACT_VERSION = 4
+const val MIN_SUPPORTED_USAGE_CONTRACT = 3
+
+fun isSupportedUsageContract(version: Int): Boolean =
+  version in MIN_SUPPORTED_USAGE_CONTRACT..USAGE_CONTRACT_VERSION
 
 @Serializable
 enum class UsageProvider {
@@ -43,6 +47,7 @@ data class UsageTokenTotals(
 @Serializable
 data class UsageBucket(
   val day: String,
+  val hourStart: String? = null,
   val provider: UsageProvider,
   val model: String,
   val totals: UsageTokenTotals,

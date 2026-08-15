@@ -228,6 +228,55 @@ class ThreadListV2Test {
   }
 
   @Test
+  fun auto_settles_from_change_request_state() {
+    val recent = summary("pr", updatedAt = "2026-08-08T11:00:00Z", branch = "feat/pr")
+    assertTrue(
+      isEffectivelySettled(
+        recent,
+        now,
+        settlementSupported = true,
+        changeRequestState = "closed",
+      ),
+    )
+    assertTrue(
+      isEffectivelySettled(
+        recent,
+        now,
+        settlementSupported = true,
+        changeRequestState = "merged",
+      ),
+    )
+    assertFalse(
+      isEffectivelySettled(
+        recent,
+        now,
+        settlementSupported = true,
+        autoSettleOnMerge = false,
+        changeRequestState = "merged",
+      ),
+    )
+    val stale = summary("open", updatedAt = "2026-08-01T12:00:00Z", branch = "feat/pr")
+    assertFalse(
+      isEffectivelySettled(
+        stale,
+        now,
+        settlementSupported = true,
+        changeRequestState = "open",
+      ),
+    )
+  }
+
+  @Test
+  fun matches_change_request_state_to_the_thread_branch() {
+    val thread = summary("pr", branch = "feat/pr")
+    assertEquals("merged", changeRequestStateFor(thread, "feat/pr", "merged"))
+    assertNull(changeRequestStateFor(thread, "main", "merged"))
+    assertEquals("/repo/.worktrees/pr", threadChangeRequestCwd(thread.copy(worktreePath = "/repo/.worktrees/pr"), "/repo"))
+    assertEquals("/repo", threadChangeRequestCwd(thread, "/repo"))
+    assertNull(threadChangeRequestCwd(summary("plain"), "/repo"))
+  }
+
+  @Test
   fun explicit_active_override_suppresses_auto_settle() {
     val active = summary(
       "active",
@@ -305,6 +354,8 @@ class ThreadListV2Test {
     hasPendingUserInput: Boolean = false,
     session: ThreadSession? = null,
     latestTurn: LatestTurn? = null,
+    branch: String? = null,
+    worktreePath: String? = null,
   ) = ThreadSummary(
     id = id,
     projectId = projectId,
@@ -312,8 +363,8 @@ class ThreadListV2Test {
     modelSelection = ModelSelection("i", "m"),
     runtimeMode = "full-access",
     interactionMode = "default",
-    branch = null,
-    worktreePath = null,
+    branch = branch,
+    worktreePath = worktreePath,
     latestTurn = latestTurn,
     session = session,
     createdAt = createdAt,

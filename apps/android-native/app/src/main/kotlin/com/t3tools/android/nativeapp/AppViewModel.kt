@@ -17,6 +17,7 @@ import com.t3tools.android.protocol.TerminalBufferState
 import com.t3tools.android.protocol.TerminalMetadataEvent
 import com.t3tools.android.protocol.TerminalStatus
 import com.t3tools.android.protocol.VcsRef
+import com.t3tools.android.protocol.VcsStatus
 import com.t3tools.android.protocol.WorktreeBootstrap
 import com.t3tools.android.protocol.WorkspaceContentMatch
 import com.t3tools.android.protocol.WorkspaceEntry
@@ -208,6 +209,12 @@ class AppViewModel(
   private val mutableGitState = MutableStateFlow(GitUiState())
   val gitState = mutableGitState.asStateFlow()
 
+  private val mutableChangeRequestStates = MutableStateFlow<Map<String, String>>(emptyMap())
+  val changeRequestStates = mutableChangeRequestStates.asStateFlow()
+  private val changeRequestJobs = mutableMapOf<String, Job>()
+  private val lastChangeRequestStatus = mutableMapOf<String, VcsStatus?>()
+  private var lastChangeRequestWatchKey: String? = null
+
   private val mutableNewTaskBranchesState = MutableStateFlow(NewTaskBranchesUiState())
   val newTaskBranchesState = mutableNewTaskBranchesState.asStateFlow()
 
@@ -265,6 +272,10 @@ class AppViewModel(
   private val reviewRevealedBySection = mutableMapOf<String, Set<String>>()
 
   private var retryable: RetryableDispatch? = null
+
+  init {
+    viewModelScope.launch { runtime.collect(::syncChangeRequestWatches) }
+  }
 
   fun loadUsage(days: Int = mutableUsageState.value.windowDays) {
     val previous = mutableUsageState.value
@@ -2278,6 +2289,93 @@ class AppViewModel(
       val value: com.t3tools.android.protocol.WorkspaceContentMatches,
     ) : WorkspaceSearchLoad
   }
+
+  private fun syncChangeRequestWatches(state: OnlineChatState) {
+    val environmentId = state.environment?.environmentId
+    val connected = state.connectionPhase == ConnectionPhase.Connected
+    val watches = linkedMapOf<String, String>()
+    if (environmentId != null && connected) {
+      state.shell.threads.values.forEach { thread ->
+        if (thread.archivedAt != null) return@forEach
+        val cwd = threadChangeRequestCwd(
+          thread,
+          state.shell.projects[thread.projectId]?.workspaceRoot,
+        ) ?: return@forEach
+        watches[changeRequestWatchKey(environmentId, cwd)] = cwd
+      }
+    }
+    val watchKey = buildString {
+      append(environmentId)
+      append('|')
+      append(connected)
+      append('|')
+      state.shell.threads.values.forEach { thread ->
+        append(thread.id)
+        append(':')
+        append(thread.branch)
+        append(':')
+        append(thread.worktreePath)
+        append(':')
+        append(thread.archivedAt != null)
+        append(';')
+      }
+    }
+    if (watchKey == lastChangeRequestWatchKey) return
+    lastChangeRequestWatchKey = watchKey
+
+    (changeRequestJobs.keys - watches.keys).forEach { key ->
+      changeRequestJobs.remove(key)?.cancel()
+      lastChangeRequestStatus.remove(key)
+    }
+    val liveIds = state.shell.threads.keys
+    mutableChangeRequestStates.update { current -> current.filterKeys(liveIds::contains) }
+    if (environmentId == null || !connected) {
+      mutableChangeRequestStates.value = emptyMap()
+      return
+    }
+    watches.forEach { (key, cwd) ->
+      lastChangeRequestStatus[key]?.let { applyChangeRequestStates(environmentId, cwd, it) }
+      if (changeRequestJobs[key]?.isActive == true) return@forEach
+      changeRequestJobs[key] = viewModelScope.launch {
+        var status = lastChangeRequestStatus[key]
+        runCatching {
+          repository.observeVcsStatus(environmentId, cwd).collect { event ->
+            status = reduceVcsStatus(status, event)
+            lastChangeRequestStatus[key] = status
+            applyChangeRequestStates(environmentId, cwd, status)
+          }
+        }
+      }
+    }
+  }
+
+  private fun applyChangeRequestStates(environmentId: String, cwd: String, status: VcsStatus?) {
+    val state = runtime.value
+    if (state.environment?.environmentId != environmentId) return
+    mutableChangeRequestStates.update { current ->
+      val next = current.toMutableMap()
+      var changed = false
+      state.shell.threads.values.forEach { thread ->
+        if (threadChangeRequestCwd(thread, state.shell.projects[thread.projectId]?.workspaceRoot) != cwd) {
+          return@forEach
+        }
+        val prState = changeRequestStateFor(thread, status?.refName, status?.pullRequest?.state)
+        val previous = next[thread.id]
+        if (prState == null) {
+          if (previous != null) {
+            next.remove(thread.id)
+            changed = true
+          }
+        } else if (previous != prState) {
+          next[thread.id] = prState
+          changed = true
+        }
+      }
+      if (changed) next else current
+    }
+  }
+
+  private fun changeRequestWatchKey(environmentId: String, cwd: String) = "$environmentId\u0000$cwd"
 
   override fun onCleared() {
     repository.close()

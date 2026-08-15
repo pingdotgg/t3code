@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.CallMerge
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AccountTree
@@ -1215,6 +1216,7 @@ private fun HomeScreen(
   val threadListState = rememberLazyListState()
   var previousRevealSignal by remember { mutableStateOf(HomeListRevealSignal()) }
   val caps = runtime.threadCapabilities
+  val changeRequestStates by viewModel.changeRequestStates.collectAsState()
   val projectGroups = remember(runtime.shell.projects, runtime.settings.projectGroupingMode) {
     buildLogicalProjectGroups(runtime.shell.projects.values, runtime.settings.projectGroupingMode)
   }
@@ -1255,6 +1257,8 @@ private fun HomeScreen(
     filterStatus,
     caps.settlement,
     caps.snooze,
+    runtime.settings.autoSettleOnMerge,
+    changeRequestStates,
   ) {
     buildThreadListV2Layout(
       threads = rawThreads,
@@ -1264,6 +1268,8 @@ private fun HomeScreen(
       snoozedShelfExpanded = snoozedExpanded || filterStatus == ThreadFilterStatus.Snoozed,
       settledShelfExpanded = settledExpanded || filterStatus == ThreadFilterStatus.Settled,
       settledLimit = settledLimit,
+      autoSettleOnMerge = runtime.settings.autoSettleOnMerge,
+      changeRequestStateByThreadId = changeRequestStates,
     )
   }
 
@@ -1993,6 +1999,15 @@ private fun SettingsScreen(
       }
 
       NativeSettingsSection("Threads") {
+        NativeSettingsSwitchRow(
+          icon = Icons.AutoMirrored.Rounded.CallMerge,
+          label = "Auto-settle merged threads",
+          checked = runtime.settings.autoSettleOnMerge,
+          onCheckedChange = {
+            viewModel.updateSettings(runtime.settings.copy(autoSettleOnMerge = it))
+          },
+        )
+        HorizontalDivider(color = Color(0xFF27272A))
         NativeSettingsRow(Icons.Rounded.Archive, "Archived Threads", onClick = onOpenArchivedThreads)
       }
 
@@ -5181,7 +5196,7 @@ private fun ChatComposerArea(
               ) {
                 Icon(
                   imageVector = Icons.AutoMirrored.Rounded.Send,
-                  contentDescription = if (active || queuedMessageCount > 0) "Queue message" else "Send message",
+                  contentDescription = if (queuedMessageCount > 0) "Queue message" else "Send message",
                   tint = if (canSend) Color.White else Color(0xFF71717A),
                   modifier = Modifier.size(18.dp),
                 )

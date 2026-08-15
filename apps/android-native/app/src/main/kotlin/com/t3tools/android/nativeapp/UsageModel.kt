@@ -1,7 +1,7 @@
 package com.t3tools.android.nativeapp
 
-import com.t3tools.android.protocol.USAGE_CONTRACT_VERSION
 import com.t3tools.android.protocol.UsageBucket
+import com.t3tools.android.protocol.isSupportedUsageContract
 import com.t3tools.android.protocol.UsageCostSource
 import com.t3tools.android.protocol.UsageProvider
 import com.t3tools.android.protocol.UsageSourceStatus
@@ -94,11 +94,11 @@ fun usageWindow(
 
 fun mergeUsage(reports: List<EnvironmentUsageReport>): MergedUsage {
   val stale = reports.mapNotNull { report ->
-    report.summary?.takeIf { it.contractVersion != USAGE_CONTRACT_VERSION }
+    report.summary?.takeIf { !isSupportedUsageContract(it.contractVersion) }
       ?.let { report.environmentId }
   }
   val current = reports.mapNotNull { report ->
-    report.summary?.takeIf { it.contractVersion == USAGE_CONTRACT_VERSION }
+    report.summary?.takeIf { isSupportedUsageContract(it.contractVersion) }
       ?.let { report to it }
   }.sortedBy { it.first.environmentId }
 

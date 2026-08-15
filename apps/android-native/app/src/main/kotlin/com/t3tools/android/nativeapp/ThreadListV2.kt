@@ -123,17 +123,39 @@ private fun isAfter(value: String?, reference: String): Boolean {
   return instant.isAfter(referenceInstant)
 }
 
+fun changeRequestAutoSettles(
+  state: String?,
+  autoSettleOnMerge: Boolean = true,
+): Boolean = state == "closed" || (state == "merged" && autoSettleOnMerge)
+
+fun threadChangeRequestCwd(thread: ThreadSummary, projectWorkspaceRoot: String?): String? {
+  val worktree = thread.worktreePath?.takeIf { it.isNotBlank() }
+  if (worktree != null) return worktree
+  if (thread.branch.isNullOrBlank()) return null
+  return projectWorkspaceRoot?.takeIf { it.isNotBlank() }
+}
+
+fun changeRequestStateFor(thread: ThreadSummary, refName: String?, pullRequestState: String?): String? {
+  val branch = thread.branch ?: return null
+  if (refName != branch) return null
+  return pullRequestState
+}
+
 fun isEffectivelySettled(
   thread: ThreadSummary,
   now: Instant,
   settlementSupported: Boolean,
   autoSettleAfterDays: Int = 3,
+  autoSettleOnMerge: Boolean = true,
+  changeRequestState: String? = null,
 ): Boolean {
   if (!settlementSupported) return false
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false
   if (thread.session?.status == "running" || thread.session?.status == "starting") return false
   if (thread.settledOverride == "settled") return true
   if (thread.settledOverride == "active") return false
+  if (changeRequestAutoSettles(changeRequestState, autoSettleOnMerge)) return true
+  if (changeRequestState == "open") return false
   if (thread.settledAt != null) return true
   val lastActivity = parseInstant(thread.updatedAt) ?: return false
   val cutoff = now.minus(Duration.ofDays(autoSettleAfterDays.toLong()))
@@ -250,6 +272,8 @@ fun buildThreadListV2Layout(
   settledLimit: Int = THREAD_LIST_V2_SETTLED_INITIAL,
   now: Instant = Instant.now(),
   autoSettleAfterDays: Int = 3,
+  autoSettleOnMerge: Boolean = true,
+  changeRequestStateByThreadId: Map<String, String> = emptyMap(),
 ): ThreadListV2Layout {
   val query = search.trim()
   val pinned = mutableListOf<ThreadSummary>()
@@ -270,7 +294,16 @@ fun buildThreadListV2Layout(
       pinned += thread
       continue
     }
-    if (isEffectivelySettled(thread, now, settlementSupported, autoSettleAfterDays)) {
+    if (
+      isEffectivelySettled(
+        thread,
+        now,
+        settlementSupported,
+        autoSettleAfterDays,
+        autoSettleOnMerge,
+        changeRequestStateByThreadId[thread.id],
+      )
+    ) {
       settled += thread
     } else {
       active += thread
