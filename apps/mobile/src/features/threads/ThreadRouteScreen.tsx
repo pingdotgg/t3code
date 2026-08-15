@@ -12,8 +12,13 @@ import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { threadSessionReloadAvailability } from "@t3tools/client-runtime/state/thread-session";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -214,6 +219,11 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
+    reportFailure: false,
+  });
+  const reloadThreadRef = useRef(selectedThread);
+  reloadThreadRef.current = selectedThread;
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -496,6 +506,51 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+  const handleReloadAgentSession = useCallback(async () => {
+    const latestThread = reloadThreadRef.current;
+    const sessionStatus = latestThread?.session?.status ?? null;
+    const reloadAvailability = threadSessionReloadAvailability(sessionStatus);
+    if (reloadAvailability === "disabled") {
+      Alert.alert(
+        "Could not reload agent session",
+        "Wait for the active turn to finish before reloading the session.",
+      );
+      return;
+    }
+    if (!latestThread || reloadAvailability === "hidden") return;
+
+    const result = await stopThreadSession({
+      environmentId: latestThread.environmentId,
+      input: { threadId: latestThread.id, onlyIfIdle: true },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not reload agent session",
+          error instanceof Error ? error.message : "An error occurred.",
+        );
+      }
+      return;
+    }
+    Alert.alert(
+      "Agent session will reload",
+      "Your next message will resume this thread with current provider and MCP settings.",
+    );
+  }, [stopThreadSession]);
+  const sessionStatus = selectedThread?.session?.status ?? null;
+  const reloadAvailability = threadSessionReloadAvailability(sessionStatus);
+  const reloadSessionControl = useMemo(
+    () =>
+      reloadAvailability !== "hidden"
+        ? {
+            accessibilityLabel: "Reload agent session",
+            disabled: reloadAvailability === "disabled",
+            onPress: () => void handleReloadAgentSession(),
+          }
+        : undefined,
+    [handleReloadAgentSession, reloadAvailability],
+  );
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -632,6 +687,7 @@ function ThreadRouteContent(
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
+    reloadSessionControl,
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   };
@@ -715,6 +771,14 @@ function ThreadRouteContent(
         onPress: handleToggleInspector,
       });
     }
+    if (reloadSessionControl) {
+      actions.push({
+        accessibilityLabel: reloadSessionControl.accessibilityLabel,
+        disabled: reloadSessionControl.disabled,
+        icon: "arrow.clockwise",
+        onPress: reloadSessionControl.onPress,
+      });
+    }
     return actions;
   }, [
     fileInspector.supported,
@@ -723,6 +787,7 @@ function ThreadRouteContent(
     handleOpenGitInspector,
     handleToggleInspector,
     props.onReturnToThread,
+    reloadSessionControl,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
   ]);
@@ -816,6 +881,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        optionsVersion={reloadAvailability}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.

@@ -22,3 +22,14 @@ pill** fallback because their colors are not controlled by T3 Code.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Reload an agent session
+
+Reload a thread's agent session after changing provider configuration, enabling an MCP server, or
+connecting an integration such as Computer Use. On web and desktop, open the thread actions from
+the thread title or sidebar row and choose **Reload agent session**, or run the same action from the
+command palette. On mobile, use the reload button in the thread toolbar.
+
+Reloading stops only that thread's provider process. Your next message resumes the same provider
+conversation with the current configuration; other threads and the T3 Code environment keep
+running. The action is unavailable while a turn is starting or running.

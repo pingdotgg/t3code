@@ -9,6 +9,7 @@ const baseState: ThreadActionMenuState = {
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
+  sessionStatus: "ready",
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
@@ -26,7 +27,7 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy-path", "copy-thread-id", "delete"]);
+    ).toEqual(["reload-session", "rename", "mark-unread", "copy-path", "copy-thread-id", "delete"]);
   });
 
   it("includes branch items only for threads with a branch", () => {
@@ -57,6 +58,21 @@ describe("buildThreadActionMenuItems", () => {
       (candidate) => candidate.id === "regenerate-title",
     );
     expect(item).toMatchObject({ label: "Regenerating…", disabled: true });
+  });
+
+  it("offers session reload without interrupting an active turn", () => {
+    const ready = buildThreadActionMenuItems(baseState).find(
+      (candidate) => candidate.id === "reload-session",
+    );
+    expect(ready).toMatchObject({ label: "Reload agent session", disabled: false });
+
+    const running = buildThreadActionMenuItems({ ...baseState, sessionStatus: "running" }).find(
+      (candidate) => candidate.id === "reload-session",
+    );
+    expect(running).toMatchObject({ label: "Reload agent session", disabled: true });
+
+    expect(ids({ ...baseState, sessionStatus: "stopped" })).not.toContain("reload-session");
+    expect(ids({ ...baseState, sessionStatus: null })).not.toContain("reload-session");
   });
 
   it("marks delete as destructive and keeps it last", () => {

@@ -4,6 +4,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { threadSessionReloadAvailability } from "@t3tools/client-runtime/state/thread-session";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -36,6 +37,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  RefreshCwIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -57,6 +59,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useReloadThreadSession } from "../hooks/useReloadThreadSession";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
@@ -583,6 +586,7 @@ function OpenCommandPaletteDialog(props: {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const reloadThreadSession = useReloadThreadSession();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -1453,6 +1457,26 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
+  }
+
+  if (activeThread) {
+    const reloadAvailability = threadSessionReloadAvailability(
+      activeThread.session?.status ?? null,
+    );
+    if (reloadAvailability !== "hidden") {
+      actionItems.push({
+        kind: "action",
+        value: "action:reload-agent-session",
+        searchTerms: ["reload agent session", "restart provider", "refresh mcp", "computer use"],
+        title: "Reload agent session",
+        description: "Use current provider and MCP settings on the next message",
+        icon: <RefreshCwIcon className={ITEM_ICON_CLASS} />,
+        disabled: reloadAvailability === "disabled",
+        run: async () => {
+          await reloadThreadSession(scopeThreadRef(activeThread.environmentId, activeThread.id));
+        },
+      });
+    }
   }
 
   actionItems.push({
