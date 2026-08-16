@@ -66,6 +66,7 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import {
   findPromptStashUndoTransaction,
+  mergePromptStashUndoImages,
   type PromptStashUndoTransaction,
   undoPromptStashSideEffects,
 } from "./promptStashUndo";
@@ -2154,11 +2155,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         currentTargetKey: composerDraftTargetKey,
         takeEntry: takeStashEntry,
         restoreImages: (images) => {
-          for (const currentImage of composerImagesRef.current) {
-            removeComposerDraftImage(composerDraftTarget, currentImage.id);
+          const merged = mergePromptStashUndoImages({
+            currentImages: composerImagesRef.current,
+            restoredImages: images,
+            maxImages: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          });
+          for (const image of merged.unusedImages) {
+            URL.revokeObjectURL(image.previewUrl);
           }
-          composerImagesRef.current = images;
-          addComposerDraftImages(composerDraftTarget, images);
+          composerImagesRef.current = merged.images;
+          addComposerDraftImages(composerDraftTarget, merged.addedImages);
+          if (merged.overflowImageNames.length > 0) {
+            toastManager.add({
+              type: "warning",
+              title: "Some images were not restored",
+              description: `${merged.overflowImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-image limit.`,
+            });
+          }
         },
       });
       if (!transaction || (!result.undone && transaction.state === "available")) return;
@@ -2186,7 +2199,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerImagesRef,
       isComposerApprovalState,
       pendingUserInputs.length,
-      removeComposerDraftImage,
       takeStashEntry,
     ],
   );
@@ -2259,7 +2271,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const undoTransaction: PromptStashUndoTransaction = {
         entryId,
         targetKey: composerDraftTargetKey,
-        historyEntryId: composerEditorRef.current?.captureCurrentHistoryEntry() ?? null,
+        historyEntryId: composerEditorRef.current?.captureCurrentHistoryEntry("") ?? null,
         images,
         state: "available",
       };

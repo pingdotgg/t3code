@@ -3,11 +3,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { ComposerImageAttachment } from "../../composerDraftStore";
 import {
   findPromptStashUndoTransaction,
+  mergePromptStashUndoImages,
   type PromptStashUndoTransaction,
   undoPromptStashSideEffects,
 } from "./promptStashUndo";
 
-function makeImage(): ComposerImageAttachment {
+function makeImage(overrides: Partial<ComposerImageAttachment> = {}): ComposerImageAttachment {
   return {
     type: "image",
     id: "image-1",
@@ -16,6 +17,7 @@ function makeImage(): ComposerImageAttachment {
     sizeBytes: 4,
     previewUrl: "blob:revoked-preview",
     file: { name: "screenshot.png" } as File,
+    ...overrides,
   };
 }
 
@@ -101,5 +103,42 @@ describe("undoPromptStashSideEffects", () => {
 
     expect(result.undone).toBe(false);
     expect(takeEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe("mergePromptStashUndoImages", () => {
+  it("keeps newer attachments when a text-only stash is undone", () => {
+    const newerImage = makeImage({ id: "newer-image" });
+
+    expect(
+      mergePromptStashUndoImages({
+        currentImages: [newerImage],
+        restoredImages: [],
+        maxImages: 8,
+      }),
+    ).toEqual({
+      images: [newerImage],
+      addedImages: [],
+      unusedImages: [],
+      overflowImageNames: [],
+    });
+  });
+
+  it("appends stashed images without replacing newer attachments", () => {
+    const newerImage = makeImage({ id: "newer-image", name: "newer.png" });
+    const stashedImage = makeImage({ id: "stashed-image", name: "stashed.png" });
+
+    expect(
+      mergePromptStashUndoImages({
+        currentImages: [newerImage],
+        restoredImages: [stashedImage],
+        maxImages: 8,
+      }),
+    ).toEqual({
+      images: [newerImage, stashedImage],
+      addedImages: [stashedImage],
+      unusedImages: [],
+      overflowImageNames: [],
+    });
   });
 });

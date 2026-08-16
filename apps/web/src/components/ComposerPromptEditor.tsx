@@ -87,6 +87,7 @@ import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTermin
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import { captureComposerHistoryEntry } from "./composerHistory";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 const SURROUND_SYMBOLS: [string, string][] = [
@@ -874,7 +875,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
-  captureCurrentHistoryEntry: () => number;
+  captureCurrentHistoryEntry: (nextValue: string) => number;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1755,9 +1756,8 @@ function ComposerPromptEditorInner({
           ),
         );
       },
-      captureCurrentHistoryEntry: () => {
-        const editorState = editor.getEditorState();
-        historyState.current = { editor, editorState };
+      captureCurrentHistoryEntry: (nextValue) => {
+        const editorState = captureComposerHistoryEntry({ editor, historyState, nextValue });
         return getHistoryEntryId(editorState);
       },
       readSnapshot,

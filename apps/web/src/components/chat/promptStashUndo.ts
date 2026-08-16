@@ -13,6 +13,48 @@ type TakeStashEntryResult = {
   durable: boolean;
 };
 
+function imageDedupKey(image: ComposerImageAttachment): string {
+  return `${image.mimeType}\0${image.sizeBytes}\0${image.name}`;
+}
+
+/** Appends restored stash images without replacing newer attachments. */
+export function mergePromptStashUndoImages(options: {
+  currentImages: ReadonlyArray<ComposerImageAttachment>;
+  restoredImages: ReadonlyArray<ComposerImageAttachment>;
+  maxImages: number;
+}): {
+  images: ComposerImageAttachment[];
+  addedImages: ComposerImageAttachment[];
+  unusedImages: ComposerImageAttachment[];
+  overflowImageNames: string[];
+} {
+  const images = [...options.currentImages];
+  const addedImages: ComposerImageAttachment[] = [];
+  const unusedImages: ComposerImageAttachment[] = [];
+  const overflowImageNames: string[] = [];
+  const ids = new Set(images.map((image) => image.id));
+  const dedupKeys = new Set(images.map(imageDedupKey));
+
+  for (const image of options.restoredImages) {
+    const dedupKey = imageDedupKey(image);
+    if (ids.has(image.id) || dedupKeys.has(dedupKey)) {
+      unusedImages.push(image);
+      continue;
+    }
+    if (images.length >= options.maxImages) {
+      unusedImages.push(image);
+      overflowImageNames.push(image.name);
+      continue;
+    }
+    ids.add(image.id);
+    dedupKeys.add(dedupKey);
+    images.push(image);
+    addedImages.push(image);
+  }
+
+  return { images, addedImages, unusedImages, overflowImageNames };
+}
+
 /** Finds the stash side effect attached to Lexical's next history entry. */
 export function findPromptStashUndoTransaction(
   transactions: ReadonlyArray<PromptStashUndoTransaction>,
