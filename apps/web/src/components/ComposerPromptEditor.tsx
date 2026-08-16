@@ -967,10 +967,7 @@ function ComposerCommandKeyPlugin(props: {
         const navigationKey = props.resolvePickerNavigationKey(event);
         if (!navigationKey) return false;
 
-        handleCommand(navigationKey, event);
-        event.preventDefault();
-        event.stopPropagation();
-        return true;
+        return handleCommand(navigationKey, event);
       },
       COMMAND_PRIORITY_HIGH,
     );
