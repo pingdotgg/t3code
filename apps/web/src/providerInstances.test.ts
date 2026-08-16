@@ -9,7 +9,9 @@ import {
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
+  sortProviderInstanceEntries,
 } from "./providerInstances";
+import { reorderProviders } from "./uiStateStore";
 
 function provider(input: {
   provider: ProviderDriverKind;
@@ -458,5 +460,39 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("sortProviderInstanceEntries and reorderProviders", () => {
+  it("sorts entries according to customOrder while preserving unlisted entries", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
+      provider({ provider: ProviderDriverKind.make("antigravity"), instanceId: "antigravity" }),
+    ]);
+
+    const sorted = sortProviderInstanceEntries(entries, ["antigravity", "codex"]);
+    expect(sorted.map((e) => e.instanceId)).toEqual(["antigravity", "codex", "claudeAgent"]);
+  });
+
+  it("reorders provider order correctly when dragged to new target position", () => {
+    const allIds = ["codex", "claudeAgent", "antigravity"];
+    const initialOrder = ["codex", "claudeAgent", "antigravity"];
+    const reordered = reorderProviders(
+      {
+        projectExpandedById: {},
+        projectOrder: [],
+        providerOrder: initialOrder,
+        threadLastVisitedAtById: {},
+        threadChangedFilesExpandedById: {},
+        defaultAdvertisedEndpointKey: null,
+      },
+      initialOrder,
+      allIds,
+      "antigravity",
+      "codex",
+    );
+
+    expect(reordered.providerOrder).toEqual(["antigravity", "codex", "claudeAgent"]);
   });
 });

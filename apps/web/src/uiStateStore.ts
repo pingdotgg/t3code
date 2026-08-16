@@ -20,6 +20,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  providerOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -34,6 +35,10 @@ export interface UiProjectState {
   projectOrder: string[];
 }
 
+export interface UiProviderState {
+  providerOrder: string[];
+}
+
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
@@ -43,11 +48,12 @@ export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
 
-export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+export interface UiState extends UiProjectState, UiProviderState, UiThreadState, UiEndpointState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  providerOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -125,6 +131,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    providerOrder: sanitizeStringArray(parsed.providerOrder),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -203,6 +210,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        providerOrder: state.providerOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -381,6 +389,37 @@ export function reorderProjects(
   };
 }
 
+export function reorderProviders(
+  state: UiState,
+  currentProviderOrder: readonly string[],
+  allInstanceIds: readonly string[],
+  draggedInstanceId: string,
+  targetInstanceId: string,
+): UiState {
+  if (!draggedInstanceId || !targetInstanceId || draggedInstanceId === targetInstanceId) {
+    return state;
+  }
+  const base = currentProviderOrder.length > 0 ? [...currentProviderOrder] : [...allInstanceIds];
+  for (const id of allInstanceIds) {
+    if (!base.includes(id)) {
+      base.push(id);
+    }
+  }
+  const draggedIndex = base.indexOf(draggedInstanceId);
+  const targetIndex = base.indexOf(targetInstanceId);
+  if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) {
+    return state;
+  }
+  const [removed] = base.splice(draggedIndex, 1);
+  if (removed) {
+    base.splice(targetIndex, 0, removed);
+  }
+  return {
+    ...state,
+    providerOrder: base,
+  };
+}
+
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
@@ -391,6 +430,12 @@ interface UiStateStore extends UiState {
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
+  ) => void;
+  reorderProviders: (
+    currentProviderOrder: readonly string[],
+    allInstanceIds: readonly string[],
+    draggedInstanceId: string,
+    targetInstanceId: string,
   ) => void;
 }
 
@@ -409,6 +454,16 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
+    ),
+  reorderProviders: (currentProviderOrder, allInstanceIds, draggedInstanceId, targetInstanceId) =>
+    set((state) =>
+      reorderProviders(
+        state,
+        currentProviderOrder,
+        allInstanceIds,
+        draggedInstanceId,
+        targetInstanceId,
+      ),
     ),
 }));
 

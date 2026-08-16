@@ -237,11 +237,8 @@ export function applyProviderInstanceSettings(
  */
 export function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
+  customOrder?: ReadonlyArray<string>,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  // Group by driver kind preserving first-appearance order, then emit
-  // default-first within each kind. Using a Map keeps the "first-seen"
-  // semantics for kinds whose default instance is absent (unusual but
-  // possible during the migration).
   const byKind = new Map<ProviderDriverKind, ProviderInstanceEntry[]>();
   for (const entry of entries) {
     const bucket = byKind.get(entry.driverKind);
@@ -251,13 +248,37 @@ export function sortProviderInstanceEntries(
       byKind.set(entry.driverKind, [entry]);
     }
   }
-  const sorted: ProviderInstanceEntry[] = [];
+  const defaultSorted: ProviderInstanceEntry[] = [];
   for (const bucket of byKind.values()) {
     const defaults = bucket.filter((entry) => entry.isDefault);
     const customs = bucket.filter((entry) => !entry.isDefault);
-    sorted.push(...defaults, ...customs);
+    defaultSorted.push(...defaults, ...customs);
   }
-  return sorted;
+
+  if (!customOrder || customOrder.length === 0) {
+    return defaultSorted;
+  }
+
+  const ordered: ProviderInstanceEntry[] = [];
+  const remaining = new Set(defaultSorted);
+
+  for (const key of customOrder) {
+    const match = defaultSorted.find(
+      (entry) => remaining.has(entry) && (entry.instanceId === key || entry.driverKind === key),
+    );
+    if (match) {
+      ordered.push(match);
+      remaining.delete(match);
+    }
+  }
+
+  for (const entry of defaultSorted) {
+    if (remaining.has(entry)) {
+      ordered.push(entry);
+    }
+  }
+
+  return ordered;
 }
 
 /**
