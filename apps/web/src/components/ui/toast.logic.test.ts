@@ -2,9 +2,22 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildVisibleToastLayout,
+  hasVisibleToastAction,
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
+
+describe("hasVisibleToastAction", () => {
+  it("treats a labeled action as visible", () => {
+    assert.equal(hasVisibleToastAction({ children: "Update" }), true);
+  });
+
+  it("hides an explicit empty action used to clear a previous CTA", () => {
+    assert.equal(hasVisibleToastAction({ children: null }), false);
+    assert.equal(hasVisibleToastAction({ children: "" }), false);
+    assert.equal(hasVisibleToastAction(undefined), false);
+  });
+});
 
 describe("shouldHideCollapsedToastContent", () => {
   it("keeps a single visible toast readable", () => {

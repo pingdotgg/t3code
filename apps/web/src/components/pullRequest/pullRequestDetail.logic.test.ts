@@ -8,7 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  buildAskAboutLinesHandoff,
+  buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
@@ -18,7 +18,9 @@ import {
   handoffReviewComments,
   isThreadOwnPullRequest,
   orderPullRequestComments,
+  pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
+  pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   readableFailure,
@@ -53,6 +55,12 @@ const TIMELINE_SOURCE: Pick<
   closedAt: null,
 };
 
+describe("pull request action menu", () => {
+  it("keeps the group divider when auto-merge is the only action", () => {
+    expect(pullRequestActionMenuHasGroup(false, true, false)).toBe(true);
+  });
+});
+
 describe("pull request state description", () => {
   it("keeps draft and conflicts orthogonal to the terminal states", () => {
     expect(describePullRequestState("open", true)).toBe("Draft");
@@ -81,6 +89,15 @@ describe("pull request handoff labels", () => {
       resolve: "Resolve in a new thread",
       resolveConflicts: "Resolve conflicts in a thread",
     });
+  });
+});
+
+describe("pull request composer target", () => {
+  it("rejects a page composer so agent comments cannot open another thread", () => {
+    const target = { environmentId: "env-1", threadId: "thread-1" };
+
+    expect(pullRequestComposerTarget("page", target)).toBeNull();
+    expect(pullRequestComposerTarget("thread", target)).toBe(target);
   });
 });
 
@@ -666,7 +683,7 @@ describe("asking about a change rather than working on it", () => {
     expect(handoff.reviewComments[0]?.text).toContain("Explain only. Do not change any code.");
   });
 
-  it("takes what the reader typed on the lines as the question", () => {
+  it("puts the reader's request in the composer and the selected lines in chips", () => {
     const comment = {
       id: "pull-request-selection:page.tsx:12:18",
       sectionId: "pull-request:42",
@@ -678,10 +695,10 @@ describe("asking about a change rather than working on it", () => {
       text: "what is this for?",
       diff: "+const answer = 42;",
     };
-    const handoff = buildAskAboutLinesHandoff({
+    const handoff = buildAddSelectionToAgentHandoff({
       ...base,
       comment,
-      question: "what is this for?",
+      request: "what is this for?",
     });
     expect(handoff.prompt).toBe("what is this for?");
     // Two chips: which pull request, and which lines.
@@ -689,25 +706,8 @@ describe("asking about a change rather than working on it", () => {
       "PR #42",
       "apps/web/src/page.tsx",
     ]);
-  });
-
-  it("leaves the composer empty where the reader marked lines and typed nothing", () => {
-    const handoff = buildAskAboutLinesHandoff({
-      ...base,
-      comment: {
-        id: "pull-request-selection:page.tsx:4:4",
-        sectionId: "pull-request:42",
-        sectionTitle: "PR #42 review",
-        filePath: "apps/web/src/page.tsx",
-        startIndex: 3,
-        endIndex: 3,
-        rangeLabel: "L4 (before)",
-        text: "",
-        diff: "-const answer = 41;",
-      },
-      question: "   ",
-    });
-    expect(handoff.prompt).toBe("");
+    expect(handoff.reviewComments[0]?.text).not.toContain("Do not change any code");
+    expect(handoff.reviewComments[1]?.text).toBe("");
   });
 });
 
