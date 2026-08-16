@@ -12,6 +12,7 @@ import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle } from "../ui/toggle";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedSearchLine } from "./HighlightedSearchLine";
 
 interface ProjectContentSearchDialogProps {
@@ -59,17 +60,23 @@ function SearchOptionButton(props: {
   readonly children: ReactNode;
 }) {
   return (
-    <Toggle
-      aria-label={props.label}
-      pressed={props.active}
-      title={props.label}
-      className="size-8 rounded-[5px] font-mono text-muted-foreground data-pressed:text-foreground sm:size-7"
-      size="compact"
-      variant="ghost"
-      onClick={props.onClick}
-    >
-      {props.children}
-    </Toggle>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Toggle
+            aria-label={props.label}
+            pressed={props.active}
+            className="size-8 rounded-[5px] font-mono text-muted-foreground data-pressed:text-foreground sm:size-7"
+            size="compact"
+            variant="ghost"
+            onClick={props.onClick}
+          />
+        }
+      >
+        {props.children}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 

@@ -35,6 +35,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface PullRequestFilterOption<Value extends string> {
   readonly value: Value;
@@ -156,21 +157,32 @@ function PullRequestFilterRadioGroup<Value extends string>({
       }}
     >
       <MenuGroupLabel>{label}</MenuGroupLabel>
-      {options.map((option) => (
-        <MenuRadioItem
-          key={option.value}
-          value={option.value}
-          // A host the server has already said it cannot read is not a choice here: offering
-          // it would answer the press by replacing a working list with that failure.
-          disabled={option.unavailable !== undefined}
-          title={option.unavailable}
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <option.Icon aria-hidden className="size-3.5" />
-            {option.label}
-          </span>
-        </MenuRadioItem>
-      ))}
+      {options.map((option) => {
+        // A host the server has already said it cannot read is not a choice here: offering
+        // it would answer the press by replacing a working list with that failure.
+        const item = (
+          <MenuRadioItem
+            key={option.value}
+            value={option.value}
+            className={option.unavailable ? "data-disabled:pointer-events-auto" : undefined}
+            disabled={option.unavailable !== undefined}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <option.Icon aria-hidden className="size-3.5" />
+              {option.label}
+            </span>
+          </MenuRadioItem>
+        );
+        if (!option.unavailable) return item;
+        return (
+          <Tooltip key={option.value}>
+            <TooltipTrigger render={item} />
+            <TooltipPopup side="top" className="max-w-80">
+              {option.unavailable}
+            </TooltipPopup>
+          </Tooltip>
+        );
+      })}
     </MenuRadioGroup>
   );
 }
@@ -375,12 +387,12 @@ export function PullRequestFiltersMenu({
             )
             .map((project) => {
               const reason = unavailable.get(pullRequestProjectKey(project));
-              return (
+              const item = (
                 <MenuRadioItem
                   key={pullRequestProjectKey(project)}
                   value={pullRequestProjectKey(project)}
+                  className={reason !== undefined ? "data-disabled:pointer-events-auto" : undefined}
                   disabled={reason !== undefined}
-                  title={reason}
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-2">
                     <ProjectFavicon
@@ -397,6 +409,15 @@ export function PullRequestFiltersMenu({
                     )}
                   </span>
                 </MenuRadioItem>
+              );
+              if (reason === undefined) return item;
+              return (
+                <Tooltip key={pullRequestProjectKey(project)}>
+                  <TooltipTrigger render={item} />
+                  <TooltipPopup side="top" className="max-w-80">
+                    {reason}
+                  </TooltipPopup>
+                </Tooltip>
               );
             })}
         </MenuRadioGroup>

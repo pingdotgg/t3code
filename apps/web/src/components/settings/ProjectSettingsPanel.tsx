@@ -97,6 +97,7 @@ import {
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -937,22 +938,28 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         >
           <div className="px-3 py-2 sm:px-4">
             <div className="flex min-w-0 items-center rounded-lg bg-muted/30 p-1 text-base text-muted-foreground sm:text-sm">
-              <button
-                aria-label="Copy checkout path"
-                className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                title="Copy path"
-                type="button"
-                onClick={() =>
-                  copyPathToClipboard(selectedCheckout.workspaceRoot, {
-                    path: selectedCheckout.workspaceRoot,
-                  })
-                }
-              >
-                <code className="min-w-0 flex-1 truncate font-mono">
-                  {selectedCheckout.workspaceRoot}
-                </code>
-                <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label="Copy checkout path"
+                      className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      type="button"
+                      onClick={() =>
+                        copyPathToClipboard(selectedCheckout.workspaceRoot, {
+                          path: selectedCheckout.workspaceRoot,
+                        })
+                      }
+                    >
+                      <code className="min-w-0 flex-1 truncate font-mono">
+                        {selectedCheckout.workspaceRoot}
+                      </code>
+                      <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
+                    </button>
+                  }
+                />
+                <TooltipPopup side="top">Copy path</TooltipPopup>
+              </Tooltip>
               <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
                 {selectedCheckoutThreadCount === 1
                   ? "1 thread"
