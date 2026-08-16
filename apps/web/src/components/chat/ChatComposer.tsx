@@ -1981,6 +1981,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }, 1200);
   }, []);
 
+  const closeStashMenu = useCallback(() => {
+    const restoreComposerFocus = focusStashMenuCloseOnOpenRef.current;
+    focusStashMenuCloseOnOpenRef.current = false;
+    setIsStashMenuOpen(false);
+    if (restoreComposerFocus) scheduleComposerFocus();
+  }, [scheduleComposerFocus]);
+
   const restoreStashEntry = useCallback(
     (entry: PromptStashEntry) => {
       // Remove first so a double activation (click + Enter) can't restore twice.
@@ -1995,6 +2002,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data: { hideCopyButton: true },
         });
       }
+      const restoreComposerFocus = focusStashMenuCloseOnOpenRef.current;
+      focusStashMenuCloseOnOpenRef.current = false;
       setIsStashMenuOpen(false);
 
       const currentPrompt = promptRef.current;
@@ -2078,9 +2087,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
 
-      // Only yank the caret to the end when text was actually inserted;
-      // restoring images alone should leave the user where they were typing.
-      if (promptChanged) {
+      // Pointer-opened image restores leave the caret alone. Keyboard-opened
+      // restores return focus to the composer after the menu unmounts.
+      if (promptChanged || restoreComposerFocus) {
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAtEnd();
         });
@@ -2118,8 +2127,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
     const images = [...composerImagesRef.current];
     if (prompt.length === 0 && images.length === 0) {
-      focusStashMenuCloseOnOpenRef.current = true;
-      setIsStashMenuOpen((open) => !open);
+      if (isStashMenuOpen) {
+        closeStashMenu();
+        return;
+      }
+      focusStashMenuCloseOnOpenRef.current = false;
+      setIsStashMenuOpen(true);
       return;
     }
     // A repeat ⌘S on the *same* still-unencoded snapshot would stash it
@@ -2262,28 +2275,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   }, [
     clearComposerDraftPromptAndImages,
+    closeStashMenu,
     composerDraftTarget,
     composerImagesRef,
     finalizeStashEntryImages,
     promptRef,
     pulseStashBadge,
     stashEntryToQueue,
+    isStashMenuOpen,
   ]);
 
-  const toggleStashMenu = useCallback((focusCloseButton: boolean) => {
+  const openStashMenu = useCallback((focusCloseButton: boolean) => {
     focusStashMenuCloseOnOpenRef.current = focusCloseButton;
-    setIsStashMenuOpen((open) => !open);
+    setIsStashMenuOpen(true);
   }, []);
 
   // Close the stash menu when another composer state takes over its layer.
   // This also prevents a hidden menu from reappearing after approval ends.
   useEffect(() => {
     if (composerMenuOpen || isComposerApprovalState) {
+      focusStashMenuCloseOnOpenRef.current = false;
       setIsStashMenuOpen(false);
     }
   }, [composerMenuOpen, isComposerApprovalState]);
   // The menu is a transient picker, not a panel, so typing dismisses it.
   useEffect(() => {
+    focusStashMenuCloseOnOpenRef.current = false;
     setIsStashMenuOpen(false);
   }, [prompt]);
 
@@ -2891,7 +2908,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 count={stashQueue.length}
                 pulseKey={stashPulse.key}
                 pulsing={stashPulse.active}
-                onToggleMenu={toggleStashMenu}
+                onOpenMenu={openStashMenu}
               />
             )}
 
@@ -2901,7 +2918,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   entries={stashQueue}
                   onRestore={restoreStashEntry}
                   onDelete={deleteStashEntry}
-                  onClose={() => setIsStashMenuOpen(false)}
+                  onClose={closeStashMenu}
                   focusCloseOnMount={focusStashMenuCloseOnOpenRef.current}
                 />
               </ComposerCommandMenuLayer>

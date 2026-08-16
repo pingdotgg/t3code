@@ -15,7 +15,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
   pulseKey: number;
   pulsing: boolean;
-  onToggleMenu: (focusCloseButton: boolean) => void;
+  onOpenMenu: (focusCloseButton: boolean) => void;
 }) {
   if (props.count === 0) return null;
 
@@ -35,7 +35,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         // Keep composer focus so Escape/typing flows stay intact.
         event.preventDefault();
       }}
-      onClick={(event) => props.onToggleMenu(event.detail === 0)}
+      onClick={(event) => props.onOpenMenu(event.detail === 0)}
     >
       <BookmarkIcon className="size-3" aria-hidden="true" />
       Stash
