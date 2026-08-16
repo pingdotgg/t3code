@@ -126,7 +126,7 @@ it.layer(NodeServices.layer)("message correction decider", (it) => {
     }),
   );
 
-  it.effect("allows correction when the completed turn can also be reverted", () =>
+  it.effect("rejects correction after the assistant has replied", () =>
     Effect.gen(function* () {
       const assistant = {
         id: MessageId.make("assistant-1"),
@@ -137,7 +137,7 @@ it.layer(NodeServices.layer)("message correction decider", (it) => {
         createdAt: TARGET_AT,
         updatedAt: TARGET_AT,
       };
-      const result = yield* decideOrchestrationCommand({
+      const error = yield* decideOrchestrationCommand({
         command,
         readModel: readModel(
           makeThread({
@@ -155,13 +155,11 @@ it.layer(NodeServices.layer)("message correction decider", (it) => {
             ],
           }),
         ),
-      });
+      }).pipe(Effect.flip);
 
-      const events = Array.isArray(result) ? result : [result];
-      expect(events.map((event) => event.type)).toEqual([
-        "thread.message-corrected",
-        "thread.turn-start-requested",
-      ]);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      if (error._tag !== "OrchestrationCommandInvariantError") return;
+      expect(error.detail).toBe("Only the last message in the thread can be edited.");
     }),
   );
 

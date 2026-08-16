@@ -140,10 +140,13 @@ export function reconcileThreadMessageCorrections(
   });
 }
 
-export function getLastVisibleUserMessage(
+export function getLastVisibleMessage(
   messages: ReadonlyArray<OrchestrationMessage>,
 ): OrchestrationMessage | undefined {
-  return messages.findLast((message) => message.role === "user" && !isCorrectionMessage(message));
+  return messages.findLast(
+    (message) =>
+      (message.role === "user" || message.role === "assistant") && !isCorrectionMessage(message),
+  );
 }
 
 /**
@@ -242,7 +245,7 @@ export function threadHasQueuedTurnStart(
 export type ThreadMessageCorrectionRejectionReason =
   | "target-missing"
   | "target-not-visible-user-message"
-  | "target-not-last-visible-user-message"
+  | "target-not-last-visible-message"
   | "thread-archived"
   | "session-active"
   | "queued-turn-start"
@@ -269,6 +272,9 @@ export function getThreadMessageCorrectionEligibility(input: {
   readonly occurredAt: string;
   readonly replacementText?: string;
 }): ThreadMessageCorrectionEligibility {
+  if (input.thread.archivedAt !== null) {
+    return rejectCorrection("thread-archived", "Archived threads cannot be edited.");
+  }
   const target = input.thread.messages.find((message) => message.id === input.targetMessageId);
   if (target === undefined) {
     return rejectCorrection("target-missing", "The message no longer exists.");
@@ -279,14 +285,11 @@ export function getThreadMessageCorrectionEligibility(input: {
       "Only a visible user message can be edited.",
     );
   }
-  if (getLastVisibleUserMessage(input.thread.messages)?.id !== target.id) {
+  if (getLastVisibleMessage(input.thread.messages)?.id !== target.id) {
     return rejectCorrection(
-      "target-not-last-visible-user-message",
-      "A newer user message has already been sent.",
+      "target-not-last-visible-message",
+      "Only the last message in the thread can be edited.",
     );
-  }
-  if (input.thread.archivedAt !== null) {
-    return rejectCorrection("thread-archived", "Archived threads cannot be edited.");
   }
   if (input.thread.session?.status === "starting" || input.thread.session?.status === "running") {
     return rejectCorrection("session-active", "Wait for the current turn to finish.");

@@ -1180,64 +1180,55 @@ it.effect("validates correction eligibility for idle and unavailable thread stat
     assert.strictEqual(active.eligible, false);
     if (!active.eligible) assert.strictEqual(active.reason, "session-active");
 
-    const assistantId = "assistant-error" as never;
-    const nonReadyCheckpoint = getThreadMessageCorrectionEligibility({
-      thread: {
-        ...baseThread,
-        messages: [
-          ...baseThread.messages,
-          {
-            id: assistantId,
-            role: "assistant",
-            text: "Partial response",
-            turnId: "turn-error" as never,
-            streaming: false,
-            createdAt: "2026-08-16T09:01:00.000Z",
-            updatedAt: "2026-08-16T09:01:00.000Z",
-          },
-        ],
-        checkpoints: [
-          {
-            turnId: "turn-error" as never,
-            checkpointTurnCount: 1,
-            checkpointRef: "refs/t3/checkpoints/thread-error/turn/1" as never,
-            status: "error",
-            files: [],
-            assistantMessageId: assistantId,
-            completedAt: "2026-08-16T09:01:00.000Z",
-          },
-        ],
-      },
+    const archived = getThreadMessageCorrectionEligibility({
+      thread: { ...baseThread, archivedAt: "2026-08-16T09:30:00.000Z", messages: [] },
       targetMessageId: baseThread.messages[0]!.id,
       occurredAt: "2026-08-16T10:00:00.000Z",
-      replacementText: "Corrected request",
     });
-    assert.deepStrictEqual(nonReadyCheckpoint, { eligible: true });
+    assert.strictEqual(archived.eligible, false);
+    if (!archived.eligible) assert.strictEqual(archived.reason, "thread-archived");
 
-    const completedRevertibleTurn = getThreadMessageCorrectionEligibility({
+    const correctedMessages = applyThreadMessageCorrection(baseThread.messages, {
+      targetMessageId: baseThread.messages[0]!.id,
+      correctionMessageId: "correction-hidden" as never,
+      replacementText: "Correction A",
+      providerText: buildThreadMessageCorrectionProviderText("Correction A"),
+      createdAt: "2026-08-16T10:00:00.000Z",
+      updatedAt: "2026-08-16T10:00:00.000Z",
+    });
+    const repeatedCorrection = getThreadMessageCorrectionEligibility({
+      thread: {
+        ...baseThread,
+        messages: correctedMessages,
+        session: {
+          threadId: baseThread.id,
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Failed to start",
+          updatedAt: "2026-08-16T10:01:00.000Z",
+        },
+      },
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T11:00:00.000Z",
+      replacementText: "Correction B",
+    });
+    assert.deepStrictEqual(repeatedCorrection, { eligible: true });
+
+    const trailingSystemMessage = getThreadMessageCorrectionEligibility({
       thread: {
         ...baseThread,
         messages: [
           ...baseThread.messages,
           {
-            id: assistantId,
-            role: "assistant",
-            text: "Completed response",
-            turnId: "turn-ready" as never,
+            id: "system-hidden" as never,
+            role: "system",
+            text: "Internal metadata",
+            turnId: null,
             streaming: false,
             createdAt: "2026-08-16T09:01:00.000Z",
             updatedAt: "2026-08-16T09:01:00.000Z",
-          },
-        ],
-        checkpoints: [
-          {
-            turnId: "turn-ready" as never,
-            checkpointTurnCount: 1,
-            checkpointRef: "refs/t3/checkpoints/thread-ready/turn/1" as never,
-            status: "ready",
-            files: [],
-            assistantMessageId: assistantId,
-            completedAt: "2026-08-16T09:01:00.000Z",
           },
         ],
       },
@@ -1245,7 +1236,33 @@ it.effect("validates correction eligibility for idle and unavailable thread stat
       occurredAt: "2026-08-16T10:00:00.000Z",
       replacementText: "Corrected request",
     });
-    assert.deepStrictEqual(completedRevertibleTurn, { eligible: true });
+    assert.deepStrictEqual(trailingSystemMessage, { eligible: true });
+
+    const assistantId = "assistant-response" as never;
+    const assistantResponse = getThreadMessageCorrectionEligibility({
+      thread: {
+        ...baseThread,
+        messages: [
+          ...baseThread.messages,
+          {
+            id: assistantId,
+            role: "assistant",
+            text: "Response",
+            turnId: "turn-response" as never,
+            streaming: false,
+            createdAt: "2026-08-16T09:01:00.000Z",
+            updatedAt: "2026-08-16T09:01:00.000Z",
+          },
+        ],
+      },
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      replacementText: "Corrected request",
+    });
+    assert.strictEqual(assistantResponse.eligible, false);
+    if (!assistantResponse.eligible) {
+      assert.strictEqual(assistantResponse.reason, "target-not-last-visible-message");
+    }
   }),
 );
 

@@ -6,10 +6,9 @@ multiple messages, then send again in the same thread.
 
 ## Edit or revert a message
 
-After a thread becomes idle, you can edit your latest message. Editing changes the wording shown in
-the conversation and sends a corrective follow-up; the earlier assistant response stays visible so
-the history remains clear.
+When an idle thread ends with your message, you can edit that final message. Once the assistant has
+replied, Edit is no longer available. Editing changes the wording shown in the conversation and
+sends a corrective follow-up.
 
-On web and desktop, Revert is available on any completed turn that has a checkpoint. The latest
-message can therefore offer Edit and Revert together. Revert returns both the conversation and
-workspace to the state before that message.
+On web and desktop, Revert remains available on completed turns that have a checkpoint. It returns
+both the conversation and workspace to the state before that message.

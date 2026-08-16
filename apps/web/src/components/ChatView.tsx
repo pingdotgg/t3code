@@ -16,7 +16,7 @@ import {
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
-  getLastVisibleUserMessage,
+  getLastVisibleMessage,
   getThreadMessageCorrectionEligibility,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
@@ -2688,8 +2688,8 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
-  const lastVisibleUserMessage = useMemo(
-    () => (activeThread ? getLastVisibleUserMessage(activeThread.messages) : undefined),
+  const lastVisibleMessage = useMemo(
+    () => (activeThread ? getLastVisibleMessage(activeThread.messages) : undefined),
     [activeThread],
   );
   const editableMessageId = useMemo(() => {
@@ -2697,7 +2697,7 @@ function ChatViewContent(props: ChatViewProps) {
       !supportsThreadMessageCorrection ||
       !isServerThread ||
       !activeThread ||
-      !lastVisibleUserMessage ||
+      lastVisibleMessage?.role !== "user" ||
       optimisticUserMessages.length > 0 ||
       activeEnvironmentUnavailable ||
       threadDetailLoading
@@ -2706,16 +2706,16 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return getThreadMessageCorrectionEligibility({
       thread: activeThread,
-      targetMessageId: lastVisibleUserMessage.id,
+      targetMessageId: lastVisibleMessage.id,
       occurredAt: new Date().toISOString(),
     }).eligible
-      ? lastVisibleUserMessage.id
+      ? lastVisibleMessage.id
       : null;
   }, [
     activeEnvironmentUnavailable,
     activeThread,
     isServerThread,
-    lastVisibleUserMessage,
+    lastVisibleMessage,
     optimisticUserMessages.length,
     supportsThreadMessageCorrection,
     threadDetailLoading,

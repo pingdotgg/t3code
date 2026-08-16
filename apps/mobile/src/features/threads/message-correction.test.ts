@@ -77,13 +77,35 @@ const completedThread: OrchestrationThread = {
   session: null,
 };
 
+const finalUserThread: OrchestrationThread = {
+  ...completedThread,
+  latestTurn: {
+    ...completedThread.latestTurn!,
+    state: "interrupted",
+    assistantMessageId: null,
+  },
+  messages: [completedThread.messages[0]!],
+  checkpoints: [],
+};
+
 describe("deriveMobileEditableMessageId", () => {
-  it("keeps the latest user message editable after its checkpoint is ready", () => {
+  it("does not edit a user message after the assistant has replied", () => {
     expect(
       deriveMobileEditableMessageId({
         connected: true,
         correctionSupported: true,
         thread: completedThread,
+        occurredAt,
+      }),
+    ).toBeNull();
+  });
+
+  it("edits a final user message once its turn is settled", () => {
+    expect(
+      deriveMobileEditableMessageId({
+        connected: true,
+        correctionSupported: true,
+        thread: finalUserThread,
         occurredAt,
       }),
     ).toBe(userMessageId);
@@ -94,7 +116,15 @@ describe("deriveMobileEditableMessageId", () => {
       deriveMobileEditableMessageId({
         connected: false,
         correctionSupported: true,
-        thread: completedThread,
+        thread: finalUserThread,
+        occurredAt,
+      }),
+    ).toBeNull();
+    expect(
+      deriveMobileEditableMessageId({
+        connected: true,
+        correctionSupported: false,
+        thread: finalUserThread,
         occurredAt,
       }),
     ).toBeNull();

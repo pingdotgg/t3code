@@ -1,5 +1,5 @@
 import {
-  getLastVisibleUserMessage,
+  getLastVisibleMessage,
   getThreadMessageCorrectionEligibility,
   type MessageId,
   type OrchestrationThread,
@@ -14,13 +14,13 @@ export function deriveMobileEditableMessageId(input: {
   if (!input.connected || !input.correctionSupported || input.thread === null) {
     return null;
   }
-  const lastVisibleUserMessage = getLastVisibleUserMessage(input.thread.messages);
-  if (!lastVisibleUserMessage) return null;
+  const lastVisibleMessage = getLastVisibleMessage(input.thread.messages);
+  if (lastVisibleMessage?.role !== "user") return null;
   return getThreadMessageCorrectionEligibility({
     thread: input.thread,
-    targetMessageId: lastVisibleUserMessage.id,
+    targetMessageId: lastVisibleMessage.id,
     occurredAt: input.occurredAt,
   }).eligible
-    ? lastVisibleUserMessage.id
+    ? lastVisibleMessage.id
     : null;
 }
