@@ -232,10 +232,15 @@ export function PullRequestActorLabel({
 }) {
   const login = actor?.login ?? "ghost";
   return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)} title={login}>
-      <PullRequestActorAvatar actor={actor} />
-      <span className="truncate">{login}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className={cn("flex min-w-0 items-center gap-1.5", className)} />}
+      >
+        <PullRequestActorAvatar actor={actor} />
+        <span className="truncate">{login}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{login}</TooltipPopup>
+    </Tooltip>
   );
 }
 
