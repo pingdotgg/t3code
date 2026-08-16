@@ -2791,31 +2791,55 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const fetchPullThenMergeRequestRef = (
+    operation: string,
+    cwd: string,
+    remoteName: string,
+    pullSpec: string,
+    mergeRequestSpec: string,
+    pullFailureDetail: string,
+    mergeRequestFailureDetail: string,
+  ) =>
+    executeGit(operation, cwd, ["fetch", "--quiet", "--no-tags", remoteName, pullSpec], {
+      fallbackErrorDetail: pullFailureDetail,
+    }).pipe(
+      Effect.catch((pullRefFailure) =>
+        executeGit(
+          operation,
+          cwd,
+          ["fetch", "--quiet", "--no-tags", remoteName, mergeRequestSpec],
+          { fallbackErrorDetail: mergeRequestFailureDetail },
+        ).pipe(
+          Effect.mapError(
+            (mergeRequestFailure) =>
+              new GitCommandError({
+                ...gitCommandContext({
+                  operation,
+                  cwd,
+                  args: ["fetch", "--quiet", "--no-tags", remoteName, mergeRequestSpec],
+                }),
+                detail: "git fetch of pull and merge request refs both failed",
+                cause: new AggregateError(
+                  [pullRefFailure, mergeRequestFailure],
+                  "git fetch of pull and merge request refs both failed",
+                ),
+              }),
+          ),
+        ),
+      ),
+    );
+
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
-      const fetchSpecs = [
-        `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
-        `+refs/merge-requests/${input.prNumber}/head:refs/heads/${input.branch}`,
-      ];
-      yield* executeGit(
+      yield* fetchPullThenMergeRequestRef(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, fetchSpecs[0]!],
-        {
-          fallbackErrorDetail: "git fetch pull request branch failed",
-        },
-      ).pipe(
-        Effect.orElse(() =>
-          executeGit(
-            "GitVcsDriver.fetchPullRequestBranch",
-            input.cwd,
-            ["fetch", "--quiet", "--no-tags", remoteName, fetchSpecs[1]!],
-            {
-              fallbackErrorDetail: "git fetch merge request branch failed",
-            },
-          ),
-        ),
+        remoteName,
+        `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
+        `+refs/merge-requests/${input.prNumber}/head:refs/heads/${input.branch}`,
+        "git fetch pull request branch failed",
+        "git fetch merge request branch failed",
       );
     });
 
@@ -2836,30 +2860,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
       // No refspec destination: the pull head lands in FETCH_HEAD (per worktree) instead of a
       // branch, which is the only way to read it while that branch is checked out somewhere.
-      yield* executeGit(
+      yield* fetchPullThenMergeRequestRef(
         "GitVcsDriver.fetchPullRequestHeadCommit",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
-        {
-          fallbackErrorDetail: "git fetch pull request head failed",
-        },
-      ).pipe(
-        Effect.orElse(() =>
-          executeGit(
-            "GitVcsDriver.fetchPullRequestHeadCommit",
-            input.cwd,
-            [
-              "fetch",
-              "--quiet",
-              "--no-tags",
-              remoteName,
-              `refs/merge-requests/${input.prNumber}/head`,
-            ],
-            {
-              fallbackErrorDetail: "git fetch merge request head failed",
-            },
-          ),
-        ),
+        remoteName,
+        `refs/pull/${input.prNumber}/head`,
+        `refs/merge-requests/${input.prNumber}/head`,
+        "git fetch pull request head failed",
+        "git fetch merge request head failed",
       );
 
       return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
