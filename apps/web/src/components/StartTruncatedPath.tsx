@@ -5,7 +5,6 @@ export function StartTruncatedPath({ path, className }: { path: string; classNam
   return (
     <Tooltip>
       <TooltipTrigger
-        nativeButton={false}
         render={
           <span
             className={cn(
