@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { ComposerImageAttachment } from "../../composerDraftStore";
-import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "../../lib/terminalContext";
-import { type PromptStashUndoTransaction, undoPromptStashSideEffects } from "./promptStashUndo";
+import {
+  findPromptStashUndoTransaction,
+  type PromptStashUndoTransaction,
+  undoPromptStashSideEffects,
+} from "./promptStashUndo";
 
 function makeImage(): ComposerImageAttachment {
   return {
@@ -16,10 +19,11 @@ function makeImage(): ComposerImageAttachment {
   };
 }
 
-function makeTransaction(): PromptStashUndoTransaction {
+function makeTransaction(historyEntryId = 1, entryId = "stash-1"): PromptStashUndoTransaction {
   return {
-    entryId: "stash-1",
+    entryId,
     targetKey: "draft-1",
+    historyEntryId,
     images: [makeImage()],
     state: "available",
   };
@@ -34,8 +38,6 @@ describe("undoPromptStashSideEffects", () => {
     const result = undoPromptStashSideEffects({
       transaction,
       currentTargetKey: "draft-1",
-      currentPrompt: "",
-      currentImages: [],
       takeEntry,
       restoreImages,
       createPreviewUrl: () => "blob:fresh-preview",
@@ -52,38 +54,38 @@ describe("undoPromptStashSideEffects", () => {
     ]);
   });
 
-  it("treats preserved terminal-context placeholders as an empty post-stash editor", () => {
+  it("restores a stacked stash even while the newer prompt is still visible", () => {
     const transaction = makeTransaction();
+    const takeEntry = vi.fn(() => ({ entry: { id: "stash-1" }, durable: true }));
 
     const result = undoPromptStashSideEffects({
       transaction,
       currentTargetKey: "draft-1",
-      currentPrompt: INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
-      currentImages: [],
-      takeEntry: () => ({ entry: { id: "stash-1" }, durable: true }),
+      takeEntry,
       restoreImages: vi.fn(),
       createPreviewUrl: () => "blob:fresh-preview",
     });
 
     expect(result.undone).toBe(true);
+    expect(transaction.state).toBe("undone");
+    expect(takeEntry).toHaveBeenCalledWith("stash-1");
   });
 
-  it("leaves the stash alone until newer editor text has been undone", () => {
-    const transaction = makeTransaction();
-    const takeEntry = vi.fn();
+  it("does not match an unrelated history entry even when the editor is empty", () => {
+    const transaction = makeTransaction(10);
 
-    const result = undoPromptStashSideEffects({
-      transaction,
-      currentTargetKey: "draft-1",
-      currentPrompt: "newer text",
-      currentImages: [],
-      takeEntry,
-      restoreImages: vi.fn(),
-    });
-
-    expect(result.undone).toBe(false);
+    expect(findPromptStashUndoTransaction([transaction], 11)).toBeNull();
     expect(transaction.state).toBe("available");
-    expect(takeEntry).not.toHaveBeenCalled();
+  });
+
+  it("matches stacked stashes to their own Lexical history entries", () => {
+    const first = makeTransaction(10, "stash-1");
+    const second = makeTransaction(20, "stash-2");
+    const transactions = [first, second];
+
+    expect(findPromptStashUndoTransaction(transactions, 20)).toBe(second);
+    second.state = "undone";
+    expect(findPromptStashUndoTransaction(transactions, 10)).toBe(first);
   });
 
   it("does not restore into a different composer target", () => {
@@ -93,8 +95,6 @@ describe("undoPromptStashSideEffects", () => {
     const result = undoPromptStashSideEffects({
       transaction,
       currentTargetKey: "draft-2",
-      currentPrompt: "",
-      currentImages: [],
       takeEntry,
       restoreImages: vi.fn(),
     });

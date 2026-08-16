@@ -1,9 +1,9 @@
 import type { ComposerImageAttachment } from "../../composerDraftStore";
-import { stripInlineTerminalContextPlaceholders } from "../../lib/terminalContext";
 
 export interface PromptStashUndoTransaction {
   entryId: string;
   targetKey: string;
+  historyEntryId: number | null;
   images: ReadonlyArray<ComposerImageAttachment>;
   state: "available" | "undone" | "consumed";
 }
@@ -13,6 +13,21 @@ type TakeStashEntryResult = {
   durable: boolean;
 };
 
+/** Finds the stash side effect attached to Lexical's next history entry. */
+export function findPromptStashUndoTransaction(
+  transactions: ReadonlyArray<PromptStashUndoTransaction>,
+  historyEntryId: number | null,
+): PromptStashUndoTransaction | null {
+  if (historyEntryId === null) return null;
+  for (let index = transactions.length - 1; index >= 0; index -= 1) {
+    const transaction = transactions[index];
+    if (transaction?.state === "available" && transaction.historyEntryId === historyEntryId) {
+      return transaction;
+    }
+  }
+  return null;
+}
+
 /**
  * Reverses the non-editor half of a prompt stash while Lexical handles its
  * own text undo. Keeping those responsibilities on the same undo command
@@ -21,8 +36,6 @@ type TakeStashEntryResult = {
 export function undoPromptStashSideEffects(options: {
   transaction: PromptStashUndoTransaction | null;
   currentTargetKey: string;
-  currentPrompt: string;
-  currentImages: ReadonlyArray<ComposerImageAttachment>;
   takeEntry: (entryId: string) => TakeStashEntryResult;
   restoreImages: (images: ComposerImageAttachment[]) => void;
   createPreviewUrl?: (file: File) => string;
@@ -31,9 +44,7 @@ export function undoPromptStashSideEffects(options: {
   if (
     !transaction ||
     transaction.state !== "available" ||
-    transaction.targetKey !== options.currentTargetKey ||
-    stripInlineTerminalContextPlaceholders(options.currentPrompt).length > 0 ||
-    options.currentImages.length > 0
+    transaction.targetKey !== options.currentTargetKey
   ) {
     return { undone: false, durable: true };
   }
