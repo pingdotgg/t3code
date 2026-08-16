@@ -1,10 +1,11 @@
-import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { ContextMenuItem, PreviewSessionSnapshot, PullRequestState } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
   FileDiff,
   Files,
   GitBranch,
+  GitPullRequest,
   Globe2,
   type LucideIcon,
   Plus,
@@ -12,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type ReactNode,
@@ -23,10 +25,13 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
+import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { faviconUrlForOrigin } from "~/lib/favicon";
@@ -34,16 +39,22 @@ import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
+import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
+  /** Forwarded to PreviewPanelShell so this surface persists its own width. */
+  widthStorageKey?: string;
+  /** Forwarded to PreviewPanelShell as the initial width before a user resize. */
+  defaultWidth?: number;
   layoutControls?: ReactNode;
   surfaces: readonly RightPanelSurface[];
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -56,32 +67,80 @@ interface RightPanelTabsProps {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddSourceControl: () => void;
+  onAddPullRequest: () => void;
   onAddAgents: () => void;
   browserAvailable: boolean;
+  terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   sourceControlAvailable: boolean;
+  pullRequestAvailable: boolean;
+  agentsAvailable: boolean;
+  pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
   children: ReactNode;
 }
 
+export interface PullRequestTabStatus {
+  projectId: string;
+  repository: string;
+  number: number;
+  state: PullRequestState;
+  isDraft: boolean;
+}
+
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
+  terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
   sourceControl: "Version Control is only available when a project is open in a Git repository.",
+  pullRequest: "This thread's branch has no pull request yet.",
+  agents: "Agents are only available from a thread.",
 } as const;
 
-type AddPanelSurfaceId = "source-control" | "browser" | "terminal" | "files" | "diff" | "agents";
+/** Overlays that must win over the launcher's letter shortcuts. */
+const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
+  '[data-slot="dialog-popup"]',
+  '[data-slot="alert-dialog-popup"]',
+  '[data-slot="command-dialog-popup"]',
+  '[data-slot="menu-popup"]',
+  '[data-slot="select-popup"]',
+  '[data-slot="popover-popup"]',
+  '[data-slot="combobox-popup"]',
+  '[data-slot="autocomplete-popup"]',
+].join(",");
+
+/** One-line unavailability hints for the empty-state cards. */
+const SURFACE_UNAVAILABLE_HINTS = {
+  browser: "Only available in the desktop app.",
+  terminal: "Available when a project is open.",
+  files: "Available when a project is open.",
+  diff: "Available for Git repositories.",
+  sourceControl: "Available for Git repositories.",
+  pullRequest: "No pull request on this branch yet.",
+  agents: "Available from a thread.",
+} as const;
+
+type AddPanelSurfaceId =
+  | "source-control"
+  | "browser"
+  | "terminal"
+  | "files"
+  | "diff"
+  | "pull-request"
+  | "agents";
 
 type AddPanelSurfaceAction = {
   readonly id: AddPanelSurfaceId;
   readonly label: string;
   readonly description: string;
   readonly icon: LucideIcon;
+  readonly shortcut: string;
   readonly available: boolean;
   readonly disabledReason?: string;
+  readonly unavailableHint?: string;
   readonly onClick: () => void;
   readonly badgeCount: number;
 };
@@ -95,11 +154,15 @@ type AddPanelSurfaceActionProps = Pick<
   | "onAddDiff"
   | "onAddFiles"
   | "onAddSourceControl"
+  | "onAddPullRequest"
   | "onAddAgents"
   | "browserAvailable"
+  | "terminalAvailable"
   | "diffAvailable"
   | "filesAvailable"
   | "sourceControlAvailable"
+  | "pullRequestAvailable"
+  | "agentsAvailable"
   | "liveAgentCount"
 >;
 
@@ -109,6 +172,7 @@ export const ADD_SURFACE_EMPTY_STATE_ORDER: readonly AddPanelSurfaceId[] = [
   "terminal",
   "files",
   "diff",
+  "pull-request",
   "agents",
 ];
 
@@ -117,6 +181,7 @@ export const ADD_SURFACE_MENU_ORDER: readonly AddPanelSurfaceId[] = [
   "terminal",
   "files",
   "diff",
+  "pull-request",
   "agents",
   "source-control",
 ];
@@ -130,8 +195,10 @@ function buildAddSurfaceActionMap(
       label: "Version Control",
       description: "Review repository changes and sync state.",
       icon: GitBranch,
+      shortcut: "V",
       available: props.sourceControlAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.sourceControl,
+      unavailableHint: SURFACE_UNAVAILABLE_HINTS.sourceControl,
       onClick: props.onAddSourceControl,
       badgeCount: 0,
     },
@@ -140,8 +207,10 @@ function buildAddSurfaceActionMap(
       label: "Browser",
       description: "Open a local app or URL.",
       icon: Globe2,
+      shortcut: "B",
       available: props.browserAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.browser,
+      unavailableHint: SURFACE_UNAVAILABLE_HINTS.browser,
       onClick: props.onAddBrowser,
       badgeCount: 0,
     },
@@ -150,7 +219,10 @@ function buildAddSurfaceActionMap(
       label: "Terminal",
       description: "Start a shell in this workspace.",
       icon: TerminalSquare,
-      available: true,
+      shortcut: "T",
+      available: props.terminalAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.terminal,
+      unavailableHint: SURFACE_UNAVAILABLE_HINTS.terminal,
       onClick: props.onAddTerminal,
       badgeCount: 0,
     },
@@ -159,8 +231,10 @@ function buildAddSurfaceActionMap(
       label: "Files",
       description: "Browse and read workspace files.",
       icon: Files,
+      shortcut: "F",
       available: props.filesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.files,
+      unavailableHint: SURFACE_UNAVAILABLE_HINTS.files,
       onClick: props.onAddFiles,
       badgeCount: 0,
     },
@@ -169,9 +243,23 @@ function buildAddSurfaceActionMap(
       label: "Diff",
       description: "Review changes in this thread.",
       icon: FileDiff,
+      shortcut: "D",
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
+      unavailableHint: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
+      badgeCount: 0,
+    },
+    "pull-request": {
+      id: "pull-request",
+      label: "Pull request",
+      description: "Open this branch's pull request.",
+      icon: GitPullRequest,
+      shortcut: "P",
+      available: props.pullRequestAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
+      unavailableHint: SURFACE_UNAVAILABLE_HINTS.pullRequest,
+      onClick: props.onAddPullRequest,
       badgeCount: 0,
     },
     agents: {
@@ -179,7 +267,10 @@ function buildAddSurfaceActionMap(
       label: "Agents",
       description: "Watch subagents and workflows run.",
       icon: Bot,
-      available: true,
+      shortcut: "A",
+      available: props.agentsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.agents,
+      unavailableHint: SURFACE_UNAVAILABLE_HINTS.agents,
       onClick: props.onAddAgents,
       badgeCount: props.liveAgentCount,
     },
@@ -222,73 +313,184 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
+/**
+ * Card launcher shown when the right panel has no surfaces. Keyboard-first
+ * without palette chrome: a surface's letter opens it directly from anywhere
+ * outside a typing context, and arrows plus Enter work while the launcher is
+ * focused. The highlight only appears on hover or arrow use. Unavailable
+ * surfaces stay visible with a one-line reason.
+ */
 function RightPanelEmptyState(props: { actions: readonly AddPanelSurfaceAction[] }) {
+  // -1 means no highlight: it only appears on hover or arrow use.
+  const [highlight, setHighlight] = useState(-1);
+
+  const actions = props.actions;
+
+  type SurfaceAction = AddPanelSurfaceAction;
+
+  const availableActions = actions.filter((action) => action.available);
+  const highlightIndex =
+    availableActions.length === 0 ? -1 : Math.min(highlight, availableActions.length - 1);
+
+  // Letter shortcuts work while the launcher is visible, not only while it
+  // is focused; focus moves around too easily (stray clicks) to carry them.
+  // Capture phase so app-level key handlers cannot swallow the event first;
+  // typing contexts and already-handled events are left alone.
+  const shortcutActionsRef = useRef(availableActions);
+  useEffect(() => {
+    shortcutActionsRef.current = availableActions;
+  });
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        if (target.closest("input, textarea, select")) return;
+        // An empty contenteditable (the chat composer at rest) does not
+        // count as typing; letters only become text once a draft exists.
+        const editable = target.isContentEditable ? target : target.closest("[contenteditable]");
+        if (editable && (editable.textContent ?? "").trim().length > 0) return;
+      }
+      const action = shortcutActionsRef.current.find(
+        (candidate) => candidate.shortcut.toLowerCase() === event.key.toLowerCase(),
+      );
+      if (!action) return;
+      event.preventDefault();
+      event.stopPropagation();
+      action.onClick();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, []);
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (availableActions.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+      event.preventDefault();
+      setHighlight((highlightIndex + 1) % availableActions.length);
+      return;
+    }
+    if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      setHighlight(
+        highlightIndex === -1
+          ? availableActions.length - 1
+          : (highlightIndex - 1 + availableActions.length) % availableActions.length,
+      );
+      return;
+    }
+    if (event.key === "Enter") {
+      // A focused card button owns its own activation; only open from the
+      // highlight when the container itself has focus.
+      if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+      const action = availableActions[highlightIndex];
+      if (!action) return;
+      event.preventDefault();
+      action.onClick();
+    }
+  };
+
+  // Stable identity so React only runs this callback ref on mount/unmount;
+  // an inline arrow would re-attach and re-focus on every render.
+  const focusOnMount = useCallback((node: HTMLDivElement | null) => {
+    node?.focus();
+  }, []);
+
+  const isHighlighted = (action: SurfaceAction) =>
+    highlightIndex !== -1 && availableActions[highlightIndex] === action;
+
+  const actionIcon = (action: SurfaceAction, iconClassName = "size-4") => {
+    const Icon = action.icon;
+    return (
+      <span className="relative inline-flex shrink-0">
+        <Icon className={iconClassName} />
+        {action.badgeCount > 0 ? (
+          <span
+            aria-hidden
+            className="absolute -top-1.5 -right-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
+          >
+            {action.badgeCount}
+          </span>
+        ) : null}
+      </span>
+    );
+  };
+
+  const cardShellClass =
+    "rounded-lg border border-border/80 bg-card dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5";
+  const highlightedCardClass = "bg-accent/60 dark:inset-ring-white/20";
+
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-      <div className="w-full max-w-xl">
-        <div className="mb-5 text-center">
-          <h3 className="text-sm font-medium text-foreground">Open a surface</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
+    <div
+      ref={focusOnMount}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      aria-label="Open a surface"
+      data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
+      className={cn(
+        "flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pt-6 outline-none",
+        // The panel topbar sits above this container; matching bottom padding
+        // keeps the cards centered against the full panel, not the leftover.
+        "pb-[calc(var(--workspace-topbar-height)+--spacing(6))]",
+      )}
+    >
+      <div className="relative w-full max-w-lg">
+        <div className="absolute inset-x-0 bottom-full mb-5 text-center">
+          <h3 className="font-medium text-foreground text-sm">Open a surface</h3>
+          <p className="mt-1 text-muted-foreground text-xs">
             Choose what to show in the right panel.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {props.actions.map((action) => {
-            const Icon = action.icon;
-            const content = (
-              <>
-                <span className="relative mb-3 inline-flex">
-                  <Icon className="size-5" />
-                  {action.badgeCount > 0 ? (
-                    <span
-                      aria-hidden
-                      className="absolute -top-1.5 -right-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
-                    >
-                      {action.badgeCount}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="text-sm font-medium">{action.label}</span>
-                <span className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {action.description}
-                </span>
-              </>
-            );
-            if (action.available) {
-              return (
-                <button
-                  key={action.id}
-                  type="button"
-                  onClick={action.onClick}
-                  className="cursor-pointer flex min-h-28 w-full flex-col items-start rounded-lg border border-border/80 bg-card p-4 text-left transition hover:border-border hover:bg-accent/60 dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5"
-                >
-                  {content}
-                </button>
-              );
-            }
-            const disabledCard = (className?: string) => (
+          {actions.map((action) =>
+            action.available ? (
               <button
+                key={action.label}
                 type="button"
-                disabled
+                onClick={action.onClick}
+                onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
+                onMouseLeave={() =>
+                  setHighlight((current) =>
+                    current === availableActions.indexOf(action) ? -1 : current,
+                  )
+                }
                 className={cn(
-                  "flex min-h-28 w-full cursor-not-allowed flex-col items-start rounded-lg border border-border/80 bg-card p-4 text-left opacity-40 dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5",
-                  className,
+                  "relative flex w-full cursor-pointer flex-col items-start p-4 text-left transition hover:border-border hover:bg-accent/60",
+                  cardShellClass,
+                  isHighlighted(action) && highlightedCardClass,
                 )}
               >
-                {content}
+                <Kbd className="absolute top-3 right-3">{action.shortcut}</Kbd>
+                <span className="flex items-center gap-2 pe-8">
+                  {actionIcon(action)}
+                  <span className="font-medium text-sm">{action.label}</span>
+                </span>
+                <span className="mt-1.5 text-muted-foreground text-xs leading-relaxed">
+                  {action.description}
+                </span>
               </button>
-            );
-            if (!action.disabledReason) {
-              return <div key={action.id}>{disabledCard()}</div>;
-            }
-            return (
-              <DisabledReasonTooltip
-                key={action.id}
-                reason={action.disabledReason}
-                trigger={<span className="block w-full">{disabledCard()}</span>}
-              />
-            );
-          })}
+            ) : (
+              <div
+                key={action.label}
+                className={cn(
+                  "relative flex w-full flex-col items-start p-4 opacity-40",
+                  cardShellClass,
+                )}
+              >
+                <Kbd className="absolute top-3 right-3">{action.shortcut}</Kbd>
+                <span className="flex items-center gap-2 pe-8">
+                  {actionIcon(action)}
+                  <span className="font-medium text-sm">{action.label}</span>
+                </span>
+                <span className="mt-1.5 text-muted-foreground text-xs leading-relaxed">
+                  {action.unavailableHint ?? action.disabledReason}
+                </span>
+              </div>
+            ),
+          )}
         </div>
       </div>
     </div>
@@ -314,6 +516,8 @@ function surfaceTitle(
       );
     case "source-control":
       return "Version Control";
+    case "pull-request":
+      return `#${surface.number}`;
     case "agents":
       return "Agents";
     case "preview": {
@@ -329,36 +533,46 @@ function surfaceTitle(
   }
 }
 
-function PreviewFavicon({ url }: { url: string | null }) {
-  const faviconUrl = faviconUrlForOrigin(url, 32);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 className="size-3 shrink-0" />;
+function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {
+  const publicProviderUrl = faviconUrlForOrigin(url, 32);
   return (
-    <img
-      src={faviconUrl}
-      alt=""
-      aria-hidden
-      draggable={false}
-      className="size-3 shrink-0 rounded-sm"
-      onError={() => setFailedUrl(faviconUrl)}
+    <FaviconImage
+      sources={[capturedUrl, publicProviderUrl]}
+      fallback={<Globe2 className="size-3 shrink-0" />}
+      className="size-3 shrink-0 rounded-sm object-contain"
     />
   );
+}
+
+function sameOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
 }
 
 function SurfaceIcon({
   surface,
   sessions,
+  desktopByTabId,
   theme,
+  pullRequestStatuses,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   theme: "light" | "dark";
+  pullRequestStatuses: Readonly<Record<string, PullRequestTabStatus>> | undefined;
 }) {
   switch (surface.kind) {
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-      return <PreviewFavicon url={url} />;
+      const favicon = snapshot ? (desktopByTabId[snapshot.tabId]?.favicon ?? null) : null;
+      const capturedUrl =
+        favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
+      return <PreviewFavicon capturedUrl={capturedUrl} url={url} />;
     }
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
@@ -377,6 +591,20 @@ function SurfaceIcon({
       return <TerminalSquare className="size-3 shrink-0" />;
     case "source-control":
       return <GitBranch className="size-3 shrink-0" />;
+    case "pull-request": {
+      const status = pullRequestStatuses?.[surface.id] ?? null;
+      const toneClassName =
+        status?.state === "merged"
+          ? "text-violet-600 dark:text-violet-300/90"
+          : status?.state === "closed"
+            ? "text-red-600 dark:text-red-300/90"
+            : status?.isDraft
+              ? "text-zinc-500 dark:text-zinc-400/80"
+              : status?.state === "open"
+                ? "text-emerald-600 dark:text-emerald-300/90"
+                : "text-muted-foreground";
+      return <GitPullRequest className={cn("size-3 shrink-0", toneClassName)} />;
+    }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
   }
@@ -392,11 +620,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       props.browserAvailable,
       props.diffAvailable,
       props.filesAvailable,
+      props.terminalAvailable,
       props.sourceControlAvailable,
+      props.pullRequestAvailable,
+      props.agentsAvailable,
+      props.liveAgentCount,
       props.onAddBrowser,
       props.onAddDiff,
       props.onAddFiles,
       props.onAddAgents,
+      props.onAddPullRequest,
       props.onAddSourceControl,
       props.onAddTerminal,
     ],
@@ -407,11 +640,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       props.browserAvailable,
       props.diffAvailable,
       props.filesAvailable,
+      props.terminalAvailable,
       props.sourceControlAvailable,
+      props.pullRequestAvailable,
+      props.agentsAvailable,
+      props.liveAgentCount,
       props.onAddBrowser,
       props.onAddDiff,
       props.onAddFiles,
       props.onAddAgents,
+      props.onAddPullRequest,
       props.onAddSourceControl,
       props.onAddTerminal,
     ],
@@ -497,12 +735,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     <PreviewPanelShell
       mode={props.mode}
       {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
+      {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
+      {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
     >
       <div
         className={cn(
-          "workspace-topbar gap-1 pl-2",
-          props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
-          props.mode === "inline" ? "pr-28" : "pr-3",
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
+          // The sheet overlays from the viewport top, so its tab bar keeps
+          // the titlebar's height: a compact row re-centers the layout
+          // controls a few pixels higher and the cluster jumps on open.
+          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
@@ -544,7 +786,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       <SurfaceIcon
                         surface={surface}
                         sessions={props.previewSessions}
+                        desktopByTabId={props.desktopByTabId}
                         theme={resolvedTheme}
+                        pullRequestStatuses={props.pullRequestStatuses}
                       />
                       {pending ? (
                         <span
@@ -575,8 +819,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.length > 0 ? (
               <Menu>
                 <MenuTrigger
-                  className="cursor-pointer relative inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                  aria-label="Add panel surface"
+                  render={
+                    <Button
+                      aria-label="Add panel surface"
+                      className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+                      size="icon-xs"
+                      variant="ghost"
+                    />
+                  }
                 >
                   <Plus className="size-3.5" />
                 </MenuTrigger>
