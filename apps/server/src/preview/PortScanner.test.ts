@@ -396,13 +396,9 @@ effectIt.effect(
     return Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
       const secondSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
-      yield* scanner.subscribe(
-        { configuredUrls: firstSubscriberUrls },
-        () => Effect.void,
-      );
-      yield* scanner.subscribe(
-        { configuredUrls: [secondSubscriberUrl] },
-        (servers) => Effect.sync(() => secondSnapshots.push(servers)),
+      yield* scanner.subscribe({ configuredUrls: firstSubscriberUrls }, () => Effect.void);
+      yield* scanner.subscribe({ configuredUrls: [secondSubscriberUrl] }, (servers) =>
+        Effect.sync(() => secondSnapshots.push(servers)),
       );
       yield* scanner.retain();
 
@@ -432,20 +428,43 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     yield* scanner
       .subscribe({ configuredUrls: [docsUrl] }, () => Effect.void)
       .pipe(Effect.provideService(Scope.Scope, docsScope));
-    yield* scanner.subscribe(
-      { configuredUrls: [adminUrl] },
-      () => Effect.void,
-    );
+    yield* scanner.subscribe({ configuredUrls: [adminUrl] }, () => Effect.void);
     yield* scanner.retain();
     yield* Scope.close(docsScope, Exit.void);
 
     requests.length = 0;
-    yield* TestClock.adjust(Duration.seconds(10));
-    expect(requests).toEqual([]);
-
-    yield* TestClock.adjust(Duration.seconds(10));
+    yield* TestClock.adjust(Duration.seconds(20));
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+effectIt.effect("reuses retained URL readiness on the first active tick", () => {
+  const configuredUrl = "http://localhost:43124/admin";
+  const requests: string[] = [];
+  const snapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const layer = makeProbeFailureLayer(processProbeFailure, fetchFn);
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain([configuredUrl]);
+    expect(requests).toEqual([configuredUrl]);
+
+    yield* scanner.subscribe({ configuredUrls: [configuredUrl] }, (servers) =>
+      Effect.sync(() => snapshots.push(servers)),
+    );
+    expect(snapshots.at(-1)?.[0]?.url).toBe(configuredUrl);
+    expect(requests).toEqual([configuredUrl]);
+
+    yield* TestClock.adjust(Duration.seconds(10));
+    expect(requests).toEqual([configuredUrl]);
+
+    yield* TestClock.adjust(Duration.seconds(10));
+    expect(requests).toEqual([configuredUrl, configuredUrl]);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 

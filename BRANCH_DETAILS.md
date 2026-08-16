@@ -13,7 +13,7 @@ Expected behavior:
 - Port scans are serialized before publication, so an older slow scan cannot finish after a newer scan and overwrite its snapshot.
 - Managed terminal process-set changes trigger an immediate port scan. The first unchanged registration after a non-empty process-set change performs one settle scan so a child that binds after the initial PID observation is discovered promptly; later unchanged registrations and redundant removals do not scan.
 - Discovery transitions between no known browser-ready servers and at least one known browser-ready server wake the adaptive poll scheduler so it immediately adopts the 20-second idle or 10-second active interval.
-- The broad `lsof` safety-net scan runs every 20 seconds when no browser-ready server is known and every 10 seconds while a retained discovery client has at least one known browser-ready server. The first active tick may reuse a readiness result from the 15-second cache; the second tick at 20 seconds revalidates it. This preserves discovery for servers started outside T3-managed terminals without a permanent three-second system-wide process sweep.
+- The broad `lsof` safety-net scan runs every 20 seconds when no browser-ready server is known and every 10 seconds while a retained discovery client has at least one known browser-ready server. The first active tick may reuse a readiness result from the 15-second cache; the second active tick, 20 seconds after retention, revalidates it. This preserves discovery for servers started outside T3-managed terminals without a permanent three-second system-wide process sweep.
 
 Primary files:
 
