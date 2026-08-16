@@ -1,7 +1,7 @@
 # Reference another task
 
-Type `@` in the message box to search tasks from the current environment. Choose a task to add it
-to your message. File and folder search uses `#` instead, so each trigger opens a focused list.
+Type `#` in the message box to search tasks from the current environment. Choose a task to add it
+to your message. File and folder search uses `@` instead, so each trigger opens a focused list.
 
 The reference does not copy the entire old conversation into your prompt. The agent can read the
 referenced task when it needs context, and can load long conversations in bounded pages. Selecting

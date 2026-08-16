@@ -4,7 +4,7 @@ import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
-    const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with #AGENTS.md please";
+    const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please";
 
     expect(collectComposerInlineTokens(text)).toEqual([
       {
@@ -24,7 +24,7 @@ describe("collectComposerInlineTokens", () => {
       {
         type: "mention",
         value: "AGENTS.md",
-        source: "#AGENTS.md",
+        source: "@AGENTS.md",
         start: 50,
         end: 60,
       },
@@ -33,7 +33,7 @@ describe("collectComposerInlineTokens", () => {
 
   it("does not convert incomplete trailing tokens", () => {
     expect(collectComposerInlineTokens("Use $ui")).toEqual([]);
-    expect(collectComposerInlineTokens("Inspect #AGENTS.md")).toEqual([]);
+    expect(collectComposerInlineTokens("Inspect @AGENTS.md")).toEqual([]);
   });
 
   it("keeps the delimiter after a token outside its source range", () => {
@@ -112,15 +112,15 @@ describe("collectComposerInlineTokens", () => {
   });
 
   it("does not treat task tags as file mentions", () => {
-    expect(collectComposerInlineTokens("Continue @Authentication next")).toEqual([]);
+    expect(collectComposerInlineTokens("Continue #Authentication next")).toEqual([]);
   });
 
-  it("keeps hash-prefixed file paths as mentions", () => {
-    expect(collectComposerInlineTokens("Inspect #README.md next")).toEqual([
+  it("keeps at-prefixed file paths as mentions", () => {
+    expect(collectComposerInlineTokens("Inspect @README.md next")).toEqual([
       {
         type: "mention",
         value: "README.md",
-        source: "#README.md",
+        source: "@README.md",
         start: 8,
         end: 18,
       },
@@ -140,11 +140,11 @@ describe("collectComposerInlineTokens", () => {
   });
 
   it("allows paths through explicit quoted file tags", () => {
-    expect(collectComposerInlineTokens('Inspect #"expo/ui" next')).toEqual([
+    expect(collectComposerInlineTokens('Inspect @"expo/ui" next')).toEqual([
       {
         type: "mention",
         value: "expo/ui",
-        source: '#"expo/ui"',
+        source: '@"expo/ui"',
         start: 8,
         end: 18,
       },

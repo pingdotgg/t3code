@@ -16,7 +16,7 @@ export interface ComposerThreadReference {
 
 export const COMPOSER_THREAD_REFERENCE_SCHEME = "t3-thread:";
 
-const SIMPLE_MENTION_PATH_REGEX = /^[^\s#"\\]+$/;
+const SIMPLE_MENTION_PATH_REGEX = /^[^\s@"\\]+$/;
 
 export function serializeComposerMentionPath(path: string): string {
   if (SIMPLE_MENTION_PATH_REGEX.test(path)) {
@@ -84,7 +84,7 @@ function isWhitespace(char: string): boolean {
 }
 
 /**
- * Detect an active trigger (#path, @task, $skill, /command) at the cursor position.
+ * Detect an active trigger (@path, #task, $skill, /command) at the cursor position.
  *
  * Accepts an optional `isWhitespaceChar` override so callers with inline
  * placeholder characters (e.g. terminal context chips on web) can treat
@@ -146,7 +146,7 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  if (token.startsWith("@")) {
+  if (token.startsWith("#")) {
     return {
       kind: "thread",
       query: token.slice(1),
@@ -154,7 +154,7 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  return token.startsWith("#")
+  return token.startsWith("@")
     ? {
         kind: "path",
         query: token.slice(1),

@@ -9,21 +9,21 @@ import {
 } from "./composerTrigger.ts";
 
 describe("detectComposerTrigger", () => {
-  it("uses @ for tasks", () => {
-    expect(detectComposerTrigger("Continue @auth", "Continue @auth".length)).toEqual({
+  it("uses # for tasks", () => {
+    expect(detectComposerTrigger("Continue #auth", "Continue #auth".length)).toEqual({
       kind: "thread",
       query: "auth",
       rangeStart: "Continue ".length,
-      rangeEnd: "Continue @auth".length,
+      rangeEnd: "Continue #auth".length,
     });
   });
 
-  it("uses # for files", () => {
-    expect(detectComposerTrigger("Inspect #src/com", "Inspect #src/com".length)).toEqual({
+  it("uses @ for files", () => {
+    expect(detectComposerTrigger("Inspect @src/com", "Inspect @src/com".length)).toEqual({
       kind: "path",
       query: "src/com",
       rangeStart: "Inspect ".length,
-      rangeEnd: "Inspect #src/com".length,
+      rangeEnd: "Inspect @src/com".length,
     });
   });
 });
@@ -38,7 +38,9 @@ describe("serializeComposerMentionPath", () => {
   });
 
   it("quotes paths containing the file trigger", () => {
-    expect(serializeComposerMentionPath("docs/config#draft.md")).toBe('"docs/config#draft.md"');
+    expect(serializeComposerMentionPath("docs/@generated/config.md")).toBe(
+      '"docs/@generated/config.md"',
+    );
   });
 
   it("escapes quoted mention path content", () => {

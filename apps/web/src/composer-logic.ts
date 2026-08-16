@@ -274,7 +274,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  if (token.startsWith("@")) {
+  if (token.startsWith("#")) {
     return {
       kind: "thread",
       query: token.slice(1),
@@ -282,7 +282,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  return token.startsWith("#")
+  return token.startsWith("@")
     ? {
         kind: "path",
         query: token.slice(1),
