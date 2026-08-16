@@ -22,7 +22,10 @@ import {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { filterProviderSkillsForWorkspace } from "@t3tools/shared/providerSkills";
+import {
+  filterProviderSkillsForWorkspace,
+  filterProviderSlashCommandsForWorkspace,
+} from "@t3tools/shared/providerSkills";
 import {
   memo,
   type ReactNode,
@@ -908,6 +911,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }),
     [selectedProviderStatus?.skills, gitCwd, projectWorkspaceRoot],
   );
+  // Same scoping for the `/` picker: provider snapshots carry every open
+  // workspace's commands, so keep only this chat's global + project commands.
+  const selectedProviderSlashCommands = useMemo(
+    () =>
+      filterProviderSlashCommandsForWorkspace(selectedProviderStatus?.slashCommands ?? [], gitCwd, {
+        projectRoot: projectWorkspaceRoot,
+      }),
+    [selectedProviderStatus?.slashCommands, gitCwd, projectWorkspaceRoot],
+  );
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
@@ -1129,16 +1141,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ] as const)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
-        (command) => ({
-          id: `provider-slash-command:${selectedProvider}:${command.name}`,
-          type: "provider-slash-command" as const,
-          provider: selectedProvider,
-          command,
-          label: `/${command.name}`,
-          description: command.description ?? command.input?.hint ?? "Run provider command",
-        }),
-      );
+      const providerSlashCommandItems = selectedProviderSlashCommands.map((command) => ({
+        id: `provider-slash-command:${selectedProvider}:${command.name}`,
+        type: "provider-slash-command" as const,
+        provider: selectedProvider,
+        command,
+        label: `/${command.name}`,
+        description: command.description ?? command.input?.hint ?? "Run provider command",
+      }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = (selectedProviderStatus?.skills ?? [])
         .filter((skill) => skill.enabled)
@@ -1179,7 +1189,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeUiEnabled,
     selectedProvider,
     selectedProviderSkills,
-    selectedProviderStatus,
+    selectedProviderSlashCommands,
     workspaceEntries.entries,
   ]);
 

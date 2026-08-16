@@ -168,6 +168,10 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly args: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
+    /**
+     * Working directory for the CLI invocation. Config-resolving subcommands
+     * (e.g. `debug config`) scope their output to this directory.
+     */
     readonly cwd?: string;
   }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
   readonly createOpenCodeSdkClient: (input: {
@@ -443,8 +447,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const child = yield* spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           shell: spawnCommand.shell,
-          ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.environment ? { env: input.environment } : { extendEnv: true }),
+          ...(input.cwd ? { cwd: input.cwd } : {}),
         }),
       );
       const [stdout, stderr, code] = yield* Effect.all(

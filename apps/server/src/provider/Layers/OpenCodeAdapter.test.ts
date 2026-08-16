@@ -64,6 +64,9 @@ const runtimeMock = {
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
+    commandCalls: [] as Array<Record<string, unknown>>,
+    commandNamesByDirectory: new Map<string, Array<string>>(),
+    commandListError: null as Error | null,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
@@ -84,6 +87,9 @@ const runtimeMock = {
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
+    this.state.commandCalls.length = 0;
+    this.state.commandNamesByDirectory.clear();
+    this.state.commandListError = null;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
@@ -183,6 +189,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             throw runtimeMock.state.promptAsyncError;
           }
         },
+        command: async (input: Record<string, unknown>) => {
+          runtimeMock.state.commandCalls.push(input);
+          return { data: { info: {}, parts: [] } };
+        },
         messages: async () => ({ data: runtimeMock.state.messages }),
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
           runtimeMock.state.revertCalls.push({
@@ -201,6 +211,15 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             targetIndex >= 0
               ? runtimeMock.state.messages.slice(0, targetIndex + 1)
               : runtimeMock.state.messages;
+        },
+      },
+      command: {
+        list: async ({ directory }: { directory?: string }) => {
+          if (runtimeMock.state.commandListError) {
+            throw runtimeMock.state.commandListError;
+          }
+          const names = runtimeMock.state.commandNamesByDirectory.get(directory ?? "") ?? [];
+          return { data: names.map((name) => ({ name, hints: [] })) };
         },
       },
       event: {
@@ -383,6 +402,95 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         schemaVersion: 1,
         sessionId: "ses_persisted",
       });
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("routes a picked slash command to session.command instead of a plain prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-slash-command");
+      runtimeMock.state.commandNamesByDirectory.set(process.cwd(), ["deploy-check"]);
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/deploy-check staging",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+      // session.command is forked fire-and-forget; let the fiber run.
+      yield* advanceTestClock(1);
+
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 0);
+      const call = runtimeMock.state.commandCalls[0];
+      NodeAssert.equal(call?.command, "deploy-check");
+      NodeAssert.equal(call?.arguments, "staging");
+      NodeAssert.equal(call?.model, "anthropic/sonnet");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("sends slash text the harness does not know as a plain prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-slash-unknown");
+      runtimeMock.state.commandNamesByDirectory.set(process.cwd(), ["deploy-check"]);
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/nope do the thing",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+
+      NodeAssert.equal(runtimeMock.state.commandCalls.length, 0);
+      const prompt = runtimeMock.state.promptCalls[0] as {
+        parts: Array<{ type: string; text?: string }>;
+      };
+      NodeAssert.equal(prompt.parts[0]?.text, "/nope do the thing");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("sends slash text as a plain prompt when command.list fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-slash-list-error");
+      runtimeMock.state.commandListError = new Error("connection refused");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/deploy-check staging",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+
+      NodeAssert.equal(runtimeMock.state.commandCalls.length, 0);
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
 
       yield* adapter.stopSession(threadId);
     }),

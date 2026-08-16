@@ -1,8 +1,9 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   filterProviderSkillsForWorkspace,
+  filterProviderSlashCommandsForWorkspace,
   normalizeProviderSkillWorkspacePath,
 } from "./providerSkills.ts";
 
@@ -12,6 +13,13 @@ function skill(name: string, sourceCwd?: string): ServerProviderSkill {
     path: `/skills/${name}/SKILL.md`,
     enabled: true,
     ...(sourceCwd ? { sourceCwd, scope: "project" } : { scope: "user" }),
+  };
+}
+
+function slashCommand(name: string, sourceCwd?: string): ServerProviderSlashCommand {
+  return {
+    name,
+    ...(sourceCwd ? { sourceCwd } : {}),
   };
 }
 
@@ -139,5 +147,51 @@ describe("filterProviderSkillsForWorkspace", () => {
     const stamped = [skill("deploy", "/workspace/a")];
     const scoped = filterProviderSkillsForWorkspace(stamped, "/workspace//a/./");
     expect(scoped.map((entry) => entry.name)).toEqual(["deploy"]);
+  });
+});
+
+describe("filterProviderSlashCommandsForWorkspace", () => {
+  const inventory = [
+    slashCommand("init"),
+    slashCommand("review"),
+    slashCommand("deploy-check", "/workspace/a"),
+    slashCommand("ship", "/workspace/b"),
+  ];
+
+  it("returns only global commands when no workspace is active", () => {
+    expect(
+      filterProviderSlashCommandsForWorkspace(inventory, null).map((entry) => entry.name),
+    ).toEqual(["init", "review"]);
+  });
+
+  it("returns global commands plus the matching project bag", () => {
+    expect(
+      filterProviderSlashCommandsForWorkspace(inventory, "/workspace/a").map((entry) => entry.name),
+    ).toEqual(["deploy-check", "init", "review"]);
+  });
+
+  it("does not leak sibling workspace commands", () => {
+    const scoped = filterProviderSlashCommandsForWorkspace(inventory, "/workspace/a");
+    expect(scoped.some((entry) => entry.name === "ship")).toBe(false);
+  });
+
+  it("lets project commands override global commands on name collision", () => {
+    const withCollision = [slashCommand("init"), slashCommand("init", "/workspace/a")];
+    const scoped = filterProviderSlashCommandsForWorkspace(withCollision, "/workspace/a");
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]?.sourceCwd).toBe("/workspace/a");
+    expect(filterProviderSlashCommandsForWorkspace(withCollision, "/workspace/b")).toHaveLength(1);
+    expect(
+      filterProviderSlashCommandsForWorkspace(withCollision, "/workspace/b")[0]?.sourceCwd,
+    ).toBeUndefined();
+  });
+
+  it("includes project-root commands when filtering by a worktree of that project", () => {
+    const scoped = filterProviderSlashCommandsForWorkspace(
+      inventory,
+      "/workspace/a-worktrees/feat",
+      { projectRoot: "/workspace/a" },
+    );
+    expect(scoped.map((entry) => entry.name)).toEqual(["deploy-check", "init", "review"]);
   });
 });

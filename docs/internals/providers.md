@@ -55,10 +55,31 @@ plus user-invocable skills. Filesystem scanning of `.grok/skills`, `.claude/skil
 `.agents/skills` fills in when inspect is missing, including project skills from a workspace
 whose inspect probe failed.
 
-Clients must not show the raw union in the `$` picker. They filter with
-`filterProviderSkillsForWorkspace` (`@t3tools/shared/providerSkills`) using the active chat's
+OpenCode follows the same harness-first rule for the `/` picker. Local installs resolve
+commands through `opencode debug config` per workspace cwd — the exact `.opencode/command(s)`,
+`~/.config/opencode/command(s)`, and `opencode.json` entries the harness would load — while
+configured external servers are queried through the SDK `command.list` per directory, which
+also sees MCP- and plugin-contributed commands. A command the harness reports for every
+queried workspace is global; one reported for a subset keeps that workspace's `sourceCwd` on
+`ServerProviderSlashCommand`. Built-ins (`init`, `review`) are registered in harness code, not
+config, so they merge from a constant in `Drivers/OpenCodeCommands.ts`. The `$` picker stays
+filesystem-based (`Drivers/OpenCodeSkills.ts`, covering `.opencode/skill(s)` plus compat
+roots) because the status probe deliberately avoids spawning a server and skills need their
+on-disk paths.
+
+Slash-command _execution_ differs per harness. Claude and Grok parse leading-slash prompt text
+themselves, so the composer only inserts `/name `; OpenCode's server never parses prompt text
+(the TUI routes commands to a dedicated endpoint), so `OpenCodeAdapter.sendTurn` detects a
+leading `/name args`, checks it against the session's cached `command.list`, and invokes
+`session.command` in a session-scoped fiber (the endpoint blocks until the command turn
+completes; turn progress still streams through the event pump). Unknown names and steers fall
+back to plain prompt text.
+
+Clients must not show the raw union in the `$` or `/` pickers. They filter with
+`filterProviderSkillsForWorkspace` / `filterProviderSlashCommandsForWorkspace`
+(`@t3tools/shared/providerSkills`) using the active chat's
 `worktreePath ?? project.workspaceRoot`, and may pass `projectRoot` so worktree chats still see
-project-root-tagged skills before a re-probe re-tags under the worktree path. Timeline skill chips
+project-root-tagged entries before a re-probe re-tags under the worktree path. Timeline skill chips
 may keep the full inventory so historical mentions still label correctly when the user switches
 projects.
 

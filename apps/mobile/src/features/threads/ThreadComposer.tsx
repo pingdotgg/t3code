@@ -59,7 +59,10 @@ import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { RemoteClientConnectionState } from "../../lib/connection";
-import { filterProviderSkillsForWorkspace } from "@t3tools/shared/providerSkills";
+import {
+  filterProviderSkillsForWorkspace,
+  filterProviderSlashCommandsForWorkspace,
+} from "@t3tools/shared/providerSkills";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
@@ -367,6 +370,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }),
     [selectedProviderStatus?.skills, skillWorkspaceCwd, props.projectCwd],
   );
+  // Scope the `/` picker the same way: provider snapshots carry every open
+  // workspace's commands; keep this thread's global + project commands.
+  const selectedProviderSlashCommands = useMemo(
+    () =>
+      filterProviderSlashCommandsForWorkspace(
+        selectedProviderStatus?.slashCommands ?? [],
+        skillWorkspaceCwd,
+        { projectRoot: props.projectCwd },
+      ),
+    [selectedProviderStatus?.slashCommands, skillWorkspaceCwd, props.projectCwd],
+  );
 
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
@@ -432,7 +446,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
       const providerCommands: ComposerCommandItem[] = [];
-      for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
+      for (const cmd of selectedProviderSlashCommands) {
         if (!cmd.name.toLowerCase().includes(q)) continue;
         providerCommands.push({
           id: `pcmd:${cmd.name}`,
@@ -554,7 +568,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderSkills, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, selectedProviderSkills, selectedProviderSlashCommands]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;

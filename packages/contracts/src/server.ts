@@ -82,6 +82,14 @@ export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
+  /**
+   * Absolute workspace cwd this project command was discovered under.
+   * Omitted for harness built-in and user/global commands that are in scope
+   * for every chat. Clients filter the `/` picker to global commands plus
+   * commands whose `sourceCwd` matches the active thread's worktree or
+   * project root.
+   */
+  sourceCwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 

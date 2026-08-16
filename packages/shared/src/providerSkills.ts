@@ -1,4 +1,4 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 
 import {
   isUncPath,
@@ -120,14 +120,40 @@ export function filterProviderSkillsForWorkspace(
   workspaceCwd: string | null | undefined,
   options?: FilterProviderSkillsForWorkspaceOptions,
 ): ServerProviderSkill[] {
+  return filterWorkspaceScopedByName(skills, workspaceCwd, options);
+}
+
+/**
+ * Slash commands in scope for a chat's project/branch (worktree).
+ *
+ * Same scoping rule as `filterProviderSkillsForWorkspace`: harness built-in
+ * and user/global commands (`sourceCwd` omitted) are the baseline, project
+ * commands matching `workspaceCwd` (or the `projectRoot` fallback) are
+ * merged in, and more specific entries win on name collision.
+ */
+export function filterProviderSlashCommandsForWorkspace(
+  commands: ReadonlyArray<ServerProviderSlashCommand>,
+  workspaceCwd: string | null | undefined,
+  options?: FilterProviderSkillsForWorkspaceOptions,
+): ServerProviderSlashCommand[] {
+  return filterWorkspaceScopedByName(commands, workspaceCwd, options);
+}
+
+function filterWorkspaceScopedByName<
+  T extends { readonly name: string; readonly sourceCwd?: string | undefined },
+>(
+  items: ReadonlyArray<T>,
+  workspaceCwd: string | null | undefined,
+  options?: FilterProviderSkillsForWorkspaceOptions,
+): T[] {
   const normalizedWorkspace =
     workspaceCwd && workspaceCwd.trim().length > 0
       ? normalizeProviderSkillWorkspacePath(workspaceCwd)
       : null;
 
-  const userSkills = skills.filter((skill) => !skill.sourceCwd);
+  const userItems = items.filter((item) => !item.sourceCwd);
   if (normalizedWorkspace === null) {
-    return userSkills;
+    return userItems;
   }
 
   const normalizedProjectRoot =
@@ -137,31 +163,31 @@ export function filterProviderSkillsForWorkspace(
   const includeProjectRootFallback =
     normalizedProjectRoot !== null && normalizedProjectRoot !== normalizedWorkspace;
 
-  const worktreeSkills: ServerProviderSkill[] = [];
-  const projectRootSkills: ServerProviderSkill[] = [];
+  const worktreeItems: T[] = [];
+  const projectRootItems: T[] = [];
 
-  for (const skill of skills) {
-    if (!skill.sourceCwd) {
+  for (const item of items) {
+    if (!item.sourceCwd) {
       continue;
     }
-    const source = normalizeProviderSkillWorkspacePath(skill.sourceCwd);
+    const source = normalizeProviderSkillWorkspacePath(item.sourceCwd);
     if (source === normalizedWorkspace) {
-      worktreeSkills.push(skill);
+      worktreeItems.push(item);
     } else if (includeProjectRootFallback && source === normalizedProjectRoot) {
-      projectRootSkills.push(skill);
+      projectRootItems.push(item);
     }
   }
 
   // User → project-root fallback → exact chat cwd so more specific wins.
-  const byName = new Map<string, ServerProviderSkill>();
-  for (const skill of userSkills) {
-    byName.set(skill.name, skill);
+  const byName = new Map<string, T>();
+  for (const item of userItems) {
+    byName.set(item.name, item);
   }
-  for (const skill of projectRootSkills) {
-    byName.set(skill.name, skill);
+  for (const item of projectRootItems) {
+    byName.set(item.name, item);
   }
-  for (const skill of worktreeSkills) {
-    byName.set(skill.name, skill);
+  for (const item of worktreeItems) {
+    byName.set(item.name, item);
   }
 
   return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
