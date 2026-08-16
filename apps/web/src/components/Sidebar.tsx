@@ -3124,9 +3124,14 @@ export default function Sidebar() {
           case "pin":
             attemptPin(threadRef);
             return;
-          case "unpin":
+          case "unpin": {
+            const confirmed = await settlePromise(() =>
+              api.dialogs.confirm(`Unpin thread "${thread.title}"?`),
+            );
+            if (confirmed._tag === "Failure" || !confirmed.value) return;
             attemptUnpin(threadRef);
             return;
+          }
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
