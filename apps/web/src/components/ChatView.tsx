@@ -3844,7 +3844,8 @@ function ChatViewContent(props: ChatViewProps) {
         !activeThread ||
         !isServerThread ||
         activeMessageEdit.saving ||
-        isWorking
+        isWorking ||
+        sendInFlightRef.current
       ) {
         return;
       }
@@ -3888,6 +3889,8 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
       setMessageEdit((current) => (current ? { ...current, saving: true } : null));
       setOptimisticMessageCorrection({
         messageId: activeMessageEdit.messageId,
@@ -3922,6 +3925,8 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (failure._tag === "Failure") {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
         setOptimisticMessageCorrection((current) =>
           current?.messageId === requestMessageId ? null : current,
         );
@@ -3938,6 +3943,7 @@ function ChatViewContent(props: ChatViewProps) {
         }
         return;
       }
+      sendInFlightRef.current = false;
       if (latestActiveThreadRef.current?.id === requestThreadId) {
         setThreadError(requestThreadId, null);
       }
@@ -3950,6 +3956,7 @@ function ChatViewContent(props: ChatViewProps) {
     [
       activeEnvironmentUnavailable,
       activeThread,
+      beginLocalDispatch,
       correctThreadMessage,
       environmentId,
       interactionMode,
@@ -3957,6 +3964,7 @@ function ChatViewContent(props: ChatViewProps) {
       isWorking,
       activeMessageEdit,
       persistThreadSettingsForNextTurn,
+      resetLocalDispatch,
       runtimeMode,
       setThreadError,
     ],
