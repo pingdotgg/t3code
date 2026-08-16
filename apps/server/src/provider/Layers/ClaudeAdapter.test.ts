@@ -3251,6 +3251,72 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "synthesizes a snapshot-only message instead of claiming a completed id-less block",
+    () => {
+      const harness = makeHarness();
+      const snapshotOnlyText = "Second, snapshot-only message.";
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        // One short of turn.completed on purpose: a regression (the snapshot claiming the
+        // completed block and being skipped) produces fewer events and fails fast below.
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "go",
+          attachments: [],
+        });
+
+        // A message streams and completes WITHOUT message_start — its block carries no
+        // message id, which is what forces the backfill onto the id-less fallback path.
+        harness.query.emit(textBlockStart("idless-start-1", 0));
+        harness.query.emit(textDelta("idless-delta-1", 0, "First answer."));
+        harness.query.emit(blockStop("idless-stop-1", 0));
+
+        // The next message never streams at all: it arrives only as a snapshot, reusing
+        // content index 0. The completed id-less block must not swallow it.
+        harness.query.emit(
+          assistantSnapshot("idless-snapshot", "msg-snapshot-only", [snapshotOnlyText]),
+        );
+        harness.query.emit(successResult("idless-result"));
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const deltas = assistantTextDeltas(runtimeEvents);
+        assert.equal(deltas.length, 2);
+        assert.equal(deltaText(deltas[0]), "First answer.");
+        assert.equal(deltaText(deltas[1]), snapshotOnlyText);
+        assert.notEqual(String(deltas[0]?.itemId), String(deltas[1]?.itemId));
+
+        const completions = runtimeEvents.filter(
+          (event) =>
+            event.type === "item.completed" && event.payload.itemType === "assistant_message",
+        );
+        // The streamed block carries no detail (nothing was backfilled into it); the
+        // synthesized one completes from its snapshot text.
+        assert.deepEqual(
+          completions.map((event) =>
+            event.type === "item.completed" ? event.payload.detail : undefined,
+          ),
+          [undefined, snapshotOnlyText],
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("segments Claude assistant text blocks around tool calls", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

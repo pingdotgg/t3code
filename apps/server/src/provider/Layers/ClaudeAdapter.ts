@@ -2006,8 +2006,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         candidates.findLast(
           (block) => block.messageId !== undefined && block.messageId === snapshotMessageId,
         ) ??
+        // Without ids the block is only "this snapshot's" when it is still open or its
+        // delivered text matches. A completed block with DIFFERENT text belongs to an earlier
+        // message — claiming it would swallow a snapshot-only message entirely; excluding
+        // every completed block would re-synthesize the ordinary stream→stop→snapshot flow as
+        // a duplicate.
         candidates.findLast(
-          (block) => block.messageId === undefined || snapshotMessageId === undefined,
+          (block) =>
+            (block.messageId === undefined || snapshotMessageId === undefined) &&
+            (!block.completionEmitted ||
+              block.streamedText === text ||
+              block.fallbackText === text),
         );
 
       const block =
