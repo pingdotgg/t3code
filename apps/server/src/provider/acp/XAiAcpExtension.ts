@@ -538,6 +538,16 @@ export function parseGrokRewindExecute(payload: unknown): GrokRewindExecuteResul
   };
 }
 
+export const GROK_REWIND_FAILURE_DETAIL = "Grok rewind did not succeed.";
+
+/** Stable, bounded rewind failure text. The raw provider error stays in `cause`. */
+export function grokRewindFailureDetail(error: string | null | undefined): string {
+  const clipped = error?.replace(/\s+/g, " ").trim().slice(0, 240) ?? "";
+  return clipped.length > 0
+    ? `${GROK_REWIND_FAILURE_DETAIL} ${clipped}`
+    : GROK_REWIND_FAILURE_DETAIL;
+}
+
 function readTokenCount(...values: ReadonlyArray<unknown>): number | undefined {
   for (const value of values) {
     const parsed = nonNegativeInt(value);

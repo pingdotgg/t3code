@@ -12,6 +12,7 @@ import {
   extractGrokTokenUsage,
   extractXAiAskUserQuestions,
   grokPromptCountForTurns,
+  grokRewindFailureDetail,
   grokRewindTargetForTurnCount,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
@@ -349,6 +350,16 @@ describe("Grok rewind and usage helpers", () => {
     expect(grokRewindTargetForTurnCount(points, 2)?.promptIndex).toBe(1);
     expect(grokRewindTargetForTurnCount(points, 4)).toBeUndefined();
     expect(grokPromptCountForTurns([{ items: [1] }, { items: [2, 3] }], 1)).toBe(2);
+  });
+
+  it("keeps rewind failure detail bounded and includes the provider error", () => {
+    expect(grokRewindFailureDetail(null)).toBe("Grok rewind did not succeed.");
+    expect(grokRewindFailureDetail("target is stale")).toBe(
+      "Grok rewind did not succeed. target is stale",
+    );
+    expect(grokRewindFailureDetail(`  ${"x".repeat(400)}  `).length).toBeLessThanOrEqual(
+      "Grok rewind did not succeed. ".length + 240,
+    );
   });
 
   it("reads Grok token usage from prompt _meta", () => {

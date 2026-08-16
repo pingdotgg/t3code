@@ -10,15 +10,35 @@ export interface GrokToolUpdateGate {
   lastEmittedAt: number;
 }
 
+function grokToolDataSignature(data: unknown): string {
+  if (typeof data === "string") {
+    return `s${data.length}:${data.slice(-64)}`;
+  }
+  if (Array.isArray(data)) {
+    const last = data.length === 0 ? "" : grokToolDataSignature(data[data.length - 1]);
+    return `a${data.length}:${last}`;
+  }
+  if (data !== null && typeof data === "object") {
+    return `{${Object.entries(data as Record<string, unknown>)
+      .map(([key, value]) => `${key}:${grokToolDataSignature(value)}`)
+      .join(",")}}`;
+  }
+  if (data === undefined) {
+    return "u";
+  }
+  if (data === null) {
+    return "n";
+  }
+  return String(data);
+}
+
 export function grokToolCallFingerprint(toolCall: AcpToolCallState): string {
-  const data = JSON.stringify(toolCall.data) ?? "";
   return [
     toolCall.toolCallId,
     toolCall.status ?? "",
     toolCall.title ?? "",
     toolCall.detail ?? "",
-    String(data.length),
-    data.slice(-128),
+    grokToolDataSignature(toolCall.data),
   ].join("\u001f");
 }
 
@@ -31,17 +51,13 @@ export function shouldEmitGrokToolUpdate(input: {
   if (status === "completed" || status === "failed") {
     return true;
   }
-  const fingerprint = grokToolCallFingerprint(input.toolCall);
-  if (input.previous?.fingerprint === fingerprint) {
-    return false;
-  }
   if (
     input.previous !== undefined &&
     input.nowMs - input.previous.lastEmittedAt < GROK_TOOL_UPDATE_MIN_INTERVAL_MS
   ) {
     return false;
   }
-  return true;
+  return input.previous?.fingerprint !== grokToolCallFingerprint(input.toolCall);
 }
 
 function truncateText(value: string): string {

@@ -79,6 +79,7 @@ import {
   extractGrokTokenUsage,
   extractXAiAskUserQuestions,
   grokPromptCountForTurns,
+  grokRewindFailureDetail,
   grokRewindTargetForTurnCount,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
@@ -723,6 +724,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             readonly method: "x.ai/session_notification" | "_x.ai/session_notification";
             readonly params: unknown;
           }> = [];
+          let sessionNotificationsReady = false;
           const applySessionNotification = (
             ctx: GrokSessionContext,
             method: "x.ai/session_notification" | "_x.ai/session_notification",
@@ -822,6 +824,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpCallbackFailure(
                     Effect.gen(function* () {
                       yield* logNative(input.threadId, method, params);
+                      if (!sessionNotificationsReady) {
+                        pendingSessionNotifications.push({ method, params });
+                        return;
+                      }
                       const ctx = sessions.get(input.threadId);
                       if (!ctx) {
                         pendingSessionNotifications.push({ method, params });
@@ -1104,10 +1110,23 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
           sessionScopeTransferred = true;
-          yield* Effect.forEach(pendingSessionNotifications, (pending) =>
-            applySessionNotification(ctx, pending.method, pending.params),
-          );
-          pendingSessionNotifications.length = 0;
+          // Keep live notifications queued until every buffered startup
+          // update has been applied. `sessions.set` would otherwise let a
+          // later tick mutate workflow state mid-replay.
+          for (;;) {
+            const batch = pendingSessionNotifications.splice(0);
+            if (batch.length === 0) {
+              sessionNotificationsReady = true;
+              if (pendingSessionNotifications.length === 0) {
+                break;
+              }
+              sessionNotificationsReady = false;
+              continue;
+            }
+            yield* Effect.forEach(batch, (pending) =>
+              applySessionNotification(ctx, pending.method, pending.params),
+            );
+          }
 
           yield* offerRuntimeEvent({
             type: "session.started",
@@ -1757,7 +1776,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             return yield* new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "_x.ai/rewind/execute",
-              detail: "Grok rewind did not succeed.",
+              detail: grokRewindFailureDetail(executed?.error),
               ...(executed?.error ? { cause: executed.error } : {}),
             });
           }

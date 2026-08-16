@@ -52,6 +52,17 @@ describe("GrokAcpToolUpdates", () => {
     ).toBe(false);
   });
 
+  it("does not stringify large in-progress payloads while rate-limited", () => {
+    const lines = Array.from({ length: 20_000 }, (_, index) => `line-${index}`);
+    expect(
+      shouldEmitGrokToolUpdate({
+        toolCall: { ...running, data: { lines } },
+        previous: { fingerprint: "other", lastEmittedAt: 900 },
+        nowMs: 1_000,
+      }),
+    ).toBe(false);
+  });
+
   it("always emits a terminal status", () => {
     expect(
       shouldEmitGrokToolUpdate({
