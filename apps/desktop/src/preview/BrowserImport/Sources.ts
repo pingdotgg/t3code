@@ -8,18 +8,34 @@
  *
  * @module BrowserImportSources
  */
-// @effect-diagnostics nodeBuiltinImport:off
 import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools/contracts";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+
+/**
+ * Where a source's files live, resolved once per call rather than read from
+ * the ambient process so the registry stays testable.
+ */
+export interface SourcePaths {
+  readonly path: Path.Path;
+  readonly home: string;
+}
+
+export const sourcePaths = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const environment = yield* HostProcessEnvironment;
+  return { path, home: environment.HOME ?? environment.USERPROFILE ?? "" } satisfies SourcePaths;
+});
 
 export interface BrowserImportSourceDefinition {
   readonly id: BrowserImportSourceId;
   readonly name: string;
   /** Platforms the definition's paths are valid for. */
   readonly platforms: ReadonlyArray<NodeJS.Platform>;
-  readonly userDataDirectory: () => string;
+  readonly userDataDirectory: (paths: SourcePaths) => string;
   readonly keychainService: string;
   readonly keychainAccount: string;
 }
@@ -29,36 +45,34 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     id: "helium",
     name: "Helium",
     platforms: ["darwin"],
-    userDataDirectory: () =>
-      NodePath.join(NodeOS.homedir(), "Library", "Application Support", "net.imput.helium"),
+    userDataDirectory: ({ path, home }) =>
+      path.join(home, "Library", "Application Support", "net.imput.helium"),
     keychainService: "Helium Storage Key",
     keychainAccount: "Helium",
   },
 ];
 
-const pathExists = (path: string): Promise<boolean> =>
-  NodeFSP.access(path).then(
-    () => true,
-    () => false,
-  );
-
-/**
- * Tests the directory entry itself rather than whatever it points at.
- *
- * Chromium points `SingletonLock` at `<host>-<pid>`, a target that never
- * exists, so following the link reports a running browser as closed — exactly
- * backwards, and it would let an import read a live, mid-write database.
- */
-const entryExists = (path: string): Promise<boolean> =>
-  NodeFSP.lstat(path).then(
-    () => true,
-    () => false,
-  );
-
 export const cookieDatabasePath = (
   definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
   profileDirectory: string,
-): string => NodePath.join(definition.userDataDirectory(), profileDirectory, "Cookies");
+): string => paths.path.join(definition.userDataDirectory(paths), profileDirectory, "Cookies");
+
+/** Shape of the slice of Chromium's `Local State` that names its profiles. */
+const LocalState = Schema.Struct({
+  profile: Schema.optional(
+    Schema.Struct({
+      info_cache: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ name: Schema.optional(Schema.String) })),
+      ),
+    }),
+  ),
+});
+const decodeLocalState = Schema.decodeUnknownEffect(Schema.fromJsonString(LocalState));
+
+const DEFAULT_PROFILES: ReadonlyArray<BrowserImportSourceProfile> = [
+  { directory: "Default", name: "Default" },
+];
 
 /**
  * Profiles the source browser knows about, read from its `Local State`.
@@ -68,41 +82,53 @@ export const cookieDatabasePath = (
  * case, and failing the whole import over a missing display name would be
  * disproportionate.
  */
-export async function listSourceProfiles(
+export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProfiles")(function* (
   definition: BrowserImportSourceDefinition,
-): Promise<ReadonlyArray<BrowserImportSourceProfile>> {
-  const fallback: ReadonlyArray<BrowserImportSourceProfile> = [
-    { directory: "Default", name: "Default" },
-  ];
-  try {
-    const raw = await NodeFSP.readFile(
-      NodePath.join(definition.userDataDirectory(), "Local State"),
-      "utf8",
-    );
-    const parsed = JSON.parse(raw) as {
-      profile?: { info_cache?: Record<string, { name?: string }> };
-    };
-    const entries = Object.entries(parsed.profile?.info_cache ?? {});
-    if (entries.length === 0) return fallback;
-    return entries.map(([directory, info]) => ({
-      directory,
-      name: info.name?.trim() || directory,
-    }));
-  } catch {
-    return fallback;
-  }
-}
+  paths: SourcePaths,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const localStatePath = paths.path.join(definition.userDataDirectory(paths), "Local State");
+
+  const profiles = yield* fileSystem.readFileString(localStatePath).pipe(
+    Effect.flatMap(decodeLocalState),
+    Effect.map((state) => Object.entries(state.profile?.info_cache ?? {})),
+    Effect.map((entries) =>
+      entries.map(([directory, info]) => ({ directory, name: info.name?.trim() || directory })),
+    ),
+    Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
+  );
+
+  return profiles.length === 0 ? DEFAULT_PROFILES : profiles;
+});
 
 /** Whether the browser is running, which leaves its cookie DB mid-write. */
-export async function isSourceRunning(definition: BrowserImportSourceDefinition): Promise<boolean> {
+export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const lock = paths.path.join(definition.userDataDirectory(paths), "SingletonLock");
   // Chromium writes a `SingletonLock` symlink for as long as an instance holds
   // the profile. Its presence is a far cheaper and more targeted signal than
   // scanning the process table for a name.
-  return entryExists(NodePath.join(definition.userDataDirectory(), "SingletonLock"));
-}
+  //
+  // The link points at `<host>-<pid>`, a target that never exists, and both
+  // `stat` and `exists` follow links — so they report every running browser as
+  // closed, which would let an import read a live, mid-write database.
+  // `readLink` is the one probe that answers for the entry itself.
+  return yield* fileSystem.stat(lock).pipe(
+    Effect.catchCause(() => fileSystem.readLink(lock)),
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
 
-export async function isSourceInstalled(
+export const isSourceInstalled = Effect.fn("BrowserImportSources.isSourceInstalled")(function* (
   definition: BrowserImportSourceDefinition,
-): Promise<boolean> {
-  return pathExists(definition.userDataDirectory());
-}
+  paths: SourcePaths,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem
+    .exists(definition.userDataDirectory(paths))
+    .pipe(Effect.orElseSucceed(() => false));
+});

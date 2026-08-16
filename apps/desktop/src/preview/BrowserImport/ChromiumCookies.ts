@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - `node:crypto` implements the
+// OSCrypt primitives Chromium uses; Effect has no equivalent.
 /**
  * Chromium cookie extraction.
  *
@@ -15,10 +16,13 @@
  */
 import * as Keyring from "@napi-rs/keyring";
 import * as NodeCrypto from "node:crypto";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-import * as NodeSqlite from "node:sqlite";
+
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /** macOS OSCrypt parameters. Chromium has used these since the feature landed. */
 const MAC_KEY_ITERATIONS = 1003;
@@ -41,21 +45,41 @@ export interface ChromiumCookie {
   readonly sameSite: "no_restriction" | "lax" | "strict";
 }
 
-export type ChromiumCookieReadFailure =
-  | { readonly reason: "needsKeychainApproval" }
-  | { readonly reason: "keychainItemMissing" }
-  | { readonly reason: "browserRunning" }
-  | { readonly reason: "unsupportedPlatform" };
+export const ChromiumCookieReadReason = Schema.Literals([
+  "needsKeychainApproval",
+  "keychainItemMissing",
+  "browserRunning",
+  "unsupportedPlatform",
+  "readFailed",
+]);
+export type ChromiumCookieReadReason = typeof ChromiumCookieReadReason.Type;
 
-export class ChromiumCookieReadError extends Error {
-  readonly failure: ChromiumCookieReadFailure;
-
-  constructor(failure: ChromiumCookieReadFailure) {
-    super(`Could not read Chromium cookies: ${failure.reason}`);
-    this.name = "ChromiumCookieReadError";
-    this.failure = failure;
+export class ChromiumCookieReadError extends Schema.TaggedErrorClass<ChromiumCookieReadError>()(
+  "ChromiumCookieReadError",
+  {
+    reason: ChromiumCookieReadReason,
+    /** Kept for the log; never surfaced to the user. */
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Could not read Chromium cookies: ${this.reason}.`;
   }
 }
+
+/** Row shape of the cookie table, decoded rather than cast. */
+const CookieRow = Schema.Struct({
+  host_key: Schema.String,
+  name: Schema.String,
+  encrypted_value: Schema.Uint8Array,
+  path: Schema.String,
+  expires_seconds: Schema.Number,
+  is_secure: Schema.Number,
+  is_httponly: Schema.Number,
+  samesite: Schema.Number,
+});
+
+const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
 
 /**
  * Chromium stores `SameSite` as an int; unspecified (-1) behaves as Lax in
@@ -97,45 +121,52 @@ const toUnixSeconds = (webkitSeconds: number): number | undefined => {
  * the user means the prompt can be approved while nothing is left listening —
  * which reads as "approving did nothing".
  */
-async function readMacKeychainPassword(service: string, account: string): Promise<string> {
-  let password: string | null;
-  try {
-    password = new Keyring.Entry(service, account).getPassword();
-  } catch (cause) {
-    const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
-    // Distinguish the causes rather than reporting "approve the prompt" for a
-    // failure approving cannot fix.
-    if (/no (matching )?entry|not found/i.test(message)) {
-      throw new ChromiumCookieReadError({ reason: "keychainItemMissing" });
-    }
-    throw new ChromiumCookieReadError({ reason: "needsKeychainApproval" });
-  }
+const readMacKeychainPassword = Effect.fn("ChromiumCookies.readMacKeychainPassword")(function* (
+  service: string,
+  account: string,
+) {
+  const password = yield* Effect.try({
+    try: () => new Keyring.Entry(service, account).getPassword(),
+    catch: (cause) => {
+      const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+      // Distinguish the causes rather than telling the user to approve a
+      // prompt when approving cannot fix the failure.
+      const missing = /no (matching )?entry|not found/i.test(message);
+      return new ChromiumCookieReadError({
+        reason: missing ? "keychainItemMissing" : "needsKeychainApproval",
+        cause,
+      });
+    },
+  });
   if (password === null || password === "") {
-    throw new ChromiumCookieReadError({ reason: "keychainItemMissing" });
+    return yield* new ChromiumCookieReadError({ reason: "keychainItemMissing" });
   }
   return password;
-}
+});
 
 /**
  * Chromium keeps the cookie DB open with WAL, and reading it in place can
  * observe a torn state. Copying first — including the sidecars — gives a
  * consistent snapshot without touching the browser's own files.
+ *
+ * Scoped: the temp directory is removed when the caller's scope closes.
  */
-async function copyCookieDatabase(cookiePath: string): Promise<{
-  readonly path: string;
-  readonly cleanup: () => Promise<void>;
-}> {
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3code-cookie-import-"));
-  const target = NodePath.join(directory, "Cookies");
-  await NodeFSP.copyFile(cookiePath, target);
-  for (const suffix of ["-wal", "-shm"]) {
-    await NodeFSP.copyFile(`${cookiePath}${suffix}`, `${target}${suffix}`).catch(() => undefined);
-  }
-  return {
-    path: target,
-    cleanup: () => NodeFSP.rm(directory, { recursive: true, force: true }).catch(() => undefined),
-  };
-}
+const snapshotCookieDatabase = Effect.fn("ChromiumCookies.snapshotCookieDatabase")(function* (
+  cookiePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-cookie-import-" });
+  const target = path.join(directory, "Cookies");
+  yield* fileSystem.copyFile(cookiePath, target);
+  // The sidecars only exist while the browser holds the database open, so a
+  // missing one is normal rather than a failure.
+  yield* Effect.forEach(["-wal", "-shm"], (suffix) =>
+    fileSystem.copyFile(`${cookiePath}${suffix}`, `${target}${suffix}`).pipe(Effect.ignore),
+  );
+  return target;
+});
 
 const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): string | null => {
   const buffer = Buffer.from(encrypted);
@@ -166,16 +197,16 @@ export interface ChromiumCookieSource {
   readonly platform: NodeJS.Platform;
 }
 
-export async function readChromiumCookies(
+export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookies")(function* (
   source: ChromiumCookieSource,
-): Promise<ReadonlyArray<ChromiumCookie>> {
+) {
   if (source.platform !== "darwin") {
     // Linux (libsecret) and Windows (DPAPI, and App-Bound Encryption on
     // current Chrome) each need their own key path; only macOS is implemented.
-    throw new ChromiumCookieReadError({ reason: "unsupportedPlatform" });
+    return yield* new ChromiumCookieReadError({ reason: "unsupportedPlatform" });
   }
 
-  const password = await readMacKeychainPassword(source.keychainService, source.keychainAccount);
+  const password = yield* readMacKeychainPassword(source.keychainService, source.keychainAccount);
   const key = NodeCrypto.pbkdf2Sync(
     password,
     MAC_KEY_SALT,
@@ -184,54 +215,44 @@ export async function readChromiumCookies(
     "sha1",
   );
 
-  const snapshot = await copyCookieDatabase(source.cookieDatabasePath);
-  try {
-    const database = new NodeSqlite.DatabaseSync(snapshot.path, { readOnly: true });
-    try {
-      const rows = database
-        .prepare(
-          `select host_key, name, encrypted_value, path,
-                  expires_utc / 1000000 as expires_seconds,
-                  is_secure, is_httponly, samesite
-             from cookies`,
-        )
-        .all() as unknown as ReadonlyArray<{
-        host_key: string;
-        name: string;
-        encrypted_value: Uint8Array;
-        path: string;
-        expires_seconds: number;
-        is_secure: number;
-        is_httponly: number;
-        samesite: number;
-      }>;
+  const snapshotPath = yield* snapshotCookieDatabase(source.cookieDatabasePath).pipe(
+    Effect.mapError((cause) => new ChromiumCookieReadError({ reason: "readFailed", cause })),
+  );
 
-      const cookies: ChromiumCookie[] = [];
-      for (const row of rows) {
-        const value = decryptValue(row.encrypted_value, key, row.host_key);
-        if (value === null) continue;
-        const secure = row.is_secure === 1;
-        // Electron matches cookies to a URL rather than a bare domain, so a
-        // host-only entry keeps its leading dot stripped for the URL but not
-        // for the domain it is registered under.
-        const host = row.host_key.startsWith(".") ? row.host_key.slice(1) : row.host_key;
-        cookies.push({
-          url: `${secure ? "https" : "http"}://${host}${row.path}`,
-          name: row.name,
-          value,
-          domain: row.host_key,
-          path: row.path,
-          secure,
-          httpOnly: row.is_httponly === 1,
-          expirationDate: toUnixSeconds(row.expires_seconds),
-          sameSite: sameSiteFromColumn(row.samesite),
-        });
-      }
-      return cookies;
-    } finally {
-      database.close();
-    }
-  } finally {
-    await snapshot.cleanup();
+  const rows = yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const raw = yield* sql`
+      select host_key, name, encrypted_value, path,
+             expires_utc / 1000000 as expires_seconds,
+             is_secure, is_httponly, samesite
+        from cookies
+    `;
+    return yield* decodeCookieRows(raw);
+  }).pipe(
+    Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
+    Effect.mapError((cause) => new ChromiumCookieReadError({ reason: "readFailed", cause })),
+  );
+
+  const cookies: ChromiumCookie[] = [];
+  for (const row of rows) {
+    const value = decryptValue(row.encrypted_value, key, row.host_key);
+    if (value === null) continue;
+    const secure = row.is_secure === 1;
+    // Electron matches cookies to a URL rather than a bare domain, so a
+    // host-only entry keeps its leading dot stripped for the URL but not for
+    // the domain it is registered under.
+    const host = row.host_key.startsWith(".") ? row.host_key.slice(1) : row.host_key;
+    cookies.push({
+      url: `${secure ? "https" : "http"}://${host}${row.path}`,
+      name: row.name,
+      value,
+      domain: row.host_key,
+      path: row.path,
+      secure,
+      httpOnly: row.is_httponly === 1,
+      expirationDate: toUnixSeconds(row.expires_seconds),
+      sameSite: sameSiteFromColumn(row.samesite),
+    });
   }
-}
+  return cookies satisfies ReadonlyArray<ChromiumCookie>;
+});

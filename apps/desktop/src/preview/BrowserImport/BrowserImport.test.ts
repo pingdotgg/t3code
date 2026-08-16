@@ -1,21 +1,23 @@
-// @effect-diagnostics nodeBuiltinImport:off - Builds the on-disk browser layout the import reads.
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import {
+  HostProcessEnvironment,
+  HostProcessExecutablePath,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 
-import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as BrowserSession from "../BrowserSession.ts";
 import * as BrowserImport from "./BrowserImport.ts";
-import { BROWSER_IMPORT_SOURCES } from "./Sources.ts";
+import { BROWSER_IMPORT_SOURCES, sourcePaths } from "./Sources.ts";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
 
 /**
- * Fails loudly if the import ever reaches session work: every test here covers
- * a request that must be rejected before a cookie is read or written.
+ * Dies if the import reaches session work: every case here covers a request
+ * that must be rejected before a cookie is read or written.
  */
 const rejectedBeforeSession = Layer.succeed(BrowserSession.BrowserSession, {
   derivePartition: () => Effect.die("derivePartition must not be reached"),
@@ -24,41 +26,46 @@ const rejectedBeforeSession = Layer.succeed(BrowserSession.BrowserSession, {
   clearCache: () => Effect.die("clearCache must not be reached"),
 } as unknown as BrowserSession.BrowserSession["Service"]);
 
-const layer = BrowserImport.layer.pipe(
-  Layer.provide(rejectedBeforeSession),
-  Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
-  Layer.provide(Layer.succeed(HostProcessExecutablePath, "/Applications/T3 Code.app")),
-);
+/**
+ * Builds the service against a scratch home containing an installed, closed
+ * copy of the source browser.
+ */
+const withImporter = Effect.fnUntraced(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-import-" });
+  const environment = Layer.succeed(HostProcessEnvironment, { HOME: home });
+  const paths = yield* sourcePaths.pipe(
+    Effect.provideService(HostProcessEnvironment, { HOME: home }),
+  );
+  yield* fileSystem.makeDirectory(`${helium.userDataDirectory(paths)}/Default`, {
+    recursive: true,
+  });
 
-const withScratchHome = Effect.fnUntraced(function* () {
-  const realHome = process.env.HOME;
-  const home = yield* Effect.acquireRelease(
-    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3code-import-"))),
-    (dir) =>
-      Effect.promise(async () => {
-        if (realHome === undefined) delete process.env.HOME;
-        else process.env.HOME = realHome;
-        await NodeFSP.rm(dir, { recursive: true, force: true });
-      }),
+  const importer = yield* BrowserImport.BrowserImport.pipe(
+    Effect.provide(
+      BrowserImport.layer.pipe(
+        Layer.provide(rejectedBeforeSession),
+        Layer.provide(environment),
+        Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
+        Layer.provide(Layer.succeed(HostProcessExecutablePath, "/Applications/T3 Code.app")),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
   );
-  process.env.HOME = home;
-  yield* Effect.promise(() =>
-    NodeFSP.mkdir(NodePath.join(helium.userDataDirectory(), "Default"), { recursive: true }),
-  );
-  return home;
+  return { importer, home, paths };
 });
 
 describe("BrowserImport.importCookies", () => {
-  it.effect("rejects a profile directory the source never reported", () =>
+  it.effect("rejects a source profile the browser never reported", () =>
     Effect.gen(function* () {
-      const home = yield* withScratchHome();
-      // A cookie database that is reachable on disk but outside the browser's
-      // user-data directory — the payoff a traversal would be after.
-      const secrets = NodePath.join(home, "secrets");
-      yield* Effect.promise(() => NodeFSP.mkdir(secrets, { recursive: true }));
-      yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(secrets, "Cookies"), "not-a-db"));
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { importer, home } = yield* withImporter();
 
-      const importer = yield* BrowserImport.BrowserImport;
+      // A cookie database reachable on disk but outside the browser's
+      // user-data directory — the payoff a traversal would be after.
+      yield* fileSystem.makeDirectory(`${home}/secrets`, { recursive: true });
+      yield* fileSystem.writeFileString(`${home}/secrets/Cookies`, "not-a-db");
+
       const error = yield* importer
         .importCookies({
           input: {
@@ -73,6 +80,33 @@ describe("BrowserImport.importCookies", () => {
 
       assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
       assert.equal(error.reason, "unknownSourceProfile");
-    }).pipe(Effect.provide(layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("refuses to import while the source browser holds its profile", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { importer, paths } = yield* withImporter();
+      // The lock Chromium leaves while it is running, dangling target and
+      // all. This must stop the import before it ever asks the keychain.
+      yield* fileSystem.symlink(
+        "host-that-does-not-exist-1234",
+        `${helium.userDataDirectory(paths)}/SingletonLock`,
+      );
+
+      const error = yield* importer
+        .importCookies({
+          input: {
+            sourceId: "helium",
+            sourceProfileDirectory: "Default",
+            targetProfileId: "default",
+          },
+          scope: "persist:t3code-preview-test",
+          persistent: true,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.reason, "browserRunning");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

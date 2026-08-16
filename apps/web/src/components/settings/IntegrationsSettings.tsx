@@ -7,7 +7,9 @@
  * @module IntegrationsSettings
  */
 import {
+  BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_IMPORT_UNAVAILABLE_COPY,
+  BrowserImportFailureReason,
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserProfile,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
@@ -109,6 +111,19 @@ const APPEARANCE_LABELS: Readonly<Record<PreviewAppearancePreference, string>> =
 };
 
 const zoomLabel = (zoomFactor: number) => `${Math.round(zoomFactor * 100)}%`;
+
+/**
+ * IPC flattens the failure to its message, so the reason token travels inside
+ * it. Anything unrecognised reads as a plain read failure rather than leaking
+ * the raw message into a toast.
+ */
+const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
+  const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+  return (
+    BrowserImportFailureReason.literals.find((reason) => message.includes(`failed: ${reason}.`)) ??
+    "readFailed"
+  );
+};
 
 const viewportSelectValue = (viewport: PreviewViewportSetting): string => {
   if (viewport._tag === "fill") return FILL_VALUE;
@@ -618,18 +633,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         });
       })
       .catch((cause: unknown) => {
-        const reason = String((cause as { message?: unknown })?.message ?? "");
-        const known = (
-          Object.keys(BROWSER_IMPORT_UNAVAILABLE_COPY) as ReadonlyArray<
-            keyof typeof BROWSER_IMPORT_UNAVAILABLE_COPY
-          >
-        ).find((candidate) => reason.includes(candidate));
         toastManager.add({
           type: "error",
           title: `Could not import from ${source.name}`,
-          description: known
-            ? BROWSER_IMPORT_UNAVAILABLE_COPY[known]
-            : "The browser's cookie database could not be read.",
+          description: BROWSER_IMPORT_FAILURE_COPY[importFailureReason(cause)],
         });
       })
       .finally(() => setBusy(false));

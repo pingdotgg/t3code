@@ -10,35 +10,40 @@ import type {
   BrowserImportSource,
   BrowserImportUnavailableReason,
 } from "@t3tools/contracts";
+import { BrowserImportFailureReason } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as BrowserSession from "../BrowserSession.ts";
-import {
-  ChromiumCookieReadError,
-  readChromiumCookies,
-  type ChromiumCookie,
-} from "./ChromiumCookies.ts";
+import { readChromiumCookies } from "./ChromiumCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   cookieDatabasePath,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
+  sourcePaths,
   type BrowserImportSourceDefinition,
+  type SourcePaths,
 } from "./Sources.ts";
 
 export class BrowserImportFailedError extends Schema.TaggedErrorClass<BrowserImportFailedError>()(
   "BrowserImportFailedError",
   {
     sourceId: Schema.String,
-    reason: Schema.String,
+    reason: BrowserImportFailureReason,
+    /** Kept for the log; the user only ever sees the reason's copy. */
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  // The reason token is part of the message on purpose: IPC flattens the error
+  // to its message, and the renderer maps that token back to user-facing copy.
   override get message(): string {
     return `Importing cookies from ${this.sourceId} failed: ${this.reason}.`;
   }
@@ -57,36 +62,40 @@ export class BrowserImport extends Context.Service<
   }
 >()("@t3tools/desktop/preview/BrowserImport/BrowserImport") {}
 
-const unavailableReason = async (
+const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function* (
   definition: BrowserImportSourceDefinition,
   platform: NodeJS.Platform,
-): Promise<BrowserImportUnavailableReason | undefined> => {
+  paths: SourcePaths,
+): Effect.fn.Return<BrowserImportUnavailableReason | undefined, never, FileSystem.FileSystem> {
   if (!definition.platforms.includes(platform)) return "unsupportedPlatform";
-  if (!(await isSourceInstalled(definition))) return "notInstalled";
-  if (await isSourceRunning(definition)) return "browserRunning";
+  if (!(yield* isSourceInstalled(definition, paths))) return "notInstalled";
+  if (yield* isSourceRunning(definition, paths)) return "browserRunning";
   return undefined;
-};
+});
 
 export const make = Effect.gen(function* BrowserImportMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
   const platform = yield* HostProcessPlatform;
   const executablePath = yield* HostProcessExecutablePath;
+  // Captured here so the service's methods stay free of a requirements
+  // channel: the layer is built where NodeServices is already in scope.
+  const platformServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  const paths = yield* sourcePaths;
 
-  const listSources = Effect.promise(async (): Promise<ReadonlyArray<BrowserImportSource>> => {
-    const sources: BrowserImportSource[] = [];
-    for (const definition of BROWSER_IMPORT_SOURCES) {
-      const unavailable = await unavailableReason(definition, platform);
-      sources.push({
+  const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.forEach(
+    BROWSER_IMPORT_SOURCES,
+    Effect.fnUntraced(function* (definition) {
+      const unavailable = yield* unavailableReason(definition, platform, paths);
+      return {
         id: definition.id,
         name: definition.name,
         // Listing profiles touches the source's own files, so skip it when the
         // source is unusable anyway.
-        profiles: unavailable === undefined ? await listSourceProfiles(definition) : [],
+        profiles: unavailable === undefined ? yield* listSourceProfiles(definition, paths) : [],
         ...(unavailable === undefined ? {} : { unavailable }),
-      });
-    }
-    return sources;
-  });
+      } satisfies BrowserImportSource;
+    }),
+  ).pipe(Effect.provide(platformServices));
 
   const importCookies = Effect.fn("BrowserImport.importCookies")(function* (input: {
     readonly input: BrowserImportInput;
@@ -99,11 +108,13 @@ export const make = Effect.gen(function* BrowserImportMake() {
     if (!definition) {
       return yield* new BrowserImportFailedError({
         sourceId: input.input.sourceId,
-        reason: "unknown source",
+        reason: "unknownSource",
       });
     }
 
-    const blocked = yield* Effect.promise(() => unavailableReason(definition, platform));
+    const blocked = yield* unavailableReason(definition, platform, paths).pipe(
+      Effect.provide(platformServices),
+    );
     if (blocked !== undefined) {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: blocked });
     }
@@ -120,7 +131,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
     // source itself reported it. Forwarding it unchecked would let `..`
     // segments walk out of the browser's user-data directory and read any
     // cookie database reachable on disk.
-    const sourceProfiles = yield* Effect.promise(() => listSourceProfiles(definition));
+    const sourceProfiles = yield* listSourceProfiles(definition, paths).pipe(
+      Effect.provide(platformServices),
+    );
     const requestedProfile = sourceProfiles.find(
       (profile) => profile.directory === input.input.sourceProfileDirectory,
     );
@@ -131,28 +144,30 @@ export const make = Effect.gen(function* BrowserImportMake() {
       });
     }
 
-    const cookies: ReadonlyArray<ChromiumCookie> = yield* Effect.tryPromise({
-      try: () =>
-        readChromiumCookies({
-          cookieDatabasePath: cookieDatabasePath(definition, requestedProfile.directory),
-          keychainService: definition.keychainService,
-          keychainAccount: definition.keychainAccount,
-          platform,
-        }),
-      catch: (cause) =>
-        new BrowserImportFailedError({
-          sourceId: definition.id,
-          reason: cause instanceof ChromiumCookieReadError ? cause.failure.reason : "readFailed",
-        }),
-    });
+    const cookies = yield* readChromiumCookies({
+      cookieDatabasePath: cookieDatabasePath(definition, paths, requestedProfile.directory),
+      keychainService: definition.keychainService,
+      keychainAccount: definition.keychainAccount,
+      platform,
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(platformServices),
+      Effect.mapError(
+        (cause) =>
+          new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
+      ),
+    );
 
-    const session = yield* browserSession
-      .getSession(input.scope, input.persistent)
-      .pipe(
-        Effect.mapError(
-          () => new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" }),
-        ),
-      );
+    const session = yield* browserSession.getSession(input.scope, input.persistent).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BrowserImportFailedError({
+            sourceId: definition.id,
+            reason: "sessionUnavailable",
+            cause,
+          }),
+      ),
+    );
 
     // Written one at a time rather than in parallel: Chromium's cookie store
     // serialises writes anyway, and a rejected cookie should only cost itself.
