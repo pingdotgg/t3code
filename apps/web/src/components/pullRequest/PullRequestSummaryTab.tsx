@@ -480,6 +480,7 @@ export function PullRequestSummaryTab({
                       >
                         <PullRequestActorLabel
                           actor={actor}
+                          tooltip={false}
                           className="gap-0 [&>img]:ring-2 [&>img]:ring-background [&>span:first-child]:ring-2 [&>span:first-child]:ring-background [&>span:last-child]:sr-only"
                         />
                       </TooltipTrigger>
