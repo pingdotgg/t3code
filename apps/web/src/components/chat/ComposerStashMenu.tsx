@@ -116,7 +116,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           </Button>
         </div>
         <CommandList className="max-h-72">
-          <CommandGroup>
+          <CommandGroup aria-label="Stashed prompts">
             {entries.length === 0 ? (
               <p className="px-3 pb-3 pt-1 text-secondary-label text-xs">
                 Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.

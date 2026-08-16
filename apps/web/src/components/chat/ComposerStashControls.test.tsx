@@ -17,6 +17,7 @@ describe("ComposerStashMenu", () => {
     );
 
     expect(markup).toContain('aria-label="Close stashed prompts"');
+    expect(markup).toContain('aria-label="Stashed prompts"');
     expect(markup.indexOf('aria-label="Close stashed prompts"')).toBeLessThan(
       markup.indexOf('data-slot="command-list"'),
     );
