@@ -322,9 +322,11 @@ fn is_browser_app(app_name: &str) -> bool {
             | "firefox developer edition"
             | "firefox nightly"
             | "safari"
+            | "safari technology preview"
             | "microsoft edge"
             | "microsoft edge beta"
             | "microsoft edge dev"
+            | "microsoft edge canary"
             | "opera"
             | "opera gx"
             | "arc"
@@ -502,7 +504,13 @@ fn website_haystack(sample: &Sample) -> Option<String> {
 }
 
 fn app_allowed(app_id: &str, app_name: &str, control: &Control) -> bool {
-    let needles: Vec<String> = control.apps.iter().map(|s| s.to_lowercase()).collect();
+    // Empty needles match every haystack via `str::contains("")` — drop them.
+    let needles: Vec<String> = control
+        .apps
+        .iter()
+        .map(|s| s.to_lowercase())
+        .filter(|s| !s.trim().is_empty())
+        .collect();
     let hay: Vec<String> = [app_id.to_lowercase(), app_name.to_lowercase()]
         .into_iter()
         .filter(|h| !h.is_empty())
