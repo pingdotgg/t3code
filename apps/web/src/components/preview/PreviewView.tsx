@@ -697,7 +697,10 @@ export function PreviewView({
           // "Default" would be noise on the common case, while a tab in
           // another profile is exactly what needs calling out.
           activeProfile && activeProfile.id !== browserDefaults.profileId ? (
-            <Badge variant="outline" className="shrink-0">
+            // Capped and truncated: profile names run to 48 characters, and an
+            // unbounded badge in this row takes its width from the URL input,
+            // the only flexible element in the compact chrome.
+            <Badge variant="outline" className="max-w-28 shrink-0 truncate">
               {activeProfile.name}
             </Badge>
           ) : null
