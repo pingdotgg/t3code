@@ -7,6 +7,7 @@
  * @module IntegrationsSettings
  */
 import {
+  BROWSER_IMPORT_UNAVAILABLE_COPY,
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserProfile,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
@@ -24,13 +25,13 @@ import {
   findBrowserProfile,
   isBuiltInBrowserProfileId,
   resolveBrowserProfiles,
+  type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
-import { InfoIcon, Plus as PlusIcon, Trash2 as Trash2Icon } from "lucide-react";
-import { useState } from "react";
-import type { ReactNode } from "react";
+import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -48,6 +49,19 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
+import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
@@ -74,7 +88,6 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { searchableSetting } from "./settingsSearch";
 
 const FILL_VALUE = "fill";
@@ -483,24 +496,52 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
  * so there is nothing to rename and removing them would strand every tab that
  * opened under them.
  */
+
+/**
+ * Per-profile cookie import from a browser installed on this machine.
+ *
+ * Sources are listed lazily on open: detection touches the other browser's
+ * files, and the answer changes while the app is running (quitting the browser
+ * clears `browserRunning`), so a value cached at mount would go stale.
+ */
+/**
+ * Profile list, its header menu, and the import flow.
+ *
+ * One menu creates profiles and imports into them, because the two are the
+ * same decision from the user's side: "I want a profile that has my Helium
+ * logins in it". Import targets include "New profile" so that case does not
+ * require creating one first and then finding a second control.
+ */
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const updateSettings = useUpdatePrimarySettings();
   const environmentId = usePrimaryEnvironment()?.environmentId;
+  const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
+  const [busy, setBusy] = useState(false);
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
 
-  const addProfile = () => {
-    if (userProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return;
-    const taken = new Set(resolveBrowserProfiles(userProfiles).map((profile) => profile.name));
-    let name = "New profile";
-    for (let index = 2; taken.has(name); index += 1) name = `New profile ${index}`;
-    updateSettings({
-      browserProfiles: [
-        ...userProfiles,
-        { id: `profile-${randomUUID()}`, name, kind: "persistent" as const },
-      ],
-    });
+  const profiles = resolveBrowserProfiles(userProfiles);
+  const resolvedDefaultId =
+    findBrowserProfile(profiles, defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID;
+
+  const uniqueName = (base: string) => {
+    const taken = new Set(profiles.map((profile) => profile.name));
+    if (!taken.has(base)) return base;
+    for (let index = 2; ; index += 1) {
+      const candidate = `${base} ${index}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+  };
+
+  const createProfile = (name: string) => {
+    const profile = {
+      id: `profile-${randomUUID()}`,
+      name: uniqueName(name),
+      kind: "persistent" as const,
+    };
+    updateSettings({ browserProfiles: [...userProfiles, profile] });
+    return profile;
   };
 
   const renameProfile = (id: string, next: string) => {
@@ -513,6 +554,20 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     });
   };
 
+  const clearProfileData = (id: string, name: string) => {
+    if (!environmentId || !previewBridge) return;
+    void Promise.all([
+      previewBridge.clearCookies(environmentId, id),
+      previewBridge.clearCache(environmentId, id),
+    ])
+      .then(() => {
+        toastManager.add({ type: "success", title: `Cleared ${name}'s cookies and cache` });
+      })
+      .catch(() => {
+        toastManager.add({ type: "error", title: `Could not clear ${name}'s data` });
+      });
+  };
+
   const removeProfile = (id: string) => {
     setProfilePendingRemoval(null);
     // Drop the partition's data too, otherwise a removed profile's cookies
@@ -523,94 +578,237 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     }
     updateSettings({
       browserProfiles: userProfiles.filter((profile) => profile.id !== id),
-      // Reassign the default rather than leaving it pointing at nothing.
       ...(defaultProfileId === id ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID } : {}),
     });
   };
 
+  const loadSources = () => {
+    if (!previewBridge) return;
+    void previewBridge
+      .listBrowserImportSources()
+      .then(setSources)
+      .catch(() => setSources([]));
+  };
+
+  const runImport = (
+    source: BrowserImportSource,
+    sourceProfileDirectory: string,
+    targetProfileId: string,
+    targetName: string,
+  ) => {
+    if (!environmentId || !previewBridge) return;
+    setBusy(true);
+    void previewBridge
+      .importBrowserCookies({
+        environmentId,
+        sourceId: source.id,
+        sourceProfileDirectory,
+        targetProfileId,
+      })
+      .then((result) => {
+        toastManager.add({
+          type: result.imported > 0 ? "success" : "error",
+          title:
+            result.imported > 0
+              ? `Imported ${result.imported} cookies into ${targetName}`
+              : `No cookies imported from ${source.name}`,
+          // Surfaced rather than hidden: a mostly-skipped import should not
+          // read as a clean success.
+          ...(result.skipped > 0 ? { description: `${result.skipped} skipped.` } : {}),
+        });
+      })
+      .catch((cause: unknown) => {
+        const reason = String((cause as { message?: unknown })?.message ?? "");
+        const known = (
+          Object.keys(BROWSER_IMPORT_UNAVAILABLE_COPY) as ReadonlyArray<
+            keyof typeof BROWSER_IMPORT_UNAVAILABLE_COPY
+          >
+        ).find((candidate) => reason.includes(candidate));
+        toastManager.add({
+          type: "error",
+          title: `Could not import from ${source.name}`,
+          description: known
+            ? BROWSER_IMPORT_UNAVAILABLE_COPY[known]
+            : "The browser's cookie database could not be read.",
+        });
+      })
+      .finally(() => setBusy(false));
+  };
+
+  const importInto = (
+    source: BrowserImportSource,
+    sourceProfileDirectory: string,
+    target: "new" | { readonly id: string; readonly name: string },
+  ) => {
+    if (target === "new") {
+      const created = createProfile(source.name);
+      runImport(source, sourceProfileDirectory, created.id, created.name);
+      return;
+    }
+    runImport(source, sourceProfileDirectory, target.id, target.name);
+  };
+
+  const atProfileLimit = userProfiles.length >= BROWSER_PROFILE_MAX_COUNT;
+
   return (
     <SettingsRow
       {...searchableSetting("browser-profiles")}
-      description="Each profile keeps its own cookies and logins, so a tab opened under one can't see another's. Incognito discards everything when the app closes."
+      description="Each profile keeps its own cookies and logins, so a tab opened under one can't see another's. Incognito isn't listed here — it keeps nothing, and you pick it when opening a tab."
       control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={disabled || userProfiles.length >= BROWSER_PROFILE_MAX_COUNT}
-          onClick={addProfile}
-        >
-          <PlusIcon />
-          Add profile
-        </Button>
+        <Menu onOpenChange={(open) => open && loadSources()}>
+          <MenuTrigger render={<Button size="sm" variant="outline" disabled={disabled || busy} />}>
+            <PlusIcon />
+            Add profile
+          </MenuTrigger>
+          <MenuPopup align="end" className="min-w-56">
+            <MenuItem disabled={atProfileLimit} onClick={() => createProfile("New profile")}>
+              Blank profile
+            </MenuItem>
+            <MenuSeparator />
+            <MenuGroup>
+              <MenuGroupLabel>Import from</MenuGroupLabel>
+              {sources === null ? (
+                <MenuItem disabled>Looking for browsers…</MenuItem>
+              ) : sources.length === 0 ? (
+                <MenuItem disabled>No supported browsers found</MenuItem>
+              ) : (
+                sources.flatMap((source) =>
+                  source.unavailable
+                    ? [
+                        // Kept visible with its reason rather than hidden:
+                        // "Helium is running, quit it" beats "Helium isn't
+                        // listed".
+                        <MenuItem key={source.id} disabled>
+                          <span className="flex flex-col items-start">
+                            <span>{source.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {BROWSER_IMPORT_UNAVAILABLE_COPY[source.unavailable]}
+                            </span>
+                          </span>
+                        </MenuItem>,
+                      ]
+                    : source.profiles.map((sourceProfile) => (
+                        <MenuSub key={`${source.id}:${sourceProfile.directory}`}>
+                          <MenuSubTrigger>
+                            {source.profiles.length > 1
+                              ? `${source.name} — ${sourceProfile.name}`
+                              : source.name}
+                          </MenuSubTrigger>
+                          <MenuSubPopup className="min-w-44">
+                            <MenuItem
+                              disabled={atProfileLimit}
+                              onClick={() => importInto(source, sourceProfile.directory, "new")}
+                            >
+                              New profile
+                            </MenuItem>
+                            <MenuSeparator />
+                            <MenuGroup>
+                              <MenuGroupLabel>Existing profile</MenuGroupLabel>
+                              {profiles
+                                // Incognito is discarded on quit, so importing
+                                // into it would throw the work away.
+                                .filter((profile) => profile.kind !== "incognito")
+                                .map((profile) => (
+                                  <MenuItem
+                                    key={profile.id}
+                                    onClick={() =>
+                                      importInto(source, sourceProfile.directory, {
+                                        id: profile.id,
+                                        name: profile.name,
+                                      })
+                                    }
+                                  >
+                                    {profile.name}
+                                  </MenuItem>
+                                ))}
+                            </MenuGroup>
+                          </MenuSubPopup>
+                        </MenuSub>
+                      )),
+                )
+              )}
+            </MenuGroup>
+          </MenuPopup>
+        </Menu>
       }
     >
       {/*
-        Each profile is its own bounded row, and the list carries the bottom
-        spacing `SettingsRow` leaves to its children (`pt-3 pb-1`). Bare rows
-        stack on narrow viewports with a larger gap inside a row than between
-        rows, which reads as the remove button belonging to the profile below.
+        The bordered container groups rows unambiguously at any width, and
+        carries the bottom spacing `SettingsRow` leaves to its children
+        (`pt-3 pb-1`).
       */}
-      <div className="mt-2 space-y-1 pb-2">
-        {resolveBrowserProfiles(userProfiles).map((profile) => {
-          const builtIn = isBuiltInBrowserProfileId(profile.id);
-          return (
-            <div
-              key={profile.id}
-              className={cn(
-                ITEM_ROW_INNER_CLASSNAME,
-                "rounded-lg border border-border/60 px-3 py-2",
-              )}
-            >
-              {builtIn ? (
-                // Dimmed here rather than on the list, which is the only
-                // content in the row without a disabled treatment of its own:
-                // a wrapper-level dim would stack with the rename field's and
-                // the remove button's, landing them near 0.41 while every
-                // other disabled control in the block sits at 0.64.
-                <span
-                  className={cn(
-                    "flex min-w-0 items-center gap-2 text-sm text-foreground",
-                    disabled && "opacity-64",
+      <div className="mt-2 mb-2 overflow-hidden rounded-lg border border-border/60">
+        {profiles
+          .filter((profile) => profile.kind !== "incognito")
+          .map((profile, index) => {
+            const builtIn = isBuiltInBrowserProfileId(profile.id);
+            const isDefault = profile.id === resolvedDefaultId;
+            return (
+              <div
+                key={profile.id}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2",
+                  index > 0 && "border-t border-border/60",
+                )}
+              >
+                <span className="flex min-w-0 flex-1 items-center gap-2">
+                  {builtIn ? (
+                    // Dimmed here rather than on the table: a wrapper-level
+                    // dim stacks with the rename field's and the row menu
+                    // button's own, landing them near 0.41 while every other
+                    // disabled control in the block sits at 0.64.
+                    <span
+                      className={cn("truncate text-sm text-foreground", disabled && "opacity-64")}
+                    >
+                      {profile.name}
+                    </span>
+                  ) : (
+                    <DraftInput
+                      nativeInput
+                      size="sm"
+                      className="w-full max-w-56"
+                      aria-label={`Rename ${profile.name}`}
+                      disabled={disabled}
+                      maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
+                      value={profile.name}
+                      onCommit={(next) => renameProfile(profile.id, next)}
+                    />
                   )}
-                >
-                  {profile.name}
-                  <Badge variant="outline">
-                    {profile.kind === "incognito" ? "Ephemeral" : "Built-in"}
-                  </Badge>
+                  {isDefault ? <Badge>Default</Badge> : null}
                 </span>
-              ) : (
-                <DraftInput
-                  nativeInput
-                  size="sm"
-                  className="w-full sm:w-64"
-                  aria-label={`Rename ${profile.name}`}
-                  disabled={disabled}
-                  maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
-                  value={profile.name}
-                  onCommit={(next) => renameProfile(profile.id, next)}
-                />
-              )}
-              {builtIn ? null : (
-                <Tooltip>
-                  <TooltipTrigger
+                <Menu>
+                  <MenuTrigger
                     render={
                       <Button
                         size="icon-sm"
                         variant="ghost-muted"
                         disabled={disabled}
-                        aria-label={`Remove ${profile.name}`}
-                        onClick={() => setProfilePendingRemoval(profile)}
-                      >
-                        <Trash2Icon />
-                      </Button>
+                        aria-label={`${profile.name} options`}
+                      />
                     }
-                  />
-                  <TooltipPopup side="top">Remove profile and its data</TooltipPopup>
-                </Tooltip>
-              )}
-            </div>
-          );
-        })}
+                  >
+                    <MoreVertical />
+                  </MenuTrigger>
+                  <MenuPopup align="end" className="min-w-44">
+                    <MenuItem
+                      disabled={isDefault}
+                      onClick={() => updateSettings({ browserDefaultProfileId: profile.id })}
+                    >
+                      Set as default
+                    </MenuItem>
+                    <MenuItem onClick={() => clearProfileData(profile.id, profile.name)}>
+                      Clear cookies and cache
+                    </MenuItem>
+                    {builtIn ? null : (
+                      <MenuItem variant="destructive" onClick={() => removeProfile(profile.id)}>
+                        Remove profile and data
+                      </MenuItem>
+                    )}
+                  </MenuPopup>
+                </Menu>
+              </div>
+            );
+          })}
       </div>
       <AlertDialog
         open={profilePendingRemoval !== null}
@@ -643,60 +841,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   );
 }
 
-function BrowserDefaultProfileSetting({ disabled }: { readonly disabled: boolean }) {
-  const userProfiles = useClientSettings((settings) => settings.browserProfiles);
-  const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
-  const updateSettings = useUpdatePrimarySettings();
-  // Incognito is deliberately absent: as a default it would open every tab
-  // into storage that is discarded on close.
-  const profiles = resolveBrowserProfiles(userProfiles).filter(
-    (profile) => profile.kind !== "incognito",
-  );
-  const selected = findBrowserProfile(profiles, defaultProfileId) ?? profiles[0];
-
-  return (
-    <SettingsRow
-      {...searchableSetting("browser-default-profile")}
-      description="Profile new browser tabs open under, including tabs an agent opens."
-      resetAction={
-        !disabled && defaultProfileId !== DEFAULT_BROWSER_PROFILE_ID ? (
-          <SettingResetButton
-            label="default browser profile"
-            onClick={() => updateSettings({ browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID })}
-          />
-        ) : null
-      }
-      control={
-        <Select
-          disabled={disabled}
-          value={selected?.id ?? DEFAULT_BROWSER_PROFILE_ID}
-          onValueChange={(value) => {
-            if (value !== null) updateSettings({ browserDefaultProfileId: value });
-          }}
-        >
-          <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Default browser profile">
-            <SelectValue>{selected?.name ?? "Default"}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {profiles.map((profile) => (
-              <SelectItem hideIndicator key={profile.id} value={profile.id}>
-                {profile.name}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      }
-    />
-  );
-}
-
 export function IntegrationsSettingsPanel() {
   // Client-local preview defaults are editable only where the preview exists.
   const previewDefaultsDisabled = !isElectron;
   const previewDefaults = (
     <>
       <BrowserProfilesSetting disabled={previewDefaultsDisabled} />
-      <BrowserDefaultProfileSetting disabled={previewDefaultsDisabled} />
       <BrowserViewportSetting disabled={previewDefaultsDisabled} />
       <BrowserZoomSetting disabled={previewDefaultsDisabled} />
       <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
