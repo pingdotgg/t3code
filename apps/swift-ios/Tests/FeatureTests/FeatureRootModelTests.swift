@@ -955,20 +955,20 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func initialDetailLoadMergesNewerThreadMetadata() async {
+    func initialDetailLoadMergesLatestThreadMetadata() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
-        let updatedThread = FeatureThread(
+        let intermediateThread = FeatureThread(
             id: thread.id,
             projectID: thread.projectID,
-            title: "Updated"
+            title: "Intermediate"
         )
         let cached = FeatureThreadDetail(
             thread: thread,
             messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Cached")]
         )
         let refreshed = FeatureThreadDetail(
-            thread: thread,
+            thread: intermediateThread,
             messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Refreshed")]
         )
         client.snapshot = FeatureSnapshot(threads: [thread])
@@ -984,7 +984,15 @@ struct FeatureRootModelTests {
                 } onChange: {
                     continuation.resume()
                 }
-                client.emit(.thread(updatedThread))
+                client.emit(.thread(intermediateThread))
+            }
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(thread))
             }
         }
 
@@ -992,10 +1000,118 @@ struct FeatureRootModelTests {
         client.finishEvents()
         await run.value
 
-        #expect(loaded?.thread == updatedThread)
+        #expect(loaded?.thread == thread)
         #expect(loaded?.messages == refreshed.messages)
         #expect(model.details[thread.id] == loaded)
-        #expect(model.snapshot.threads == [updatedThread])
+        #expect(model.snapshot.threads == [thread])
+    }
+
+    @Test
+    func initialDetailLoadDoesNotRestoreResolvedApproval() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let approval = FeatureApproval(
+            id: "approval-1",
+            threadID: thread.id,
+            kind: .command,
+            title: "Run command",
+            detail: "swift test"
+        )
+        let stale = FeatureThreadDetail(thread: thread, approvals: [approval])
+        client.threadDetail = stale
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+        client.beforeLoadThreadReturn = {
+            await model.resolveApproval(approval.id, decision: .allowOnce)
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+
+        #expect(loaded?.approvals.isEmpty == true)
+        #expect(model.details[thread.id]?.approvals.isEmpty == true)
+    }
+
+    @Test
+    func initialDetailLoadDoesNotRestoreThreadRemovedBySnapshot() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.detailRevisions[thread.id]
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.snapshot(FeatureSnapshot()))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == nil)
+        #expect(model.details[thread.id] == nil)
+        #expect(model.snapshot.threads.isEmpty)
+    }
+
+    @Test
+    func initialDetailLoadMergesLatestSnapshotMetadata() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let intermediateThread = FeatureThread(
+            id: thread.id,
+            projectID: thread.projectID,
+            title: "Intermediate"
+        )
+        let cached = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Cached")]
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: intermediateThread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Refreshed")]
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = cached
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+        client.threadDetail = refreshed
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.snapshot(FeatureSnapshot(threads: [intermediateThread])))
+            }
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.snapshot(FeatureSnapshot(threads: [thread])))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == thread)
+        #expect(loaded?.messages == refreshed.messages)
+        #expect(model.details[thread.id] == loaded)
+        #expect(model.snapshot.threads == [thread])
     }
 
     @Test
