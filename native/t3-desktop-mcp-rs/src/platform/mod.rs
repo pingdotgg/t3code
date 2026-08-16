@@ -99,6 +99,8 @@ pub fn escape_app_field(value: &str) -> String {
     for ch in value.chars() {
         match ch {
             '\\' => out.push_str("\\\\"),
+            '[' => out.push_str("\\["),
+            ']' => out.push_str("\\]"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             other => out.push(other),
@@ -115,6 +117,8 @@ pub fn unescape_app_field(value: &str) -> String {
         if ch == '\\' {
             match chars.next() {
                 Some('\\') => out.push('\\'),
+                Some('[') => out.push('['),
+                Some(']') => out.push(']'),
                 Some('n') => out.push('\n'),
                 Some('r') => out.push('\r'),
                 Some(other) => {

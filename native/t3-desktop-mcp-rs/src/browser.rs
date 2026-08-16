@@ -178,6 +178,7 @@ impl BrowserBridge {
             ));
         }
 
+        let command = if command == "press_key" { "press" } else { command };
         let params = self.params_for(command, args)?;
         let result = self.dispatch(command, params)?;
         Ok(describe(command, &result, args))

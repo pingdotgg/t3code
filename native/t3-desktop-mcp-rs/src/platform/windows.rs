@@ -21,9 +21,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, EnumWindows, GetClassNameW,
-    GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SW_RESTORE, SetForegroundWindow,
-    ShowWindow, WindowFromPoint, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN,
-    WM_RBUTTONUP,
+    GetWindowLongW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SW_RESTORE,
+    SetForegroundWindow, ShowWindow, WindowFromPoint, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, GWL_STYLE,
 };
 
 use super::agent_cursor::AgentCursor;
@@ -163,11 +163,16 @@ impl WindowsDesktop {
         if class.starts_with("Chrome_") || class.starts_with("Chrome_WidgetWin") {
             return false;
         }
+        if class == "Static" {
+            // Static labels ignore mouse messages unless SS_NOTIFY is set.
+            const SS_NOTIFY: i32 = 0x0001_0000;
+            let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
+            return style & SS_NOTIFY != 0;
+        }
         matches!(
             class.as_str(),
             "Button"
                 | "Edit"
-                | "Static"
                 | "ComboBox"
                 | "ComboLBox"
                 | "ListBox"

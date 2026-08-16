@@ -314,7 +314,15 @@ impl LinuxDesktop {
 
     fn point_coordinates(&self, target: Point) -> Result<(f64, f64)> {
         match target {
-            Point::Screen(x, y) => Ok((x, y)),
+            Point::Screen(x, y) => {
+                if crate::capture::on_wayland() && !self.focused_app_is_x11_backed() {
+                    return Err(DesktopError::new(
+                        "screen-coordinate clicks are not supported for native Wayland apps — \
+                         focus an X11/XWayland client or use an element id",
+                    ));
+                }
+                Ok((x, y))
+            }
             Point::Element(id) => {
                 let reference = self.element(id)?;
                 // Native Wayland clients report window-relative geometry; XTEST
@@ -332,11 +340,18 @@ impl LinuxDesktop {
         }
     }
 
-    /// True when the element's a11y bus name maps to a pid that owns an X11
-    /// window — X11 or XWayland clients. Native Wayland apps do not.
+    /// True when the element's screen geometry lies inside an X11/XWayland
+    /// window owned by its pid. Native Wayland apps report window-relative
+    /// bounds that do not match any X11 window — fail closed in that case.
     fn element_is_x11_backed(&self, element: &ElementRef) -> bool {
         let pid = self.pid_for_bus(&element.bus);
-        pid != 0 && largest_window_id_for_pid(pid).is_ok()
+        if pid == 0 {
+            return false;
+        }
+        let Ok((x, y)) = self.center(element) else {
+            return false;
+        };
+        point_in_x11_window_for_pid(pid, x, y)
     }
 
     /// True when the frontmost app owns an X11/XWayland window, so XTEST can
@@ -504,16 +519,21 @@ impl LinuxDesktop {
             })?;
 
         let replacement = vec![keysym; per];
-        connection
+        let remap = connection
             .change_keyboard_mapping(1, scratch, per as u8, &replacement)
-            .map_err(|error| DesktopError::new(format!("could not remap keycode: {error}")))?
-            .check()
-            .map_err(|error| DesktopError::new(format!("could not remap keycode: {error}")))?;
-        connection
-            .flush()
-            .map_err(|error| DesktopError::new(format!("X11 flush failed: {error}")))?;
+            .map_err(|error| DesktopError::new(format!("could not remap keycode: {error}")))
+            .and_then(|cookie| {
+                cookie
+                    .check()
+                    .map_err(|error| DesktopError::new(format!("could not remap keycode: {error}")))
+            })
+            .and_then(|()| {
+                connection
+                    .flush()
+                    .map_err(|error| DesktopError::new(format!("X11 flush failed: {error}")))
+            });
 
-        let result = self.tap_keycode(scratch, false);
+        let result = remap.and_then(|()| self.tap_keycode(scratch, false));
 
         // Always hand the keycode back, even if the tap failed, or the user's
         // keyboard keeps our borrowed mapping. Surface cleanup failures after
@@ -691,12 +711,14 @@ fn match_application(
 ) -> Result<(ElementRef, String, u32)> {
     let trimmed = query.trim();
     if let Ok(pid) = trimmed.parse::<u32>() {
-        if let Some(hit) = applications.iter().find(|(_, _, app_pid)| *app_pid == pid) {
-            return Ok(hit.clone());
+        if pid != 0 {
+            if let Some(hit) = applications.iter().find(|(_, _, app_pid)| *app_pid == pid) {
+                return Ok(hit.clone());
+            }
+            return Err(DesktopError::new(format!(
+                "no app on the accessibility bus has pid {pid}"
+            )));
         }
-        return Err(DesktopError::new(format!(
-            "no app on the accessibility bus has pid {pid}"
-        )));
     }
 
     let lowered = trimmed.to_lowercase();
@@ -748,6 +770,38 @@ fn match_application(
     }
 }
 
+/// True when `(x, y)` lies inside an X11/XWayland window owned by `pid`.
+fn point_in_x11_window_for_pid(pid: u32, x: f64, y: f64) -> bool {
+    let Ok(windows) = std::panic::catch_unwind(Window::all) else {
+        return false;
+    };
+    let Ok(windows) = windows else {
+        return false;
+    };
+    let xi = x.round() as i32;
+    let yi = y.round() as i32;
+    for window in windows {
+        if window.pid().unwrap_or(0) != pid {
+            continue;
+        }
+        let Ok(wx) = window.x() else {
+            continue;
+        };
+        let Ok(wy) = window.y() else {
+            continue;
+        };
+        let width = window.width().unwrap_or(0);
+        let height = window.height().unwrap_or(0);
+        if width == 0 || height == 0 {
+            continue;
+        }
+        if xi >= wx && xi < wx + width as i32 && yi >= wy && yi < wy + height as i32 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Largest window owned by `pid` (including minimized), for EWMH activation.
 fn largest_window_id_for_pid(pid: u32) -> Result<u32> {
     // `Window::all` uses X11/`xcb` when `DISPLAY` is set — do not mutate
@@ -793,11 +847,18 @@ fn largest_window_id_for_pid(pid: u32) -> Result<u32> {
 /// Latin-1 is its own keysym range; everything else uses the Unicode range
 /// X11 reserves for exactly this purpose.
 fn char_to_keysym(character: char) -> u32 {
-    let code = character as u32;
-    if (0x20..=0xff).contains(&code) {
-        code
-    } else {
-        0x0100_0000 + code
+    match character {
+        '\n' => 0xff0a,
+        '\t' => 0xff09,
+        '\r' => 0xff0d,
+        other => {
+            let code = other as u32;
+            if (0x20..=0xff).contains(&code) {
+                code
+            } else {
+                0x0100_0000 + code
+            }
+        }
     }
 }
 
@@ -980,7 +1041,27 @@ impl Desktop for LinuxDesktop {
                 };
             }
         };
-        let (reference, name, a11y_pid) = match_application(&applications, app)?;
+        let (reference, name, a11y_pid) = match match_application(&applications, app) {
+            Ok(hit) => hit,
+            Err(_) => {
+                let pid = apps::resolve_pid(app)?;
+                let name = apps::list_apps()
+                    .ok()
+                    .and_then(|apps| {
+                        apps.into_iter()
+                            .find(|entry| entry.pid == pid)
+                            .map(|entry| entry.name)
+                    })
+                    .unwrap_or_else(|| app.to_string());
+                return match self.raise_x11_window(pid) {
+                    Ok(()) => Ok(format!("activated {name} (pid {pid})")),
+                    Err(error) => Err(DesktopError::new(format!(
+                        "{name} refused focus ({error}) — no AT-SPI match and no X11 window could \
+                         be raised"
+                    ))),
+                };
+            }
+        };
 
         // The application object itself cannot take focus; its first frame can.
         let frames = {
