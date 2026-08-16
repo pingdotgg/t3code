@@ -1951,14 +1951,38 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }));
 
     // A snapshot describes ONE assistant message, but `assistantTextBlockOrder` accumulates
-    // every text block of the whole turn and is never reset between messages. Matching from
-    // the head therefore poured the snapshot's text into blocks of *earlier* messages once a
-    // turn contained more than one of them, leaving the message whose stream actually broke
-    // unrepaired. The snapshot's blocks are the most recent ones, so skip the leftovers of
-    // earlier messages. Never shift past the head: when the snapshot has MORE text blocks than
-    // the turn recorded, some block never started streaming at all, and the trailing entries
-    // are the ones missing — those still have to be synthesized head-first, as before.
-    const tailOffset = Math.max(0, orderedBlocks.length - snapshotTextBlocks.length);
+    // every text block of the whole turn and is never reset between messages, so position
+    // alone cannot say which trailing blocks are the snapshot's. Pure tail alignment breaks
+    // the moment the stream died before every snapshot block was opened: the window then
+    // swallows completed blocks of earlier messages and each paragraph lands one block off.
+    // The streamed prefixes disambiguate — the snapshot must extend whatever its open blocks
+    // already streamed. Pick the shift that binds the most open blocks compatibly. Ties keep
+    // the FIRST such shift: preferring a later one would slide past a fully-completed message
+    // whose snapshot arrives after the fact and re-synthesize its text as a duplicate block.
+    let tailOffset = Math.max(0, orderedBlocks.length - snapshotTextBlocks.length);
+    let bestBoundOpenBlocks = -1;
+    for (let shift = 0; shift <= orderedBlocks.length; shift++) {
+      let boundOpenBlocks = 0;
+      let compatible = true;
+      for (const [position, text] of snapshotTextBlocks.entries()) {
+        const candidate = orderedBlocks[shift + position];
+        if (!candidate) {
+          break;
+        }
+        if (candidate.block.completionEmitted) {
+          continue;
+        }
+        if (!text.startsWith(candidate.block.streamedText)) {
+          compatible = false;
+          break;
+        }
+        boundOpenBlocks += 1;
+      }
+      if (compatible && boundOpenBlocks > bestBoundOpenBlocks) {
+        bestBoundOpenBlocks = boundOpenBlocks;
+        tailOffset = shift;
+      }
+    }
 
     for (const [position, text] of snapshotTextBlocks.entries()) {
       const existingEntry = orderedBlocks[tailOffset + position];
