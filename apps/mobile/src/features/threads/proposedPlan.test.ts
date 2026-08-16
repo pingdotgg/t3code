@@ -14,6 +14,10 @@ describe("mobile proposed-plan presentation", () => {
     expect(stripDisplayedPlanMarkdown(markdown)).toBe("Replace the old content.");
   });
 
+  it("ignores leading blank lines before removing the title and summary headings", () => {
+    expect(stripDisplayedPlanMarkdown("\n# Update Index\n\n## Summary\nBody")).toBe("Body");
+  });
+
   it("falls back when the plan has no heading", () => {
     expect(proposedPlanTitle("- inspect\n- update")).toBeNull();
   });

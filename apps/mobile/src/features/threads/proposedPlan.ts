@@ -7,7 +7,13 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
 
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   const lines = planMarkdown.trimEnd().split(/\r?\n/);
-  const sourceLines = lines[0] && /^\s{0,3}#{1,6}\s+/.test(lines[0]) ? lines.slice(1) : [...lines];
+  const sourceLines = [...lines];
+  while (sourceLines[0]?.trim().length === 0) {
+    sourceLines.shift();
+  }
+  if (sourceLines[0] && /^\s{0,3}#{1,6}\s+/.test(sourceLines[0])) {
+    sourceLines.shift();
+  }
   while (sourceLines[0]?.trim().length === 0) {
     sourceLines.shift();
   }

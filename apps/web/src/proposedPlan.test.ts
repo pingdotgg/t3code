@@ -56,6 +56,10 @@ describe("stripDisplayedPlanMarkdown", () => {
     );
   });
 
+  it("ignores leading blank lines before removing the title and summary headings", () => {
+    expect(stripDisplayedPlanMarkdown("\n# Update Index\n\n## Summary\nBody")).toBe("Body");
+  });
+
   it("preserves non-summary headings after dropping the title heading", () => {
     expect(stripDisplayedPlanMarkdown("# Integrate RPC\n\n## Scope\n\n- step 1\n")).toBe(
       "## Scope\n\n- step 1",
