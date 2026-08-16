@@ -75,7 +75,7 @@ import {
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
-import { resolveShortcutCommand } from "../../keybindings";
+import { pickerNavigationKeyForEvent, resolveShortcutCommand } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -594,6 +594,7 @@ export interface ChatComposerProps {
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
+  previewOpen: boolean;
   gitCwd: string | null;
 
   // Refs the parent needs kept in sync
@@ -682,6 +683,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     settings,
     keybindings,
     terminalOpen,
+    previewOpen,
     gitCwd,
     promptRef,
     composerRef,
@@ -1995,6 +1997,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     return false;
   };
+  const resolveComposerPickerNavigationKey = useCallback(
+    (event: KeyboardEvent) => {
+      if (!composerMenuOpenRef.current) return null;
+      return pickerNavigationKeyForEvent(event, keybindings, {
+        context: {
+          terminalFocus: false,
+          terminalOpen,
+          previewFocus: false,
+          previewOpen,
+          modelPickerOpen: false,
+          pickerFocus: true,
+        },
+      });
+    },
+    [keybindings, previewOpen, terminalOpen],
+  );
 
   // ------------------------------------------------------------------
   // Prompt stash (⌘S)
@@ -3225,6 +3243,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}
                   onCommandKeyDown={onComposerCommandKey}
+                  resolvePickerNavigationKey={resolveComposerPickerNavigationKey}
                   onPaste={onComposerPaste}
                   placeholder={
                     isComposerApprovalState

@@ -32,6 +32,7 @@ export interface ShortcutMatchContext {
   terminalOpen: boolean;
   previewFocus: boolean;
   previewOpen: boolean;
+  pickerFocus: boolean;
   [key: string]: boolean;
 }
 
@@ -39,6 +40,8 @@ interface ShortcutMatchOptions {
   platform?: string;
   context?: Partial<ShortcutMatchContext>;
 }
+
+type PickerNavigationKey = "ArrowUp" | "ArrowDown";
 
 interface ResolvedShortcutLabelOptions extends ShortcutMatchOptions {
   platform?: string;
@@ -126,6 +129,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     terminalOpen: false,
     previewFocus: false,
     previewOpen: false,
+    pickerFocus: false,
     ...options?.context,
   };
 }
@@ -219,6 +223,19 @@ export function resolveShortcutCommand(
     if (!matchesShortcut(event, binding.shortcut, platform)) continue;
     return binding.command;
   }
+  return null;
+}
+
+export function pickerNavigationKeyForEvent(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): PickerNavigationKey | null {
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") return null;
+
+  const command = resolveShortcutCommand(event, keybindings, options);
+  if (command === "picker.previous") return "ArrowUp";
+  if (command === "picker.next") return "ArrowDown";
   return null;
 }
 
