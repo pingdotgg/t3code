@@ -304,15 +304,12 @@ export const make = Effect.gen(function* () {
     mtimeMs: number,
     provider: UsageProviderKind,
     windowStartMs?: number,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
       if (provider === "opencode") {
-        const parsed = yield* Effect.promise(() =>
-          readOpenCodeRecords(filePath, windowStartMs ?? 0),
-        );
-        // A read failure is not an empty transcript: reporting zero usage
-        // would silently drop the source's usage.
-        return parsed ?? [];
+        // A read failure is not an empty transcript: returning null lets the
+        // caller report the source as failed instead of zero usage.
+        return yield* Effect.promise(() => readOpenCodeRecords(filePath, windowStartMs ?? 0));
       }
 
       const cached = fileCache.get(filePath);
@@ -450,10 +447,12 @@ export const make = Effect.gen(function* () {
           provider,
           windowStartMs,
         );
+        const failed = stats === null || records === null;
+        const scanned = records ?? [];
         // Distinct per database. Buckets carry per-cell session counts, but a
         // session spans days and models, so clients total this figure instead.
         const sessionIds = new Set<string>();
-        for (const record of records) {
+        for (const record of scanned) {
           // Only sessions that contributed in-window count: the query slack
           // admits boundary rows whose timestamps fall outside the range.
           if (aggregator.add(record) && record.sessionId.length > 0) {
@@ -462,12 +461,12 @@ export const make = Effect.gen(function* () {
         }
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: stats === null ? "failed" : "ok",
-          scannedFiles: records.length > 0 ? 1 : 0,
-          skippedFiles: records.length > 0 ? 0 : 1,
+          status: failed ? "failed" : "ok",
+          scannedFiles: scanned.length > 0 ? 1 : 0,
+          skippedFiles: scanned.length > 0 ? 0 : 1,
           malformedRecords: 0,
           distinctSessions: sessionIds.size,
-          message: stats === null ? "Transcript database could not be read." : null,
+          message: failed ? "Transcript database could not be read." : null,
         });
         continue;
       }
@@ -483,7 +482,8 @@ export const make = Effect.gen(function* () {
       for (const file of files) {
         livePaths.add(file.path);
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        if (records.length === 0) {
+        // A failed read is not an empty file: it is neither scanned nor cached.
+        if (records === null || records.length === 0) {
           skippedFiles += 1;
           continue;
         }

@@ -22,7 +22,7 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 4 as const;
+export const USAGE_CONTRACT_VERSION = 5 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "opencode"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
