@@ -13,6 +13,7 @@ import {
   selectProjectGroupingSettings,
 } from "../../logicalProject";
 import type {
+  ContextMenuItem,
   ModelSelection,
   ProviderDriverKind,
   SidebarProjectGroupingMode,
@@ -21,10 +22,18 @@ import type {
 } from "@t3tools/contracts";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { CopyIcon, FolderIcon, PlusIcon, ServerIcon, SettingsIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
@@ -59,11 +68,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
-import {
-  primaryServerKeybindingsAtom,
-  primaryServerProvidersAtom,
-  serverEnvironment,
-} from "../../state/server";
+import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -76,10 +81,28 @@ import {
   type NewProjectScriptInput,
   type ProjectScriptEditorRequest,
 } from "../projectScriptEditor";
+import { cn } from "../../lib/utils";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+} from "../WorkspaceBreadcrumb";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -123,34 +146,119 @@ function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
 }
 
-export function ProjectSettingsPanel({
-  selectedProjectKey,
-}: {
-  selectedProjectKey: string | null;
-}) {
+export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
+  const navigate = useNavigate();
+  const canGoBack = useCanGoBack();
+  const navigateBackWithinApp = useCallback(() => {
+    if (canGoBack) {
+      window.history.back();
+      return;
+    }
+    void navigate({ to: "/" });
+  }, [canGoBack, navigate]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement) {
+        activeElement.blur();
+      }
+      navigateBackWithinApp();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigateBackWithinApp]);
+
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
+        {!isElectron && (
+          <header
+            className={cn(
+              "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
+              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            )}
+          >
+            <ProjectSettingsBreadcrumb projectKey={projectKey} />
+          </header>
+        )}
+        {isElectron && (
+          <div
+            className={cn(
+              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
+              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            )}
+          >
+            <ProjectSettingsBreadcrumb projectKey={projectKey} />
+          </div>
+        )}
+        <ProjectSettingsPanel projectKey={projectKey} />
+      </div>
+    </SidebarInset>
+  );
+}
+
+function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
-  const currentHash = useLocation({ select: (location) => location.hash });
+  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const openProjectMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    const api = readLocalApi();
+    if (!api) return;
 
-  // The index route auto-selects the first project so /settings/projects is
-  // never a dead end. Hash is preserved for settings-search jumps.
-  useEffect(() => {
-    if (selectedProjectKey !== null) return;
-    const first = groups[0];
-    if (!first) return;
-    void navigate({
-      to: "/settings/projects/$projectKey",
-      params: { projectKey: first.projectKey },
-      ...(currentHash ? { hash: currentHash } : {}),
-      replace: true,
-      hashScrollIntoView: false,
+    const rect = event.currentTarget.getBoundingClientRect();
+    const items: ContextMenuItem<string>[] = groups.map((group) => ({
+      id: group.projectKey,
+      label: group.displayName,
+    }));
+    void settlePromise(() =>
+      api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
+    ).then((clicked) => {
+      if (clicked._tag === "Failure" || clicked.value === null) return;
+      void navigate({
+        to: "/projects/$projectKey",
+        params: { projectKey: clicked.value },
+        replace: true,
+        hashScrollIntoView: false,
+      });
     });
-  }, [currentHash, groups, navigate, selectedProjectKey]);
+  };
 
-  const selected =
-    selectedProjectKey === null
-      ? null
-      : (groups.find((group) => group.projectKey === selectedProjectKey) ?? null);
+  return (
+    <WorkspaceBreadcrumb ariaLabel="Project settings breadcrumb">
+      <WorkspaceBreadcrumbItem>Projects</WorkspaceBreadcrumbItem>
+      <WorkspaceBreadcrumbSeparator />
+      <WorkspaceBreadcrumbItem current>
+        {selected ? (
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-label="Switch project"
+            onClick={openProjectMenu}
+            className="group/project-title inline-flex min-w-0 max-w-64 cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="min-w-0 truncate">{selected.displayName}</span>
+            <ChevronDownIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/project-title:opacity-100 group-focus-visible/project-title:opacity-100"
+            />
+          </button>
+        ) : (
+          <span className="truncate text-muted-foreground">Unavailable project</span>
+        )}
+      </WorkspaceBreadcrumbItem>
+    </WorkspaceBreadcrumb>
+  );
+}
+
+export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
+  const groups = useSettingsProjectGroups();
+  const navigate = useNavigate();
+
+  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
 
   // Remember the members of the last rendered group so a grouping-rule change
   // (which changes the group key) can follow the project to its new group.
@@ -163,112 +271,43 @@ export function ProjectSettingsPanel({
     };
   }, [selected]);
 
-  // Recover when the selected key stops matching (regroup, removal, or a
-  // stale deep link) instead of parking on a dead-end message.
+  // A grouping-rule change replaces the group key mid-visit; follow the
+  // project to its new key instead of parking on the not-found state.
   useEffect(() => {
-    if (selectedProjectKey === null || selected !== null || groups.length === 0) return;
+    if (selected !== null) return;
     const last = lastSelectionRef.current;
-    const successor =
-      last?.key === selectedProjectKey
-        ? (groups.find((group) =>
-            group.memberProjects.some((member) =>
-              last.memberKeys.includes(member.physicalProjectKey),
-            ),
-          ) ?? null)
-        : null;
+    if (last?.key !== projectKey) return;
+    const successor = groups.find((group) =>
+      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
+    );
     if (successor) {
       void navigate({
-        to: "/settings/projects/$projectKey",
+        to: "/projects/$projectKey",
         params: { projectKey: successor.projectKey },
         replace: true,
         hashScrollIntoView: false,
       });
-    } else {
-      void navigate({ to: "/settings/projects", replace: true, hashScrollIntoView: false });
     }
-  }, [groups, navigate, selected, selectedProjectKey]);
+  }, [groups, navigate, projectKey, selected]);
 
-  const selectProject = useCallback(
-    (projectKey: string) => {
-      void navigate({
-        to: "/settings/projects/$projectKey",
-        params: { projectKey },
-        replace: true,
-        hashScrollIntoView: false,
-      });
-    },
-    [navigate],
-  );
-
-  return (
-    <div className="flex min-h-0 flex-1">
-      <nav
-        aria-label="Projects"
-        className="w-60 shrink-0 space-y-0.5 overflow-y-auto border-e border-border/40 p-3 pt-10 max-sm:hidden sm:pt-12"
-      >
-        {groups.map((group) => {
-          const isActive = group.projectKey === selected?.projectKey;
-          return (
-            <button
-              key={group.projectKey}
-              type="button"
-              onClick={() => selectProject(group.projectKey)}
-              className={`flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                isActive
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-              }`}
-            >
-              <ProjectFavicon
-                environmentId={group.environmentId}
-                cwd={group.workspaceRoot}
-                faviconPath={group.faviconPath}
-                className="size-4 shrink-0"
-              />
-              <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
-              {group.groupedProjectCount > 1 ? (
-                <span className="shrink-0 text-xs text-muted-foreground/70">
-                  {group.groupedProjectCount}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-        {groups.length === 0 ? (
-          <p className="px-2 py-4 text-sm text-muted-foreground">No projects yet.</p>
-        ) : null}
-      </nav>
-      {selected ? (
-        <ProjectDetail
-          key={selected.projectKey}
-          group={selected}
-          groups={groups}
-          onSelectProject={selectProject}
-        />
-      ) : (
-        <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
-          {groups.length === 0 ? "Add a project from the sidebar to configure it here." : null}
-        </div>
-      )}
-    </div>
-  );
+  if (!selected) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+        {groups.length === 0
+          ? "Add a project from the sidebar to configure it here."
+          : "This project is no longer available."}
+      </div>
+    );
+  }
+  return <ProjectDetail key={selected.projectKey} group={selected} />;
 }
 
-function ProjectDetail({
-  group,
-  groups,
-  onSelectProject,
-}: {
-  group: SidebarProjectSnapshot;
-  groups: ReadonlyArray<SidebarProjectSnapshot>;
-  onSelectProject: (projectKey: string) => void;
-}) {
+function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const navigate = useNavigate();
   const settings = usePrimarySettings();
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -307,11 +346,6 @@ function ProjectDetail({
     }
     return counts;
   }, [threads]);
-  const groupThreadCount = group.memberProjects.reduce(
-    (total, member) => total + (threadCountByMember.get(memberKey(member)) ?? 0),
-    0,
-  );
-
   const reportFailure = useCallback((title: string, result: AtomCommandResult<void, unknown>) => {
     if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
@@ -324,15 +358,15 @@ function ProjectDetail({
     );
   }, []);
 
-  // Group-shared fields (default model, scripts) live on each physical
-  // project record, so a group-level edit fans out to every member.
+  // Group-shared fields live on each physical project record, so a
+  // group-level edit fans out to every member.
   const updateAllMembers = useCallback(
     async (
       input: Partial<{
+        title: string;
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
         faviconPath: string | null;
-        scripts: ReadonlyArray<ReturnType<typeof buildProjectScript>>;
       }>,
       failureTitle: string,
     ): Promise<AtomCommandResult<void, unknown>> => {
@@ -359,6 +393,20 @@ function ProjectDetail({
       return AsyncResult.success(undefined);
     },
     [group.memberProjects, reportFailure, updateProject],
+  );
+
+  const renameGroup = useCallback(
+    async (nextTitle: string) => {
+      const title = nextTitle.trim();
+      if (!title) {
+        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+        return;
+      }
+      if (title === group.displayName) return;
+      if (group.memberProjects.every((member) => member.title === title)) return;
+      await updateAllMembers({ title }, "Failed to rename project");
+    },
+    [group.displayName, group.memberProjects, updateAllMembers],
   );
 
   // ----- default model -----
@@ -414,14 +462,25 @@ function ProjectDetail({
     [updateAllMembers],
   );
 
-  // ----- scripts -----
-  const scripts = representative.scripts;
+  // ----- checkout selection and scripts -----
+  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState(representative.physicalProjectKey);
+  const selectedCheckout =
+    group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
+    representative;
+  const selectedServerConfig = useAtomValue(
+    serverEnvironment.configValueAtom(selectedCheckout.environmentId),
+  );
+  const keybindings = selectedServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  const scripts = selectedCheckout.scripts;
   const [editorRequest, setEditorRequest] = useState<ProjectScriptEditorRequest | null>(null);
   // Script writes replace the whole array, so two overlapping writes computed
   // from the same snapshot would drop each other's changes. One at a time.
   const [isSavingScripts, setIsSavingScripts] = useState(false);
   const savingScriptsRef = useRef(false);
-  const t3File = useT3ProjectFileState(representative.environmentId, representative.workspaceRoot);
+  const t3File = useT3ProjectFileState(
+    selectedCheckout.environmentId,
+    selectedCheckout.workspaceRoot,
+  );
   // What the "Default" option resolves to while no override is set: the
   // repo's t3.json value when present, otherwise the global setting.
   const inheritedEnvMode = t3File.file?.defaultThreadEnvMode ?? settings.defaultThreadEnvMode;
@@ -456,20 +515,24 @@ function ProjectDetail({
         // Captured before the write so a cleared or deleted binding can be
         // removed from the keybindings config afterwards.
         const previousKeybinding = keybindingValueForCommand(keybindings, keybindingCommand);
-        const updateResult = await updateAllMembers(
-          { scripts: nextScripts },
-          "Failed to save scripts",
+        const updateResult = mapAtomCommandResult(
+          await updateProject({
+            environmentId: selectedCheckout.environmentId,
+            input: { projectId: selectedCheckout.id, scripts: nextScripts },
+          }),
+          () => undefined,
         );
-        if (updateResult._tag === "Failure") return updateResult;
+        if (updateResult._tag === "Failure") {
+          reportFailure("Failed to save scripts", updateResult);
+          return updateResult;
+        }
 
         const keybindingRule = decodeProjectScriptKeybindingRule({
           keybinding,
           command: keybindingCommand,
         });
         if (!isElectron) return updateResult;
-        const environmentIds = [
-          ...new Set(group.memberProjects.map((member) => member.environmentId)),
-        ];
+        const environmentIds = [selectedCheckout.environmentId];
         const previousTarget = previousKeybinding
           ? decodeProjectScriptKeybindingRule({
               keybinding: previousKeybinding,
@@ -512,11 +575,12 @@ function ProjectDetail({
       }
     },
     [
-      group.memberProjects,
       keybindings,
       removeKeybinding,
       reportFailure,
-      updateAllMembers,
+      selectedCheckout.environmentId,
+      selectedCheckout.id,
+      updateProject,
       upsertKeybinding,
     ],
   );
@@ -589,26 +653,6 @@ function ProjectDetail({
   );
 
   // ----- checkouts -----
-  const renameMember = useCallback(
-    async (member: SidebarProjectGroupMember, nextTitle: string) => {
-      const title = nextTitle.trim();
-      if (!title) {
-        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
-        return;
-      }
-      if (title === member.title) return;
-      const result = mapAtomCommandResult(
-        await updateProject({
-          environmentId: member.environmentId,
-          input: { projectId: member.id, title },
-        }),
-        () => undefined,
-      );
-      reportFailure("Failed to rename project", result);
-    },
-    [reportFailure, updateProject],
-  );
-
   const updateGroupingPreference = useCallback(
     (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
       const overrideKey = deriveProjectGroupingOverrideKey(member);
@@ -657,6 +701,7 @@ function ProjectDetail({
               : "Other entries in this grouped project are unaffected.",
             "This action cannot be undone.",
           ].join("\n"),
+          { variant: "destructive" },
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
@@ -689,8 +734,10 @@ function ProjectDetail({
         draftStore.clearProjectDraftThreadId(projectRef);
       }
 
+      // The project's settings page just deleted itself; there is no projects
+      // listing to fall back to, so leave settings entirely.
       if (isWholeGroup) {
-        void navigate({ to: "/settings/projects", replace: true });
+        void navigate({ to: "/", replace: true });
       }
     },
     [
@@ -703,424 +750,426 @@ function ProjectDetail({
     ],
   );
 
-  const repositoryLine =
-    representative.repositoryIdentity?.displayName ??
-    representative.repositoryIdentity?.canonicalKey ??
-    "No git remote detected";
-  const environmentCount = new Set(group.memberProjects.map((member) => member.environmentId)).size;
+  const selectedCheckoutThreadCount = threadCountByMember.get(memberKey(selectedCheckout)) ?? 0;
+  const selectedCheckoutGrouping =
+    projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+      deriveProjectGroupingOverrideKey(selectedCheckout)
+    ] ?? "inherit";
+  const selectedCheckoutLabel = selectedCheckout.environmentLabel ?? "This machine";
 
   return (
-    <SettingsPageContainer className="gap-10">
-      <div className="flex items-center gap-3 px-3 sm:px-4">
-        <ProjectFavicon
-          environmentId={group.environmentId}
-          cwd={group.workspaceRoot}
-          faviconPath={group.faviconPath}
-          className="size-8 shrink-0"
-        />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-xl font-semibold tracking-[-0.02em] text-foreground">
-            {group.displayName}
-          </h1>
-          <p className="truncate text-[13px] text-muted-foreground">
-            {repositoryLine}
-            {" · "}
-            {group.memberProjects.length === 1
-              ? "1 checkout"
-              : `${group.memberProjects.length} checkouts`}
-            {environmentCount > 1 ? ` across ${environmentCount} environments` : ""}
-            {" · "}
-            {groupThreadCount === 1 ? "1 thread" : `${groupThreadCount} threads`}
-          </p>
-        </div>
-        <Select value={group.projectKey} onValueChange={(value) => onSelectProject(String(value))}>
-          <SelectTrigger className="sm:hidden" aria-label="Switch project">
-            <SelectValue>{group.displayName}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {groups.map((candidate) => (
-              <SelectItem key={candidate.projectKey} hideIndicator value={candidate.projectKey}>
-                {candidate.displayName}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      </div>
-
-      <SettingsSection title="Appearance">
-        <SettingsRow
-          id="project-favicon"
-          title="Project icon"
-          description={faviconPath ?? "Automatic"}
-          resetAction={
-            faviconPath !== null ? (
-              <SettingResetButton
-                label="project icon"
-                disabled={isSavingFavicon}
-                onClick={() => void setFaviconPath(null)}
+    <>
+      <SettingsPageContainer>
+        <SettingsSection title="Project">
+          <SettingsRow
+            title="Name"
+            description="The shared name for this project group in the sidebar and thread lists."
+            control={
+              <Input
+                key={`${group.projectKey}:${group.displayName}`}
+                className="w-full sm:w-64"
+                aria-label="Project name"
+                defaultValue={group.displayName}
+                onBlur={(event) => {
+                  void renameGroup(event.currentTarget.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
               />
-            ) : null
-          }
-          control={
-            <div className="flex items-center gap-2">
-              <ProjectFavicon
-                environmentId={representative.environmentId}
-                cwd={representative.workspaceRoot}
-                faviconPath={faviconPath}
-                className="size-6"
-              />
-              <Button
-                size="xs"
-                variant="outline"
-                type="button"
-                aria-label="Choose a project icon file"
-                disabled={isSavingFavicon}
-                onClick={() => setFaviconPickerOpen(true)}
-              >
-                Choose file
-              </Button>
-            </div>
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Model">
-        <SettingsRow
-          id="project-default-model"
-          title="Default model"
-          description="New threads in this project start with this model. Applies to every checkout in this group."
-          resetAction={
-            storedSelection !== null ? (
-              <SettingResetButton
-                label="project default model"
-                onClick={() => setDefaultModel(null)}
-              />
-            ) : null
-          }
-          control={
-            resolvedSelection && activeEntry ? (
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                <ProviderModelPicker
-                  activeInstanceId={resolvedSelection.instanceId}
-                  model={resolvedSelection.model}
-                  lockedProvider={null}
-                  instanceEntries={instanceEntries}
-                  modelOptionsByInstance={modelOptionsByInstance}
-                  triggerVariant="outline"
-                  triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                  onInstanceModelChange={(instanceId, model) => {
-                    setDefaultModel(createModelSelection(instanceId, model));
-                  }}
+            }
+          />
+          <SettingsRow
+            title="Project icon"
+            description={faviconPath ?? "Automatic"}
+            resetAction={
+              faviconPath !== null ? (
+                <SettingResetButton
+                  label="project icon"
+                  disabled={isSavingFavicon}
+                  onClick={() => void setFaviconPath(null)}
                 />
-                <TraitsPicker
-                  provider={activeEntry.driverKind as ProviderDriverKind}
-                  models={activeEntry.models}
-                  model={resolvedSelection.model}
-                  prompt=""
-                  onPromptChange={() => {}}
-                  modelOptions={resolvedSelection.options ?? []}
-                  allowPromptInjectedEffort={false}
-                  triggerVariant="outline"
-                  triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                  onModelOptionsChange={(nextOptions) => {
-                    setDefaultModel(
-                      createModelSelection(
-                        resolvedSelection.instanceId,
-                        resolvedSelection.model,
-                        nextOptions,
-                      ),
-                    );
-                  }}
+              ) : null
+            }
+            control={
+              <div className="flex items-center gap-2">
+                <ProjectFavicon
+                  environmentId={representative.environmentId}
+                  cwd={representative.workspaceRoot}
+                  faviconPath={faviconPath}
+                  className="size-6"
                 />
+                <Button
+                  size="xs"
+                  variant="outline"
+                  type="button"
+                  aria-label="Choose a project icon file"
+                  disabled={isSavingFavicon}
+                  onClick={() => setFaviconPickerOpen(true)}
+                >
+                  Choose file
+                </Button>
               </div>
-            ) : (
-              <span className="text-sm text-muted-foreground">No providers available</span>
-            )
-          }
-        />
-      </SettingsSection>
+            }
+          />
+        </SettingsSection>
 
-      <SettingsSection title="New threads">
-        <SettingsRow
-          id="project-new-thread-workspace"
-          title="Workspace"
-          description="Where new threads in this project start. Overrides t3.json and the global default; applies to every checkout in this group."
-          resetAction={
-            storedEnvMode !== null ? (
-              <SettingResetButton
-                label="project workspace default"
-                onClick={() => setDefaultThreadEnvMode(null)}
-              />
-            ) : null
-          }
-          control={
+        <SettingsSection title="New threads">
+          <SettingsRow
+            title="Model"
+            description="New threads in this project start with this model. Applies to every checkout in this group."
+            resetAction={
+              storedSelection !== null ? (
+                <SettingResetButton
+                  label="project default model"
+                  onClick={() => setDefaultModel(null)}
+                />
+              ) : null
+            }
+            control={
+              resolvedSelection && activeEntry ? (
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <ProviderModelPicker
+                    activeInstanceId={resolvedSelection.instanceId}
+                    model={resolvedSelection.model}
+                    lockedProvider={null}
+                    instanceEntries={instanceEntries}
+                    modelOptionsByInstance={modelOptionsByInstance}
+                    triggerVariant="outline"
+                    triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                    onInstanceModelChange={(instanceId, model) => {
+                      setDefaultModel(createModelSelection(instanceId, model));
+                    }}
+                  />
+                  <TraitsPicker
+                    provider={activeEntry.driverKind as ProviderDriverKind}
+                    models={activeEntry.models}
+                    model={resolvedSelection.model}
+                    prompt=""
+                    onPromptChange={() => {}}
+                    modelOptions={resolvedSelection.options ?? []}
+                    allowPromptInjectedEffort={false}
+                    triggerVariant="outline"
+                    triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                    onModelOptionsChange={(nextOptions) => {
+                      setDefaultModel(
+                        createModelSelection(
+                          resolvedSelection.instanceId,
+                          resolvedSelection.model,
+                          nextOptions,
+                        ),
+                      );
+                    }}
+                  />
+                </div>
+              ) : (
+                <span className="text-sm text-muted-foreground">No providers available</span>
+              )
+            }
+          />
+          <SettingsRow
+            title="Workspace"
+            description="Where new threads in this project start. Overrides t3.json and the global default; applies to every checkout in this group."
+            resetAction={
+              storedEnvMode !== null ? (
+                <SettingResetButton
+                  label="project workspace default"
+                  onClick={() => setDefaultThreadEnvMode(null)}
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={storedEnvMode ?? "inherit"}
+                onValueChange={(value) => {
+                  if (value === "worktree" || value === "local") {
+                    setDefaultThreadEnvMode(value);
+                  } else if (value === "inherit") {
+                    setDefaultThreadEnvMode(null);
+                  }
+                }}
+              >
+                <SelectTrigger aria-label="New-thread workspace">
+                  <SelectValue>
+                    {storedEnvMode === null
+                      ? group.memberProjects.length > 1
+                        ? "Default (per checkout)"
+                        : `Default (${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`
+                      : resolveEnvModeLabel(storedEnvMode)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="inherit">
+                    {group.memberProjects.length > 1
+                      ? "Default (each checkout's t3.json or global setting)"
+                      : `Default (${inheritedEnvModeSource}: ${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`}
+                  </SelectItem>
+                  <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+                  <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Checkout"
+          headerAction={
             <Select
-              value={storedEnvMode ?? "inherit"}
-              onValueChange={(value) => {
-                if (value === "worktree" || value === "local") {
-                  setDefaultThreadEnvMode(value);
-                } else if (value === "inherit") {
-                  setDefaultThreadEnvMode(null);
-                }
-              }}
+              value={selectedCheckout.physicalProjectKey}
+              onValueChange={(value) => setSelectedCheckoutKey(String(value))}
             >
-              <SelectTrigger aria-label="New-thread workspace">
-                <SelectValue>
-                  {storedEnvMode === null
-                    ? `Default (${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`
-                    : resolveEnvModeLabel(storedEnvMode)}
-                </SelectValue>
+              <SelectTrigger className="max-w-64" aria-label="Selected checkout">
+                <SelectValue>{selectedCheckoutLabel}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="inherit">
-                  Default ({inheritedEnvModeSource}:{" "}
-                  {resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})
-                </SelectItem>
-                <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
-                <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
+                {group.memberProjects.map((member) => (
+                  <SelectItem
+                    key={member.physicalProjectKey}
+                    hideIndicator
+                    value={member.physicalProjectKey}
+                  >
+                    {member.environmentLabel ?? "This machine"} · {member.workspaceRoot}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }
-        />
-      </SettingsSection>
-
-      <SettingsSection
-        id="project-scripts"
-        title="Scripts"
-        headerAction={
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={isSavingScripts}
-            onClick={() =>
-              setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })
+        >
+          <div className="px-3 py-2 sm:px-4">
+            <div className="flex min-w-0 items-center rounded-lg bg-muted/30 p-1 text-base text-muted-foreground sm:text-sm">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label="Copy checkout path"
+                      className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      type="button"
+                      onClick={() =>
+                        copyPathToClipboard(selectedCheckout.workspaceRoot, {
+                          path: selectedCheckout.workspaceRoot,
+                        })
+                      }
+                    >
+                      <code className="min-w-0 flex-1 truncate font-mono">
+                        {selectedCheckout.workspaceRoot}
+                      </code>
+                      <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
+                    </button>
+                  }
+                />
+                <TooltipPopup side="top">Copy path</TooltipPopup>
+              </Tooltip>
+              <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
+                {selectedCheckoutThreadCount === 1
+                  ? "1 thread"
+                  : `${selectedCheckoutThreadCount} threads`}
+              </div>
+            </div>
+          </div>
+          <SettingsRow
+            title="Project grouping"
+            description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."
+            control={
+              <Select
+                value={selectedCheckoutGrouping}
+                onValueChange={(value) => {
+                  if (
+                    value === "inherit" ||
+                    value === "repository" ||
+                    value === "repository_path" ||
+                    value === "separate"
+                  ) {
+                    updateGroupingPreference(selectedCheckout, value);
+                  }
+                }}
+              >
+                <SelectTrigger aria-label={`Grouping rule for ${selectedCheckoutLabel}`}>
+                  <SelectValue>
+                    {selectedCheckoutGrouping === "inherit"
+                      ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                      : PROJECT_GROUPING_MODE_LABELS[selectedCheckoutGrouping]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="inherit">
+                    Use global default
+                  </SelectItem>
+                  <SelectItem hideIndicator value="repository">
+                    {PROJECT_GROUPING_MODE_LABELS.repository}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="repository_path">
+                    {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="separate">
+                    {PROJECT_GROUPING_MODE_LABELS.separate}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
             }
-          >
-            <PlusIcon className="size-3.5" />
-            Add action
-          </Button>
-        }
-      >
-        {scripts.length === 0 ? (
-          <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
-            No scripts yet. Scripts run in a project terminal from the thread top bar; one script
-            can run automatically when a worktree is created.
-          </p>
-        ) : (
-          <div className="space-y-0.5">
-            {scripts.map((script) => {
+          />
+          {group.memberProjects.length > 1 ? (
+            <SettingsRow
+              title="Remove checkout"
+              description="Removes this checkout and its threads from the project group. Files on disk are not touched."
+              control={
+                <Button
+                  size="xs"
+                  variant="destructive-outline"
+                  onClick={() => void removeMembers([selectedCheckout])}
+                >
+                  <Trash2Icon className="size-3.5" />
+                  Remove checkout
+                </Button>
+              }
+            />
+          ) : null}
+          <div className="flex min-h-8 flex-col items-start gap-3 px-3 pt-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4">
+            <div className="min-w-0">
+              <h3 className="text-base font-semibold text-foreground">Actions</h3>
+              <p className="text-pretty text-sm text-muted-foreground">
+                Saved and run only in {selectedCheckoutLabel}.
+              </p>
+            </div>
+            <div className="flex w-full flex-wrap gap-1.5 sm:w-auto sm:shrink-0 sm:justify-end">
+              {importableScripts.length > 0 ? (
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button size="xs" variant="ghost" disabled={isSavingScripts} type="button" />
+                    }
+                  >
+                    Import scripts
+                    <ChevronDownIcon className="size-3.5" />
+                  </MenuTrigger>
+                  <MenuPopup align="end" className="w-72">
+                    <MenuGroup>
+                      <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
+                      <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
+                        Add actions declared by this checkout without editing them first.
+                      </p>
+                    </MenuGroup>
+                    <MenuSeparator />
+                    {importableScripts.map((fileScript) => (
+                      <MenuItem
+                        key={`${fileScript.name} ${fileScript.command}`}
+                        onClick={() => void importFileScript(fileScript)}
+                      >
+                        <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{fileScript.name}</div>
+                          <div className="truncate font-mono text-muted-foreground">
+                            {fileScript.command}
+                          </div>
+                        </div>
+                      </MenuItem>
+                    ))}
+                  </MenuPopup>
+                </Menu>
+              ) : null}
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isSavingScripts}
+                onClick={() =>
+                  setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })
+                }
+              >
+                <PlusIcon className="size-3.5" />
+                Add action
+              </Button>
+            </div>
+          </div>
+          {scripts.length === 0 ? (
+            <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
+              No actions configured for this checkout.
+            </p>
+          ) : (
+            scripts.map((script) => {
               const shortcutLabel = shortcutLabelForCommand(
                 keybindings,
                 commandForProjectScript(script.id),
               );
               return (
-                <div
+                <SettingsRow
                   key={script.id}
-                  className="group flex min-w-0 items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/50 sm:px-4"
-                >
-                  <ScriptIcon
-                    icon={script.icon}
-                    className="size-4 shrink-0 text-muted-foreground"
-                  />
-                  <span className="shrink-0 text-sm font-medium text-foreground">
-                    {script.name}
-                  </span>
-                  {script.runOnWorktreeCreate ? (
-                    <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] text-muted-foreground">
-                      setup
+                  className="group py-2"
+                  title={
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ScriptIcon
+                        icon={script.icon}
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="max-w-40 shrink-0 truncate">{script.name}</span>
+                      <code className="min-w-0 flex-1 truncate font-mono font-normal text-muted-foreground">
+                        {script.command}
+                      </code>
+                      {script.runOnWorktreeCreate ? (
+                        <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
+                          setup
+                        </span>
+                      ) : null}
+                      {script.previewUrl ? (
+                        <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground max-sm:hidden">
+                          preview · desktop only
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                  {script.previewUrl ? (
-                    <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] text-muted-foreground max-sm:hidden">
-                      preview · desktop only
-                    </span>
-                  ) : null}
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground/80">
-                    {script.command}
-                  </span>
-                  {shortcutLabel ? (
-                    <span className="shrink-0 text-xs text-muted-foreground">{shortcutLabel}</span>
-                  ) : null}
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-                    aria-label={`Edit ${script.name}`}
-                    disabled={isSavingScripts}
-                    onClick={() => setEditorRequest(editorRequestForScript(script, keybindings))}
-                  >
-                    <SettingsIcon className="size-3.5" />
-                  </Button>
-                </div>
+                  }
+                  control={
+                    <>
+                      {shortcutLabel ? (
+                        <span className="text-xs text-muted-foreground">{shortcutLabel}</span>
+                      ) : null}
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        className="shrink-0 text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+                        aria-label={`Edit ${script.name}`}
+                        disabled={isSavingScripts}
+                        onClick={() =>
+                          setEditorRequest(editorRequestForScript(script, keybindings))
+                        }
+                      >
+                        <SettingsIcon className="size-3.5" />
+                      </Button>
+                    </>
+                  }
+                />
               );
-            })}
-          </div>
-        )}
-        {t3File.status === "invalid" ? (
+            })
+          )}
+          {t3File.status === "invalid" ? (
+            <SettingsRow
+              title="t3.json is invalid"
+              description="A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
+              className="text-warning"
+            />
+          ) : null}
+        </SettingsSection>
+
+        <SettingsSection title="Danger">
           <SettingsRow
-            title="t3.json is invalid"
-            description="A t3.json exists at the workspace root but fails to parse, so every script and icon it declares is ignored. Check the JSON syntax and icon values."
-            className="text-warning"
-          />
-        ) : null}
-        {importableScripts.length > 0 ? (
-          <SettingsRow
-            title="Import from t3.json"
-            description={`${importableScripts.length} script${importableScripts.length === 1 ? "" : "s"} declared in this repo's t3.json ${importableScripts.length === 1 ? "is" : "are"} not set up yet.`}
+            title={
+              group.memberProjects.length > 1 ? "Remove this project everywhere" : "Remove project"
+            }
+            description={
+              group.memberProjects.length > 1
+                ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
+                : "Deletes the project entry and its threads. Files on disk are not touched."
+            }
             control={
-              <div className="flex flex-wrap justify-end gap-1.5">
-                {importableScripts.map((fileScript) => (
-                  <Button
-                    key={`${fileScript.name} ${fileScript.command}`}
-                    size="xs"
-                    variant="outline"
-                    disabled={isSavingScripts}
-                    onClick={() => void importFileScript(fileScript)}
-                  >
-                    <ScriptIcon icon={fileScript.icon ?? "play"} className="size-3.5" />
-                    {fileScript.name}
-                  </Button>
-                ))}
-              </div>
+              <Button
+                variant="destructive-outline"
+                onClick={() => void removeMembers(group.memberProjects)}
+              >
+                <Trash2Icon />
+                {group.memberProjects.length > 1 ? "Remove all entries" : "Remove project"}
+              </Button>
             }
           />
-        ) : null}
-      </SettingsSection>
-
-      <SettingsSection id="project-checkouts" title="Checkouts">
-        <div className="space-y-2 px-3 sm:px-4">
-          {group.memberProjects.map((member) => {
-            const threadCount = threadCountByMember.get(memberKey(member)) ?? 0;
-            const groupingOverride =
-              projectGroupingSettings.sidebarProjectGroupingOverrides?.[
-                deriveProjectGroupingOverrideKey(member)
-              ] ?? "inherit";
-            return (
-              <div
-                key={member.physicalProjectKey}
-                className="space-y-3 rounded-lg border border-border/50 p-3"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <ServerIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                    {member.environmentLabel ?? "Current environment"}
-                  </span>
-                  <span className="ms-auto shrink-0 text-xs text-muted-foreground">
-                    {threadCount === 1 ? "1 thread" : `${threadCount} threads`}
-                  </span>
-                  {group.memberProjects.length > 1 ? (
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      className="shrink-0 text-muted-foreground hover:text-destructive-foreground"
-                      aria-label={`Remove checkout ${member.workspaceRoot}`}
-                      onClick={() => void removeMembers([member])}
-                    >
-                      <Trash2Icon className="size-3.5" />
-                    </Button>
-                  ) : null}
-                </div>
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
-                  <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
-                    {member.workspaceRoot}
-                  </span>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-4 shrink-0 rounded-sm"
-                    aria-label="Copy project path"
-                    onClick={() =>
-                      copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot })
-                    }
-                  >
-                    <CopyIcon className="size-3" />
-                  </Button>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="grid min-w-0 gap-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">Name</span>
-                    <Input
-                      key={`${member.physicalProjectKey}:${member.title}`}
-                      aria-label={`Project name in ${member.environmentLabel ?? "current environment"}`}
-                      defaultValue={member.title}
-                      onBlur={(event) => {
-                        void renameMember(member, event.currentTarget.value);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") event.currentTarget.blur();
-                      }}
-                    />
-                  </label>
-                  <label className="grid min-w-0 gap-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">Grouping rule</span>
-                    <Select
-                      value={groupingOverride}
-                      onValueChange={(value) => {
-                        if (
-                          value === "inherit" ||
-                          value === "repository" ||
-                          value === "repository_path" ||
-                          value === "separate"
-                        ) {
-                          updateGroupingPreference(member, value);
-                        }
-                      }}
-                    >
-                      <SelectTrigger
-                        className="w-full"
-                        aria-label={`Grouping rule for ${member.environmentLabel ?? "current environment"}`}
-                      >
-                        <SelectValue>
-                          {groupingOverride === "inherit"
-                            ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                            : PROJECT_GROUPING_MODE_LABELS[groupingOverride]}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectPopup align="start" alignItemWithTrigger={false}>
-                        <SelectItem hideIndicator value="inherit">
-                          Use global default
-                        </SelectItem>
-                        <SelectItem hideIndicator value="repository">
-                          {PROJECT_GROUPING_MODE_LABELS.repository}
-                        </SelectItem>
-                        <SelectItem hideIndicator value="repository_path">
-                          {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                        </SelectItem>
-                        <SelectItem hideIndicator value="separate">
-                          {PROJECT_GROUPING_MODE_LABELS.separate}
-                        </SelectItem>
-                      </SelectPopup>
-                    </Select>
-                  </label>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title="Danger">
-        <SettingsRow
-          title={
-            group.memberProjects.length > 1 ? "Remove this project everywhere" : "Remove project"
-          }
-          description={
-            group.memberProjects.length > 1
-              ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-              : "Deletes the project entry and its threads. Files on disk are not touched."
-          }
-          control={
-            <Button
-              variant="destructive-outline"
-              onClick={() => void removeMembers(group.memberProjects)}
-            >
-              <Trash2Icon />
-              {group.memberProjects.length > 1 ? "Remove all entries" : "Remove project"}
-            </Button>
-          }
-        />
-      </SettingsSection>
+        </SettingsSection>
+      </SettingsPageContainer>
 
       <ProjectScriptEditorDialog
         request={editorRequest}
@@ -1138,6 +1187,6 @@ function ProjectDetail({
         open={faviconPickerOpen}
         projectName={group.displayName}
       />
-    </SettingsPageContainer>
+    </>
   );
 }

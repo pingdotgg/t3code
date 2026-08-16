@@ -56,7 +56,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   return (
     <div
-      className="mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
+      className="@container/changed-files mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
       data-changed-files-state={
         expanded ? "expanded" : compactPreviewVisible ? "preview" : "collapsed"
       }
@@ -64,7 +64,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       <div
         data-changed-files-header=""
         className={cn(
-          "flex items-center justify-between gap-2 rounded-xl px-1",
+          "flex items-center justify-between gap-2 rounded-xl",
           expanded &&
             "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]",
         )}
@@ -73,34 +73,36 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           type="button"
           aria-expanded={expanded}
           data-scroll-anchor-ignore
-          className="group flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group flex min-w-0 flex-1 items-center rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => onExpandedChange(!expanded)}
         >
-          <ChevronRightIcon
-            aria-hidden="true"
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-              expanded && "rotate-90",
-            )}
-          />
-          <span className="flex min-w-0 items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
-            <span>
-              {files.length} changed file{files.length === 1 ? "" : "s"}
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+            <ChevronRightIcon
+              aria-hidden="true"
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                expanded && "rotate-90",
+              )}
+            />
+            <span className="flex shrink-0 items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
+              <span>
+                {files.length} changed file{files.length === 1 ? "" : "s"}
+              </span>
+              {hasNonZeroStat(summaryStat) && (
+                <DiffStatLabel
+                  additions={summaryStat.additions}
+                  className="text-xs leading-4"
+                  deletions={summaryStat.deletions}
+                  layout="inline"
+                />
+              )}
             </span>
-            {hasNonZeroStat(summaryStat) && (
-              <DiffStatLabel
-                additions={summaryStat.additions}
-                className="text-xs leading-4"
-                deletions={summaryStat.deletions}
-                layout="inline"
-              />
-            )}
-          </span>
-          <span className="ml-1 hidden truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 sm:inline">
-            {expanded ? "Hide files" : "Show files"}
+            <span className="ml-1 hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 @[24rem]/changed-files:inline">
+              {expanded ? "Hide files" : "Show files"}
+            </span>
           </span>
         </button>
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5 pr-1">
           {expanded ? (
             <Tooltip>
               <TooltipTrigger
@@ -142,7 +144,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden sm:inline">Open diff</span>
+              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
             </TooltipTrigger>
             <TooltipPopup side="top">Open the full diff</TooltipPopup>
           </Tooltip>
@@ -172,21 +174,26 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {previewFiles.map((file) => (
-              <button
-                key={file.path}
-                type="button"
-                title={file.path}
-                className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => onOpenTurnDiff(turnId, file.path)}
-              >
-                <PierreEntryIcon
-                  pathValue={file.path}
-                  kind="file"
-                  theme={resolvedTheme}
-                  className="size-3 shrink-0 text-muted-foreground/70"
-                />
-                <span className="truncate">{changedFileName(file.path)}</span>
-              </button>
+              <Tooltip key={file.path}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => onOpenTurnDiff(turnId, file.path)}
+                    />
+                  }
+                >
+                  <PierreEntryIcon
+                    pathValue={file.path}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="size-3 shrink-0 text-muted-foreground/70"
+                  />
+                  <span className="truncate">{changedFileName(file.path)}</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">{file.path}</TooltipPopup>
+              </Tooltip>
             ))}
             <button
               type="button"

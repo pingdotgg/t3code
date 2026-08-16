@@ -71,6 +71,9 @@ const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
   "SSH_AUTH_SOCK",
   "HOMEBREW_PREFIX",
   "HOMEBREW_CELLAR",
@@ -84,6 +87,8 @@ const LOGIN_SHELL_ENV_NAMES = [
   "WAYLAND_DISPLAY",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
+const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
+const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
@@ -207,7 +212,7 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.USERPROFILE).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
+      onSome: (value) => [`${value}\\.local\\bin`, `${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
     }),
   ),
 ];
@@ -379,10 +384,18 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   function* (
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-    const noProfile = yield* readWindowsEnvironment(["PATH"], { loadProfile: false });
-    const profile = yield* readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, {
-      loadProfile: true,
-    });
+    // Concurrent, not sequential: these two probes are independent (only their
+    // results are combined below) and each spawns its own PowerShell. Run in
+    // series they sit at offset 0 of desktop.startup, before anything else, and
+    // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
+    // startup span, of which desktop.bootstrap is ~30ms.
+    const [noProfile, profile] = yield* Effect.all(
+      [
+        readWindowsEnvironment(["PATH"], { loadProfile: false }),
+        readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
+      ],
+      { concurrency: 2 },
+    );
     const mergedPath = mergePaths("win32", [
       trimNonEmpty(profile.PATH),
       trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
@@ -461,6 +474,29 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
+      }
+    }
+
+    // Locale variables form one precedence group: LC_ALL can override an inherited
+    // LANG or LC_CTYPE, so only hydrate the group when the process has none of them.
+    if (
+      config.platform === "darwin" &&
+      LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
+    ) {
+      for (const name of LOCALE_ENV_NAMES) {
+        const value = trimNonEmpty(shellEnvironment[name]);
+        if (Option.isSome(value)) {
+          config.env[name] = value.value;
+        }
+      }
+
+      // GUI launches inherit no locale from launchd, so spawned agents land in the C
+      // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
+      // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
+      // available on those releases. Leaving LANG unset keeps C-stable collation and
+      // formatting, so output parsing is unaffected.
+      if (LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+        config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
       }
     }
 

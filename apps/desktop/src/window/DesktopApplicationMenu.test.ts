@@ -31,6 +31,7 @@ const environmentInput = {
 const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   metadata: Effect.die("unexpected metadata read"),
   name: Effect.succeed("T3 Code"),
+  systemLocale: Effect.succeed("en-US"),
   whenReady: Effect.void,
   quit: Effect.void,
   exit: () => Effect.void,
@@ -53,7 +54,6 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
 const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
   pickFolder: () => Effect.succeed(Option.none()),
   pickFiles: () => Effect.succeed([]),
-  confirm: () => Effect.succeed(false),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
 } satisfies ElectronDialog.ElectronDialog["Service"]);

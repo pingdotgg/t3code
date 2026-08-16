@@ -45,7 +45,7 @@ describe("searchSettings", () => {
 
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
-    expect(searchSettings("work").map((item) => item.id)).toEqual(["project-new-thread-workspace"]);
+    expect(searchSettings("glass").map((item) => item.id)).toEqual(["setting-glass-opacity"]);
     expect(searchSettings("xyzzy")).toEqual([]);
   });
 
@@ -58,6 +58,11 @@ describe("searchSettings", () => {
 
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
+  });
+
+  it("hides desktop-only settings from browser search", () => {
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
+    expect(searchSettings("quit confirmation")).toEqual([]);
   });
 
   it("keeps catalog result ids unique", () => {
