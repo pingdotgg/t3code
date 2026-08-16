@@ -1,9 +1,20 @@
+import {
+  MOBILE_DEFAULT_THEME_ID,
+  MOBILE_THEME_IDS,
+  type MobileThemeId,
+} from "@t3tools/shared/themePalettes";
+
 import { SHOWCASE_SCENES, type ShowcaseScene } from "./mobile-showcase-environment.ts";
 
 export { SHOWCASE_SCENES };
 export type { ShowcaseScene };
 
 export type ShowcaseAppearance = "light" | "dark";
+
+/** Every palette the mobile appearance settings can select. */
+export const SHOWCASE_THEMES = MOBILE_THEME_IDS;
+export const DEFAULT_SHOWCASE_THEME = MOBILE_DEFAULT_THEME_ID;
+export type ShowcaseTheme = MobileThemeId;
 
 export interface ShowcaseStoreAssetSpec {
   readonly store: "apple" | "google-play";
@@ -25,6 +36,8 @@ export interface ShowcaseIosDevice {
   readonly simulatorDeviceType?: string;
   /** Appearance used when the CLI does not pass --appearance. */
   readonly appearance: ShowcaseAppearance;
+  /** Palette used when the CLI does not pass --theme. */
+  readonly theme: ShowcaseTheme;
   /** Orientation applied by the capture harness. Defaults to portrait. */
   readonly orientation?: "portrait" | "landscape";
   readonly scenes: ReadonlyArray<ShowcaseScene>;
@@ -38,6 +51,8 @@ export interface ShowcaseAndroidDevice {
   readonly avd: string;
   /** Appearance used when the CLI does not pass --appearance. */
   readonly appearance: ShowcaseAppearance;
+  /** Palette used when the CLI does not pass --theme. */
+  readonly theme: ShowcaseTheme;
   /** Native ABI used by the AVD, from its config.ini `abi.type`. */
   readonly abi?: "arm64-v8a" | "x86_64" | "x86" | "armeabi-v7a";
   readonly scenes: ReadonlyArray<ShowcaseScene>;
@@ -92,6 +107,7 @@ const config: ShowcaseConfig = {
       simulator: "iPhone 17 Pro Max",
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
       appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
       scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
@@ -108,6 +124,7 @@ const config: ShowcaseConfig = {
       simulator: "T3 Showcase iPhone 14 Plus",
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-14-Plus",
       appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
       scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
@@ -124,6 +141,7 @@ const config: ShowcaseConfig = {
       simulator: "iPad Pro 13-inch (M5)",
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-16GB",
       appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
       orientation: "landscape",
       scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
@@ -143,6 +161,7 @@ const config: ShowcaseConfig = {
       // Blacksmith Linux runner can use KVM acceleration.
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
       appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
       viewport: {
         width: 1080,
         height: 1920,
@@ -165,6 +184,7 @@ const config: ShowcaseConfig = {
       avd: "Pixel_10_Pro",
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
       appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
       viewport: {
         width: 1080,
         height: 1920,
@@ -187,6 +207,7 @@ const config: ShowcaseConfig = {
       avd: "Pixel_10_Pro",
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
       appearance: "dark",
+      theme: DEFAULT_SHOWCASE_THEME,
       viewport: {
         width: 1440,
         height: 2560,

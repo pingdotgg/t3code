@@ -3,6 +3,7 @@ import { Image, type ImageStyle, type StyleProp } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
+import { useThemeColor } from "../lib/useThemeColor";
 
 export function PierreEntryIcon(props: {
   readonly path: string;
@@ -11,8 +12,9 @@ export function PierreEntryIcon(props: {
   readonly style?: StyleProp<ImageStyle>;
 }) {
   const size = props.size ?? 16;
+  const folderColor = useThemeColor("--color-icon-subtle");
   if (props.kind === "directory") {
-    return <SymbolView name="folder" size={size} tintColor="#a1a1aa" type="monochrome" />;
+    return <SymbolView name="folder" size={size} tintColor={folderColor} type="monochrome" />;
   }
 
   return (

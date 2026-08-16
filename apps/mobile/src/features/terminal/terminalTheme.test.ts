@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
+import { BUILT_IN_THEMES, getThemeColorsForAppearance } from "@t3tools/shared/themePalettes";
 
-import { buildGhosttyThemeConfig, getPierreTerminalTheme } from "./terminalTheme";
+import { themeColorToNativeColor } from "../../lib/mobileTheme";
+
+import {
+  buildGhosttyThemeConfig,
+  getMobileTerminalTheme,
+  getPierreTerminalTheme,
+} from "./terminalTheme";
 
 describe("getPierreTerminalTheme", () => {
   it("returns the Pierre light terminal palette", () => {
@@ -19,6 +26,33 @@ describe("getPierreTerminalTheme", () => {
       cursorForeground: "#009fff",
       cursorBackground: "#0a0a0a",
     });
+  });
+});
+
+describe("getMobileTerminalTheme", () => {
+  it("preserves the Pierre terminal for the default theme", () => {
+    for (const scheme of ["light", "dark"] as const) {
+      expect(getMobileTerminalTheme("t3-code", scheme)).toEqual(getPierreTerminalTheme(scheme));
+    }
+  });
+
+  it("applies the selected palette without replacing ANSI status colors", () => {
+    const standard = getMobileTerminalTheme("t3-code", "dark");
+    const ocean = getMobileTerminalTheme("ocean", "dark");
+
+    expect(ocean.background).not.toBe(standard.background);
+    expect(ocean.cursorForeground).not.toBe(standard.cursorForeground);
+    expect(ocean.palette).toEqual(standard.palette);
+  });
+
+  it("uses the canonical desktop terminal roles for built-in themes", () => {
+    const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === "ocean")!;
+    const colors = getThemeColorsForAppearance(theme, "dark")!;
+    const terminal = getMobileTerminalTheme("ocean", "dark");
+
+    expect(terminal.background).toBe(themeColorToNativeColor(colors.terminalBackground));
+    expect(terminal.foreground).toBe(themeColorToNativeColor(colors.terminalForeground));
+    expect(terminal.cursorForeground).toBe(themeColorToNativeColor(colors.terminalCursor));
   });
 });
 

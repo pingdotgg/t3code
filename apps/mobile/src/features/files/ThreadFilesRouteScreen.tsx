@@ -1,7 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, useColorScheme, View } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
@@ -35,6 +35,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { ReviewHighlighterProvider } from "../review/ReviewHighlighterProvider";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
@@ -242,10 +243,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
-  const colorScheme = useColorScheme();
   const isAndroid = Platform.OS === "android";
-  const highlightTheme = colorScheme === "dark" ? "dark" : "light";
+  const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const iconColor = String(useThemeColor("--color-icon-muted"));
+  const sheetSurfaceColor = String(useThemeColor("--color-sheet-solid"));
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
@@ -362,10 +363,12 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
 
   return (
     <>
-      {/* Static header config (glass preset, title, contentStyle) lives in Stack.tsx.
-          Only genuinely dynamic options are set here. */}
+      {/* Static header config (glass preset and title) lives in Stack.tsx. The
+          live sheet color stays dynamic here so the FlatList can remain the
+          direct scene child for native scroll-edge sampling. */}
       <NativeStackScreenOptions
         options={{
+          contentStyle: { backgroundColor: sheetSurfaceColor },
           headerShown: !isAndroid,
           unstable_headerSubtitle:
             Platform.OS === "ios" && projectName.length > 0 ? projectName : undefined,

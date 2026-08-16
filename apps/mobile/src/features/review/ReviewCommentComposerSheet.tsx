@@ -2,14 +2,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Platform,
-  Pressable,
-  ScrollView,
-  View,
-  useColorScheme,
-  useWindowDimensions,
-} from "react-native";
+import { Platform, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ImageViewing from "react-native-image-viewing";
@@ -33,10 +26,10 @@ import {
   useReviewCommentTarget,
 } from "./reviewCommentSelection";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { changeTone, DiffTokenText, ReviewChangeBar } from "./reviewDiffRendering";
 import {
   highlightReviewSelectedLines,
-  type ReviewDiffTheme,
   type ReviewHighlightedToken,
 } from "./shikiReviewHighlighter";
 
@@ -52,7 +45,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const colorScheme = useColorScheme();
+  const { themeAppearance: selectedTheme } = useAppearancePreferences();
   const iconTint = String(useThemeColor("--color-icon"));
   const target = useReviewCommentTarget();
   const { codeSurface } = useAppearanceCodeSurface();
@@ -72,7 +65,6 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const lastLine = selectedLines[selectedLines.length - 1] ?? null;
   const firstNumber = firstLine ? getReviewUnifiedLineNumber(firstLine) : null;
   const lastNumber = lastLine ? getReviewUnifiedLineNumber(lastLine) : null;
-  const selectedTheme = (colorScheme === "dark" ? "dark" : "light") satisfies ReviewDiffTheme;
   const canSubmit =
     commentText.trim().length > 0 && target !== null && !!environmentId && !!threadId;
   const selectionLabel =
@@ -162,7 +154,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   }, [attachments, commentText, dismissComposer, environmentId, target, threadId]);
 
   return (
-    <View className="flex-1">
+    <View className="flex-1 bg-sheet">
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
         <View
           className="flex-1 px-5"

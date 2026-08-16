@@ -20,6 +20,8 @@ import showcaseConfig, {
   type ShowcaseStoreAssetSpec,
   SHOWCASE_SCENES,
   type ShowcaseScene,
+  SHOWCASE_THEMES,
+  type ShowcaseTheme,
 } from "./mobile-showcase.config.ts";
 import {
   SHOWCASE_ENVIRONMENTS,
@@ -76,6 +78,7 @@ interface CliOptions {
   readonly deviceIds: ReadonlySet<string>;
   readonly scenes: ReadonlySet<ShowcaseScene>;
   readonly appearances: ReadonlySet<ShowcaseAppearance>;
+  readonly themes: ReadonlySet<ShowcaseTheme>;
   readonly skipBuild: boolean;
   readonly skipMetro: boolean;
   readonly keepRunning: boolean;
@@ -87,6 +90,7 @@ export interface ShowcaseCapture {
   readonly device: ShowcaseDevice;
   readonly scenes: ReadonlyArray<ShowcaseScene>;
   readonly appearance: ShowcaseAppearance;
+  readonly theme: ShowcaseTheme;
 }
 
 interface IosCaptureCleanup {
@@ -223,9 +227,16 @@ export function validateStoreAssetCount(
 
 export function showcaseCaptureDirectory(
   outputDirectory: string,
-  capture: Pick<ShowcaseCapture, "device" | "appearance">,
+  capture: Pick<ShowcaseCapture, "device" | "appearance" | "theme">,
 ): string {
-  return NodePath.join(outputDirectory, capture.device.storeAsset.directory, capture.appearance);
+  // Each palette owns a leaf folder so one upload slot never mixes themes and
+  // every folder keeps a store-legal screenshot count of its own.
+  return NodePath.join(
+    outputDirectory,
+    capture.device.storeAsset.directory,
+    capture.appearance,
+    capture.theme,
+  );
 }
 
 async function finalizeCapture(destination: string, device: ShowcaseDevice): Promise<void> {
@@ -276,6 +287,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
   const deviceIds = new Set<string>();
   const scenes = new Set<ShowcaseScene>();
   const appearances = new Set<ShowcaseAppearance>();
+  const themes = new Set<ShowcaseTheme>();
   let skipBuild = false;
   let skipMetro = false;
   let keepRunning = false;
@@ -318,6 +330,18 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
         appearances.add(value);
       }
       index += 1;
+    } else if (argument === "--theme") {
+      const value = argumentValue(args, index, argument);
+      if (value === "all") {
+        for (const theme of SHOWCASE_THEMES) themes.add(theme);
+      } else if (SHOWCASE_THEMES.some((theme) => theme === value)) {
+        themes.add(value as ShowcaseTheme);
+      } else {
+        // The app silently falls back to its default palette for an unknown id,
+        // so reject it here rather than shipping a mislabeled screenshot.
+        throw new Error(`Unsupported theme '${value}'. Use ${SHOWCASE_THEMES.join(", ")}, or all.`);
+      }
+      index += 1;
     } else if (argument === "--skip-build") {
       skipBuild = true;
     } else if (argument === "--skip-metro") {
@@ -340,6 +364,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
     deviceIds,
     scenes,
     appearances,
+    themes,
     skipBuild,
     skipMetro,
     keepRunning,
@@ -350,7 +375,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
 
 export function planShowcaseCaptures(
   config: ShowcaseConfig,
-  options: Pick<CliOptions, "platforms" | "deviceIds" | "scenes" | "appearances">,
+  options: Pick<CliOptions, "platforms" | "deviceIds" | "scenes" | "appearances" | "themes">,
 ): ReadonlyArray<ShowcaseCapture> {
   const captures = config.devices
     .filter((device) => options.platforms.size === 0 || options.platforms.has(device.platform))
@@ -358,14 +383,18 @@ export function planShowcaseCaptures(
     .flatMap((device) => {
       const appearances =
         options.appearances.size === 0 ? [device.appearance] : options.appearances;
-      return [...appearances].map((appearance) => ({
-        device,
-        appearance,
-        scenes:
-          options.scenes.size === 0
-            ? device.scenes
-            : device.scenes.filter((scene) => options.scenes.has(scene)),
-      }));
+      const themes = options.themes.size === 0 ? [device.theme] : options.themes;
+      return [...appearances].flatMap((appearance) =>
+        [...themes].map((theme) => ({
+          device,
+          appearance,
+          theme,
+          scenes:
+            options.scenes.size === 0
+              ? device.scenes
+              : device.scenes.filter((scene) => options.scenes.has(scene)),
+        })),
+      );
     })
     .filter((capture) => capture.scenes.length > 0);
 
@@ -393,6 +422,7 @@ Options:
   --scene <name>             Capture one scene (repeatable)
   --appearance light|dark|both
                              Override the configured appearance
+  --theme <id>|all           Override the configured palette (repeatable)
   --skip-build               Reuse the existing simulator app / debug APK
   --skip-metro               Reuse an already running showcase Metro server
   --keep-running             Leave devices and Metro running after capture
@@ -400,12 +430,13 @@ Options:
   --list                     Print this help and the configured matrix
 
 Scenes: ${SHOWCASE_SCENES.join(", ")}
+Themes: ${SHOWCASE_THEMES.join(", ")}
 
 Configured devices:
 ${config.devices
   .map((device) => {
     const target = device.platform === "ios" ? device.simulator : device.avd;
-    return `  ${device.id.padEnd(18)} ${device.platform.padEnd(8)} ${target} -> ${device.storeAsset.directory}/{light|dark} (${device.storeAsset.width}×${device.storeAsset.height}, default ${device.appearance}) [${device.scenes.join(", ")}]`;
+    return `  ${device.id.padEnd(18)} ${device.platform.padEnd(8)} ${target} -> ${device.storeAsset.directory}/{light|dark}/<theme> (${device.storeAsset.width}×${device.storeAsset.height}, default ${device.appearance} ${device.theme}) [${device.scenes.join(", ")}]`;
   })
   .join("\n")}
 `);
@@ -946,6 +977,8 @@ async function captureIos(
       JSON.stringify(pairingUrls),
       "--showcaseScene",
       firstScene,
+      "--showcaseTheme",
+      capture.theme,
       // The app rotates itself; Simulator menu UI scripting needs macOS
       // Accessibility permission that CI runners do not grant to osascript.
       "--showcaseOrientation",
@@ -1204,6 +1237,9 @@ async function captureAndroid(
     "--es",
     "showcaseScene",
     firstScene,
+    "--es",
+    "showcaseTheme",
+    capture.theme,
     ANDROID_PACKAGE,
   ]);
   for (const [sceneIndex, scene] of capture.scenes.entries()) {

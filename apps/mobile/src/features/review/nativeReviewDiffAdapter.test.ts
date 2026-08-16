@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import { MOBILE_THEME_IDS } from "../../lib/mobileTheme";
 
 import {
+  createNativeReviewDiffTheme,
   getCachedNativeReviewDiffData,
   type BuildNativeReviewDiffDataInput,
 } from "./nativeReviewDiffAdapter";
@@ -52,5 +54,28 @@ describe("getCachedNativeReviewDiffData", () => {
 
     expect(equivalent).toBe(first);
     expect(changed).not.toBe(first);
+  });
+});
+
+describe("createNativeReviewDiffTheme", () => {
+  it("serializes every native color as cross-platform opaque hex", () => {
+    for (const themeId of MOBILE_THEME_IDS) {
+      for (const appearance of ["light", "dark"] as const) {
+        const theme = createNativeReviewDiffTheme(appearance, themeId);
+        for (const color of Object.values(theme)) {
+          expect(color, `${themeId}/${appearance}`).toMatch(/^#[\da-f]{6}$/i);
+        }
+      }
+    }
+  });
+
+  it("uses the selected app palette for native code surfaces", () => {
+    const standard = createNativeReviewDiffTheme("dark", "t3-code");
+    const iris = createNativeReviewDiffTheme("dark", "iris");
+
+    expect(iris.background).not.toBe(standard.background);
+    expect(iris.hunkText).not.toBe(standard.hunkText);
+    expect(iris.addBar).toBe(standard.addBar);
+    expect(iris.deleteBar).toBe(standard.deleteBar);
   });
 });

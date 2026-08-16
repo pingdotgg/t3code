@@ -3,11 +3,12 @@ import { BlurView } from "expo-blur";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import { BackHandler, Pressable, ScrollView, useColorScheme, View } from "react-native";
+import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 import { appBlurTargetRef } from "../lib/appBlurTarget";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { type AppSymbolName, SymbolView } from "./AppSymbol";
@@ -79,7 +80,8 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const anchorRef = useRef<View>(null);
   const overlayRef = useRef<View>(null);
 
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
   const rippleColor = useThemeColor("--color-subtle");

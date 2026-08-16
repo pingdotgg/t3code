@@ -1,14 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  Platform,
-  PlatformColor,
-  Pressable,
-  StyleSheet,
-  View,
-  type AccessibilityActionEvent,
-} from "react-native";
+import { Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
+import { useThemeColor } from "../../lib/useThemeColor";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
 
@@ -28,6 +22,8 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   latestProps.current = props;
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const dividerColor = useThemeColor("--color-border");
+  const activeDividerColor = useThemeColor("--color-primary");
   const handleResizeStart = useCallback(() => {
     setDragging(true);
     latestProps.current.onResizeStart?.();
@@ -84,7 +80,13 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
       >
-        <View style={[styles.line, (hovered || dragging) && styles.activeLine]} />
+        <View
+          style={[
+            styles.line,
+            { backgroundColor: dividerColor },
+            (hovered || dragging) && [styles.activeLine, { backgroundColor: activeDividerColor }],
+          ]}
+        />
       </Pressable>
     </GestureDetector>
   );
@@ -93,14 +95,11 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
 const styles = StyleSheet.create({
   line: {
     alignSelf: "center",
-    backgroundColor:
-      Platform.OS === "ios" ? PlatformColor("separator") : "rgba(120, 120, 128, 0.28)",
     height: "100%",
     opacity: 0.7,
     width: StyleSheet.hairlineWidth,
   },
   activeLine: {
-    backgroundColor: Platform.OS === "ios" ? PlatformColor("systemBlueColor") : "#0a84ff",
     opacity: 1,
     width: 2,
   },

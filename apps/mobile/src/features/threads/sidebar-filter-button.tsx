@@ -1,5 +1,5 @@
 import { SymbolView } from "../../components/AppSymbol";
-import { Pressable, StyleSheet, useColorScheme } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 
 import { useThemeColor } from "../../lib/useThemeColor";
 
@@ -15,10 +15,8 @@ export function SidebarFilterButton(props: {
 }) {
   const iconColor = useThemeColor("--color-foreground");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
-  const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
-  const idleBackgroundColor =
-    colorScheme === "dark" ? "rgba(118,118,128,0.24)" : "rgba(255,255,255,0.72)";
-  const borderColor = colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
+  const idleBackgroundColor = useThemeColor("--color-glass-surface");
+  const borderColor = useThemeColor("--color-header-border");
 
   return (
     <Pressable

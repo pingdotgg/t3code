@@ -4,7 +4,6 @@ import {
   Pressable,
   ScrollView,
   View,
-  useColorScheme,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -13,6 +12,8 @@ import {
 } from "react-native";
 
 import { useThemeColor } from "../lib/useThemeColor";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { themeColorWithAlpha } from "../lib/mobileTheme";
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./AppText";
 import { SymbolView } from "./AppSymbol";
@@ -213,21 +214,22 @@ export function ComposerToolbarButton(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const iconColor = useThemeColor("--color-icon");
   const iconSubtle = useThemeColor("--color-icon-subtle");
   const primaryFg = useThemeColor("--color-primary-foreground");
   const dangerFg = useThemeColor("--color-danger-foreground");
   const variant = props.variant ?? "default";
   const isCircle = !props.label && props.showChevron === false;
-  const defaultBorderColor = isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
-  const activeBorderColor = isDarkMode ? "rgba(255,255,255,0.13)" : "rgba(0,0,0,0.1)";
+  const defaultBorderColor = useThemeColor("--color-border-subtle");
+  const activeBorderColor = useThemeColor("--color-border");
   const filledBorderColor =
     variant === "danger"
-      ? "rgba(255,255,255,0.14)"
+      ? themeColorWithAlpha(String(dangerFg), 0.14)
       : props.disabled
         ? defaultBorderColor
-        : "rgba(255,255,255,0.18)";
+        : themeColorWithAlpha(String(primaryFg), 0.18);
   const iconTintColor =
     variant === "primary"
       ? props.disabled

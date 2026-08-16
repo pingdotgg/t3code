@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { useThemeColor } from "../../lib/useThemeColor";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
@@ -35,6 +36,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const nativeTerminalAvailable = hasNativeTerminalSurface();
+  const iconColor = useThemeColor("--color-icon");
   const terminalId = DEFAULT_TERMINAL_ID;
   const lastGridSizeRef = useRef<TerminalGridSize>({
     cols: DEFAULT_TERMINAL_COLS,
@@ -214,13 +216,13 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   }
 
   return (
-    <View className="absolute inset-x-3 bottom-28 top-28 overflow-hidden rounded-[8px] border border-white/10 bg-neutral-950 shadow-2xl">
-      <View className="flex-row items-center justify-between border-b border-white/10 px-3 py-2">
+    <View className="absolute inset-x-3 bottom-28 top-28 overflow-hidden rounded-[8px] border border-border bg-screen shadow-2xl">
+      <View className="flex-row items-center justify-between border-b border-border px-3 py-2">
         <View className="min-w-0 flex-1">
-          <Text className="font-t3-bold text-sm text-neutral-100" numberOfLines={1}>
+          <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
             Terminal
           </Text>
-          <Text className="text-2xs text-neutral-500" numberOfLines={1}>
+          <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
             {nativeTerminalAvailable ? "Native Ghostty surface" : "Text fallback active"}
           </Text>
         </View>
@@ -231,10 +233,10 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
             </Text>
           ) : null}
           <Pressable
-            className="h-8 w-8 items-center justify-center rounded-[8px] bg-white/10"
+            className="h-8 w-8 items-center justify-center rounded-[8px] bg-subtle"
             onPress={props.onClose}
           >
-            <SymbolView name="xmark" size={13} tintColor="#e5e5e5" type="monochrome" />
+            <SymbolView name="xmark" size={13} tintColor={iconColor} type="monochrome" />
           </Pressable>
         </View>
       </View>

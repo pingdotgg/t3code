@@ -8,8 +8,9 @@ import {
   type ReactNode,
   useRef,
 } from "react";
-import { Platform, Pressable, useColorScheme, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
 import { cn } from "../lib/cn";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
@@ -117,7 +118,8 @@ export function ControlPillMenu(
     readonly className?: string;
   },
 ) {
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
 
   if (Platform.OS === "android") {
     // Long-press menus keep their child interactive: the child element gets
