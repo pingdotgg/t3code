@@ -46,16 +46,47 @@ describe("turnChime", () => {
   });
 
   it("plays a two-tone chime when called", () => {
-    playTurnCompletionSound();
+    playTurnCompletionSound("chime");
     expect(createdOscillators.length).toBe(2);
     expect(createdOscillators[0]?.start).toHaveBeenCalledWith(10);
     expect(createdOscillators[1]?.start).toHaveBeenCalledWith(10.08);
   });
 
-  it("plays an error sound when called", () => {
-    playTurnErrorSound();
+  it("plays bell sound preset", () => {
+    playTurnCompletionSound("bell");
+    expect(createdOscillators.length).toBe(1);
+    expect(createdOscillators[0]?.start).toHaveBeenCalledWith(10);
+  });
+
+  it("plays marimba sound preset", () => {
+    playTurnCompletionSound("marimba");
+    expect(createdOscillators.length).toBe(3);
+  });
+
+  it("plays pop sound preset", () => {
+    playTurnCompletionSound("pop");
+    expect(createdOscillators.length).toBe(1);
+  });
+
+  it("plays descending error sound", () => {
+    playTurnErrorSound("descending");
     expect(createdOscillators.length).toBe(2);
     expect(createdOscillators[0]?.start).toHaveBeenCalledWith(10);
     expect(createdOscillators[1]?.start).toHaveBeenCalledWith(10.09);
+  });
+
+  it("plays chord error sound preset", () => {
+    playTurnErrorSound("chord");
+    expect(createdOscillators.length).toBe(3);
+  });
+
+  it("plays subtle error sound preset", () => {
+    playTurnErrorSound("subtle");
+    expect(createdOscillators.length).toBe(1);
+  });
+
+  it("plays buzz error sound preset", () => {
+    playTurnErrorSound("buzz");
+    expect(createdOscillators.length).toBe(2);
   });
 });

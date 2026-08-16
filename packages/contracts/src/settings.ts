@@ -104,12 +104,16 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
-/**
- * A user-chosen font family (a single name or a comma-separated list). Empty
- * means "use the app default"; clients compose their own fallback stacks.
- */
 export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
 export type FontFamilyPreference = typeof FontFamilyPreference.Type;
+
+export const SoundCompletionKind = Schema.Literals(["chime", "bell", "marimba", "pop"]);
+export type SoundCompletionKind = typeof SoundCompletionKind.Type;
+export const DEFAULT_SOUND_COMPLETION_KIND: SoundCompletionKind = "chime";
+
+export const SoundErrorKind = Schema.Literals(["descending", "chord", "subtle", "buzz"]);
+export type SoundErrorKind = typeof SoundErrorKind.Type;
+export const DEFAULT_SOUND_ERROR_KIND: SoundErrorKind = "descending";
 
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -201,6 +205,15 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   soundNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  soundErrorNotificationsEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  soundCompletionKind: SoundCompletionKind.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SOUND_COMPLETION_KIND)),
+  ),
+  soundErrorKind: SoundErrorKind.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SOUND_ERROR_KIND)),
+  ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -805,6 +818,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   soundNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
+  soundErrorNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
+  soundCompletionKind: Schema.optionalKey(SoundCompletionKind),
+  soundErrorKind: Schema.optionalKey(SoundErrorKind),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

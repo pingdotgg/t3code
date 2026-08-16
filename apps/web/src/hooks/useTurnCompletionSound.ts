@@ -83,12 +83,16 @@ export function useTurnCompletionSound(): void {
     );
     knownCompletionsRef.current = nextCompletions;
 
-    if (settings.soundNotificationsEnabled) {
-      if (hasNewError) {
-        playTurnErrorSound();
-      } else if (hasNewCompletion) {
-        playTurnCompletionSound();
-      }
+    if (hasNewError && settings.soundErrorNotificationsEnabled) {
+      playTurnErrorSound(settings.soundErrorKind);
+    } else if (hasNewCompletion && settings.soundNotificationsEnabled) {
+      playTurnCompletionSound(settings.soundCompletionKind);
     }
-  }, [threads, settings.soundNotificationsEnabled]);
+  }, [
+    threads,
+    settings.soundNotificationsEnabled,
+    settings.soundErrorNotificationsEnabled,
+    settings.soundCompletionKind,
+    settings.soundErrorKind,
+  ]);
 }

@@ -1,4 +1,11 @@
-import { ArchiveIcon, ArchiveX, ChevronRightIcon, LoaderIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  ChevronRightIcon,
+  LoaderIcon,
+  SettingsIcon,
+  Volume2,
+} from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +16,8 @@ import {
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  type SoundCompletionKind,
+  type SoundErrorKind,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -76,6 +85,7 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
+import { playTurnCompletionSound, playTurnErrorSound } from "../../audio/turnChime";
 import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -154,6 +164,20 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const SOUND_COMPLETION_LABELS: Record<SoundCompletionKind, string> = {
+  chime: "Chime",
+  bell: "Bell",
+  marimba: "Marimba",
+  pop: "Pop",
+};
+
+const SOUND_ERROR_LABELS: Record<SoundErrorKind, string> = {
+  descending: "Descending",
+  chord: "Chord",
+  subtle: "Subtle",
+  buzz: "Double pulse",
+};
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -526,8 +550,15 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
-      ...(settings.soundNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled
+      ...(settings.soundNotificationsEnabled !==
+        DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled ||
+      settings.soundCompletionKind !== DEFAULT_UNIFIED_SETTINGS.soundCompletionKind
         ? ["Turn completion chime"]
+        : []),
+      ...(settings.soundErrorNotificationsEnabled !==
+        DEFAULT_UNIFIED_SETTINGS.soundErrorNotificationsEnabled ||
+      settings.soundErrorKind !== DEFAULT_UNIFIED_SETTINGS.soundErrorKind
+        ? ["Turn error chime"]
         : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
     ],
@@ -537,6 +568,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.soundNotificationsEnabled,
+      settings.soundErrorNotificationsEnabled,
+      settings.soundCompletionKind,
+      settings.soundErrorKind,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -576,24 +610,13 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    // Only touch the theme keys that are actually dirty, so a theme-storage
-    // failure cannot block restoring unrelated settings. Preferences are
-    // re-read after the confirmation dialog: they may have changed (another
-    // tab, an OS flip) while it was open, and rollback must restore the live
-    // values rather than the ones captured at render time.
     let previousTheme = theme;
     try {
       previousTheme = readThemePreference();
-    } catch {
-      // Storage is unreadable; the render-time value is the best rollback.
-    }
-    // The mix may have changed while the confirmation dialog was open; both
-    // the dirty check and the rollback must see the live value.
+    } catch {}
     const liveHalves = readThemeHalves();
     const needsThemeReset = previousTheme !== "system";
     const needsMixReset = liveHalves !== null;
-    // Same for the appearance mode: trusting the render-time value would skip
-    // the reset and report success while a non-system mode stayed in storage.
     const needsFollowSystemReset = readAppearanceModePreference(previousTheme) !== "system";
     const notifyThemeRestoreFailure = () => {
       toastManager.add(
@@ -604,9 +627,6 @@ export function useSettingsRestore(onRestored?: () => void) {
         }),
       );
     };
-    // Rollback restores the base preference first (which clears any mix) and
-    // then re-applies the captured mix on top, so no failure path can leave
-    // the pair of keys half-restored.
     const previousHalves = liveHalves;
     const rollbackThemeState = () => {
       if (needsThemeReset) setTheme(previousTheme);
@@ -649,6 +669,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       soundNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled,
+      soundErrorNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.soundErrorNotificationsEnabled,
+      soundCompletionKind: DEFAULT_UNIFIED_SETTINGS.soundCompletionKind,
+      soundErrorKind: DEFAULT_UNIFIED_SETTINGS.soundErrorKind,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -2244,25 +2267,134 @@ export function GeneralSettingsPanel() {
           description="Play a subtle sound when an agent completes a turn."
           resetAction={
             settings.soundNotificationsEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled ? (
+              DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled ||
+            settings.soundCompletionKind !== DEFAULT_UNIFIED_SETTINGS.soundCompletionKind ? (
               <SettingResetButton
                 label="turn completion chime"
                 onClick={() =>
                   updateSettings({
                     soundNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled,
+                    soundCompletionKind: DEFAULT_UNIFIED_SETTINGS.soundCompletionKind,
                   })
                 }
               />
             ) : null
           }
           control={
-            <Switch
-              checked={settings.soundNotificationsEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ soundNotificationsEnabled: Boolean(checked) })
-              }
-              aria-label="Play sound when agent completes a turn"
-            />
+            <div className="flex items-center gap-2">
+              <Select
+                value={settings.soundCompletionKind}
+                onValueChange={(val) => {
+                  if (!val) return;
+                  const kind = val as SoundCompletionKind;
+                  updateSettings({ soundCompletionKind: kind });
+                  playTurnCompletionSound(kind);
+                }}
+                disabled={!settings.soundNotificationsEnabled}
+              >
+                <SelectTrigger className="w-32" aria-label="Turn completion sound">
+                  <SelectValue>{SOUND_COMPLETION_LABELS[settings.soundCompletionKind]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="chime">
+                    Chime
+                  </SelectItem>
+                  <SelectItem hideIndicator value="bell">
+                    Bell
+                  </SelectItem>
+                  <SelectItem hideIndicator value="marimba">
+                    Marimba
+                  </SelectItem>
+                  <SelectItem hideIndicator value="pop">
+                    Pop
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Preview turn completion sound"
+                disabled={!settings.soundNotificationsEnabled}
+                onClick={() => playTurnCompletionSound(settings.soundCompletionKind)}
+              >
+                <Volume2 className="size-3.5" />
+              </Button>
+              <Switch
+                checked={settings.soundNotificationsEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ soundNotificationsEnabled: Boolean(checked) })
+                }
+                aria-label="Play sound when agent completes a turn"
+              />
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sound-error-notifications")}
+          description="Play a distinct alert sound when an agent turn ends in an error."
+          resetAction={
+            settings.soundErrorNotificationsEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.soundErrorNotificationsEnabled ||
+            settings.soundErrorKind !== DEFAULT_UNIFIED_SETTINGS.soundErrorKind ? (
+              <SettingResetButton
+                label="turn error chime"
+                onClick={() =>
+                  updateSettings({
+                    soundErrorNotificationsEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.soundErrorNotificationsEnabled,
+                    soundErrorKind: DEFAULT_UNIFIED_SETTINGS.soundErrorKind,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex items-center gap-2">
+              <Select
+                value={settings.soundErrorKind}
+                onValueChange={(val) => {
+                  if (!val) return;
+                  const kind = val as SoundErrorKind;
+                  updateSettings({ soundErrorKind: kind });
+                  playTurnErrorSound(kind);
+                }}
+                disabled={!settings.soundErrorNotificationsEnabled}
+              >
+                <SelectTrigger className="w-32" aria-label="Turn error sound">
+                  <SelectValue>{SOUND_ERROR_LABELS[settings.soundErrorKind]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="descending">
+                    Descending
+                  </SelectItem>
+                  <SelectItem hideIndicator value="chord">
+                    Chord
+                  </SelectItem>
+                  <SelectItem hideIndicator value="subtle">
+                    Subtle
+                  </SelectItem>
+                  <SelectItem hideIndicator value="buzz">
+                    Double pulse
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Preview turn error sound"
+                disabled={!settings.soundErrorNotificationsEnabled}
+                onClick={() => playTurnErrorSound(settings.soundErrorKind)}
+              >
+                <Volume2 className="size-3.5" />
+              </Button>
+              <Switch
+                checked={settings.soundErrorNotificationsEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ soundErrorNotificationsEnabled: Boolean(checked) })
+                }
+                aria-label="Play sound when agent turn fails"
+              />
+            </div>
           }
         />
 

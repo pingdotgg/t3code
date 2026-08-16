@@ -34,17 +34,41 @@ describe("ClientSettings word wrap", () => {
 });
 
 describe("ClientSettings sound notifications", () => {
-  it("defaults sound notifications on", () => {
-    expect(decodeClientSettings({}).soundNotificationsEnabled).toBe(true);
+  it("defaults sound notifications on and with standard presets", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.soundNotificationsEnabled).toBe(true);
+    expect(settings.soundErrorNotificationsEnabled).toBe(true);
+    expect(settings.soundCompletionKind).toBe("chime");
+    expect(settings.soundErrorKind).toBe("descending");
   });
 
-  it("decodes explicit sound notifications setting", () => {
+  it("decodes explicit sound notifications settings", () => {
     expect(
-      decodeClientSettings({ soundNotificationsEnabled: false }).soundNotificationsEnabled,
-    ).toBe(false);
+      decodeClientSettings({
+        soundNotificationsEnabled: false,
+        soundErrorNotificationsEnabled: false,
+        soundCompletionKind: "bell",
+        soundErrorKind: "chord",
+      }),
+    ).toMatchObject({
+      soundNotificationsEnabled: false,
+      soundErrorNotificationsEnabled: false,
+      soundCompletionKind: "bell",
+      soundErrorKind: "chord",
+    });
     expect(
-      decodeClientSettingsPatch({ soundNotificationsEnabled: false }).soundNotificationsEnabled,
-    ).toBe(false);
+      decodeClientSettingsPatch({
+        soundNotificationsEnabled: false,
+        soundErrorNotificationsEnabled: false,
+        soundCompletionKind: "marimba",
+        soundErrorKind: "subtle",
+      }),
+    ).toMatchObject({
+      soundNotificationsEnabled: false,
+      soundErrorNotificationsEnabled: false,
+      soundCompletionKind: "marimba",
+      soundErrorKind: "subtle",
+    });
   });
 });
 
