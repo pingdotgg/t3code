@@ -1,6 +1,5 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FiberRef from "effect/FiberRef";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -25,8 +24,10 @@ import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
  * MCP elicitations that share a `serverName`) should read this instead of a
  * non-unique payload field.
  */
-export const CurrentServerRequestId: FiberRef.FiberRef<string | number | undefined> =
-  FiberRef.unsafeMake(undefined);
+export const CurrentServerRequestId = Context.Reference<string | number | undefined>(
+  "effect-codex-app-server/CurrentServerRequestId",
+  { defaultValue: () => undefined },
+);
 
 export interface CodexAppServerClientOptions {
   readonly logIncoming?: boolean;
@@ -183,14 +184,10 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
       const responseSchema = getServerRequestResponseSchema(method);
       const handler = requestHandlers.get(method);
 
-      return FiberRef.locally(
-        CurrentServerRequestId,
-        request.id,
-      )(
-        decodeOptionalPayload(method, payloadSchema, request.params).pipe(
-          Effect.flatMap((decoded) => runHandler(handler, decoded, method)),
-          Effect.flatMap((result) => encodeOptionalPayload(method, responseSchema, result)),
-        ),
+      return decodeOptionalPayload(method, payloadSchema, request.params).pipe(
+        Effect.flatMap((decoded) => runHandler(handler, decoded, method)),
+        Effect.flatMap((result) => encodeOptionalPayload(method, responseSchema, result)),
+        Effect.provideService(CurrentServerRequestId, request.id),
       );
     }
 
