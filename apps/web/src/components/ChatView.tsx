@@ -325,6 +325,8 @@ import {
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import {
+  resolveThreadErrorDismissAction,
+  resolveThreadErrorPresentation,
   resolveSourceControlPanelTarget,
   retargetOpenSourceControlSurface,
   useSourceControlRightPanelSurfaceState,
@@ -1704,12 +1706,13 @@ function ChatViewContent(props: ChatViewProps) {
     setDraftThreadContext,
     updateThreadMetadata,
   });
-  const threadError = isServerThread
-    ? (localServerError ??
-      sourceControlMetadataError ??
-      activeServerThread?.session?.lastError ??
-      null)
-    : localDraftError;
+  const { error: threadError, source: threadErrorSource } = resolveThreadErrorPresentation({
+    isServerThread,
+    localDraftError,
+    localServerError,
+    sessionError: activeServerThread?.session?.lastError ?? null,
+    sourceControlMetadataError,
+  });
   const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
@@ -3354,8 +3357,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
 
   const dismissThreadError = useCallback(() => {
-    setThreadError(activeThreadId, null);
-    clearActiveSourceControlMetadataError();
+    const action = resolveThreadErrorDismissAction(threadErrorSource);
+    if (action === "clear-thread") {
+      setThreadError(activeThreadId, null);
+    } else if (action === "clear-source-control") {
+      clearActiveSourceControlMetadataError();
+    }
     dismissThreadErrorBannerForSession(threadErrorBannerKey);
     setThreadErrorBannerDismissTick((tick) => tick + 1);
   }, [
@@ -3363,6 +3370,7 @@ function ChatViewContent(props: ChatViewProps) {
     clearActiveSourceControlMetadataError,
     setThreadError,
     threadErrorBannerKey,
+    threadErrorSource,
   ]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;

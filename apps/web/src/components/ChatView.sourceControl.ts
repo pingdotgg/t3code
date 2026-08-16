@@ -102,6 +102,39 @@ type SourceControlServerMetadataUpdateResult =
       readonly message: string;
     };
 
+export type ThreadErrorSource = "draft" | "local-server" | "source-control" | "session";
+
+export function resolveThreadErrorDismissAction(
+  source: ThreadErrorSource | null,
+): "clear-thread" | "clear-source-control" | "mask-only" {
+  if (source === "draft" || source === "local-server") return "clear-thread";
+  if (source === "source-control") return "clear-source-control";
+  return "mask-only";
+}
+
+export function resolveThreadErrorPresentation(input: {
+  readonly isServerThread: boolean;
+  readonly localDraftError: string | null;
+  readonly localServerError: string | null;
+  readonly sessionError: string | null;
+  readonly sourceControlMetadataError: string | null;
+}): { readonly error: string | null; readonly source: ThreadErrorSource | null } {
+  if (!input.isServerThread) {
+    return input.localDraftError === null
+      ? { error: null, source: null }
+      : { error: input.localDraftError, source: "draft" };
+  }
+  if (input.localServerError !== null) {
+    return { error: input.localServerError, source: "local-server" };
+  }
+  if (input.sourceControlMetadataError !== null) {
+    return { error: input.sourceControlMetadataError, source: "source-control" };
+  }
+  return input.sessionError === null
+    ? { error: null, source: null }
+    : { error: input.sessionError, source: "session" };
+}
+
 export function sourceControlMetadataErrorFromFailure(error: unknown): string {
   if (typeof error === "string") {
     return error;

@@ -20,6 +20,8 @@ import {
   filterVisibleSourceControlSurfaces,
   isSourceControlAvailable,
   resolveSourceControlPanelTarget,
+  resolveThreadErrorDismissAction,
+  resolveThreadErrorPresentation,
   resolveVisibleSourceControlSurface,
   resolveSourceControlDraftMetadataTarget,
   retargetOpenSourceControlSurface,
@@ -72,8 +74,63 @@ describe("resolveSourceControlDraftMetadataTarget", () => {
   });
 });
 
+describe("resolveThreadErrorPresentation", () => {
+  it("keeps lower-priority Source Control failures available after local errors", () => {
+    const input = {
+      isServerThread: true,
+      localDraftError: null,
+      localServerError: "local dispatch failed",
+      sessionError: "persisted provider failure",
+      sourceControlMetadataError: "metadata update failed",
+    } as const;
+
+    expect(resolveThreadErrorPresentation(input)).toEqual({
+      error: "local dispatch failed",
+      source: "local-server",
+    });
+    expect(resolveThreadErrorPresentation({ ...input, localServerError: null })).toEqual({
+      error: "metadata update failed",
+      source: "source-control",
+    });
+    expect(
+      resolveThreadErrorPresentation({
+        ...input,
+        localServerError: null,
+        sourceControlMetadataError: null,
+      }),
+    ).toEqual({ error: "persisted provider failure", source: "session" });
+  });
+
+  it("keeps draft errors independent from server-only error sources", () => {
+    expect(
+      resolveThreadErrorPresentation({
+        isServerThread: false,
+        localDraftError: "draft failed",
+        localServerError: "ignored server error",
+        sessionError: "ignored session error",
+        sourceControlMetadataError: "ignored metadata error",
+      }),
+    ).toEqual({ error: "draft failed", source: "draft" });
+  });
+
+  it("dismisses only the error source currently presented", () => {
+    expect(resolveThreadErrorDismissAction("draft")).toBe("clear-thread");
+    expect(resolveThreadErrorDismissAction("local-server")).toBe("clear-thread");
+    expect(resolveThreadErrorDismissAction("source-control")).toBe("clear-source-control");
+    expect(resolveThreadErrorDismissAction("session")).toBe("mask-only");
+    expect(resolveThreadErrorDismissAction(null)).toBe("mask-only");
+  });
+});
+
 describe("source control right panel surface visibility", () => {
   const sourceControlSurface = { id: "source-control", kind: "source-control" } as const;
+  const pullRequestSurface = {
+    id: "pull-request:project-a:pingdotgg%2Ft3code:6392",
+    kind: "pull-request",
+    projectId: "project-a",
+    repository: "pingdotgg/t3code",
+    number: 6392,
+  } as const;
   const agentsSurface = { id: "agents", kind: "agents" } as const;
   const assertActiveSourceControlSurface = (
     phase: string,
@@ -131,6 +188,22 @@ describe("source control right panel surface visibility", () => {
         surfaces,
       }),
     ).toBe(surfaces);
+  });
+
+  it("keeps pull-request tabs visible when Source Control becomes unavailable", () => {
+    const visibleSurfaces = filterVisibleSourceControlSurfaces({
+      sourceControlAvailable: false,
+      surfaces: [sourceControlSurface, pullRequestSurface, agentsSurface],
+    });
+
+    expect(visibleSurfaces).toEqual([pullRequestSurface, agentsSurface]);
+    expect(
+      resolveVisibleSourceControlSurface({
+        sourceControlAvailable: false,
+        surface: sourceControlSurface,
+        visibleSurfaces,
+      }),
+    ).toBe(pullRequestSurface);
   });
 
   it("falls back from an unavailable active Source Control surface to another visible surface", () => {
