@@ -67,7 +67,8 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
 
 Open **Settings → Source Control → Worktrees** to see the Git worktrees managed by T3 Code.
 Worktrees are grouped by project. Each row shows its branch, a linked thread, recent activity, and
-whether local work protects it from cleanup. Select a thread title to return to that conversation.
+whether local work protects it from cleanup. Select an available thread title to return to that
+conversation.
 
 T3 Code only performs automatic cleanup when a worktree has no active thread, no local changes, and
 no unpushed commits. Removing a safe worktree keeps its local branch and T3 checkpoint history. If a

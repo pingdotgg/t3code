@@ -672,24 +672,33 @@ function WorktreeRichMetadata({
 }) {
   const linkedThreads = worktree.threads.filter((thread) => thread.status !== "deleted");
   const firstThread =
-    linkedThreads.find((thread) => thread.status === "active") ?? linkedThreads[0] ?? null;
+    linkedThreads.find((thread) => thread.status === "active") ??
+    linkedThreads.find((thread) => thread.status === "settled") ??
+    linkedThreads[0] ??
+    null;
+  const firstThreadTitle = firstThread?.title || "Untitled thread";
   const otherThreadCount = firstThread === null ? 0 : linkedThreads.length - 1;
   const parts: ReadonlyArray<{ key: string; node: ReactNode }> = [
     ...(firstThread
       ? [
           {
             key: "thread",
-            node: (
-              <Link
-                to="/$environmentId/$threadId"
-                params={{ environmentId, threadId: firstThread.threadId }}
-                className="inline-flex min-w-0 max-w-full items-center gap-1 text-foreground/70 hover:text-foreground"
-                title={firstThread.title}
-              >
-                <ArrowUpRightIcon className="size-3 shrink-0" aria-hidden />
-                <span className="truncate">{firstThread.title || "Untitled thread"}</span>
-              </Link>
-            ),
+            node:
+              firstThread.status === "archived" ? (
+                <span className="min-w-0 max-w-full truncate" title={firstThreadTitle}>
+                  {firstThreadTitle} (archived)
+                </span>
+              ) : (
+                <Link
+                  to="/$environmentId/$threadId"
+                  params={{ environmentId, threadId: firstThread.threadId }}
+                  className="inline-flex min-w-0 max-w-full items-center gap-1 text-foreground/70 hover:text-foreground"
+                  title={firstThreadTitle}
+                >
+                  <ArrowUpRightIcon className="size-3 shrink-0" aria-hidden />
+                  <span className="truncate">{firstThreadTitle}</span>
+                </Link>
+              ),
           },
         ]
       : [
