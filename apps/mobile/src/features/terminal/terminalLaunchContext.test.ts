@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
-  peekPendingTerminalLaunch,
   resolvePreferredThreadWorktreePath,
   resolveTerminalOpenLocation,
   stagePendingTerminalLaunch,
@@ -82,19 +81,13 @@ describe("pending terminal launches", () => {
       },
     });
 
-    expect(peekPendingTerminalLaunch(target)).toEqual({
-      cwd: "/repo/worktrees/feature",
-      worktreePath: "/repo/worktrees/feature",
-      env: { FOO: "bar" },
-      initialInput: "pnpm dev\r",
-    });
     expect(takePendingTerminalLaunch(target)).toEqual({
       cwd: "/repo/worktrees/feature",
       worktreePath: "/repo/worktrees/feature",
       env: { FOO: "bar" },
       initialInput: "pnpm dev\r",
     });
-    expect(peekPendingTerminalLaunch(target)).toBeNull();
+    expect(takePendingTerminalLaunch(target)).toBeNull();
   });
 
   it("keeps pending launches isolated per terminal target", () => {
@@ -118,7 +111,6 @@ describe("pending terminal launches", () => {
       },
     });
 
-    expect(peekPendingTerminalLaunch(otherTarget)).toBeNull();
     expect(takePendingTerminalLaunch(otherTarget)).toBeNull();
     expect(takePendingTerminalLaunch(primaryTarget)).toEqual({
       cwd: "/repo/root",

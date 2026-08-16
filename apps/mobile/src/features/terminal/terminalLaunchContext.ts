@@ -36,12 +36,6 @@ export function stagePendingTerminalLaunch(input: {
   });
 }
 
-export function peekPendingTerminalLaunch(
-  target: PendingTerminalLaunchTarget,
-): PendingTerminalLaunch | null {
-  return pendingTerminalLaunches.get(pendingTerminalLaunchKey(target)) ?? null;
-}
-
 export function takePendingTerminalLaunch(
   target: PendingTerminalLaunchTarget,
 ): PendingTerminalLaunch | null {

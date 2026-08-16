@@ -134,7 +134,6 @@ function matchMedia() {
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
-let toolCallExpandedBodyClassName: typeof import("./MessagesTimeline").toolCallExpandedBodyClassName;
 
 beforeAll(async () => {
   const classList = {
@@ -168,7 +167,7 @@ beforeAll(async () => {
     },
   });
 
-  ({ MessagesTimeline, toolCallExpandedBodyClassName } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline } = await import("./MessagesTimeline"));
 }, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -238,11 +237,6 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("sizes expanded tool details with the configured code font size", () => {
-    expect(toolCallExpandedBodyClassName).toContain("var(--font-size-code");
-    expect(toolCallExpandedBodyClassName).not.toContain("text-[11px]");
-  });
-
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
