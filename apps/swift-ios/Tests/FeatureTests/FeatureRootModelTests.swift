@@ -955,6 +955,50 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func initialDetailLoadMergesNewerThreadMetadata() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let updatedThread = FeatureThread(
+            id: thread.id,
+            projectID: thread.projectID,
+            title: "Updated"
+        )
+        let cached = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Cached")]
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Refreshed")]
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = cached
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+        client.threadDetail = refreshed
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(updatedThread))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == updatedThread)
+        #expect(loaded?.messages == refreshed.messages)
+        #expect(model.details[thread.id] == loaded)
+        #expect(model.snapshot.threads == [updatedThread])
+    }
+
+    @Test
     func environmentScopedCatalogAndPreferencesInvalidateHomePresentation() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)

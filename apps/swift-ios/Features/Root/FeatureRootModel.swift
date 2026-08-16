@@ -46,6 +46,8 @@ public final class FeatureRootModel {
     private var pendingCompletionSubmissionIDs: Set<String> = []
     private var pendingDiscardSubmissionIDs: Set<String> = []
     private var detailRecency: [String] = []
+    private var detailLoadGeneration: UInt64 = 0
+    private var detailLoadRevisions: [String: UInt64] = [:]
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
@@ -385,14 +387,21 @@ public final class FeatureRootModel {
             return cached
         }
         let environment = currentEnvironmentIdentity
-        let revisionBeforeLoad = detailRevisions[id]
+        let loadGenerationBeforeLoad = detailLoadGeneration
+        let loadRevisionBeforeLoad = detailLoadRevisions[id]
+        let threadBeforeLoad = snapshot.threads.first { $0.id == id }
         do {
-            let detail = try await client.loadThread(id: id)
+            var detail = try await client.loadThread(id: id)
             guard currentEnvironmentIdentity == environment else {
                 return details[id]
             }
-            if detailRevisions[id] != revisionBeforeLoad {
+            if detailLoadGeneration != loadGenerationBeforeLoad
+                || detailLoadRevisions[id] != loadRevisionBeforeLoad {
                 return details[id]
+            }
+            if let currentThread = snapshot.threads.first(where: { $0.id == id }),
+               currentThread != threadBeforeLoad {
+                detail.thread = currentThread
             }
             store(detail)
             upsert(detail.thread)
@@ -770,6 +779,7 @@ public final class FeatureRootModel {
         guard details[id] != next else { return }
         details[id] = next
         markDetailRecentlyUsed(id)
+        bumpDetailLoadRevision(id: id)
         bumpDetailRevision(id: id, change: .full)
     }
 
@@ -780,6 +790,7 @@ public final class FeatureRootModel {
         let next = addingPendingMessages(to: incoming)
         details[id] = next
         markDetailRecentlyUsed(id)
+        bumpDetailLoadRevision(id: id)
         let appended = next.messages.dropFirst(incoming.messages.count).map(\.id)
         let pendingDelta = FeatureDetailDelta(
             changedMessages: delta.changedMessages + next.messages.dropFirst(incoming.messages.count),
@@ -806,16 +817,23 @@ public final class FeatureRootModel {
         if details.removeValue(forKey: id) != nil {
             detailRecency.removeAll { $0 == id }
         }
+        bumpDetailLoadRevision(id: id)
         bumpDetailRevision(id: id, change: .full)
     }
 
     private func clearDetails() {
+        detailLoadGeneration &+= 1
+        detailLoadRevisions.removeAll()
         guard !details.isEmpty else { return }
         details.removeAll()
         detailRecency.removeAll()
         detailRevision &+= 1
         detailRevisions.removeAll()
         detailRenderUpdates.removeAll()
+    }
+
+    private func bumpDetailLoadRevision(id: String) {
+        detailLoadRevisions[id] = (detailLoadRevisions[id] ?? 0) &+ 1
     }
 
     private func markDetailRecentlyUsed(_ id: String) {
