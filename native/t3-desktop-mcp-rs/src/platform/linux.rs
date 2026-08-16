@@ -1043,7 +1043,12 @@ impl Desktop for LinuxDesktop {
         };
         let (reference, name, a11y_pid) = match match_application(&applications, app) {
             Ok(hit) => hit,
-            Err(_) => {
+            Err(error) => {
+                // Ambiguous matches must stay fail-closed (ask for a pid). Only
+                // fall back to X11 when AT-SPI has no match at all.
+                if error.0.contains("matches several") {
+                    return Err(error);
+                }
                 let pid = apps::resolve_pid(app)?;
                 let name = apps::list_apps()
                     .ok()
@@ -1055,9 +1060,9 @@ impl Desktop for LinuxDesktop {
                     .unwrap_or_else(|| app.to_string());
                 return match self.raise_x11_window(pid) {
                     Ok(()) => Ok(format!("activated {name} (pid {pid})")),
-                    Err(error) => Err(DesktopError::new(format!(
-                        "{name} refused focus ({error}) — no AT-SPI match and no X11 window could \
-                         be raised"
+                    Err(raise_error) => Err(DesktopError::new(format!(
+                        "{name} refused focus ({raise_error}) — no AT-SPI match and no X11 window \
+                         could be raised"
                     ))),
                 };
             }
