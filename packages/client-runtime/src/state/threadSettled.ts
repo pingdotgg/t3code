@@ -3,6 +3,14 @@ import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
+/** Returns whether the change request state settles the thread immediately. */
+export function changeRequestAutoSettles(
+  state: ChangeRequestStateLike | null | undefined,
+  autoSettleOnMerge = true,
+): boolean {
+  return state === "closed" || (state === "merged" && autoSettleOnMerge);
+}
+
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export function threadLastActivityAt(shell: OrchestrationThreadShell): string | null {
@@ -221,9 +229,9 @@ export function threadWokeAt(
  * queued turn) are checked first and hold a thread active regardless of any
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
- * wins in both directions; without one, a thread auto-settles on a
- * merged/closed PR immediately or on inactivity past the window — except
- * that an open PR blocks the inactivity path entirely. The server
+ * wins in both directions; without one, a thread can auto-settle on a
+ * merged PR, always settles on a closed PR, or settles on inactivity past
+ * the window. An open PR blocks the inactivity path entirely. The server
  * un-settles on real activity (user message, session start, approval/
  * user-input request), so an override never goes stale silently.
  */
@@ -232,6 +240,7 @@ export function effectiveSettled(
   options: {
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
+    readonly autoSettleOnMerge?: boolean;
     readonly changeRequestState?: ChangeRequestStateLike | null;
   },
 ): boolean {
@@ -258,13 +267,13 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
-  if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
+  if (changeRequestAutoSettles(options.changeRequestState, options.autoSettleOnMerge !== false)) {
     return true;
   }
   // An open PR is unfinished business regardless of how long the thread has
   // been quiet: review can take days, and hiding the thread would bury the
-  // work waiting on it. Only merge/close (above) or an explicit user settle
-  // resolves it.
+  // work waiting on it. A configured merge, a close, or an explicit user
+  // settle resolves it.
   if (options.changeRequestState === "open") return false;
   if (options.autoSettleAfterDays === null) return false;
 
@@ -284,7 +293,7 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -317,17 +326,24 @@ function addSnoozeDays(base: Date, days: number): Date {
 
 /**
  * Shared "snooze until" choices for every client. "This evening" only
- * appears while it is meaningfully before evening; after that the list
- * starts at "Tomorrow".
+ * appears while it is meaningfully before evening; after that the calendar
+ * choices start at "Tomorrow".
  */
 export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   const inAnHour = new Date(now.getTime() + HOUR_MS);
+  const inThreeHours = new Date(now.getTime() + 3 * HOUR_MS);
   const presets: SnoozePreset[] = [
     {
       id: "hour",
       label: "In 1 hour",
       whenLabel: snoozeTimeOfDayLabel(inAnHour),
       snoozedUntil: inAnHour.toISOString(),
+    },
+    {
+      id: "three-hours",
+      label: "In 3 hours",
+      whenLabel: snoozeTimeOfDayLabel(inThreeHours),
+      snoozedUntil: inThreeHours.toISOString(),
     },
   ];
 
