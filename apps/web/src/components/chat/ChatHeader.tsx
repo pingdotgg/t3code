@@ -336,6 +336,7 @@ export const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+            projectRoot={openInCwd}
           />
         )}
         {activeProjectName && (

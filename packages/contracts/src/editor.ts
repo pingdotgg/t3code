@@ -72,6 +72,11 @@ export type EditorId = typeof EditorId.Type;
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   editor: EditorId,
+  /**
+   * Thread workspace root already known to T3. JetBrains CLIs use this as the
+   * project to open or reuse; never inferred from the file path.
+   */
+  projectRoot: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 

@@ -200,6 +200,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  projectRoot,
   compact = false,
   enableShortcut = true,
 }: {
@@ -207,6 +208,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  projectRoot?: string | null;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
@@ -252,6 +254,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         input: {
           cwd: openInCwd,
           editor,
+          ...(projectRoot ? { projectRoot } : {}),
         },
       });
       setPreferredEditor(editor);
@@ -263,6 +266,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       openInCwd,
       openInEditorMutation,
       preferredEditor,
+      projectRoot,
       remote,
       setPreferredEditor,
     ],
