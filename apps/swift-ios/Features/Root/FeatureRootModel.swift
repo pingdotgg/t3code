@@ -391,8 +391,8 @@ public final class FeatureRootModel {
             guard currentEnvironmentIdentity == environment else {
                 return details[id]
             }
-            if detailRevisions[id] != revisionBeforeLoad, let liveDetail = details[id] {
-                return liveDetail
+            if detailRevisions[id] != revisionBeforeLoad {
+                return details[id]
             }
             store(detail)
             upsert(detail.thread)
@@ -803,8 +803,9 @@ public final class FeatureRootModel {
     }
 
     private func removeDetail(id: String) {
-        guard details.removeValue(forKey: id) != nil else { return }
-        detailRecency.removeAll { $0 == id }
+        if details.removeValue(forKey: id) != nil {
+            detailRecency.removeAll { $0 == id }
+        }
         bumpDetailRevision(id: id, change: .full)
     }
 

@@ -924,6 +924,37 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func initialDetailLoadDoesNotRestoreRemovedThread() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.detailRevisions[thread.id]
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.threadRemoved(id: thread.id))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == nil)
+        #expect(model.details[thread.id] == nil)
+        #expect(model.snapshot.threads.isEmpty)
+    }
+
+    @Test
     func environmentScopedCatalogAndPreferencesInvalidateHomePresentation() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
