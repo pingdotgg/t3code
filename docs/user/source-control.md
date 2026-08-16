@@ -27,6 +27,11 @@ T3 Code works with the platforms your team already uses:
 - Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push, in one flow
 - If the local repository has no commits yet, publishing creates the remote and wires it up but does not push. Make a commit, then push normally.
 
+**Open a project's GitHub repository**
+
+- GitHub-backed projects show a GitHub button in the thread header and project controls
+- Select it to open the project's configured remote in your browser
+
 ### Manage Code Reviews Without Context Switching
 
 **Create pull requests while you work**

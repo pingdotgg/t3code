@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyGitStatusStreamEvent,
   buildTemporaryWorktreeBranchName,
+  getGitHubRepositoryUrlFromRemoteUrl,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
@@ -59,6 +60,33 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
     expect(
       parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/T3Tools/T3Code.git"),
     ).toBe("T3Tools/T3Code");
+  });
+});
+
+describe("getGitHubRepositoryUrlFromRemoteUrl", () => {
+  it("converts common GitHub clone URLs to the repository page", () => {
+    expect(getGitHubRepositoryUrlFromRemoteUrl("git@github.com:T3Tools/T3Code.git")).toBe(
+      "https://github.com/T3Tools/T3Code",
+    );
+    expect(getGitHubRepositoryUrlFromRemoteUrl("https://github.com/T3Tools/T3Code.git")).toBe(
+      "https://github.com/T3Tools/T3Code",
+    );
+  });
+
+  it("supports self-hosted GitHub remotes without exposing clone credentials", () => {
+    expect(
+      getGitHubRepositoryUrlFromRemoteUrl(
+        "https://x-access-token:secret@github.company.test:8443/T3Tools/T3Code.git",
+      ),
+    ).toBe("https://github.company.test:8443/T3Tools/T3Code");
+    expect(getGitHubRepositoryUrlFromRemoteUrl("git@github.company.test:T3Tools/T3Code.git")).toBe(
+      "https://github.company.test/T3Tools/T3Code",
+    );
+  });
+
+  it("returns null for non-GitHub and missing remotes", () => {
+    expect(getGitHubRepositoryUrlFromRemoteUrl("git@gitlab.com:T3Tools/T3Code.git")).toBeNull();
+    expect(getGitHubRepositoryUrlFromRemoteUrl(null)).toBeNull();
   });
 });
 

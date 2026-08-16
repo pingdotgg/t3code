@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
+import { getGitHubRepositoryUrlFromRemoteUrl } from "@t3tools/shared/git";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
@@ -15,8 +16,10 @@ import Svg, { Circle, Path } from "react-native-svg";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { SourceControlIcon } from "../../components/SourceControlIcon";
 import { cn } from "../../lib/cn";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { relativeTime } from "../../lib/time";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -91,6 +94,9 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   const { groupKey, onGroupAction, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
+  const githubRepositoryUrl = getGitHubRepositoryUrlFromRemoteUrl(
+    props.project.repositoryIdentity?.locator.remoteUrl ?? null,
+  );
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-collapsed"),
     [groupKey, onGroupAction],
@@ -101,6 +107,11 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
     }
   }, [newThreadTarget, onNewThread]);
   const showNewThreadButton = onNewThread !== undefined && newThreadTarget !== null;
+  const handleOpenGitHubRepository = useCallback(() => {
+    if (githubRepositoryUrl) {
+      void tryOpenExternalUrl(githubRepositoryUrl, "project-repository");
+    }
+  }, [githubRepositoryUrl]);
 
   // The new-thread button is a SIBLING of the collapse toggle, not a child:
   // nested touchables are unreachable to VoiceOver/TalkBack (the parent
@@ -160,6 +171,17 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           {props.threadCount}
         </Text>
       </Pressable>
+      {githubRepositoryUrl ? (
+        <Pressable
+          accessibilityLabel={`Open ${props.title} on GitHub`}
+          accessibilityRole="link"
+          hitSlop={{ ...verticalHitSlop, left: 10, right: 10 }}
+          onPress={handleOpenGitHubRepository}
+          style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1, paddingLeft: 12 })}
+        >
+          <SourceControlIcon kind="github" size={compact ? 19 : 16} color={iconMutedColor} />
+        </Pressable>
+      ) : null}
       {showNewThreadButton ? (
         <Pressable
           accessibilityLabel={`Create new thread in ${props.title}`}

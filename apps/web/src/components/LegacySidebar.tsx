@@ -57,6 +57,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { getGitHubRepositoryUrlFromRemoteUrl } from "@t3tools/shared/git";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -1610,7 +1611,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "open-github" | "rename" | "grouping" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1618,8 +1619,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           },
         ): ContextMenuItem<string> => {
           const id = `${action}:${member.physicalProjectKey}`;
-          actionHandlers.set(id, () => {
+          actionHandlers.set(id, async () => {
             switch (action) {
+              case "open-github": {
+                const repositoryUrl = getGitHubRepositoryUrlFromRemoteUrl(
+                  member.repositoryIdentity?.locator.remoteUrl ?? null,
+                );
+                if (!repositoryUrl) return;
+                try {
+                  await api.shell.openExternal(repositoryUrl);
+                } catch (error) {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Failed to open GitHub repository",
+                      description: error instanceof Error ? error.message : "An error occurred.",
+                    }),
+                  );
+                }
+                return;
+              }
               case "rename":
                 openProjectRenameDialog(member);
                 return;
@@ -1643,15 +1662,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "open-github" | "rename" | "grouping" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
             isDisabled?: (member: SidebarProjectGroupMember) => boolean;
+            members?: readonly SidebarProjectGroupMember[];
           },
         ): ContextMenuItem<string> => {
-          if (project.memberProjects.length === 1) {
-            const singleMember = project.memberProjects[0]!;
+          const members = options?.members ?? project.memberProjects;
+          if (members.length === 1) {
+            const singleMember = members[0]!;
             return {
               ...makeLeaf(action, singleMember, {
                 ...(options?.destructive ? { destructive: true } : {}),
@@ -1666,7 +1687,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             id: `${action}:submenu`,
             label,
             ...(action === "delete" ? { icon: "trash" } : {}),
-            children: project.memberProjects.map((member) =>
+            children: members.map((member) =>
               makeLeaf(action, member, {
                 ...(options?.destructive ? { destructive: true } : {}),
                 ...(options?.isDisabled?.(member) ? { disabled: true } : {}),
@@ -1675,8 +1696,23 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        const githubMembers = project.memberProjects.filter((member) =>
+          Boolean(
+            getGitHubRepositoryUrlFromRemoteUrl(
+              member.repositoryIdentity?.locator.remoteUrl ?? null,
+            ),
+          ),
+        );
+
         const clicked = await api.contextMenu.show(
           [
+            ...(githubMembers.length > 0
+              ? [
+                  buildTargetedItem("open-github", "Open on GitHub", {
+                    members: githubMembers,
+                  }),
+                ]
+              : []),
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),

@@ -11,6 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
+import { getGitHubRepositoryUrlFromRemoteUrl } from "@t3tools/shared/git";
 import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
@@ -23,6 +24,7 @@ import {
 } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import ProjectScriptsControl, {
@@ -37,12 +39,14 @@ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { GitHubIcon } from "../Icons";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -56,6 +60,7 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
+  activeProjectRemoteUrl: string | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -117,6 +122,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   activeProjectCwd,
   activeProjectFaviconPath,
+  activeProjectRemoteUrl,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -143,6 +149,19 @@ export const ChatHeader = memo(function ChatHeader({
     primaryEnvironmentId,
     remoteOpenMode: remoteOpenState.mode,
   });
+  const githubRepositoryUrl = getGitHubRepositoryUrlFromRemoteUrl(activeProjectRemoteUrl);
+  const openGitHubRepository = useCallback(() => {
+    const api = readLocalApi();
+    if (!api || !githubRepositoryUrl) return;
+
+    void api.shell.openExternal(githubRepositoryUrl).catch((error: unknown) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to open GitHub repository",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, [githubRepositoryUrl]);
   const activeThreadRef = useMemo(
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
     [activeThreadEnvironmentId, activeThreadId],
@@ -235,7 +254,7 @@ export const ChatHeader = memo(function ChatHeader({
             doesn't answer it. */}
         {activeProjectName ? (
           <>
-            <WorkspaceBreadcrumbItem>
+            <WorkspaceBreadcrumbItem className="gap-2">
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -257,6 +276,23 @@ export const ChatHeader = memo(function ChatHeader({
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>
+              {githubRepositoryUrl ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-micro"
+                        variant="ghost-muted"
+                        aria-label={`Open ${activeProjectName} on GitHub`}
+                        onClick={openGitHubRepository}
+                      />
+                    }
+                  >
+                    <GitHubIcon className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Open {activeProjectName} on GitHub</TooltipPopup>
+                </Tooltip>
+              ) : null}
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
           </>
