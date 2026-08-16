@@ -9,6 +9,7 @@ const baseState: ThreadActionMenuState = {
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
+  isRunning: false,
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
@@ -26,7 +27,7 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy-path", "delete"]);
+    ).toEqual(["rename", "mark-unread", "copy-path", "copy-thread-id", "archive", "delete"]);
   });
 
   it("includes branch items only for threads with a branch", () => {
@@ -44,18 +45,14 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids(baseState)).toEqual(expect.arrayContaining(["pin", "settle", "snooze"]));
   });
 
-  it("offers an optional archive action and preserves its blocked state", () => {
-    expect(buildThreadActionMenuItems(baseState).some((item) => item.id === "archive")).toBe(false);
-
+  it("lets the default sidebar override the archive blocked state", () => {
     const items = buildThreadActionMenuItems({ ...baseState, archive: { disabled: true } });
     expect(items.find((item) => item.id === "archive")).toEqual({
       id: "archive",
       label: "Archive thread",
       disabled: true,
     });
-    expect(items.map((item) => item.id)).toEqual(
-      expect.arrayContaining(["settle", "archive", "snooze"]),
-    );
+    expect(items.filter((item) => item.id === "archive")).toHaveLength(1);
   });
 
   it("disables snooze when the thread cannot snooze, keeping presets visible", () => {
@@ -76,5 +73,29 @@ describe("buildThreadActionMenuItems", () => {
   it("marks delete as destructive and keeps it last", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
+  });
+
+  it("offers archive as a non-destructive action right before delete", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    const archiveItem = items.at(-2);
+    expect(archiveItem?.id).toBe("archive");
+    expect(archiveItem?.destructive).toBeFalsy();
+    expect(items.at(-1)?.id).toBe("delete");
+  });
+
+  it("keeps archive available even when the environment lacks every other capability", () => {
+    expect(
+      ids({
+        ...baseState,
+        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+      }),
+    ).toContain("archive");
+  });
+
+  it("disables archive while the thread is running", () => {
+    const archiveItem = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(
+      (item) => item.id === "archive",
+    );
+    expect(archiveItem?.disabled).toBe(true);
   });
 });

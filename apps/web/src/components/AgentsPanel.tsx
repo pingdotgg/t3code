@@ -28,6 +28,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { Button } from "~/components/ui/button";
 
 /**
  * In-flight states all present as Working (one steady state, per the
@@ -282,14 +283,15 @@ function WorkflowScriptView({
         <span className="truncate font-mono text-[.65rem] text-muted-foreground">
           {scriptPath.split("/").at(-1)}
         </span>
-        <button
-          type="button"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           onClick={onClose}
           aria-label="Close script"
-          className="ml-auto text-muted-foreground hover:text-foreground"
+          className="ml-auto"
         >
           <X aria-hidden className="size-3" />
-        </button>
+        </Button>
       </div>
       <div className="max-h-72 overflow-auto p-2">
         {result._tag === "Success" ? (
@@ -417,14 +419,14 @@ function ExpandedWorkflowSection({
         <span className="ml-auto font-mono normal-case text-muted-foreground/80">
           {settled}/{members.length} settled
         </span>
-        <button
-          type="button"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           onClick={onCollapse}
           aria-label="Collapse workflow"
-          className="text-muted-foreground hover:text-foreground"
         >
           <ChevronDown aria-hidden className="size-3" />
-        </button>
+        </Button>
       </div>
       <PhaseRail group={group} />
       {scriptOpen && canShowScript ? (

@@ -14,7 +14,10 @@ import {
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  isSshRemoteUrl,
+} from "@t3tools/shared/sourceControl";
 
 import {
   BitbucketPullRequestListSchema,
@@ -22,11 +25,16 @@ import {
   normalizeBitbucketPullRequestRecord,
   type NormalizedBitbucketPullRequestRecord,
 } from "./bitbucketPullRequests.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
+/** A response body past this is cut short, so one huge diff cannot exhaust the server. */
+const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+/** Bitbucket redirects a diff once; this leaves room without following a chain forever. */
+const MAX_REDIRECTS = 3;
 
 const BitbucketApiEnvConfig = Config.all({
   baseUrl: Config.string("T3CODE_BITBUCKET_API_BASE_URL").pipe(
@@ -47,6 +55,9 @@ const BitbucketApiOperation = Schema.Literals([
   "createPullRequest",
   "probeAuth",
   "checkoutPullRequest",
+  // The raw escape hatch. Callers name their own operation in their own error, the way the
+  // pull request wrappers do on top of `gh` and `glab`.
+  "request",
 ]);
 type BitbucketApiOperation = typeof BitbucketApiOperation.Type;
 
@@ -56,8 +67,12 @@ export class BitbucketRepositoryLocatorError extends Schema.TaggedErrorClass<Bit
     repository: Schema.String,
   },
 ) {
+  get detail(): string {
+    return "Bitbucket repositories must be specified as workspace/repository.";
+  }
+
   override get message(): string {
-    return "Bitbucket API failed in createRepository: Bitbucket repositories must be specified as workspace/repository.";
+    return `Bitbucket API failed in createRepository: ${this.detail}`;
   }
 }
 
@@ -68,8 +83,12 @@ export class BitbucketRequestError extends Schema.TaggedErrorClass<BitbucketRequ
     cause: Schema.Defect(),
   },
 ) {
+  get detail(): string {
+    return "Failed to send the Bitbucket request.";
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in ${this.operation}: Failed to send the Bitbucket request.`;
+    return `Bitbucket API failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -81,8 +100,12 @@ export class BitbucketResponseError extends Schema.TaggedErrorClass<BitbucketRes
     responseBodyLength: NonNegativeInt,
   },
 ) {
+  get detail(): string {
+    return `Bitbucket returned HTTP ${this.status}.`;
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in ${this.operation}: Bitbucket returned HTTP ${this.status}.`;
+    return `Bitbucket API failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -94,8 +117,12 @@ export class BitbucketResponseBodyReadError extends Schema.TaggedErrorClass<Bitb
     cause: Schema.Defect(),
   },
 ) {
+  get detail(): string {
+    return `Bitbucket returned HTTP ${this.status}.`;
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in ${this.operation}: Bitbucket returned HTTP ${this.status}.`;
+    return `Bitbucket API failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -107,8 +134,12 @@ export class BitbucketResponseDecodeError extends Schema.TaggedErrorClass<Bitbuc
     cause: Schema.Defect(),
   },
 ) {
+  get detail(): string {
+    return "Bitbucket returned invalid JSON for the requested resource.";
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in ${this.operation}: Bitbucket returned invalid JSON for the requested resource.`;
+    return `Bitbucket API failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -119,8 +150,12 @@ export class BitbucketRepositoryVcsResolveError extends Schema.TaggedErrorClass<
     cause: Schema.Defect(),
   },
 ) {
+  get detail(): string {
+    return `Failed to resolve VCS repository for ${this.cwd}.`;
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in resolveRepository: Failed to resolve VCS repository for ${this.cwd}.`;
+    return `Bitbucket API failed in resolveRepository: ${this.detail}`;
   }
 }
 
@@ -131,8 +166,12 @@ export class BitbucketRepositoryRemotesListError extends Schema.TaggedErrorClass
     cause: Schema.Defect(),
   },
 ) {
+  get detail(): string {
+    return `Failed to list remotes for ${this.cwd}.`;
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in resolveRepository: Failed to list remotes for ${this.cwd}.`;
+    return `Bitbucket API failed in resolveRepository: ${this.detail}`;
   }
 }
 
@@ -142,8 +181,12 @@ export class BitbucketRepositoryRemoteNotFoundError extends Schema.TaggedErrorCl
     cwd: Schema.String,
   },
 ) {
+  get detail(): string {
+    return `No Bitbucket repository remote was detected for ${this.cwd}.`;
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in resolveRepository: No Bitbucket repository remote was detected for ${this.cwd}.`;
+    return `Bitbucket API failed in resolveRepository: ${this.detail}`;
   }
 }
 
@@ -155,8 +198,12 @@ export class BitbucketPullRequestBodyReadError extends Schema.TaggedErrorClass<B
     cause: Schema.Defect(),
   },
 ) {
+  get detail(): string {
+    return `Failed to read pull request body file ${this.bodyFile}.`;
+  }
+
   override get message(): string {
-    return `Bitbucket API failed in createPullRequest: Failed to read pull request body file ${this.bodyFile}.`;
+    return `Bitbucket API failed in createPullRequest: ${this.detail}`;
   }
 }
 
@@ -168,12 +215,38 @@ export class BitbucketCheckoutError extends Schema.TaggedErrorClass<BitbucketChe
     cause: Schema.Defect(),
   },
 ) {
+  get detail(): string {
+    return "Failed to check out the Bitbucket pull request.";
+  }
+
   override get message(): string {
-    return "Bitbucket API failed in checkoutPullRequest: Failed to check out the Bitbucket pull request.";
+    return `Bitbucket API failed in checkoutPullRequest: ${this.detail}`;
+  }
+}
+
+/**
+ * A url that does not belong to the configured Bitbucket. Refused rather than followed, because
+ * the request carries the account's credentials and a url that came back in a response — a
+ * pagination cursor, or the target of a redirect — is not this server's to trust.
+ */
+export class BitbucketUntrustedUrlError extends Schema.TaggedErrorClass<BitbucketUntrustedUrlError>()(
+  "BitbucketUntrustedUrlError",
+  {
+    /** The host only. A rejected hop is often a signed url, whose query carries a credential. */
+    host: Schema.String,
+  },
+) {
+  get detail(): string {
+    return `The response pointed at ${this.host}, outside the configured Bitbucket.`;
+  }
+
+  override get message(): string {
+    return `Bitbucket API failed in request: ${this.detail}`;
   }
 }
 
 export const BitbucketApiError = Schema.Union([
+  BitbucketUntrustedUrlError,
   BitbucketRepositoryLocatorError,
   BitbucketRequestError,
   BitbucketResponseError,
@@ -246,6 +319,24 @@ export class BitbucketApi extends Context.Service<
   BitbucketApi,
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
+
+    /**
+     * One authenticated request, returning the body verbatim. Bitbucket answers most endpoints
+     * with JSON and a few — a pull request diff, for one — with plain text, so the body is
+     * handed back undecoded for the caller to read as it sees fit.
+     */
+    readonly request: (input: {
+      readonly method: "GET" | "POST" | "PUT" | "DELETE";
+      /**
+       * A path below the API base, or a whole URL as a paged response reports its next page.
+       * A whole URL is refused unless it belongs to the configured Bitbucket.
+       */
+      readonly url: string;
+      /** A JSON document, for the endpoints that take one. */
+      readonly body?: string;
+      /** Response bytes to keep; past this the body comes back cut short and marked. */
+      readonly maxBytes?: number;
+    }) => Effect.Effect<{ readonly body: string; readonly truncated: boolean }, BitbucketApiError>;
     readonly listPullRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProvider.SourceControlProviderContext;
@@ -360,9 +451,9 @@ function requireRepositoryLocator(
 
 function parseBitbucketRemoteUrl(remoteUrl: string): BitbucketRepositoryLocator | null {
   const trimmed = remoteUrl.trim();
-  if (trimmed.startsWith("git@")) {
-    const pathStart = trimmed.indexOf(":");
-    return pathStart < 0 ? null : parseBitbucketRepositorySlug(trimmed.slice(pathStart + 1));
+  const scpMatch = /^[a-zA-Z0-9._-]+@[^:/]+:(.+)$/.exec(trimmed);
+  if (scpMatch?.[1]) {
+    return parseBitbucketRepositorySlug(scpMatch[1]);
   }
 
   try {
@@ -406,8 +497,8 @@ function defaultChangeRequestTargetBranch(input: {
 }
 
 function shouldPreferSshRemote(originRemoteUrl: string | null): boolean {
-  const trimmed = originRemoteUrl?.trim() ?? "";
-  return trimmed.startsWith("git@") || trimmed.startsWith("ssh://");
+  if (!originRemoteUrl) return false;
+  return isSshRemoteUrl(originRemoteUrl);
 }
 
 function selectCloneUrl(input: {
@@ -473,11 +564,25 @@ function authFromConfig(
   };
 }
 
+/** Null for anything that is not a url at all, which is never the configured Bitbucket. */
+function originOf(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
 function responseError(
   operation: BitbucketApiOperation,
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<never, BitbucketApiError> {
-  return response.text.pipe(
+  // Bounded like any other body: an error response is no smaller than a successful one, and
+  // only its length is reported anyway.
+  return collectUint8StreamText({
+    stream: response.stream,
+    maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
+  }).pipe(
     Effect.mapError(
       (cause) =>
         new BitbucketResponseBodyReadError({
@@ -486,12 +591,12 @@ function responseError(
           cause,
         }),
     ),
-    Effect.flatMap((body) =>
+    Effect.flatMap((collected) =>
       Effect.fail(
         new BitbucketResponseError({
           operation,
           status: response.status,
-          responseBodyLength: body.length,
+          responseBodyLength: collected.text.length,
         }),
       ),
     ),
@@ -689,7 +794,107 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // A pull request's diff, diffstat and conflicts are served as redirects to a commit-range
+  // URL, and the client does not follow redirects unless asked. The hop stays on the same host,
+  // so the credentials travel with it.
+  /**
+   * The one host these credentials may be sent to. A url that came back inside a response — a
+   * pagination cursor, or the target of a redirect — is data, not instruction, so it is checked
+   * against this before the account's token travels with it.
+   */
+  const apiOrigin = originOf(config.baseUrl);
+
+  const trustedUrl = (value: string): string | null => {
+    if (!/^https?:\/\//u.test(value)) return apiUrl(value);
+    const origin = originOf(value);
+    return origin !== null && origin === apiOrigin ? value : null;
+  };
+
+  /**
+   * Redirects are followed here rather than by the client, which forwards every header to
+   * whatever host it is sent to. A pull request diff, diffstat and conflicts are all served as
+   * redirects, so they have to be followed — but only back to the same Bitbucket.
+   */
+  const send = (input: {
+    readonly method: "GET" | "POST" | "PUT" | "DELETE";
+    readonly url: string;
+    readonly body?: string;
+    readonly redirects: number;
+  }): Effect.Effect<HttpClientResponse.HttpClientResponse, BitbucketApiError> => {
+    const url = trustedUrl(input.url);
+    if (url === null) {
+      return Effect.fail(
+        new BitbucketUntrustedUrlError({ host: originOf(input.url) ?? "an unreadable url" }),
+      );
+    }
+    const base =
+      input.method === "GET"
+        ? HttpClientRequest.get(url)
+        : input.method === "POST"
+          ? HttpClientRequest.post(url)
+          : input.method === "DELETE"
+            ? HttpClientRequest.make("DELETE")(url)
+            : HttpClientRequest.put(url);
+    // No `Accept: application/json`: the diff endpoints answer with a patch, not JSON.
+    const withBody =
+      input.body === undefined
+        ? base
+        : base.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
+    return httpClient.execute(withAuth(withBody)).pipe(
+      Effect.mapError(
+        (cause): BitbucketApiError => new BitbucketRequestError({ operation: "request", cause }),
+      ),
+      Effect.flatMap((response) => {
+        const location = response.headers.location;
+        if (
+          response.status >= 300 &&
+          response.status < 400 &&
+          location !== undefined &&
+          input.redirects < MAX_REDIRECTS
+        ) {
+          return send({
+            ...input,
+            url: new URL(location, url).toString(),
+            redirects: input.redirects + 1,
+          });
+        }
+        return Effect.succeed(response);
+      }),
+    );
+  };
+
+  const request: BitbucketApi["Service"]["request"] = (input) =>
+    send({ ...input, redirects: 0 }).pipe(
+      Effect.flatMap((response) =>
+        HttpClientResponse.matchStatus({
+          // Read through the body stream rather than `text`, so an oversized diff is stopped
+          // as it arrives instead of being materialized whole and then cut. The same collector
+          // the process runner bounds command output with.
+          "2xx": (success) =>
+            collectUint8StreamText({
+              stream: success.stream,
+              maxBytes: input.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new BitbucketResponseBodyReadError({
+                    operation: "request",
+                    status: success.status,
+                    cause,
+                  }),
+              ),
+              Effect.map((collected) => ({
+                body: collected.text,
+                truncated: collected.truncated,
+              })),
+            ),
+          orElse: (failed) => responseError("request", failed),
+        })(response),
+      ),
+    );
+
   return BitbucketApi.of({
+    request,
     probeAuth: executeJson(
       "probeAuth",
       HttpClientRequest.get(apiUrl("/user")),

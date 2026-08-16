@@ -1,12 +1,13 @@
-import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
-import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
+import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { GlassSurface } from "../../components/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { useThemeColor } from "../../lib/useThemeColor";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -45,44 +46,18 @@ interface ComposerCommandPopoverProps {
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
-function PopoverSurface(props: {
-  readonly children: React.ReactNode;
-  readonly isDarkMode: boolean;
-  readonly style?: ViewStyle;
-}) {
+function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
+  const tintColor = useThemeColor("--color-glass-surface");
   const baseStyle: ViewStyle = {
     borderRadius: 16,
     overflow: "hidden",
     ...props.style,
   };
 
-  if (isLiquidGlassSupported) {
-    return (
-      <LiquidGlassView
-        effect="clear"
-        interactive={false}
-        tintColor={props.isDarkMode ? "rgba(30,30,32,0.95)" : "rgba(255,255,255,0.92)"}
-        colorScheme={props.isDarkMode ? "dark" : "light"}
-        style={baseStyle}
-      >
-        {props.children}
-      </LiquidGlassView>
-    );
-  }
-
   return (
-    <View
-      style={[
-        baseStyle,
-        {
-          backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
-          borderWidth: 1,
-          borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
-        },
-      ]}
-    >
+    <GlassSurface glassEffectStyle="clear" tintColor={tintColor} style={baseStyle}>
       {props.children}
-    </View>
+    </GlassSurface>
   );
 }
 
@@ -133,7 +108,8 @@ const CommandRow = memo(function CommandRow(props: {
   readonly isLast: boolean;
 }) {
   const iconName = itemIcon(props.item);
-  const iconColor = "#a1a1aa";
+  const iconColor = useThemeColor("--color-icon-subtle");
+  const borderColor = useThemeColor("--color-border");
 
   return (
     <Pressable
@@ -146,7 +122,7 @@ const CommandRow = memo(function CommandRow(props: {
         gap: 10,
         opacity: pressed ? 0.6 : 1,
         borderBottomWidth: props.isLast ? 0 : 0.5,
-        borderBottomColor: "rgba(255,255,255,0.1)",
+        borderBottomColor: borderColor,
       })}
     >
       {props.item.type === "path" ? (
@@ -158,7 +134,7 @@ const CommandRow = memo(function CommandRow(props: {
         {props.item.label}
       </Text>
       {props.item.description ? (
-        <Text className="min-w-0 flex-1 text-xs text-zinc-400" numberOfLines={1}>
+        <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
           {props.item.description}
         </Text>
       ) : null}
@@ -169,11 +145,10 @@ const CommandRow = memo(function CommandRow(props: {
 export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
-  const isDarkMode = useColorScheme() === "dark";
   const label = groupLabel(props.triggerKind);
 
   return (
-    <PopoverSurface isDarkMode={isDarkMode}>
+    <PopoverSurface>
       {label ? (
         <View className="px-3.5 pt-2.5 pb-1">
           <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
