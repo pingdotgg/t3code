@@ -34,12 +34,18 @@ export class FirefoxCookieReadError extends Schema.TaggedErrorClass<FirefoxCooki
   "FirefoxCookieReadError",
   {
     reason: FirefoxCookieReadReason,
+    /**
+     * Which database the read was for. Firefox keeps one per profile, so
+     * without it a failure cannot be traced back to the profile that caused
+     * it.
+     */
+    cookieDatabasePath: Schema.String,
     /** Kept for the log; never surfaced to the user. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Could not read Firefox cookies: ${this.reason}.`;
+    return `Could not read Firefox cookies at ${this.cookieDatabasePath}: ${this.reason}.`;
   }
 }
 
@@ -67,7 +73,9 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
   cookieDatabasePath: string,
 ) {
   const snapshotPath = yield* snapshotCookieDatabase(cookieDatabasePath).pipe(
-    Effect.mapError((cause) => new FirefoxCookieReadError({ reason: "readFailed", cause })),
+    Effect.mapError(
+      (cause) => new FirefoxCookieReadError({ reason: "readFailed", cookieDatabasePath, cause }),
+    ),
   );
 
   const rows = yield* Effect.gen(function* () {
@@ -85,7 +93,9 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
     return yield* decodeCookieRows(raw);
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
-    Effect.mapError((cause) => new FirefoxCookieReadError({ reason: "readFailed", cause })),
+    Effect.mapError(
+      (cause) => new FirefoxCookieReadError({ reason: "readFailed", cookieDatabasePath, cause }),
+    ),
   );
 
   return rows.map((row) => {
