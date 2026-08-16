@@ -131,6 +131,13 @@ describe("bindCodexSkillInvocations", () => {
     });
   });
 
+  it("does not treat shell paths as unknown skills", () => {
+    expect(bindCodexSkillInvocations("check $HOME/.config", [grillWithDocs])).toEqual({
+      ok: true,
+      inputs: [],
+    });
+  });
+
   it("attaches one skill item when case variants resolve to the same path", () => {
     expect(
       bindCodexSkillInvocations("$Foo then $foo", [

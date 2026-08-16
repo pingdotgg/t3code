@@ -158,6 +158,13 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerSkillInvocations("Use $review.")).toEqual(["review"]);
     expect(collectComposerSkillInvocations("$review, then continue")).toEqual(["review"]);
     expect(collectComposerSkillInvocations("call $skill-name.")).toEqual(["skill-name"]);
+    expect(collectComposerSkillInvocations("try $review!")).toEqual(["review"]);
+  });
+
+  it("does not treat shell paths or filenames as skill invocations", () => {
+    expect(collectComposerSkillInvocations("check $HOME/.config")).toEqual([]);
+    expect(collectComposerSkillInvocations("open $review.md")).toEqual([]);
+    expect(collectComposerSkillInvocations("$PATH/bin then $review.")).toEqual(["review"]);
   });
 
   it("ignores non-skill dollar text and empty prompts", () => {

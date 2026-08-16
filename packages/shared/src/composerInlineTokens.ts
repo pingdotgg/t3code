@@ -21,10 +21,11 @@ export interface CollectComposerInlineTokensOptions {
 const SKILL_NAME_PATTERN = "[a-zA-Z][a-zA-Z0-9:_-]*";
 // Trailing whitespace is required while typing so `$partial` does not become a chip.
 const SKILL_TOKEN_REGEX = new RegExp(`(^|\\s)\\$(${SKILL_NAME_PATTERN})(?=\\s)`, "g");
-// Submitted messages treat a token as complete when the next character is not
-// part of a skill name, so `$review.` and `$review,` still bind.
+// Submitted messages also accept sentence punctuation so `$review.` / `$review,`
+// bind. A period only terminates when it is not an extension (`$review.md`).
+// Path-like `$HOME/.config` stays plain text — `/` is not a terminator.
 const COMPLETE_SKILL_INVOCATION_REGEX = new RegExp(
-  `(^|\\s)\\$(${SKILL_NAME_PATTERN})(?![a-zA-Z0-9:_-])`,
+  `(^|\\s)\\$(${SKILL_NAME_PATTERN})(?=\\s|$|[,!?;)"']|\\.(?![a-zA-Z0-9]))`,
   "g",
 );
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
