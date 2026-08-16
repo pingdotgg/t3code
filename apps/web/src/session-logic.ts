@@ -69,6 +69,11 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   rawCommand?: string;
+  /**
+   * Persisted tool result (stdout / `data.result.content`). Shown in the
+   * expanded Command-run row; never used as the collapsed preview.
+   */
+  output?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
@@ -238,6 +243,9 @@ export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
   const parts: string[] = [];
   if (entry.detail) {
     parts.push(entry.detail);
+  }
+  if (entry.output) {
+    parts.push(entry.output);
   }
   if (entry.command) {
     parts.push(entry.command);
@@ -856,6 +864,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
   }
+  const output = extractPersistedToolResult(payload);
+  if (output && output !== detail && output !== commandPreview.command) {
+    entry.output = output;
+  }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
   }
@@ -1036,6 +1048,7 @@ function mergeDerivedWorkLogEntries(
   const detail = next.detail ?? previous.detail;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const output = next.output ?? previous.output;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
@@ -1049,6 +1062,7 @@ function mergeDerivedWorkLogEntries(
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(output ? { output } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
@@ -1285,11 +1299,13 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const itemInput = asRecord(item?.input);
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
+  const dataInput = asRecord(data?.input);
   const candidates: unknown[] = [
     item?.command,
     itemInput?.command,
     itemResult?.command,
     data?.command,
+    dataInput?.command,
     itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
 
@@ -1380,6 +1396,64 @@ function summarizeToolRawOutput(payload: Record<string, unknown> | null): string
   }
 
   return null;
+}
+
+function extractToolResultText(result: unknown): string | null {
+  const direct = asTrimmedString(result);
+  if (direct) {
+    return direct;
+  }
+
+  const record = asRecord(result);
+  if (!record) {
+    return null;
+  }
+
+  const content = record.content;
+  const contentText = asTrimmedString(content);
+  if (contentText) {
+    return contentText;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const chunks: string[] = [];
+  for (const entryValue of content) {
+    const text = asTrimmedString(entryValue) ?? asTrimmedString(asRecord(entryValue)?.text);
+    if (text) {
+      chunks.push(text);
+    }
+  }
+  return chunks.length > 0 ? chunks.join("\n") : null;
+}
+
+function extractPersistedToolResult(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const candidates = [data?.result, item?.result];
+  for (const candidate of candidates) {
+    const text = extractToolResultText(candidate);
+    if (!text) {
+      continue;
+    }
+    const output = stripTrailingExitCode(text).output;
+    if (output) {
+      return output;
+    }
+  }
+  return null;
+}
+
+/**
+ * Full persisted tool result for the expanded Command-run body. Collapsed
+ * previews keep using `command` / `detail` and must not receive this string.
+ */
+export function selectWorkLogToolOutput(
+  entry: Pick<WorkLogEntry, "output" | "detail" | "command">,
+): string | null {
+  return asTrimmedString(entry.output);
 }
 
 function extractAcpTextContent(value: unknown): string | null {

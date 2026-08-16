@@ -33,6 +33,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
+  selectWorkLogToolOutput,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
@@ -75,6 +76,7 @@ import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
+  presentExpandedToolOutput,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -2035,32 +2037,47 @@ function workEntryRawCommand(
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
 }
 
-function buildToolCallExpandedBody(
+function buildToolCallExpandedSections(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
-): string | null {
-  const blocks: string[] = [];
+): {
+  preamble: string | null;
+  output: string | null;
+  files: string | null;
+} {
+  const preambleBlocks: string[] = [];
   if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
-    blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
+    preambleBlocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
   }
   const raw = workEntryRawCommand(workEntry);
   if (raw?.trim()) {
-    blocks.push(raw.trim());
+    preambleBlocks.push(raw.trim());
   } else if (workEntry.command?.trim()) {
-    blocks.push(workEntry.command.trim());
+    preambleBlocks.push(workEntry.command.trim());
   }
-  if (workEntry.detail?.trim()) {
-    blocks.push(workEntry.detail.trim());
+
+  const output = selectWorkLogToolOutput(workEntry);
+  const commandText = (raw ?? workEntry.command)?.trim() ?? null;
+  if (!output) {
+    const detail = workEntry.detail?.trim();
+    if (detail && detail !== commandText) {
+      preambleBlocks.push(detail);
+    }
   }
+
   const changedFiles = workEntry.changedFiles ?? [];
-  if (changedFiles.length > 0) {
-    blocks.push(
-      changedFiles
-        .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
-        .join("\n"),
-    );
-  }
-  return blocks.length > 0 ? blocks.join("\n\n") : null;
+  const files =
+    changedFiles.length > 0
+      ? changedFiles
+          .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
+          .join("\n")
+      : null;
+
+  return {
+    preamble: preambleBlocks.length > 0 ? preambleBlocks.join("\n\n") : null,
+    output,
+    files,
+  };
 }
 
 const toolCallExpandedBodyClassName =
@@ -2119,6 +2136,33 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
+const ToolCallOutputBlock = memo(function ToolCallOutputBlock(props: {
+  output: string;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) {
+  const presented = presentExpandedToolOutput(props.output, props.expanded);
+  return (
+    <div className="mt-1">
+      <div className="mb-0.5 flex items-center justify-end gap-1">
+        {presented.truncated ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="h-5 px-1.5 text-[11px] text-muted-foreground"
+            onClick={props.onToggleExpanded}
+          >
+            {props.expanded ? "Show less" : "Show more"}
+          </Button>
+        ) : null}
+        <MessageCopyButton text={props.output} size="icon-xs" variant="ghost" />
+      </div>
+      <pre className={toolCallExpandedBodyClassName}>{presented.text}</pre>
+    </div>
+  );
+});
 
 /**
  * A1 spawn CTA: one anchored row per workflow run (or per-turn direct-spawn
@@ -2233,6 +2277,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
   const [expanded, setExpanded] = useState(false);
+  const [outputExpanded, setOutputExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
@@ -2245,8 +2290,11 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       ? null
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const expandedSections = buildToolCallExpandedSections(workEntry, workspaceRoot);
+  const canExpand =
+    expandedSections.preamble !== null ||
+    expandedSections.output !== null ||
+    expandedSections.files !== null;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -2370,13 +2418,25 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </div>
         </div>
       </div>
-      {expanded && canExpand && expandedBody ? (
+      {expanded && canExpand ? (
         <div
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+          {expandedSections.preamble ? (
+            <pre className={toolCallExpandedBodyClassName}>{expandedSections.preamble}</pre>
+          ) : null}
+          {expandedSections.output ? (
+            <ToolCallOutputBlock
+              output={expandedSections.output}
+              expanded={outputExpanded}
+              onToggleExpanded={() => setOutputExpanded((value) => !value)}
+            />
+          ) : null}
+          {expandedSections.files ? (
+            <pre className={toolCallExpandedBodyClassName}>{expandedSections.files}</pre>
+          ) : null}
         </div>
       ) : null}
     </div>

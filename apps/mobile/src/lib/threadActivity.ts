@@ -68,6 +68,7 @@ interface WorkLogEntry {
   detail?: string;
   command?: string;
   rawCommand?: string;
+  output?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
@@ -408,6 +409,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
   }
+  const output = extractPersistedToolResult(payload);
+  if (output && output !== entry.detail && output !== commandPreview.command) {
+    entry.output = output;
+  }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
   }
@@ -497,6 +502,7 @@ function mergeDerivedWorkLogEntries(
   const detail = next.detail ?? previous.detail;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const output = next.output ?? previous.output;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
@@ -509,6 +515,7 @@ function mergeDerivedWorkLogEntries(
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(output ? { output } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
@@ -659,7 +666,7 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
     appendUniqueBlock(`MCP call\n${JSON.stringify(entry.toolData, null, 2)}`);
   }
   appendUniqueBlock(entry.rawCommand ?? entry.command);
-  appendUniqueBlock(entry.detail);
+  appendUniqueBlock(entry.output ?? entry.detail);
   if ((entry.changedFiles?.length ?? 0) > 0) {
     appendUniqueBlock(entry.changedFiles!.join("\n"));
   }
@@ -671,6 +678,7 @@ function workEntryHasExpandedBody(entry: WorkLogEntry): boolean {
   return (
     (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) ||
     Boolean((entry.rawCommand ?? entry.command)?.trim()) ||
+    Boolean(entry.output?.trim()) ||
     Boolean(entry.detail?.trim()) ||
     (entry.changedFiles?.some((path) => path.trim().length > 0) ?? false)
   );
@@ -726,6 +734,54 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractToolResultText(result: unknown): string | null {
+  const direct = asTrimmedString(result);
+  if (direct) {
+    return direct;
+  }
+
+  const record = asRecord(result);
+  if (!record) {
+    return null;
+  }
+
+  const content = record.content;
+  const contentText = asTrimmedString(content);
+  if (contentText) {
+    return contentText;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const chunks: string[] = [];
+  for (const entryValue of content) {
+    const text = asTrimmedString(entryValue) ?? asTrimmedString(asRecord(entryValue)?.text);
+    if (text) {
+      chunks.push(text);
+    }
+  }
+  return chunks.length > 0 ? chunks.join("\n") : null;
+}
+
+function extractPersistedToolResult(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const candidates = [data?.result, item?.result];
+  for (const candidate of candidates) {
+    const text = extractToolResultText(candidate);
+    if (!text) {
+      continue;
+    }
+    const output = stripTrailingExitCode(text).output;
+    if (output) {
+      return output;
+    }
+  }
+  return null;
 }
 
 function trimMatchingOuterQuotes(value: string): string {
@@ -886,11 +942,13 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const itemInput = asRecord(item?.input);
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
+  const dataInput = asRecord(data?.input);
   const candidates: unknown[] = [
     item?.command,
     itemInput?.command,
     itemResult?.command,
     data?.command,
+    dataInput?.command,
     itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
 

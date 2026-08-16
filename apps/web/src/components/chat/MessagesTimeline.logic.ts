@@ -11,6 +11,25 @@ import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../..
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+/** First-paint cap for an expanded Command-run body; the full string stays on the entry. */
+export const TOOL_OUTPUT_PREVIEW_MAX_CHARS = 4_000;
+
+export function presentExpandedToolOutput(
+  output: string,
+  expanded: boolean,
+): { text: string; truncated: boolean } {
+  if (expanded || output.length <= TOOL_OUTPUT_PREVIEW_MAX_CHARS) {
+    return {
+      text: output,
+      truncated: output.length > TOOL_OUTPUT_PREVIEW_MAX_CHARS,
+    };
+  }
+  return {
+    text: `${output.slice(0, TOOL_OUTPUT_PREVIEW_MAX_CHARS).trimEnd()}\n…`,
+    truncated: true,
+  };
+}
+
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
@@ -318,6 +337,10 @@ function deriveUnsettledTurnId(
  * Settled turns fold their commentary and tool activity behind a
  * "Worked for ..." row anchored at the turn's first foldable entry; the
  * terminal assistant message stays visible below the fold.
+ *
+ * Tool-only turns have no terminal message, so every work entry is hidden
+ * while collapsed. Expanding the fold must still reveal those entries —
+ * hiding them is only a collapsed-state concern, not a deletion.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -387,9 +410,10 @@ function deriveTurnFolds(input: {
     if (group.hasStreamingMessage) {
       continue;
     }
+    const terminalEntryId = group.terminalEntry?.id ?? null;
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (terminalEntryId !== null && entry.id === terminalEntryId) {
         continue;
       }
       // Agent-spawn CTA rows never fold: workflows outlive their launching

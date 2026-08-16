@@ -184,6 +184,29 @@ describe("projectActivityPayload", () => {
     });
   });
 
+  it("projects Claude Bash result content so the work-log can render it", () => {
+    const output = `hello from bash\n${"x".repeat(200)}`;
+    const source = makeActivity("claude-bash", "command_execution", {
+      toolName: "Bash",
+      input: { command: "printf hello && cat huge.txt" },
+      result: {
+        type: "tool_result",
+        tool_use_id: "toolu_1",
+        content: output,
+        is_error: false,
+      },
+    });
+    const projected = projectActivityPayload(source);
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.command).toBe("printf hello && cat huge.txt");
+    expect(data.result).toEqual({ content: output });
+    expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([source]));
+    expect(deriveWorkLogEntries([projected])[0]).toMatchObject({
+      command: "printf hello && cat huge.txt",
+      output,
+    });
+  });
+
   it("slims MCP tool data to the fields the expanded row renders", () => {
     expect(projectActivityPayload(fixtures[4]!).payload).toEqual({
       itemType: "mcp_tool_call",

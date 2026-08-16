@@ -324,6 +324,58 @@ describe("buildThreadFeed", () => {
     expect(group.activities[0]?.getFullDetail()).toContain("repository.search");
   });
 
+  it("includes persisted Claude Bash result content in the expanded work row", () => {
+    const turnId = TurnId.make("turn-bash");
+    const output = "hello from bash\nsecond line";
+    const thread = makeThread({
+      id: ThreadId.make("thread-bash"),
+      projectId: ProjectId.make("project-1"),
+      title: "Bash output",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("bash-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Command run",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            title: "Command run",
+            itemType: "command_execution",
+            detail: "Bash: printf hello",
+            status: "completed",
+            data: {
+              toolName: "Bash",
+              input: { command: "printf hello" },
+              result: {
+                type: "tool_result",
+                content: output,
+                is_error: false,
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+
+    expect(group.activities[0]?.detail).toBe("printf hello");
+    expect(group.activities[0]?.getFullDetail()).toBe(`printf hello\n\n${output}`);
+  });
+
   it("defers large tool output expansion until a work row is opened or copied", () => {
     let serializedToolOutputs = 0;
     const activities = Array.from({ length: 5_000 }, (_, index) =>
