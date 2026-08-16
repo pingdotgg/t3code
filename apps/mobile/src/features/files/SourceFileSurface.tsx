@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
+  type LayoutChangeEvent,
   ScrollView,
   Text as NativeText,
   useColorScheme,
@@ -25,8 +26,11 @@ import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences"
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import {
   buildNativeSourceTokens,
+  buildNativeSourceRows,
   NATIVE_SOURCE_CONTENT_WIDTH,
-  nativeSourceRowId,
+  nativeSourceRowIdsForLine,
+  nativeSourceRowIndexForLine,
+  nativeSourceWrapColumns,
 } from "./nativeSourceFileAdapter";
 import { prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
@@ -159,9 +163,24 @@ function NativeSourceFileSurface(
 ) {
   const { NativeView, onRefresh } = props;
   const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
-  const { width: viewportWidth } = useWindowDimensions();
-  const { rowsJson, status, targetIndex, theme, tokens } = useSourceFileModel(props);
+  const { width: windowWidth } = useWindowDimensions();
+  const [surfaceWidth, setSurfaceWidth] = useState(windowWidth);
+  const {
+    lines,
+    rowsJson: unwrappedRowsJson,
+    status,
+    targetIndex,
+    theme,
+    tokens,
+  } = useSourceFileModel(props);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    if (nextWidth <= 0) {
+      return;
+    }
+    setSurfaceWidth((currentWidth) => (currentWidth === nextWidth ? currentWidth : nextWidth));
+  }, []);
   const handlePullToRefresh = useCallback(async () => {
     if (!onRefresh) {
       return;
@@ -173,19 +192,35 @@ function NativeSourceFileSurface(
       setIsPullRefreshing(false);
     }
   }, [onRefresh]);
-  const tokensJson = useMemo(() => JSON.stringify(buildNativeSourceTokens(tokens)), [tokens]);
+  const wrapColumns = codeWordBreak
+    ? nativeSourceWrapColumns(surfaceWidth, codeSurface)
+    : undefined;
+  const rowsJson = useMemo(
+    () =>
+      wrapColumns === undefined
+        ? unwrappedRowsJson
+        : JSON.stringify(buildNativeSourceRows(lines, wrapColumns)),
+    [lines, unwrappedRowsJson, wrapColumns],
+  );
+  const tokensJson = useMemo(
+    () => JSON.stringify(buildNativeSourceTokens(tokens, wrapColumns)),
+    [tokens, wrapColumns],
+  );
+  const initialRowIndex =
+    targetIndex === null ? -1 : nativeSourceRowIndexForLine(lines, targetIndex, wrapColumns);
   const selectedRowIdsJson = useMemo(
-    () => JSON.stringify(targetIndex === null ? [] : [nativeSourceRowId(targetIndex)]),
-    [targetIndex],
+    () =>
+      JSON.stringify(
+        targetIndex === null
+          ? []
+          : nativeSourceRowIdsForLine(lines[targetIndex] ?? "", targetIndex, wrapColumns),
+      ),
+    [lines, targetIndex, wrapColumns],
   );
   const themeJson = useMemo(() => JSON.stringify(createNativeReviewDiffTheme(theme)), [theme]);
   const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
-  const contentWidth = codeWordBreak
-    ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)
-    : NATIVE_SOURCE_CONTENT_WIDTH;
-
   return (
-    <View className="relative flex-1 bg-sheet">
+    <View className="relative flex-1 bg-sheet" onLayout={handleLayout}>
       <SourceHighlightStatusView status={status} />
       <NativeView
         collapsable={false}
@@ -193,8 +228,12 @@ function NativeSourceFileSurface(
         style={{ flex: 1 }}
         appearanceScheme={theme}
         contentResetKey={props.path}
-        contentWidth={contentWidth}
-        initialRowIndex={targetIndex ?? -1}
+        contentWidth={
+          codeWordBreak
+            ? Math.max(240, surfaceWidth - codeSurface.gutterWidth - 24)
+            : NATIVE_SOURCE_CONTENT_WIDTH
+        }
+        initialRowIndex={initialRowIndex}
         rowHeight={nativeSourceStyle.rowHeight ?? codeSurface.rowHeight}
         rowsJson={rowsJson}
         selectedRowIdsJson={selectedRowIdsJson}
