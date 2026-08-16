@@ -4,9 +4,11 @@ import {
   type ModelSelection,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -406,14 +408,20 @@ export function currentGrokMaxTokensFromSessionSetup(
   return parseGrokAcpModelMeta(current?._meta).totalContextTokens;
 }
 
-export function isGrokAcpAuthFailure(error: unknown): boolean {
-  const text = [
-    error instanceof Error ? `${error.name} ${error.message}` : "",
-    typeof error === "string" ? error : "",
-    String(error),
-  ].join(" ");
-  return /authenticat|unauthorized|not logged in|login required|no credentials|cached_token|xai\.api_key|401\b/i.test(
-    text,
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+/** ACP JSON-RPC `authRequired` (`AcpRequestError.authRequired`). */
+const GROK_ACP_AUTH_REQUIRED_CODE = -32000;
+
+function isGrokAcpAuthRequestError(error: unknown): boolean {
+  return (
+    isAcpRequestError(error) &&
+    (error.method === "authenticate" || error.code === GROK_ACP_AUTH_REQUIRED_CODE)
+  );
+}
+
+export function isGrokAcpAuthFailure(cause: Cause.Cause<unknown>): boolean {
+  return cause.reasons.some(
+    (reason) => Cause.isFailReason(reason) && isGrokAcpAuthRequestError(reason.error),
   );
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -159,9 +160,38 @@ describe("grokDiscoveredModelCapabilities", () => {
 });
 
 describe("isGrokAcpAuthFailure", () => {
-  it("recognizes authenticate failures", () => {
-    expect(isGrokAcpAuthFailure(new Error("authenticate failed: cached_token"))).toBe(true);
-    expect(isGrokAcpAuthFailure(new Error("session/new timed out"))).toBe(false);
+  it("recognizes tagged authenticate and auth-required failures", () => {
+    expect(
+      isGrokAcpAuthFailure(
+        Cause.fail(
+          new EffectAcpErrors.AcpRequestError({
+            code: -32600,
+            errorMessage: "authenticate rejected",
+            method: "authenticate",
+          }),
+        ),
+      ),
+    ).toBe(true);
+    expect(isGrokAcpAuthFailure(Cause.fail(EffectAcpErrors.AcpRequestError.authRequired()))).toBe(
+      true,
+    );
+  });
+
+  it("does not treat payload text or other ACP methods as auth failure", () => {
+    expect(isGrokAcpAuthFailure(Cause.fail(new Error("authenticate failed: cached_token")))).toBe(
+      false,
+    );
+    expect(
+      isGrokAcpAuthFailure(
+        Cause.fail(
+          new EffectAcpErrors.AcpRequestError({
+            code: -32603,
+            errorMessage: "session/new timed out",
+            method: "session/new",
+          }),
+        ),
+      ),
+    ).toBe(false);
   });
 });
 
