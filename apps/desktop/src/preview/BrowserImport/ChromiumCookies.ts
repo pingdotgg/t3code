@@ -3,42 +3,51 @@
 /**
  * Chromium cookie extraction.
  *
- * Reads a Chromium-family browser's cookie database and decrypts it with the
- * key the OS keychain hands us, which is the mechanism the browser itself
- * uses. macOS mediates that with a per-app consent prompt, so the user
- * explicitly approves T3 Code reading it.
+ * Reads a Chromium-family browser's cookie database and decrypts each record
+ * with the key its prefix calls for. Key acquisition — and the consent it
+ * needs — lives in `ChromiumKeys`.
  *
- * Deliberately no fallback when the keychain says no: the alternative
- * techniques exist to defeat that consent, and this feature is not worth
- * shipping them.
+ * Records whose scheme we hold no key for are skipped rather than failing the
+ * whole import: a Linux database can mix `v10` and `v11`, and a Windows one
+ * can mix `v10` and app-bound `v20`. A partial result reported honestly is
+ * more useful than an all-or-nothing error.
  *
  * @module ChromiumCookies
  */
-import * as Keyring from "@napi-rs/keyring";
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  ChromiumKeyError,
+  ChromiumKeyFailure,
+  resolveChromiumKeys,
+  type ChromiumKeyMaterial,
+} from "./ChromiumKeys.ts";
 import { cookieScope, snapshotCookieDatabase, type ImportedCookie } from "./CookieDatabase.ts";
 
-/** macOS OSCrypt parameters. Chromium has used these since the feature landed. */
-const MAC_KEY_ITERATIONS = 1003;
-const MAC_KEY_SALT = "saltysalt";
-const MAC_KEY_LENGTH = 16;
-/** OSCrypt uses a fixed IV of 16 spaces rather than a per-record one. */
-const AES_IV = Buffer.alloc(16, 0x20);
-const V10_PREFIX = "v10";
+/** OSCrypt's CBC mode uses a fixed IV of 16 spaces rather than a per-record one. */
+const AES_CBC_IV = Buffer.alloc(16, 0x20);
+/** Windows AES-GCM records carry a 12-byte nonce and a 16-byte tag. */
+const GCM_NONCE_LENGTH = 12;
+const GCM_TAG_LENGTH = 16;
 
 export type ChromiumCookie = ImportedCookie;
 
+/**
+ * Every way the read can fail: the key failures, plus the ones this module
+ * raises itself.
+ */
 export const ChromiumCookieReadReason = Schema.Literals([
-  "needsKeychainApproval",
-  "keychainItemMissing",
+  ...ChromiumKeyFailure.literals,
   "browserRunning",
-  "unsupportedPlatform",
   "readFailed",
 ]);
 export type ChromiumCookieReadReason = typeof ChromiumCookieReadReason.Type;
@@ -73,7 +82,6 @@ const CookieRow = Schema.Struct({
   is_httponly: Schema.Number,
   samesite: Schema.Number,
 });
-
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
 
 /**
@@ -81,7 +89,7 @@ const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
  * modern Chromium, so it maps there rather than to `no_restriction`, which
  * would widen the cookie's scope on import.
  */
-const sameSiteFromColumn = (value: number): ChromiumCookie["sameSite"] => {
+const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
   if (value === 2) return "strict";
   return "lax";
@@ -89,11 +97,9 @@ const sameSiteFromColumn = (value: number): ChromiumCookie["sameSite"] => {
 
 /**
  * Chromium timestamps count microseconds from 1601-01-01; Electron wants
- * seconds from the UNIX epoch.
- *
- * The microsecond value overflows JavaScript's safe integer range, and
- * `node:sqlite` refuses to narrow it, so the division happens in SQL and this
- * only ever sees seconds.
+ * seconds from the UNIX epoch. The microsecond value overflows JavaScript's
+ * safe integer range and `node:sqlite` refuses to narrow it, so the division
+ * happens in SQL and this only ever sees seconds.
  */
 const WEBKIT_EPOCH_OFFSET_SECONDS = 11_644_473_600;
 const toUnixSeconds = (webkitSeconds: number): number | undefined => {
@@ -102,64 +108,22 @@ const toUnixSeconds = (webkitSeconds: number): number | undefined => {
 };
 
 /**
- * Reads the OSCrypt key from the login keychain.
- *
- * Uses the in-process Keychain API rather than shelling out to
- * `/usr/bin/security`, because the keychain attributes both the consent prompt
- * and the resulting ACL entry to the binary that asks. Via the CLI the prompt
- * says "security" and "Always Allow" grants trust to a tool every process on
- * the machine can invoke; in-process it names this app and the grant belongs
- * to it. (In an unsigned dev build the name is the dev Electron binary rather
- * than the shipped app identity.)
- *
- * Deliberately untimed: macOS answers this with a modal, and a timeout racing
- * the user means the prompt can be approved while nothing is left listening —
- * which reads as "approving did nothing".
+ * Chromium >= 127 prefixes the plaintext with SHA-256 of the host key, binding
+ * a cookie to its domain. Strip it when present.
  */
-const readMacKeychainPassword = Effect.fn("ChromiumCookies.readMacKeychainPassword")(function* (
-  service: string,
-  account: string,
-  cookieDatabasePath: string,
-) {
-  const password = yield* Effect.try({
-    try: () => new Keyring.Entry(service, account).getPassword(),
-    catch: (cause) => {
-      const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
-      // Distinguish the causes rather than telling the user to approve a
-      // prompt when approving cannot fix the failure.
-      const missing = /no (matching )?entry|not found/i.test(message);
-      return new ChromiumCookieReadError({
-        reason: missing ? "keychainItemMissing" : "needsKeychainApproval",
-        cookieDatabasePath,
-        cause,
-      });
-    },
-  });
-  if (password === null || password === "") {
-    return yield* new ChromiumCookieReadError({
-      reason: "keychainItemMissing",
-      cookieDatabasePath,
-    });
-  }
-  return password;
-});
+const stripDomainBinding = (plaintext: Buffer, domain: string): Buffer => {
+  const domainHash = NodeCrypto.createHash("sha256").update(domain).digest();
+  return plaintext.length >= 32 && plaintext.subarray(0, 32).equals(domainHash)
+    ? plaintext.subarray(32)
+    : plaintext;
+};
 
-const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): string | null => {
-  const buffer = Buffer.from(encrypted);
-  if (buffer.length === 0) return "";
-  if (buffer.subarray(0, 3).toString("latin1") !== V10_PREFIX) return null;
-
+const decryptCbc = (payload: Buffer, key: Buffer, domain: string): string | null => {
   try {
-    const decipher = NodeCrypto.createDecipheriv("aes-128-cbc", key, AES_IV);
+    const decipher = NodeCrypto.createDecipheriv("aes-128-cbc", key, AES_CBC_IV);
     decipher.setAutoPadding(true);
-    let plaintext = Buffer.concat([decipher.update(buffer.subarray(3)), decipher.final()]);
-    // Chromium >= 127 prefixes the plaintext with SHA-256 of the host key to
-    // bind a cookie to its domain; strip it when present.
-    const domainHash = NodeCrypto.createHash("sha256").update(domain).digest();
-    if (plaintext.length >= 32 && plaintext.subarray(0, 32).equals(domainHash)) {
-      plaintext = plaintext.subarray(32);
-    }
-    return plaintext.toString("utf8");
+    const plaintext = Buffer.concat([decipher.update(payload), decipher.final()]);
+    return stripDomainBinding(plaintext, domain).toString("utf8");
   } catch {
     return null;
   }
@@ -175,37 +139,75 @@ export interface CookieReadResult {
   readonly undecryptable: number;
 }
 
+const decryptGcm = (payload: Buffer, key: Buffer, domain: string): string | null => {
+  try {
+    const nonce = payload.subarray(0, GCM_NONCE_LENGTH);
+    const tag = payload.subarray(payload.length - GCM_TAG_LENGTH);
+    const body = payload.subarray(GCM_NONCE_LENGTH, payload.length - GCM_TAG_LENGTH);
+    const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", key, nonce);
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(body), decipher.final()]);
+    return stripDomainBinding(plaintext, domain).toString("utf8");
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Decrypts one stored value, choosing the scheme from its prefix. Returns null
+ * when no key covers that scheme — including `v20`, which is app-bound and
+ * deliberately unreadable outside the browser.
+ */
+export function decryptChromiumValue(
+  encrypted: Uint8Array,
+  keys: ChromiumKeyMaterial,
+  domain: string,
+): string | null {
+  const buffer = Buffer.from(encrypted);
+  if (buffer.length === 0) return "";
+  const prefix = buffer.subarray(0, 3).toString("latin1");
+  const payload = buffer.subarray(3);
+
+  if (prefix === "v10") {
+    if (keys.gcmV10) return decryptGcm(payload, keys.gcmV10, domain);
+    return keys.cbcV10 ? decryptCbc(payload, keys.cbcV10, domain) : null;
+  }
+  if (prefix === "v11") {
+    return keys.cbcV11 ? decryptCbc(payload, keys.cbcV11, domain) : null;
+  }
+  return null;
+}
+
 export interface ChromiumCookieSource {
   readonly cookieDatabasePath: string;
-  readonly keychainService: string;
-  readonly keychainAccount: string;
+  readonly localStatePath: string;
+  readonly keychainService: string | undefined;
+  readonly keychainAccount: string | undefined;
   /** Supplied by the caller from `HostProcessPlatform` rather than read here. */
   readonly platform: NodeJS.Platform;
 }
 
 export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookies")(function* (
   source: ChromiumCookieSource,
-) {
-  if (source.platform !== "darwin") {
-    // Linux (libsecret) and Windows (DPAPI, and App-Bound Encryption on
-    // current Chrome) each need their own key path; only macOS is implemented.
-    return yield* new ChromiumCookieReadError({
-      reason: "unsupportedPlatform",
-      cookieDatabasePath: source.cookieDatabasePath,
-    });
-  }
-
-  const password = yield* readMacKeychainPassword(
-    source.keychainService,
-    source.keychainAccount,
-    source.cookieDatabasePath,
-  );
-  const key = NodeCrypto.pbkdf2Sync(
-    password,
-    MAC_KEY_SALT,
-    MAC_KEY_ITERATIONS,
-    MAC_KEY_LENGTH,
-    "sha1",
+): Effect.fn.Return<
+  CookieReadResult,
+  ChromiumCookieReadError,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Path.Path | Scope.Scope
+> {
+  const keys = yield* resolveChromiumKeys({
+    platform: source.platform,
+    keychainService: source.keychainService,
+    keychainAccount: source.keychainAccount,
+    localStatePath: source.localStatePath,
+  }).pipe(
+    Effect.mapError(
+      (cause: ChromiumKeyError) =>
+        new ChromiumCookieReadError({
+          reason: cause.reason,
+          cookieDatabasePath: source.cookieDatabasePath,
+          cause,
+        }),
+    ),
   );
 
   const snapshotPath = yield* snapshotCookieDatabase(source.cookieDatabasePath).pipe(
@@ -246,11 +248,12 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
   // its rows as a clean success is the worst of the options.
   let undecryptable = 0;
   for (const row of rows) {
-    const value = decryptValue(row.encrypted_value, key, row.host_key);
+    const value = decryptChromiumValue(row.encrypted_value, keys, row.host_key);
     if (value === null) {
       undecryptable += 1;
       continue;
     }
+
     const secure = row.is_secure === 1;
     const scope = cookieScope(row.host_key, row.path, secure);
     cookies.push({

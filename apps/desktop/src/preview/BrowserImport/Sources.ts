@@ -200,6 +200,15 @@ export const cookieDatabasePath = (
     : context.path.join(root, profileDirectory, fileName);
 };
 
+/** Chromium keeps the DPAPI-wrapped Windows key in `Local State`. */
+export const localStatePath = (
+  definition: BrowserImportSourceDefinition,
+  context: BrowserImportPathContext,
+): string | undefined => {
+  const root = definition.userDataDirectory(context);
+  return root === undefined ? undefined : context.path.join(root, "Local State");
+};
+
 /**
  * Firefox records its profiles in `profiles.ini`. `Install*` sections point at
  * a default profile but do not describe one, so only `[ProfileN]` blocks
