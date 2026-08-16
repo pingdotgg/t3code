@@ -38,6 +38,25 @@ describe("shouldSyncOnboardingToggleFromLinkState", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not sync when the wizard is closed or the environment is unlinked", () => {
+    expect(
+      shouldSyncOnboardingToggleFromLinkState({
+        touched: false,
+        openForAccount: null,
+        linked: true,
+        cloudUserId: "user-1",
+      }),
+    ).toBe(false);
+    expect(
+      shouldSyncOnboardingToggleFromLinkState({
+        touched: false,
+        openForAccount: "user-1",
+        linked: false,
+        cloudUserId: "user-1",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("resolveOnboardingReconcileDesired", () => {
@@ -57,6 +76,16 @@ describe("resolveOnboardingReconcileDesired", () => {
         exposeEnvironment: false,
         publishAgentActivity: false,
         managedTunnelActive: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not rewrite publish when both toggles are off and a tunnel is already active", () => {
+    expect(
+      resolveOnboardingReconcileDesired({
+        exposeEnvironment: false,
+        publishAgentActivity: false,
+        managedTunnelActive: true,
       }),
     ).toBeNull();
   });

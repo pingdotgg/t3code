@@ -31,17 +31,19 @@ export function shouldSyncOnboardingToggleFromLinkState(input: {
   );
 }
 
-// The wizard only ever enables. A stale prefill of expose=false after
-// startup reconcile must not submit publish_only and tear the tunnel down.
+// The wizard only ever enables. Both toggles off means skip — do not unlink,
+// downgrade, or rewrite publish. A stale expose=false after startup
+// reconcile must also not submit publish_only and tear the tunnel down.
 export function resolveOnboardingReconcileDesired(input: {
   readonly exposeEnvironment: boolean;
   readonly publishAgentActivity: boolean;
   readonly managedTunnelActive: boolean;
 }): { readonly managedTunnel: boolean; readonly publish: boolean } | null {
-  const managedTunnel = input.exposeEnvironment || input.managedTunnelActive;
-  const publish = input.publishAgentActivity;
-  if (!managedTunnel && !publish) {
+  if (!input.exposeEnvironment && !input.publishAgentActivity) {
     return null;
   }
-  return { managedTunnel, publish };
+  return {
+    managedTunnel: input.exposeEnvironment || input.managedTunnelActive,
+    publish: input.publishAgentActivity,
+  };
 }

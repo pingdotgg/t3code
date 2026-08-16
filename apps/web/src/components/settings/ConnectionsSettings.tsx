@@ -1606,12 +1606,14 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   } = useCloudLinkController();
   // Opening Connections can race startup reconcile: the shared SWR atom may
   // still hold managedTunnelActive: false from a pre-reconcile read. Refresh
-  // on open, then retry on a short budget while this page stays mounted.
+  // on open, then retry on a short budget while a linked tunnel still looks
+  // inactive and this page stays mounted.
+  const linked = primaryCloudLinkState.data?.linked ?? false;
   useEffect(() => {
     primaryCloudLinkState.refresh();
   }, [primaryCloudLinkState.refresh]);
   useEffect(() => {
-    if (managedTunnelActive) {
+    if (managedTunnelActive || !linked) {
       return;
     }
     const startedAt = Date.now();
@@ -1626,7 +1628,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [managedTunnelActive, primaryCloudLinkState.refresh]);
+  }, [linked, managedTunnelActive, primaryCloudLinkState.refresh]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 

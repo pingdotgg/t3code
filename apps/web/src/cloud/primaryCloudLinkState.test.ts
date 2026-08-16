@@ -111,6 +111,7 @@ describe("scheduleStartupReconcileLinkStateRefresh", () => {
     stopStartupReconcileLinkStateRefresh(TARGET);
     vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[2]);
     expect(refresh).toHaveBeenCalledTimes(1);
+    expect(scheduleStartupReconcileLinkStateRefresh(TARGET, refresh)).toBe(false);
   });
 
   it("does not schedule without a target", () => {
