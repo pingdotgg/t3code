@@ -1635,14 +1635,12 @@ code {
   color: var(--muted-foreground);
 }
 
-/* Both inline sides: list items carry dir="auto" individually, so a right-to-left item hangs
-   its marker on the right while its neighbours keep theirs on the left. */
 .chat-markdown ul {
   /* Reset for nested uls under a widened ol — --list-gutter is an inherited
      custom property, so without this a task-list under a 3+ digit ordered
      list would inherit the outer gutter instead of its own default. */
   --list-gutter: 1.25rem;
-  padding-inline: var(--list-gutter, 1.25rem);
+  padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: disc;
 }
 
@@ -1653,8 +1651,16 @@ code {
    nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {
   --list-gutter: 1.25rem;
-  padding-inline: var(--list-gutter, 1.25rem);
+  padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
+}
+
+/* Items carry dir="auto" individually, so a right-to-left one hangs its marker on the end side,
+   where the gutter isn't. `rehypeAutoTextDirection` marks the lists that hold such an item —
+   padding both sides unconditionally would inset every English list from the text around it. */
+.chat-markdown ul[data-rtl-item],
+.chat-markdown ol[data-rtl-item] {
+  padding-inline-end: var(--list-gutter, 1.25rem);
 }
 
 .chat-markdown ul ul {
@@ -1724,7 +1730,7 @@ code {
 
 .chat-markdown section[data-footnotes] ol {
   margin: 0;
-  padding-inline: 1.25rem;
+  padding-inline-start: 1.25rem;
 }
 
 .chat-markdown section[data-footnotes] li + li {
@@ -1764,6 +1770,8 @@ code {
 }
 
 .chat-markdown pre {
+  /* Same as the table: code reads in source order, whatever direction the block around it took. */
+  direction: ltr;
   max-width: 100%;
   overflow-x: auto;
   border: 1px solid var(--border);
@@ -1825,6 +1833,10 @@ code {
    characters and defeat the overflow — restore word-boundary wrapping so the
    min column width is the longest word. */
 .chat-markdown table {
+  /* Left untagged on purpose, but an Arabic list item or quote around it would still hand it a
+     right-to-left direction to inherit, and column order is meaning here rather than presentation.
+     Cells keep dir="auto", so the text inside each still reads its own way round. */
+  direction: ltr;
   width: 100%;
   min-width: max-content;
   border-collapse: collapse;

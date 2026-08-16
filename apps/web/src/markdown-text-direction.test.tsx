@@ -41,10 +41,29 @@ Hello world
     // The quote reads its own direction; a tagged paragraph inside would blind it.
     expect(html).toContain('<blockquote dir="auto">');
     expect(html).toContain("<p>مرحبا بالعالم</p>");
-    // Lists stay untagged so each item keeps a direction of its own.
-    expect(html).toContain("<ul>");
+    // Lists never take a `dir` of their own, so each item keeps one.
+    expect(html).not.toContain("<ul dir=");
     expect(html).toContain('<li dir="auto">');
     expect(html).toContain("<p>عنصر</p>");
+  });
+
+  it("lets a nested list item read its own direction, not its parent's", () => {
+    const html = renderMarkdown(`- عنصر عربي
+  - English child`);
+
+    expect(html).toContain('<li dir="auto">عنصر عربي');
+    expect(html).toContain('<li dir="auto">English child</li>');
+  });
+
+  it("marks only the lists that hold a right-to-left item, so the marker has a gutter", () => {
+    expect(renderMarkdown("- عنصر\n- item")).toContain('<ul data-rtl-item="">');
+    expect(renderMarkdown("1. عنصر")).toContain('<ol data-rtl-item="">');
+    // An all-English list keeps the end side flush with the text around it.
+    expect(renderMarkdown("- item\n- another")).toContain("<ul>");
+    // Only the nested list carries the Arabic item, so only it gets the gutter.
+    const nested = renderMarkdown("- item\n  - عنصر");
+    expect(nested).toContain('<ul>\n<li dir="auto">item');
+    expect(nested).toContain('<ul data-rtl-item="">');
   });
 
   it("leaves code and layout containers alone", () => {

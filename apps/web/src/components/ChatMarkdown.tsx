@@ -214,6 +214,11 @@ const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeAutoTextDirection,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
+/** User messages render without raw HTML, and their Arabic needs a direction just the same. */
+const CHAT_MARKDOWN_TEXT_DIRECTION_PLUGINS = [
+  rehypeAutoTextDirection,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
@@ -556,7 +561,10 @@ function MarkdownDetails({
       data-markdown-details-open={isOpen ? "true" : "false"}
     >
       <CollapsibleTrigger
-        className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
+        // The summary element itself is dropped here, so its `dir` has to be reapplied on the
+        // row that replaces it — otherwise an Arabic title reads left-to-right under its own body.
+        dir="auto"
+        className="flex w-full items-center gap-2 py-2 text-start text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
         data-markdown-details-summary=""
       >
         <ChevronRightIcon
@@ -1801,7 +1809,9 @@ function ChatMarkdown({
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+        rehypePlugins={
+          parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : CHAT_MARKDOWN_TEXT_DIRECTION_PLUGINS
+        }
         skipHtml={false}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}

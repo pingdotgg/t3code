@@ -19,15 +19,20 @@ const FIRST_LETTER = /\p{L}/u;
  * every script a message is realistically written in.
  */
 const RIGHT_TO_LEFT_LETTER =
-  /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u;
+  /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}\p{Script=Samaritan}\p{Script=Mandaic}\p{Script=Hanifi_Rohingya}\p{Script=Yezidi}]/u;
 
-/** `undefined` rather than `"ltr"` so a left-to-right block simply inherits and nothing moves. */
-export function markdownTextDirection(text: string): "rtl" | undefined {
+/**
+ * A left-to-right block says so rather than staying silent: Yoga inherits `direction`, so an
+ * English item under an Arabic one would otherwise keep its parent's mirrored chrome. Only a
+ * block with no letter at all — a bare number, a lone link — is left to inherit.
+ */
+export function markdownTextDirection(text: string): "ltr" | "rtl" | undefined {
   const firstLetter = FIRST_LETTER.exec(text)?.[0];
-  return firstLetter && RIGHT_TO_LEFT_LETTER.test(firstLetter) ? "rtl" : undefined;
+  if (!firstLetter) return undefined;
+  return RIGHT_TO_LEFT_LETTER.test(firstLetter) ? "rtl" : "ltr";
 }
 
-export function markdownNodeDirection(node: MarkdownNode): "rtl" | undefined {
+export function markdownNodeDirection(node: MarkdownNode): "ltr" | "rtl" | undefined {
   return markdownTextDirection(markdownNodeText(node));
 }
 

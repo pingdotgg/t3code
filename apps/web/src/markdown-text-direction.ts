@@ -12,6 +12,7 @@
 interface HastNode {
   type?: string;
   tagName?: string;
+  value?: string;
   properties?: Record<string, unknown>;
   children?: HastNode[];
 }
@@ -41,8 +42,7 @@ const AUTO_DIRECTION_TAGS = new Set([
  * outermost block of a nest gets tagged; everything under it inherits.
  *
  * `ul`/`ol` are deliberately absent so their items stay the outermost blocks and keep a
- * direction each. That leaves the list itself LTR, which is why the stylesheet pads both of
- * its inline sides: a right-to-left item's marker needs room on the side it lands on.
+ * direction each. That leaves the list itself LTR, which is what `data-rtl-item` below is for.
  */
 function isAutoDirectionBlock(node: HastNode): boolean {
   if (node.type !== "element" || !node.tagName) return false;
@@ -53,6 +53,41 @@ function isAutoDirectionBlock(node: HastNode): boolean {
   return AUTO_DIRECTION_TAGS.has(node.tagName);
 }
 
+const FIRST_LETTER = /\p{L}/u;
+
+/**
+ * The living right-to-left scripts. Not the full Unicode R/AL bidi classes — those are not
+ * expressible as a property escape in JS — but every script a message is realistically in.
+ * Kept in step with the mobile client's `markdownTextDirection`, which reads the same rule.
+ */
+const RIGHT_TO_LEFT_LETTER =
+  /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}\p{Script=Samaritan}\p{Script=Mandaic}\p{Script=Hanifi_Rohingya}\p{Script=Yezidi}]/u;
+
+function firstLetter(node: HastNode): string | undefined {
+  if (node.type === "text") return FIRST_LETTER.exec(node.value ?? "")?.[0];
+  for (const child of node.children ?? []) {
+    const letter = firstLetter(child);
+    if (letter) return letter;
+  }
+  return undefined;
+}
+
+/**
+ * A right-to-left item hangs its marker on the list's end side, where an LTR list has no gutter,
+ * so the list has to be told it holds one. `:dir(rtl)` would say it in CSS alone, but the build
+ * lowers that selector to a `:lang()` list which never matches a `dir="auto"` element.
+ *
+ * The first strong letter is the same rule `dir="auto"` itself follows, so the two agree; where
+ * they don't, the cost is 1.25rem of unused padding rather than text on the wrong side.
+ */
+function holdsRightToLeftItem(list: HastNode): boolean {
+  return (list.children ?? []).some((child) => {
+    if (child.tagName !== "li") return false;
+    const letter = firstLetter(child);
+    return letter != null && RIGHT_TO_LEFT_LETTER.test(letter);
+  });
+}
+
 export function rehypeAutoTextDirection() {
   return (tree: HastNode) => {
     const visit = (node: HastNode, insideTaggedBlock: boolean) => {
@@ -60,7 +95,15 @@ export function rehypeAutoTextDirection() {
       if (tag) {
         node.properties = { ...node.properties, dir: "auto" };
       }
-      node.children?.forEach((child) => visit(child, insideTaggedBlock || tag));
+      const isList = node.tagName === "ul" || node.tagName === "ol";
+      if (isList && holdsRightToLeftItem(node)) {
+        node.properties = { ...node.properties, dataRtlItem: "" };
+      }
+      // A list is a container, not a text block, so its items start the outermost-only rule over:
+      // an English item nested under an Arabic one still reads its own way round. The item above
+      // it keeps a direction of its own — the auto algorithm reads the text it holds directly,
+      // which a nested list never was.
+      node.children?.forEach((child) => visit(child, !isList && (insideTaggedBlock || tag)));
     };
     visit(tree, false);
   };

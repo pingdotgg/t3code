@@ -589,23 +589,29 @@ export function NativeMarkdownBlock(props: {
           ))}
         </View>
       );
+    // Code and tables read in source order, so they say so rather than inheriting: an Arabic list
+    // item or quote around one would otherwise mirror its header row and its columns.
     case "code_block":
       return (
-        <NativeCodeBlock
-          node={props.node}
-          textStyle={props.textStyle}
-          highlightCode={props.highlightCode}
-          compact={props.compact}
-        />
+        <View style={{ direction: "ltr" }}>
+          <NativeCodeBlock
+            node={props.node}
+            textStyle={props.textStyle}
+            highlightCode={props.highlightCode}
+            compact={props.compact}
+          />
+        </View>
       );
     case "table":
       return (
-        <NativeTable
-          node={props.node}
-          skills={props.skills}
-          textStyle={props.textStyle}
-          onLinkPress={props.onLinkPress}
-        />
+        <View style={{ direction: "ltr" }}>
+          <NativeTable
+            node={props.node}
+            skills={props.skills}
+            textStyle={props.textStyle}
+            onLinkPress={props.onLinkPress}
+          />
+        </View>
       );
     case "image":
       return (

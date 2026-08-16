@@ -8,8 +8,10 @@ describe("markdownTextDirection", () => {
     expect(markdownTextDirection("مرحبا بالعالم")).toBe("rtl");
     expect(markdownTextDirection("  — «مرحبا»")).toBe("rtl");
     expect(markdownTextDirection("שלום עולם")).toBe("rtl");
-    expect(markdownTextDirection("Hello world")).toBeUndefined();
-    expect(markdownTextDirection("1. Hello, مرحبا")).toBeUndefined();
+    expect(markdownTextDirection("ࡀࡁࡂ")).toBe("rtl");
+    expect(markdownTextDirection("Hello world")).toBe("ltr");
+    expect(markdownTextDirection("1. Hello, مرحبا")).toBe("ltr");
+    // No letter to read: left to inherit rather than forced either way round.
     expect(markdownTextDirection("42 — 3.14")).toBeUndefined();
     expect(markdownTextDirection("")).toBeUndefined();
   });
@@ -25,7 +27,7 @@ describe("markdownNodeDirection", () => {
       markdownNodeDirection(node("list_item", [node("paragraph", [text("  "), text("مرحبا")])])),
     ).toBe("rtl");
     expect(markdownNodeDirection(node("list_item", [node("paragraph", [text("item")])]))).toBe(
-      undefined,
+      "ltr",
     );
     expect(markdownNodeDirection(node("list_item", []))).toBeUndefined();
   });

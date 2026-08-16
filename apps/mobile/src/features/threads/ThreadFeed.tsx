@@ -586,14 +586,18 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         <View className="mt-0.5 mb-2">
           {node.children?.map((child, index) => {
             const childKey = `${child.type}:${child.beg ?? "unknown"}:${child.end ?? "unknown"}`;
-            if (child.type === "task_list_item") {
-              return (
-                <Renderer key={childKey} node={child} depth={1} inListItem parentIsText={false} />
-              );
-            }
             // Per item: a right-to-left item mirrors its own row so the marker lands on the side
             // its text starts from. Matches the web client's per-block direction.
             const itemDirection = markdownNodeDirection(child);
+            if (child.type === "task_list_item") {
+              // Its checkbox row is the renderer's own, so the direction goes on a wrapper —
+              // without it a task item is the one row in the list that never mirrors.
+              return (
+                <View key={childKey} style={{ direction: itemDirection }}>
+                  <Renderer node={child} depth={1} inListItem parentIsText={false} />
+                </View>
+              );
+            }
             return (
               <View
                 className="mb-[3px] flex-row items-start"
