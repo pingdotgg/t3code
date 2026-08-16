@@ -1642,21 +1642,19 @@ function CompactFilterMenu<Value extends string>({
         <MenuRadioGroup value={value} onValueChange={(next) => onChange(next as Value)}>
           {options.map((option) => (
             <Tooltip key={option.value}>
-              <TooltipTrigger
-                render={
-                  <MenuRadioItem
-                    value={option.value}
-                    // A host the server has already said it cannot read is not a choice here either.
-                    // The pills disable it; a menu that offers it would answer the press by replacing
-                    // a working list with the same failure the pill row exists to explain.
-                    disabled={option.unavailable !== undefined}
-                  />
-                }
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <option.Icon aria-hidden className="size-3.5" />
-                  {option.label}
-                </span>
+              <TooltipTrigger render={<span className="block" />}>
+                <MenuRadioItem
+                  value={option.value}
+                  // A host the server has already said it cannot read is not a choice here either.
+                  // The pills disable it; a menu that offers it would answer the press by replacing
+                  // a working list with the same failure the pill row exists to explain.
+                  disabled={option.unavailable !== undefined}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <option.Icon aria-hidden className="size-3.5" />
+                    {option.label}
+                  </span>
+                </MenuRadioItem>
               </TooltipTrigger>
               {option.unavailable ? (
                 <TooltipPopup side="top" className="max-w-80">

@@ -692,14 +692,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
           </div>
-          <Tooltip>
-            <TooltipTrigger render={<p className="text-xs text-muted-foreground" />}>
-              {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
-              <span aria-hidden> · </span>
-              <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
-          </Tooltip>
+          <p className="text-xs text-muted-foreground">
+            <Tooltip>
+              <TooltipTrigger render={<span />}>
+                {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
+            </Tooltip>
+            <span aria-hidden> · </span>
+            <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
+          </p>
           {shareablePairingUrl === null ? (
             <p className="text-[11px] text-muted-foreground/70">
               Copy the token and pair from another client using this backend&apos;s reachable host.

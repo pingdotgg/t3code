@@ -1488,27 +1488,30 @@ export function PullRequestDetailPanel({
                     </button>
                   ))}
                 </nav>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="ml-auto inline-flex min-w-0 shrink items-center gap-1 font-mono text-[11px] text-muted-foreground" />
-                    }
-                  >
-                    <span className="truncate">{detail.baseBranch}</span>
-                    {freshness ? (
-                      <PullRequestBaseFreshnessWarning
-                        baseBranch={detail.baseBranch}
-                        freshness={freshness}
-                        pending={actionPending}
-                        onUpdate={(method) => void perform("update-branch", undefined, method)}
-                        iconClassName="size-3"
+                <span className="ml-auto inline-flex min-w-0 shrink items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                  {freshness ? (
+                    <PullRequestBaseFreshnessWarning
+                      baseBranch={detail.baseBranch}
+                      freshness={freshness}
+                      pending={actionPending}
+                      onUpdate={(method) => void perform("update-branch", undefined, method)}
+                      iconClassName="size-3"
+                    />
+                  ) : null}
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span className="inline-flex min-w-0 items-center gap-1" />}
+                    >
+                      <span className="truncate">{detail.baseBranch}</span>
+                      <ArrowLeftIcon
+                        aria-label="receives changes from"
+                        className="size-3 shrink-0"
                       />
-                    ) : null}
-                    <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
-                    <span className="truncate">{detail.headBranch}</span>
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{`${detail.baseBranch} ← ${detail.headBranch}`}</TooltipPopup>
-                </Tooltip>
+                      <span className="truncate">{detail.headBranch}</span>
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{`${detail.baseBranch} ← ${detail.headBranch}`}</TooltipPopup>
+                  </Tooltip>
+                </span>
                 <span className="ml-2 inline-flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-1 tabular-nums">
                     <FileDiffIcon className="size-3" />
@@ -1672,7 +1675,7 @@ export function PullRequestDetailPanel({
                       </span>
                     </TooltipTrigger>
                     <TooltipPopup side="top">
-                      {isBranchCopied ? "Copied" : "Copy pull request branch"}
+                      {`${isBranchCopied ? "Copied" : "Copy pull request branch"}: ${detail.headBranch}`}
                     </TooltipPopup>
                   </Tooltip>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
