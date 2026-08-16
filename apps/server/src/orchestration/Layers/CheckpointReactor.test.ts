@@ -330,6 +330,7 @@ describe("CheckpointReactor", () => {
             workingTree: { files: [], insertions: 0, deletions: 0 },
           }),
         ),
+      invalidateStatus: () => Effect.void,
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
       streamStatus: () => Stream.empty,
     });

@@ -135,6 +135,12 @@ interface ActiveRemotePoller {
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
 }
 
+interface InFlightRefresh {
+  readonly fiber: Fiber.Fiber<VcsStatusResult, GitManagerServiceError>;
+  readonly startedGeneration: number;
+  readonly pendingRerun: boolean;
+}
+
 interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
 }
@@ -162,6 +168,7 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
+    readonly invalidateStatus: (cwd: string) => Effect.Effect<void>;
     readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly streamStatus: (
       input: VcsStatusInput,
@@ -193,9 +200,8 @@ export const make = Effect.gen(function* () {
   );
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
-  const inFlightRefreshesRef = yield* SynchronizedRef.make(
-    new Map<string, Fiber.Fiber<VcsStatusResult, GitManagerServiceError>>(),
-  );
+  const inFlightRefreshesRef = yield* SynchronizedRef.make(new Map<string, InFlightRefresh>());
+  const invalidateGenerationsRef = yield* Ref.make(new Map<string, number>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -381,35 +387,120 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedStatus(cwd, local, remote, { publish: true });
   });
 
+  const invalidateGenerationOf = (cwd: string) =>
+    Ref.get(invalidateGenerationsRef).pipe(Effect.map((generations) => generations.get(cwd) ?? 0));
+
+  function startRefreshFiber(
+    cwd: string,
+    startedGeneration: number,
+  ): Effect.Effect<Fiber.Fiber<VcsStatusResult, GitManagerServiceError>> {
+    return refreshStatusCore(cwd).pipe(
+      Effect.ensuring(settleRefreshFiber(cwd, startedGeneration)),
+      Effect.forkIn(broadcasterScope),
+    );
+  }
+
+  function settleRefreshFiber(cwd: string, startedGeneration: number) {
+    return Effect.gen(function* () {
+      const shouldRerun = yield* SynchronizedRef.modify(inFlightRefreshesRef, (inFlight) => {
+        const existing = inFlight.get(cwd);
+        if (existing === undefined || existing.startedGeneration !== startedGeneration) {
+          return [false, inFlight] as const;
+        }
+        if (!existing.pendingRerun) {
+          const next = new Map(inFlight);
+          next.delete(cwd);
+          return [false, next] as const;
+        }
+        const next = new Map(inFlight);
+        next.set(cwd, { ...existing, pendingRerun: false });
+        return [true, next] as const;
+      });
+      if (!shouldRerun) {
+        return;
+      }
+
+      const nextGeneration = yield* invalidateGenerationOf(cwd);
+      const nextFiber = yield* startRefreshFiber(cwd, nextGeneration);
+      yield* SynchronizedRef.update(inFlightRefreshesRef, (inFlight) => {
+        const existing = inFlight.get(cwd);
+        if (existing === undefined || existing.startedGeneration !== startedGeneration) {
+          return inFlight;
+        }
+        const next = new Map(inFlight);
+        next.set(cwd, {
+          fiber: nextFiber,
+          startedGeneration: nextGeneration,
+          pendingRerun: existing.pendingRerun,
+        });
+        return next;
+      });
+    });
+  }
+
+  const invalidateStatus: VcsStatusBroadcaster["Service"]["invalidateStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.invalidateStatus",
+  )(function* (rawCwd) {
+    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    yield* workflow.invalidateStatus(cwd);
+    yield* Ref.update(invalidateGenerationsRef, (generations) => {
+      const next = new Map(generations);
+      next.set(cwd, (generations.get(cwd) ?? 0) + 1);
+      return next;
+    });
+    // A mutation after an in-flight refresh started must not reuse that run.
+    yield* SynchronizedRef.update(inFlightRefreshesRef, (inFlight) => {
+      const existing = inFlight.get(cwd);
+      if (existing === undefined || existing.pendingRerun) {
+        return inFlight;
+      }
+      const next = new Map(inFlight);
+      next.set(cwd, { ...existing, pendingRerun: true });
+      return next;
+    });
+  });
+
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    // Overlapping callers share one invalidate+recompute. The work is forked
-    // into the broadcaster scope so interrupting a waiter cannot cancel it.
-    const fiber = yield* SynchronizedRef.modifyEffect(inFlightRefreshesRef, (inFlight) => {
-      const existing = inFlight.get(cwd);
-      if (existing) {
-        return Effect.succeed([existing, inFlight] as const);
-      }
+    // Same-generation callers share one invalidate+recompute. The work is
+    // forked into the broadcaster scope so interrupting a waiter cannot
+    // cancel it. A later invalidate marks that run stale and this waiter
+    // joins one follow-up refresh after it completes.
+    while (true) {
+      const requestGeneration = yield* invalidateGenerationOf(cwd);
+      const inFlight = yield* SynchronizedRef.modifyEffect(inFlightRefreshesRef, (current) => {
+        const existing = current.get(cwd);
+        if (existing) {
+          if (existing.startedGeneration >= requestGeneration) {
+            return Effect.succeed([existing, current] as const);
+          }
+          const joined = { ...existing, pendingRerun: true };
+          const next = new Map(current);
+          next.set(cwd, joined);
+          return Effect.succeed([joined, next] as const);
+        }
 
-      return refreshStatusCore(cwd).pipe(
-        Effect.ensuring(
-          SynchronizedRef.update(inFlightRefreshesRef, (current) => {
+        return startRefreshFiber(cwd, requestGeneration).pipe(
+          Effect.map((started) => {
+            const created: InFlightRefresh = {
+              fiber: started,
+              startedGeneration: requestGeneration,
+              pendingRerun: false,
+            };
             const next = new Map(current);
-            next.delete(cwd);
-            return next;
+            next.set(cwd, created);
+            return [created, next] as const;
           }),
-        ),
-        Effect.forkIn(broadcasterScope),
-        Effect.map((started) => {
-          const next = new Map(inFlight);
-          next.set(cwd, started);
-          return [started, next] as const;
-        }),
-      );
-    });
-    return yield* Fiber.join(fiber);
+        );
+      });
+      const result = yield* Fiber.join(inFlight.fiber);
+      const latestGeneration = yield* invalidateGenerationOf(cwd);
+      if (inFlight.startedGeneration >= latestGeneration) {
+        return result;
+      }
+    }
   });
 
   const makeRemoteRefreshLoop = (
@@ -621,6 +712,7 @@ export const make = Effect.gen(function* () {
   return VcsStatusBroadcaster.of({
     getStatus,
     refreshLocalStatus,
+    invalidateStatus,
     refreshStatus,
     streamStatus,
   });

@@ -5273,6 +5273,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             switchRef: (input) => Effect.succeed({ refName: input.refName }),
           },
           vcsStatusBroadcaster: {
+            invalidateStatus: () => Effect.void,
             refreshStatus: () =>
               Effect.succeed({
                 isRepo: true,
@@ -7380,6 +7381,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               createWorktree,
             },
             vcsStatusBroadcaster: {
+              invalidateStatus: () => Effect.void,
               refreshStatus,
             },
             orchestrationEngine: {

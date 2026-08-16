@@ -829,7 +829,12 @@ const make = Effect.gen(function* () {
         branch: renamed.branch,
         worktreePath: cwd,
       });
-      yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
+      yield* vcsStatusBroadcaster
+        .invalidateStatus(cwd)
+        .pipe(
+          Effect.andThen(vcsStatusBroadcaster.refreshStatus(cwd)),
+          Effect.ignoreCause({ log: true }),
+        );
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider command reactor failed to generate or rename worktree branch", {

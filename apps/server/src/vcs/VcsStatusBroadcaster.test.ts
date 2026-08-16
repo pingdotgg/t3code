@@ -146,20 +146,22 @@ function makeGatedRefreshLayer(state: GatedRefreshState, gates: GatedRefreshGate
           Effect.suspend(() => {
             state.seenCwds?.push(input.cwd);
             state.localStatusCalls += 1;
+            const local = state.currentLocalStatus;
             return (
               gates.started === null || state.localStatusCalls < startedAfter
                 ? Effect.void
                 : Deferred.succeed(gates.started, undefined).pipe(Effect.ignore)
             ).pipe(
               Effect.andThen(gates.release === null ? Effect.void : Deferred.await(gates.release)),
-              Effect.as(state.currentLocalStatus),
+              Effect.as(local),
             );
           }),
         remoteStatus: () =>
           Effect.suspend(() => {
             state.remoteStatusCalls += 1;
+            const remote = state.currentRemoteStatus;
             return (gates.release === null ? Effect.void : Deferred.await(gates.release)).pipe(
-              Effect.as(state.currentRemoteStatus),
+              Effect.as(remote),
             );
           }),
         invalidateLocalStatus: () =>
@@ -1010,6 +1012,63 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.localInvalidationCalls, 2);
       assert.equal(state.remoteInvalidationCalls, 2);
       assert.deepStrictEqual([...state.seenCwds].toSorted(), ["/repo-a", "/repo-b"]);
+    }).pipe(Effect.provide(makeGatedRefreshLayer(state, gates)));
+  });
+
+  it.effect("does not reuse a pre-invalidation in-flight status refresh", () => {
+    const firstLocal = baseLocalStatus;
+    const firstRemote = baseRemoteStatus;
+    const nextLocal = {
+      ...baseLocalStatus,
+      refName: "feature/after-mutation",
+    };
+    const nextRemote = {
+      ...baseRemoteStatus,
+      aheadCount: 4,
+    };
+    const state = {
+      currentLocalStatus: firstLocal,
+      currentRemoteStatus: firstRemote,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    const gates: GatedRefreshGates = { started: null, release: null };
+
+    return Effect.gen(function* () {
+      gates.started = yield* Deferred.make<void>();
+      gates.release = yield* Deferred.make<void>();
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      const first = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(gates.started);
+      state.currentLocalStatus = nextLocal;
+      state.currentRemoteStatus = nextRemote;
+      yield* broadcaster.invalidateStatus("/repo");
+      const afterMutation = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(gates.release, undefined);
+
+      const firstResult = yield* Fiber.join(first);
+      const afterMutationResult = yield* Fiber.join(afterMutation);
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+      const nextStatus = {
+        ...nextLocal,
+        ...nextRemote,
+      };
+
+      assert.deepStrictEqual(afterMutationResult, nextStatus);
+      assert.deepStrictEqual(cached, nextStatus);
+      assert.deepStrictEqual(firstResult, nextStatus);
+      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 2);
     }).pipe(Effect.provide(makeGatedRefreshLayer(state, gates)));
   });
 });
