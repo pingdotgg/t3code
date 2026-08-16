@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { __resetAudioContextForTests, playTurnCompletionSound } from "./turnChime";
+import {
+  __resetAudioContextForTests,
+  playTurnCompletionSound,
+  playTurnErrorSound,
+} from "./turnChime";
 
 describe("turnChime", () => {
   let createdOscillators: Array<{
@@ -46,5 +50,12 @@ describe("turnChime", () => {
     expect(createdOscillators.length).toBe(2);
     expect(createdOscillators[0]?.start).toHaveBeenCalledWith(10);
     expect(createdOscillators[1]?.start).toHaveBeenCalledWith(10.08);
+  });
+
+  it("plays an error sound when called", () => {
+    playTurnErrorSound();
+    expect(createdOscillators.length).toBe(2);
+    expect(createdOscillators[0]?.start).toHaveBeenCalledWith(10);
+    expect(createdOscillators[1]?.start).toHaveBeenCalledWith(10.09);
   });
 });

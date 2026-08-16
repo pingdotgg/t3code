@@ -189,10 +189,11 @@ describe("detectNewTurnCompletions", () => {
 
     const result = detectNewTurnCompletions([thread], previous);
     expect(result.hasNewCompletion).toBe(false);
+    expect(result.hasNewError).toBe(false);
     expect(result.nextCompletions[key]).toBe("2026-08-15T07:02:00.000Z");
   });
 
-  it("does not trigger chime when a turn ends in error", () => {
+  it("triggers error sound when a turn ends in error", () => {
     const thread = createMockThread("thread-1", {
       session: {
         status: "error",
@@ -213,6 +214,7 @@ describe("detectNewTurnCompletions", () => {
 
     const result = detectNewTurnCompletions([thread], previous);
     expect(result.hasNewCompletion).toBe(false);
+    expect(result.hasNewError).toBe(true);
     expect(result.nextCompletions[key]).toBe("2026-08-15T07:02:00.000Z");
   });
 });

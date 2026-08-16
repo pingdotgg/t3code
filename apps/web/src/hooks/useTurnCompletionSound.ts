@@ -2,7 +2,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useEffect, useRef } from "react";
 
-import { playTurnCompletionSound } from "~/audio/turnChime";
+import { playTurnCompletionSound, playTurnErrorSound } from "~/audio/turnChime";
 import { useClientSettings } from "./useSettings";
 import { useThreadShells } from "~/state/entities";
 import { isLatestTurnSettled } from "~/session-logic";
@@ -12,10 +12,12 @@ export function detectNewTurnCompletions(
   previousCompletions: Readonly<Record<string, string>>,
 ): {
   readonly hasNewCompletion: boolean;
+  readonly hasNewError: boolean;
   readonly nextCompletions: Record<string, string>;
 } {
   const nextCompletions: Record<string, string> = { ...previousCompletions };
   let hasNewCompletion = false;
+  let hasNewError = false;
 
   for (const thread of threads) {
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -25,25 +27,31 @@ export function detectNewTurnCompletions(
     }
     const previousState = previousCompletions[threadKey];
 
-    const isSuccessfulCompletion =
+    const isSettled =
       isLatestTurnSettled(thread.latestTurn, thread.session) &&
-      thread.latestTurn?.state === "completed" &&
-      thread.session?.status !== "interrupted" &&
-      thread.session?.status !== "stopped" &&
-      thread.session?.status !== "error" &&
+      thread.latestTurn?.state !== "running" &&
       Boolean(thread.latestTurn?.completedAt);
 
-    if (!isSuccessfulCompletion) {
+    if (!isSettled) {
       if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
         nextCompletions[threadKey] = "running";
-      } else if (thread.latestTurn?.completedAt) {
-        nextCompletions[threadKey] = thread.latestTurn.completedAt;
       }
       continue;
     }
 
     const completedAt = thread.latestTurn?.completedAt;
     if (!completedAt) continue;
+
+    const isInterrupted =
+      thread.latestTurn?.state === "interrupted" ||
+      thread.session?.status === "interrupted" ||
+      thread.session?.status === "stopped";
+
+    const isError =
+      !isInterrupted &&
+      (thread.latestTurn?.state === "error" || thread.session?.status === "error");
+
+    const isSuccess = !isInterrupted && !isError && thread.latestTurn?.state === "completed";
 
     if (previousState === undefined) {
       nextCompletions[threadKey] = completedAt;
@@ -52,11 +60,15 @@ export function detectNewTurnCompletions(
 
     if (previousState !== completedAt) {
       nextCompletions[threadKey] = completedAt;
-      hasNewCompletion = true;
+      if (isSuccess) {
+        hasNewCompletion = true;
+      } else if (isError) {
+        hasNewError = true;
+      }
     }
   }
 
-  return { hasNewCompletion, nextCompletions };
+  return { hasNewCompletion, hasNewError, nextCompletions };
 }
 
 export function useTurnCompletionSound(): void {
@@ -65,14 +77,18 @@ export function useTurnCompletionSound(): void {
   const knownCompletionsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    const { hasNewCompletion, nextCompletions } = detectNewTurnCompletions(
+    const { hasNewCompletion, hasNewError, nextCompletions } = detectNewTurnCompletions(
       threads,
       knownCompletionsRef.current,
     );
     knownCompletionsRef.current = nextCompletions;
 
-    if (hasNewCompletion && settings.soundNotificationsEnabled) {
-      playTurnCompletionSound();
+    if (settings.soundNotificationsEnabled) {
+      if (hasNewError) {
+        playTurnErrorSound();
+      } else if (hasNewCompletion) {
+        playTurnCompletionSound();
+      }
     }
   }, [threads, settings.soundNotificationsEnabled]);
 }
