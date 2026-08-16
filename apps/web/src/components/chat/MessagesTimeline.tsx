@@ -1111,7 +1111,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums">
-        {wasEdited ? <span className="text-muted-foreground">Edited</span> : null}
         <div
           className={cn(
             "flex shrink-0 items-center gap-2 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100",
@@ -1126,6 +1125,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
             </TooltipPopup>
           </Tooltip>
+          {wasEdited ? <span className="text-muted-foreground">Edited</span> : null}
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
             {canEditMessage && !isEditing ? (

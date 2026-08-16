@@ -491,7 +491,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('aria-label="Edit message"');
-    expect(markup).toContain("Edited");
+    expect(markup).toMatch(
+      /group-hover:opacity-100[^>]*>.*<span class="text-muted-foreground">Edited<\/span>.*aria-label="Edit message"/,
+    );
     expect(markup).not.toContain('aria-label="Revert to this message"');
   });
 
