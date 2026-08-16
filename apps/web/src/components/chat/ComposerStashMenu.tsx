@@ -39,6 +39,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   const { entries, onRestore, onDelete, onClose, focusCloseOnMount } = props;
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const commandListRef = useRef<HTMLDivElement>(null);
 
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
 
@@ -65,6 +66,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         if (entries.length === 0) return;
         event.preventDefault();
         event.stopPropagation();
+        if (event.target === closeButtonRef.current) commandListRef.current?.focus();
         const currentIndex = entries.findIndex((entry) => entry.id === highlightedId);
         const offset = event.key === "ArrowDown" ? 1 : -1;
         const normalizedIndex = currentIndex >= 0 ? currentIndex : offset === 1 ? -1 : 0;
@@ -115,7 +117,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
             <XIcon />
           </Button>
         </div>
-        <CommandList className="max-h-72">
+        <CommandList ref={commandListRef} tabIndex={-1} className="max-h-72 focus:outline-none">
           <CommandGroup aria-label="Stashed prompts">
             {entries.length === 0 ? (
               <p className="px-3 pb-3 pt-1 text-secondary-label text-xs">
