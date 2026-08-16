@@ -1695,22 +1695,13 @@ function ChatViewContent(props: ChatViewProps) {
   const retainClosedRightPanelContent = retainedRightPanelThreadKey === routeThreadKey;
   useEffect(() => {
     if (maximizedRightPanelThreadKey === null) return;
-    if (maximizedRightPanelThreadKey !== routeThreadKey) {
+    if (maximizedRightPanelThreadKey !== routeThreadKey || !rightPanelOpen) {
       setMaximizedRightPanelThreadKey(null);
-      return;
     }
-    if (rightPanelOpen) return;
-    const timeout = window.setTimeout(
-      () => setMaximizedRightPanelThreadKey(null),
-      RIGHT_PANEL_EXIT_DURATION_MS,
-    );
-    return () => window.clearTimeout(timeout);
   }, [maximizedRightPanelThreadKey, rightPanelOpen, routeThreadKey]);
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
-    !shouldUseRightPanelSheet &&
-    maximizedRightPanelThreadKey === routeThreadKey &&
-    (rightPanelOpen || retainClosedRightPanelContent);
+    !shouldUseRightPanelSheet && maximizedRightPanelThreadKey === routeThreadKey && rightPanelOpen;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -6276,7 +6267,7 @@ function ChatViewContent(props: ChatViewProps) {
         <header
           data-chat-header
           className={cn(
-            "bg-background transition-[padding-left] duration-[240ms] ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
+            "bg-background",
             isElectron
               ? cn(
                   "drag-region relative flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",

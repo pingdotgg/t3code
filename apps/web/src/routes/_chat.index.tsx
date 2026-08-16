@@ -145,7 +145,7 @@ function HostedStaticOnboardingState() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <header
           className={cn(
-            "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center border-b border-border px-3 transition-[padding-left] duration-[240ms] ease-[var(--motion-ease-drawer)] motion-reduce:transition-none sm:px-5",
+            "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center border-b border-border px-3 sm:px-5",
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >

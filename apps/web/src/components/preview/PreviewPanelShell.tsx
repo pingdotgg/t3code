@@ -109,7 +109,7 @@ export function PreviewPanelShell(props: {
             "relative flex h-full min-h-0 min-w-0 flex-col",
             isInline && !props.maximized ? "shrink-0" : "w-full",
           )}
-          style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
+          style={isInline && !props.maximized ? { width: `calc(${width}px - 1px)` } : undefined}
         >
           {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
           {props.children}
