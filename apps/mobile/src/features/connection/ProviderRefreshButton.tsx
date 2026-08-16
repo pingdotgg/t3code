@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -11,6 +12,10 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
+
+export function canRefreshProviders(connectionState: EnvironmentConnectionPhase): boolean {
+  return connectionState === "connected";
+}
 
 export function ProviderRefreshButton(props: {
   readonly onRefresh: () => Promise<AtomCommandResult<unknown, unknown>>;

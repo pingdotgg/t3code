@@ -7,7 +7,7 @@ import { createElement, type ReactNode } from "react";
 
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
-import { ProviderRefreshButton } from "./ProviderRefreshButton";
+import { canRefreshProviders, ProviderRefreshButton } from "./ProviderRefreshButton";
 
 type PressableProps = {
   readonly accessibilityLabel?: string;
@@ -73,6 +73,17 @@ async function pressButton() {
 }
 
 describe("ProviderRefreshButton", () => {
+  it.each([
+    ["available", false],
+    ["offline", false],
+    ["connecting", false],
+    ["reconnecting", false],
+    ["connected", true],
+    ["error", false],
+  ] as const)("allows refresh only for %s environments", (connectionState, expected) => {
+    expect(canRefreshProviders(connectionState)).toBe(expected);
+  });
+
   it("renders a labeled full-size refresh action", () => {
     const markup = renderToStaticMarkup(
       <ProviderRefreshButton onRefresh={async () => AsyncResult.success(undefined)} />,

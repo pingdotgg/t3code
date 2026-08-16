@@ -24,7 +24,7 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
-import { ProviderRefreshButton } from "./ProviderRefreshButton";
+import { canRefreshProviders, ProviderRefreshButton } from "./ProviderRefreshButton";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
 interface CloudEnvironmentRowsProps {
@@ -409,7 +409,7 @@ function CloudEnvironmentRowShell(props: {
         trackColor={{ false: track, true: activeTrack }}
         value={props.value}
       />
-      {props.onRefreshProviders ? (
+      {props.onRefreshProviders && canRefreshProviders(props.connectionState) ? (
         <ProviderRefreshButton compact onRefresh={props.onRefreshProviders} />
       ) : null}
     </View>
