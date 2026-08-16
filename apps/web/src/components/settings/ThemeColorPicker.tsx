@@ -1,9 +1,10 @@
 import type { KeyboardEvent, PointerEvent } from "react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { isThemeColor, type ThemeColorRole } from "../../themePalette";
+import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function getThemeRoleLabel(role: ThemeColorRole): string {
   const labels: Partial<Record<ThemeColorRole, string>> = {
     canvas: "Background",
@@ -37,39 +38,18 @@ function clampThemeColor(value: number, min = 0, max = 1) {
 }
 
 /**
- * The picker's plane and sliders operate on opaque six-digit hex, but theme
- * colors may carry alpha. The suffix is preserved separately and re-attached
- * on commit so adjusting hue or brightness cannot change transparency.
+ * The picker remains an sRGB/hex adapter over the OKLCH palette engine. Alpha
+ * is preserved separately and re-attached on commit so adjusting hue or
+ * brightness cannot change transparency.
  */
 function themePickerAlphaSuffix(value: string): string {
-  const trimmed = value.trim().toLowerCase();
-  const alpha = /^#[0-9a-f]{4}$/.test(trimmed)
-    ? trimmed.slice(4).repeat(2)
-    : /^#[0-9a-f]{8}$/.test(trimmed)
-      ? trimmed.slice(7)
-      : "";
+  const normalized = themeColorToHex(value) ?? "";
+  const alpha = normalized.length === 9 ? normalized.slice(7) : "";
   return alpha === "ff" ? "" : alpha;
 }
 
 function normalizeThemePickerColor(value: string): string {
-  const trimmed = value.trim();
-  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
-    return `#${trimmed
-      .slice(1)
-      .split("")
-      .map((character) => `${character}${character}`)
-      .join("")}`;
-  }
-  if (/^#[0-9a-f]{4}$/i.test(trimmed)) {
-    return `#${trimmed
-      .slice(1, 4)
-      .split("")
-      .map((character) => `${character}${character}`)
-      .join("")}`;
-  }
-  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed;
-  if (/^#[0-9a-f]{8}$/i.test(trimmed)) return trimmed.slice(0, 7);
-  return "#000000";
+  return (themeColorToHex(value) ?? "#000000").slice(0, 7);
 }
 
 function themeHexToHsv(hex: string): ThemeColorHsv {
@@ -455,23 +435,29 @@ function ThemeColorPicker({
 }) {
   return (
     <Popover>
-      <PopoverTrigger
-        render={
-          <button
-            aria-label={`Choose ${label} color`}
-            className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            onFocus={onInteract}
-            onPointerDown={onInteract}
-            title={`Choose ${label} color`}
-            type="button"
-          >
-            <span
-              className="absolute inset-0 rounded-full shadow-sm"
-              style={{ backgroundColor: value }}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <button
+                  aria-label={`Choose ${label} color`}
+                  className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  onFocus={onInteract}
+                  onPointerDown={onInteract}
+                  type="button"
+                >
+                  <span
+                    className="absolute inset-0 rounded-full shadow-sm"
+                    style={{ backgroundColor: value }}
+                  />
+                </button>
+              }
             />
-          </button>
-        }
-      />
+          }
+        />
+        <TooltipPopup side="top">{`Choose ${label} color`}</TooltipPopup>
+      </Tooltip>
       <PopoverPopup
         align="end"
         className="overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl [--viewport-inline-padding:0px] [&_[data-slot=popover-viewport]]:p-0"
@@ -505,6 +491,9 @@ export const ThemeColorField = memo(function ThemeColorField({
   const label = customLabel ?? getThemeRoleLabel(role);
   const isColorValue = isThemeColor(value);
   const swatchValue = isColorValue ? value : "#000000";
+  const editorValue = value.trim().toLowerCase().startsWith("oklch(")
+    ? (themeColorToHex(value) ?? value)
+    : value;
 
   return (
     <div
@@ -514,16 +503,22 @@ export const ThemeColorField = memo(function ThemeColorField({
       )}
       data-theme-color-role={role}
     >
-      <button
-        aria-label={`${selected ? "Hide" : "Show"} ${label} usage`}
-        aria-pressed={selected}
-        className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => onToggleSelected?.(role)}
-        title={`${selected ? "Hide" : "Show"} where ${label} is used`}
-        type="button"
-      >
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              aria-label={`${selected ? "Hide" : "Show"} ${label} usage`}
+              aria-pressed={selected}
+              className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => onToggleSelected?.(role)}
+              type="button"
+            >
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+            </button>
+          }
+        />
+        <TooltipPopup side="top">{`${selected ? "Hide" : "Show"} where ${label} is used`}</TooltipPopup>
+      </Tooltip>
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <ThemeColorPicker
           label={label}
@@ -542,7 +537,7 @@ export const ThemeColorField = memo(function ThemeColorField({
           onPointerDown={() => onSelect?.(role)}
           size="sm"
           unstyled
-          value={value}
+          value={editorValue}
         />
       </div>
     </div>

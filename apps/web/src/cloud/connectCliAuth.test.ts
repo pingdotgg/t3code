@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildConnectCliClerkAuthorizeUrl,
+  connectCliSignInRedirectUrl,
   hasConnectCliAuthConfig,
   readConnectCliCallbackResult,
 } from "./connectCliAuth";
@@ -46,11 +47,50 @@ describe("connectCliAuth", () => {
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
   });
 
+  it("redirects straight to the CLI's loopback listener when the request carries a port", () => {
+    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
+    vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
+
+    const authorizeUrl = buildConnectCliClerkAuthorizeUrl({
+      state: "state-1",
+      challenge: "challenge-1",
+      loopbackPort: 34338,
+    });
+    expect(authorizeUrl).not.toBeNull();
+
+    const url = new URL(authorizeUrl!);
+    expect(url.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:34338/callback");
+    expect(url.searchParams.get("state")).toBe("state-1");
+  });
+
   it("returns null when the CLI OAuth client id is not configured", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
     expect(
       buildConnectCliClerkAuthorizeUrl({ state: "state-1", challenge: "challenge-1" }),
     ).toBeNull();
+  });
+
+  it("sends the sign-in redirect to the authorize endpoint, not back to /connect", () => {
+    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
+    vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
+
+    const connectUrl = "https://app.t3.codes/connect#state=state-1&challenge=challenge-1";
+    const redirectUrl = connectCliSignInRedirectUrl(
+      { state: "state-1", challenge: "challenge-1" },
+      connectUrl,
+    );
+
+    expect(redirectUrl).not.toBe(connectUrl);
+    expect(new URL(redirectUrl).pathname).toBe("/oauth/authorize");
+  });
+
+  it("falls back to the current URL when the authorize URL cannot be built", () => {
+    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
+
+    const connectUrl = "https://app.t3.codes/connect#state=state-1&challenge=challenge-1";
+    expect(
+      connectCliSignInRedirectUrl({ state: "state-1", challenge: "challenge-1" }, connectUrl),
+    ).toBe(connectUrl);
   });
 
   it("reads the code and state Clerk echoes back to the callback", () => {

@@ -701,6 +701,84 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
+  it.effect(
+    "re-probes readiness after the first budget expires while the backend is still alive",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const requestUrls: Array<string> = [];
+          let requestCount = 0;
+          let readyCount = 0;
+          let readinessTimeoutCount = 0;
+          const firstProbe = yield* Deferred.make<void>();
+          const childExit = yield* Deferred.make<void>();
+
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(
+                makeProcess({
+                  exitCode: Deferred.await(childExit).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                }),
+              ),
+            ),
+          );
+
+          // The backend stays 503 through the first *two* readiness budgets
+          // and only becomes healthy (200) for the third round, i.e. it comes
+          // up well after the initial 50ms budget has expired.
+          const httpLayer = httpClientLayer((request) =>
+            Effect.gen(function* () {
+              requestCount += 1;
+              requestUrls.push(request.url);
+              yield* Deferred.succeed(firstProbe, void 0);
+              return responseForRequest(request, requestCount <= 2 ? 503 : 200);
+            }),
+          );
+
+          const runFiber = yield* DesktopBackendManager.runBackendProcess({
+            ...baseConfig,
+            desktopTelemetryStream: Stream.empty,
+            readinessTimeout: Duration.millis(50),
+            onReady: () =>
+              Effect.sync(() => {
+                readyCount += 1;
+              }),
+            onReadinessFailure: () =>
+              Effect.sync(() => {
+                readinessTimeoutCount += 1;
+              }),
+          }).pipe(Effect.provide(Layer.merge(spawnerLayer, httpLayer)), Effect.forkChild);
+
+          yield* Deferred.await(firstProbe);
+          assert.equal(readyCount, 0);
+          assert.equal(readinessTimeoutCount, 0);
+
+          // The first 50ms readiness budget expires while the backend still
+          // answers 503. The child is alive and may yet become healthy, so the
+          // probe must start a fresh round instead of stopping permanently —
+          // the pre-fix behavior left the app stuck on "Connecting to WSL…"
+          // forever even though the backend kept running.
+          yield* TestClock.adjust(Duration.millis(50));
+          assert.equal(readinessTimeoutCount, 1);
+          assert.equal(readyCount, 0);
+
+          // The second budget also expires (backend still 503), then the third
+          // round connects. The point is the probe persisted across budgets
+          // while the process was alive instead of giving up after the first.
+          yield* TestClock.adjust(Duration.millis(100));
+          assert.equal(readinessTimeoutCount, 2);
+          assert.equal(readyCount, 1);
+          assert.equal(requestUrls.length, 3);
+
+          yield* Deferred.succeed(childExit, void 0);
+          assert.equal((yield* Fiber.join(runFiber)).code.pipe(Option.getOrUndefined), 0);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
+  );
+
   it.effect("starts the configured backend and closes the scoped process on stop", () =>
     Effect.scoped(
       Effect.gen(function* () {

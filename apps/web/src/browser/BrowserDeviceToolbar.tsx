@@ -7,11 +7,12 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS, resolvePreviewViewport } from "@t3tools/shared/previewViewport";
-import { Link2, X } from "lucide-react";
+import { Link2, Unlink2, X } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   Select,
   SelectGroup,
@@ -296,22 +297,34 @@ export function BrowserDeviceToolbar({
         />
       </form>
 
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        type="button"
-        aria-label={
-          aspectRatio === null ? "Lock viewport aspect ratio" : "Unlock viewport aspect ratio"
-        }
-        aria-pressed={aspectRatio !== null}
-        title={aspectRatio === null ? "Lock aspect ratio" : "Unlock aspect ratio"}
-        className={cn(aspectRatio !== null && "bg-accent text-foreground")}
-        disabled={pending || !customValid}
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={toggleAspectRatio}
-      >
-        <Link2 className={cn(aspectRatio !== null && "text-foreground")} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              type="button"
+              aria-label={
+                aspectRatio === null ? "Lock viewport aspect ratio" : "Unlock viewport aspect ratio"
+              }
+              aria-pressed={aspectRatio !== null}
+              className={cn(aspectRatio !== null && "bg-accent text-foreground")}
+              disabled={pending || !customValid}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={toggleAspectRatio}
+            />
+          }
+        >
+          {aspectRatio === null ? (
+            <Unlink2 className={cn(aspectRatio !== null && "text-foreground")} />
+          ) : (
+            <Link2 className={cn(aspectRatio !== null && "text-foreground")} />
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {aspectRatio === null ? "Lock aspect ratio" : "Unlock aspect ratio"}
+        </TooltipPopup>
+      </Tooltip>
       <Button
         variant="ghost"
         size="icon-xs"
