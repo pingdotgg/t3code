@@ -263,6 +263,21 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("keeps a merged thread active when auto-settle on merge is off", () => {
+    const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
+    const layout = buildThreadListV2Items({
+      threads: [merged],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey: new Map([[`${environmentId}:${merged.id}`, "merged"]]),
+      autoSettleOnMerge: false,
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["merged"]);
+    expect(layout.settledCount).toBe(0);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

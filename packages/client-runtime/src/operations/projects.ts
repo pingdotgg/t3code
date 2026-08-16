@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
 import {
+  appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
   inferProjectTitleFromPath,
@@ -174,6 +175,76 @@ export function buildAddProjectRemoteSourceReadiness(
 export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {
   const trimmed = baseDirectory?.trim() ?? "";
   return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
+}
+
+/**
+ * Folder name `git clone` would pick, from either a looked-up repository or a
+ * pasted clone URL. Providers report `owner/repo`, Azure DevOps reports
+ * `org/project/repo`, and a URL can arrive in any form: `https://host/owner/
+ * repo.git`, `ssh://git@host:22/owner/repo`, `git@host:owner/repo.git`, with
+ * or without a query, a fragment or a trailing slash. The repository is always
+ * the last segment, minus the `.git` suffix.
+ */
+export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
+  const withoutQuery = (repositoryOrRemoteUrl ?? "").split(/[?#]/)[0]?.trim() ?? "";
+  const schemeIndex = withoutQuery.indexOf("://");
+  // A remote URL carries a host before the repository path. The host is never
+  // the repository, so a link that stops at the host, or at a port, names
+  // nothing and the destination falls back to the browsed folder.
+  const hasHost = schemeIndex >= 0 || /^[^/\\:]+@[^/\\:]+:/.test(withoutQuery);
+  const pathPart = schemeIndex >= 0 ? withoutQuery.slice(schemeIndex + "://".length) : withoutQuery;
+  const segments = pathPart.split(/[/\\:]+/).filter((segment) => segment.trim().length > 0);
+  if (hasHost && segments.length < 2) {
+    return "";
+  }
+
+  const lastSegment = segments.at(-1)?.trim() ?? "";
+  // A port can only sit directly behind the authority, so it is a port only
+  // when nothing follows it. Deeper segments are path, even when numeric: the
+  // repository in `https://host/acme/123` really is named `123`.
+  if (hasHost && segments.length === 2 && /^\d+$/.test(lastSegment)) {
+    return "";
+  }
+  return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
+}
+
+/**
+ * Clone destination proposed for a directory: the directory the user picked
+ * plus the repository folder inside it. Without a name the directory is the
+ * destination, which is what the raw clone URL flow keeps doing.
+ */
+export function getCloneDestinationPath(
+  directoryPath: string,
+  directoryName: string | null | undefined,
+): string {
+  const name = directoryName?.trim() ?? "";
+  if (name.length === 0) {
+    return directoryPath;
+  }
+  return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+}
+
+/**
+ * Destination query after choosing a directory while the clone folder is
+ * pinned in the path input. Selecting an existing directory with the pinned
+ * name uses that directory directly instead of producing `repo/repo`.
+ */
+export function getCloneDestinationBrowsePath(input: {
+  readonly browseDirectoryPath: string;
+  readonly selectedDirectoryName: string;
+  readonly cloneDirectoryName: string;
+  readonly caseSensitive: boolean;
+}): string {
+  const selectedDirectoryPath = appendBrowsePathSegment(
+    input.browseDirectoryPath,
+    input.selectedDirectoryName,
+  );
+  const selectedDirectoryMatches = input.caseSensitive
+    ? input.selectedDirectoryName === input.cloneDirectoryName
+    : input.selectedDirectoryName.toLowerCase() === input.cloneDirectoryName.toLowerCase();
+  return selectedDirectoryMatches
+    ? selectedDirectoryPath
+    : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
 }
 
 export function resolveAddProjectPath(input: {
