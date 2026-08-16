@@ -75,6 +75,7 @@ import {
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
   normalizeMarkdownLinkDestination,
+  normalizeWindowsMarkdownFileLinks,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -1382,12 +1383,13 @@ function ChatMarkdown({
     serverConfig?.availableEditors ?? [],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const markdownSource = useMemo(() => normalizeWindowsMarkdownFileLinks(text), [text]);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(text)) {
+    for (const href of extractMarkdownLinkHrefs(markdownSource)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
@@ -1396,10 +1398,10 @@ function ChatMarkdown({
       }
     }
     return metaByHref;
-  }, [cwd, text]);
+  }, [cwd, markdownSource]);
   const inlineCodeFileLinkMetaByText = useMemo(() => {
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
-    for (const span of extractInlineCodeSpans(text)) {
+    for (const span of extractInlineCodeSpans(markdownSource)) {
       if (metaByText.has(span)) continue;
       const meta = resolveInlineCodeFileLinkMeta(span, cwd);
       if (meta) {
@@ -1407,7 +1409,7 @@ function ChatMarkdown({
       }
     }
     return metaByText;
-  }, [cwd, text]);
+  }, [cwd, markdownSource]);
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [
       ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
@@ -1589,7 +1591,9 @@ function ChatMarkdown({
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
         const markerOffset =
-          typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+          typeof listItemStart === "number"
+            ? findTaskListMarkerOffset(markdownSource, listItemStart)
+            : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
             {renderSkillInlineMarkdownChildren(children, skills)}
@@ -1771,6 +1775,7 @@ function ChatMarkdown({
     inlineCodeFileLinkMetaByText,
     isStreaming,
     markdownFileLinkMetaByHref,
+    markdownSource,
     onTaskListChange,
     openFileInPanel,
     openInPreferredEditor,
@@ -1778,7 +1783,6 @@ function ChatMarkdown({
     openMarkdownFileInPreview,
     resolvedTheme,
     skills,
-    text,
     threadRef,
   ]);
   /* eslint-enable react/no-unstable-nested-components */
@@ -1803,7 +1807,7 @@ function ChatMarkdown({
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >
-        {text}
+        {markdownSource}
       </ReactMarkdown>
     </div>
   );

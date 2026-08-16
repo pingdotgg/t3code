@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  normalizeWindowsMarkdownFileLinks,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
+
+function firstMarkdownLinkDestination(markdown: string): string {
+  const match = markdown.match(/\[[^\]]*]\(([^)]+)\)/);
+  const dest = match?.[1];
+  if (!dest) throw new Error(`expected a markdown link in: ${markdown}`);
+  return dest;
+}
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
@@ -32,6 +40,29 @@ describe("rewriteMarkdownFileUriHref", () => {
     expect(
       rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
     ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
+  });
+
+  it("rewrites unc file urls into windows unc paths", () => {
+    expect(rewriteMarkdownFileUriHref("file://server/share/file.txt")).toBe(
+      "\\\\server\\share\\file.txt",
+    );
+  });
+
+  it("keeps leftover windows drive and unc hrefs", () => {
+    expect(rewriteMarkdownFileUriHref("D:/tmp/t3-link-repro/example.md")).toBe(
+      "D:/tmp/t3-link-repro/example.md",
+    );
+    expect(rewriteMarkdownFileUriHref("M:\\batches\\issue-40-v1\\docs\\prompt.md")).toBe(
+      "M:\\batches\\issue-40-v1\\docs\\prompt.md",
+    );
+    expect(rewriteMarkdownFileUriHref("\\\\server\\share\\file.txt")).toBe(
+      "\\\\server\\share\\file.txt",
+    );
+  });
+
+  it("does not treat other schemes as filesystem hrefs", () => {
+    expect(rewriteMarkdownFileUriHref("https://example.com/docs")).toBeNull();
+    expect(rewriteMarkdownFileUriHref("javascript:alert(1)")).toBeNull();
   });
 });
 
@@ -126,6 +157,91 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   it("does not treat app routes as file links", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+  });
+
+  it("resolves windows drive destinations", () => {
+    expect(resolveMarkdownFileLinkTarget("D:/tmp/t3-link-repro/example.md")).toBe(
+      "D:/tmp/t3-link-repro/example.md",
+    );
+  });
+
+  it("resolves unc file urls back to windows unc paths", () => {
+    expect(resolveMarkdownFileLinkTarget("file://server/share/file.txt")).toBe(
+      "\\\\server\\share\\file.txt",
+    );
+  });
+});
+
+describe("normalizeWindowsMarkdownFileLinks", () => {
+  it("rewrites windows drive destinations to file urls that resolve", () => {
+    const rewritten = normalizeWindowsMarkdownFileLinks("[Open](D:/tmp/t3-link-repro/example.md)");
+    const dest = firstMarkdownLinkDestination(rewritten);
+    expect(dest).toBe("file:///D:/tmp/t3-link-repro/example.md");
+    expect(rewriteMarkdownFileUriHref(dest)).toBe("D:/tmp/t3-link-repro/example.md");
+    expect(resolveMarkdownFileLinkTarget(dest)).toBe("D:/tmp/t3-link-repro/example.md");
+  });
+
+  it("rewrites backslash drive destinations and angle-bracket destinations", () => {
+    expect(normalizeWindowsMarkdownFileLinks("[Open](D:\\tmp\\t3-link-repro\\example.md)")).toBe(
+      "[Open](file:///D:/tmp/t3-link-repro/example.md)",
+    );
+    expect(normalizeWindowsMarkdownFileLinks("[Open](<D:/tmp/t3-link-repro/example.md>)")).toBe(
+      "[Open](<file:///D:/tmp/t3-link-repro/example.md>)",
+    );
+    expect(normalizeWindowsMarkdownFileLinks("<D:/tmp/t3-link-repro/example.md>")).toBe(
+      "<file:///D:/tmp/t3-link-repro/example.md>",
+    );
+  });
+
+  it("autolinks bare windows drive paths", () => {
+    const rewritten = normalizeWindowsMarkdownFileLinks(
+      "See M:\\batches\\issue-40-v1\\docs\\prompt.md please",
+    );
+    expect(rewritten).toBe(
+      "See [M:\\batches\\issue-40-v1\\docs\\prompt.md](file:///M:/batches/issue-40-v1/docs/prompt.md) please",
+    );
+    expect(resolveMarkdownFileLinkTarget(firstMarkdownLinkDestination(rewritten))).toBe(
+      "M:/batches/issue-40-v1/docs/prompt.md",
+    );
+  });
+
+  it("autolinks unc paths", () => {
+    const rewritten = normalizeWindowsMarkdownFileLinks("See \\\\server\\share\\file.txt");
+    expect(rewritten).toBe("See [\\\\server\\share\\file.txt](file://server/share/file.txt)");
+    expect(resolveMarkdownFileLinkTarget(firstMarkdownLinkDestination(rewritten))).toBe(
+      "\\\\server\\share\\file.txt",
+    );
+  });
+
+  it("does not rewrite inside fenced code or inline code", () => {
+    const fenced = "```\nD:/tmp/t3-link-repro/example.md\n```";
+    const inline = "Use `D:/tmp/t3-link-repro/example.md` here";
+    const tilde = "~~~\nM:\\batches\\issue-40-v1\\docs\\prompt.md\n~~~";
+    expect(normalizeWindowsMarkdownFileLinks(fenced)).toBe(fenced);
+    expect(normalizeWindowsMarkdownFileLinks(inline)).toBe(inline);
+    expect(normalizeWindowsMarkdownFileLinks(tilde)).toBe(tilde);
+  });
+
+  it("does not touch https links", () => {
+    const httpsLink = "[docs](https://example.com/D:/not-a-path)";
+    expect(normalizeWindowsMarkdownFileLinks(httpsLink)).toBe(httpsLink);
+    expect(
+      normalizeWindowsMarkdownFileLinks("See https://example.com/docs and D:/tmp/example.md"),
+    ).toBe("See https://example.com/docs and [D:/tmp/example.md](file:///D:/tmp/example.md)");
+  });
+
+  it("leaves existing file urls and drive roots alone", () => {
+    const fileUrl = "[Open](file:///D:/tmp/t3-link-repro/example.md)";
+    expect(normalizeWindowsMarkdownFileLinks(fileUrl)).toBe(fileUrl);
+    expect(normalizeWindowsMarkdownFileLinks("See D:\\ and C:/")).toBe("See D:\\ and C:/");
+  });
+
+  it("strips trailing sentence punctuation from autolinked paths", () => {
+    expect(
+      normalizeWindowsMarkdownFileLinks("See M:\\batches\\issue-40-v1\\docs\\prompt.md."),
+    ).toBe(
+      "See [M:\\batches\\issue-40-v1\\docs\\prompt.md](file:///M:/batches/issue-40-v1/docs/prompt.md).",
+    );
   });
 });
 
