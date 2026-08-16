@@ -10,6 +10,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuGroupLabel,
   MenuSeparator,
   MenuSub,
   MenuSubPopup,
@@ -186,6 +187,11 @@ export function PreviewMoreMenu({
           </span>
         </MenuItem>
         <MenuSeparator />
+        {profileName ? (
+          // Otherwise the tab's profile is invisible: it is fixed at open, and
+          // nothing else in the chrome says which one you are browsing in.
+          <MenuGroupLabel>Profile: {profileName}</MenuGroupLabel>
+        ) : null}
         <MenuItem
           onClick={() => void bridge.clearCookies(environmentId, profileId).catch(() => undefined)}
         >

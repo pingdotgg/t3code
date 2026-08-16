@@ -29,7 +29,16 @@ import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
@@ -59,7 +68,7 @@ interface RightPanelTabsProps {
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
-  onAddBrowser: () => void;
+  onAddBrowser: (profileId?: string) => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -516,6 +525,7 @@ function SurfaceIcon({
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
+  const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
 
@@ -698,11 +708,31 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   <SurfaceMenuItem
                     available={props.browserAvailable}
                     disabledReason={SURFACE_DISABLED_REASONS.browser}
-                    onClick={props.onAddBrowser}
+                    onClick={() => props.onAddBrowser()}
                   >
                     <Globe2 />
                     Browser
                   </SurfaceMenuItem>
+                  {props.browserAvailable ? (
+                    <MenuSub>
+                      {/*
+                        A tab's profile is fixed at open — Electron only honours
+                        a partition before the guest attaches — so the choice
+                        belongs here rather than on an already-open tab.
+                      */}
+                      <MenuSubTrigger>
+                        <Globe2 />
+                        Browser in profile
+                      </MenuSubTrigger>
+                      <MenuSubPopup className="min-w-40">
+                        {browserProfiles.map((profile) => (
+                          <MenuItem key={profile.id} onClick={() => props.onAddBrowser(profile.id)}>
+                            {profile.name}
+                          </MenuItem>
+                        ))}
+                      </MenuSubPopup>
+                    </MenuSub>
+                  ) : null}
                   <SurfaceMenuItem
                     available={props.terminalAvailable}
                     disabledReason={SURFACE_DISABLED_REASONS.terminal}
