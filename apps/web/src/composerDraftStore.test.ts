@@ -846,10 +846,11 @@ describe("composerDraftStore project draft thread mapping", () => {
 
       const next = useComposerDraftStore.getState();
       expect(next.getDraftSessionByLogicalProjectKey(scopedProjectKey(projectRef))).toBeNull();
-      expect(next.getComposerDraft(threadRef)?.prompt).toBe("keep the archived thread composer");
       expect(next.getComposerDraft(draftId)?.prompt).toBe("keep the archived thread composer");
-      expect(next.getComposerDraft(threadRef)?.images).toHaveLength(1);
-      expect(next.getDraftThread(draftId)?.threadId).toBe(threadId);
+      expect(next.getComposerDraft(draftId)?.images).toHaveLength(1);
+      expect(next.getDraftThread(draftId)?.threadId).not.toBe(threadId);
+      expect(next.getDraftThread(draftId)?.threadId).toEqual(expect.any(String));
+      expect(next.getDraftThread(threadRef)).toBeNull();
       expect(next.getDraftThreadByProjectRef(otherProjectRef)?.threadId).toBe(otherThreadId);
       expect(revokeSpy).not.toHaveBeenCalled();
     } finally {

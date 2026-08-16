@@ -2565,14 +2565,33 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ([, draftId]) => !matchingDraftIds.has(draftId),
               ),
             ) as Record<string, string>;
-            if (
+            // Unpromoted leftovers keep their composer, but the archived
+            // thread id is burned — remint so sidebar send cannot recreate it.
+            let nextDraftThreads: Record<string, DraftThreadState> | undefined;
+            for (const draftId of matchingDraftIds) {
+              const existing = state.draftThreadsByThreadKey[draftId];
+              if (!existing || isDraftThreadPromoting(existing)) {
+                continue;
+              }
+              nextDraftThreads ??= { ...state.draftThreadsByThreadKey };
+              nextDraftThreads[draftId] = {
+                ...existing,
+                threadId: ThreadId.make(globalThis.crypto.randomUUID()),
+              };
+            }
+            const mappingUnchanged =
               Object.keys(nextLogicalMappings).length ===
-              Object.keys(state.logicalProjectDraftThreadKeyByLogicalProjectKey).length
-            ) {
+              Object.keys(state.logicalProjectDraftThreadKeyByLogicalProjectKey).length;
+            if (mappingUnchanged && nextDraftThreads === undefined) {
               return state;
             }
             return {
-              logicalProjectDraftThreadKeyByLogicalProjectKey: nextLogicalMappings,
+              ...(mappingUnchanged
+                ? {}
+                : { logicalProjectDraftThreadKeyByLogicalProjectKey: nextLogicalMappings }),
+              ...(nextDraftThreads === undefined
+                ? {}
+                : { draftThreadsByThreadKey: nextDraftThreads }),
             };
           });
         },
