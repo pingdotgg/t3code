@@ -186,7 +186,6 @@ function buildProps() {
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
-    isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
@@ -495,6 +494,74 @@ describe("MessagesTimeline", () => {
       /group-hover:opacity-100[^>]*>.*<span class="text-muted-foreground">Edited<\/span>.*aria-label="Edit message"/,
     );
     expect(markup).not.toContain('aria-label="Revert to this message"');
+  });
+
+  it("keeps Edit available when a completed turn also offers Revert", () => {
+    const entry = buildUserTimelineEntry("Completed request.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        editableMessageId={entry.message.id}
+        revertTurnCountByUserMessageId={new Map([[entry.message.id, 0]])}
+        timelineEntries={[entry]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Edit message"');
+    expect(markup).toContain('aria-label="Revert to this message"');
+  });
+
+  it("keeps message actions visible but disabled while work is in progress", () => {
+    const entry = buildUserTimelineEntry("Completed request.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        editableMessageId={entry.message.id}
+        revertTurnCountByUserMessageId={new Map([[entry.message.id, 0]])}
+        isWorking
+        timelineEntries={[entry]}
+      />,
+    );
+
+    expect(markup).toMatch(/<button(?=[^>]*disabled="")(?=[^>]*aria-label="Edit message")[^>]*>/);
+    expect(markup).toMatch(
+      /<button(?=[^>]*disabled="")(?=[^>]*aria-label="Revert to this message")[^>]*>/,
+    );
+  });
+
+  it("disables an open message editor while work is in progress", () => {
+    const entry = buildUserTimelineEntry("Completed request.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        editableMessageId={entry.message.id}
+        editingMessageId={entry.message.id}
+        editingDraft="Pending correction"
+        isWorking
+        timelineEntries={[entry]}
+      />,
+    );
+
+    expect(markup).toMatch(/<textarea(?=[^>]*disabled="")[^>]*>Pending correction<\/textarea>/);
+    expect(markup).toMatch(/<button(?=[^>]*disabled="")[^>]*>Save<\/button>/);
+    expect(markup).toMatch(/<button(?![^>]*disabled="")[^>]*>Cancel<\/button>/);
+  });
+
+  it("preserves the draft but disables Save when the message is no longer editable", () => {
+    const entry = buildUserTimelineEntry("Older request.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        editableMessageId={null}
+        editingMessageId={entry.message.id}
+        editingDraft="Recoverable correction"
+        timelineEntries={[entry]}
+      />,
+    );
+
+    expect(markup).toMatch(/<textarea(?![^>]*disabled="")[^>]*>Recoverable correction<\/textarea>/);
+    expect(markup).toMatch(/<button(?=[^>]*disabled="")[^>]*>Save<\/button>/);
+    expect(markup).toMatch(/<button(?![^>]*disabled="")[^>]*>Cancel<\/button>/);
   });
 
   it("renders an inline editor without using the primary composer", () => {

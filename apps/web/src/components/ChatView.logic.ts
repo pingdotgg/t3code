@@ -31,6 +31,20 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function deriveChatIsWorking(input: {
+  readonly phase: SessionPhase;
+  readonly isSendBusy: boolean;
+  readonly isConnecting: boolean;
+  readonly isRevertingCheckpoint: boolean;
+}): boolean {
+  return (
+    input.phase === "running" ||
+    input.isSendBusy ||
+    input.isConnecting ||
+    input.isRevertingCheckpoint
+  );
+}
+
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
   const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
   return () => globalThis.clearTimeout(timeoutId);

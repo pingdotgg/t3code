@@ -126,118 +126,129 @@ it.layer(NodeServices.layer)("message correction decider", (it) => {
     }),
   );
 
-  it.effect(
-    "rejects stale, revertible, active, queued, blocked, empty, and unchanged targets",
-    () =>
-      Effect.gen(function* () {
-        const assistant = {
-          id: MessageId.make("assistant-1"),
-          role: "assistant" as const,
-          text: "Done",
-          turnId: TurnId.make("turn-1"),
-          streaming: false,
-          createdAt: TARGET_AT,
-          updatedAt: TARGET_AT,
-        };
-        const variants: ReadonlyArray<{
-          readonly name: string;
-          readonly thread: OrchestrationThread;
-          readonly replacementText?: string;
-          readonly expectedText?: string;
-          readonly correctionMessageId?: MessageId;
-        }> = [
-          {
-            name: "stale",
-            thread: makeThread({
-              messages: [
-                userMessage("message-1", "Original request"),
-                userMessage("message-2", "Newer request", "2026-08-16T09:30:00.000Z"),
-              ],
-            }),
-          },
-          {
-            name: "target-changed",
-            thread: makeThread(),
-            expectedText: "An older client revision",
-          },
-          {
-            name: "message-id-collision",
-            thread: makeThread(),
-            correctionMessageId: MessageId.make("message-1"),
-          },
-          {
-            name: "revertible",
-            thread: makeThread({
-              messages: [userMessage("message-1", "Original request"), assistant],
-              checkpoints: [
-                {
-                  turnId: TurnId.make("turn-1"),
-                  checkpointTurnCount: 1,
-                  checkpointRef: "refs/t3/checkpoints/thread-1/turn/1" as never,
-                  status: "ready",
-                  files: [],
-                  assistantMessageId: assistant.id,
-                  completedAt: TARGET_AT,
-                },
-              ],
-            }),
-          },
-          {
-            name: "active",
-            thread: makeThread({
-              session: {
-                threadId: ThreadId.make("thread-1"),
-                status: "running",
-                providerName: "Codex",
-                runtimeMode: "full-access",
-                activeTurnId: TurnId.make("turn-1"),
-                lastError: null,
-                updatedAt: CORRECTION_AT,
+  it.effect("allows correction when the completed turn can also be reverted", () =>
+    Effect.gen(function* () {
+      const assistant = {
+        id: MessageId.make("assistant-1"),
+        role: "assistant" as const,
+        text: "Done",
+        turnId: TurnId.make("turn-1"),
+        streaming: false,
+        createdAt: TARGET_AT,
+        updatedAt: TARGET_AT,
+      };
+      const result = yield* decideOrchestrationCommand({
+        command,
+        readModel: readModel(
+          makeThread({
+            messages: [userMessage("message-1", "Original request"), assistant],
+            checkpoints: [
+              {
+                turnId: TurnId.make("turn-1"),
+                checkpointTurnCount: 1,
+                checkpointRef: "refs/t3/checkpoints/thread-1/turn/1" as never,
+                status: "ready",
+                files: [],
+                assistantMessageId: assistant.id,
+                completedAt: TARGET_AT,
               },
-            }),
-          },
-          {
-            name: "queued",
-            thread: makeThread({
-              latestTurn: null,
-              messages: [userMessage("message-1", "Original request", CORRECTION_AT)],
-            }),
-          },
-          {
-            name: "blocked",
-            thread: makeThread({
-              activities: [
-                {
-                  id: EventId.make("activity-approval"),
-                  tone: "approval",
-                  kind: "approval.requested",
-                  summary: "Approval requested",
-                  payload: { requestId: "request-1" },
-                  turnId: null,
-                  createdAt: TARGET_AT,
-                },
-              ],
-            }),
-          },
-          { name: "empty", thread: makeThread(), replacementText: "   " },
-          { name: "unchanged", thread: makeThread(), replacementText: "Original request" },
-        ];
+            ],
+          }),
+        ),
+      });
 
-        for (const variant of variants) {
-          const exit = yield* Effect.exit(
-            decideOrchestrationCommand({
-              command: {
-                ...command,
-                commandId: CommandId.make(`command-${variant.name}`),
-                expectedText: variant.expectedText ?? command.expectedText,
-                correctionMessageId: variant.correctionMessageId ?? command.correctionMessageId,
-                replacementText: variant.replacementText ?? command.replacementText,
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.message-corrected",
+        "thread.turn-start-requested",
+      ]);
+    }),
+  );
+
+  it.effect("rejects stale, active, queued, blocked, empty, and unchanged targets", () =>
+    Effect.gen(function* () {
+      const variants: ReadonlyArray<{
+        readonly name: string;
+        readonly thread: OrchestrationThread;
+        readonly replacementText?: string;
+        readonly expectedText?: string;
+        readonly correctionMessageId?: MessageId;
+      }> = [
+        {
+          name: "stale",
+          thread: makeThread({
+            messages: [
+              userMessage("message-1", "Original request"),
+              userMessage("message-2", "Newer request", "2026-08-16T09:30:00.000Z"),
+            ],
+          }),
+        },
+        {
+          name: "target-changed",
+          thread: makeThread(),
+          expectedText: "An older client revision",
+        },
+        {
+          name: "message-id-collision",
+          thread: makeThread(),
+          correctionMessageId: MessageId.make("message-1"),
+        },
+        {
+          name: "active",
+          thread: makeThread({
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              status: "running",
+              providerName: "Codex",
+              runtimeMode: "full-access",
+              activeTurnId: TurnId.make("turn-1"),
+              lastError: null,
+              updatedAt: CORRECTION_AT,
+            },
+          }),
+        },
+        {
+          name: "queued",
+          thread: makeThread({
+            latestTurn: null,
+            messages: [userMessage("message-1", "Original request", CORRECTION_AT)],
+          }),
+        },
+        {
+          name: "blocked",
+          thread: makeThread({
+            activities: [
+              {
+                id: EventId.make("activity-approval"),
+                tone: "approval",
+                kind: "approval.requested",
+                summary: "Approval requested",
+                payload: { requestId: "request-1" },
+                turnId: null,
+                createdAt: TARGET_AT,
               },
-              readModel: readModel(variant.thread),
-            }),
-          );
-          expect(exit._tag, variant.name).toBe("Failure");
-        }
-      }),
+            ],
+          }),
+        },
+        { name: "empty", thread: makeThread(), replacementText: "   " },
+        { name: "unchanged", thread: makeThread(), replacementText: "Original request" },
+      ];
+
+      for (const variant of variants) {
+        const exit = yield* Effect.exit(
+          decideOrchestrationCommand({
+            command: {
+              ...command,
+              commandId: CommandId.make(`command-${variant.name}`),
+              expectedText: variant.expectedText ?? command.expectedText,
+              correctionMessageId: variant.correctionMessageId ?? command.correctionMessageId,
+              replacementText: variant.replacementText ?? command.replacementText,
+            },
+            readModel: readModel(variant.thread),
+          }),
+        );
+        expect(exit._tag, variant.name).toBe("Failure");
+      }
+    }),
   );
 });

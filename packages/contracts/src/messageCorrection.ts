@@ -146,42 +146,6 @@ export function getLastVisibleUserMessage(
   return messages.findLast((message) => message.role === "user" && !isCorrectionMessage(message));
 }
 
-export function deriveRevertTurnCountByUserMessageId(
-  thread: Pick<OrchestrationThread, "messages" | "checkpoints">,
-): ReadonlyMap<MessageId, number> {
-  const checkpointTurnCountByAssistantMessageId = new Map<MessageId, number>();
-  for (const checkpoint of thread.checkpoints) {
-    if (
-      checkpoint.status === "ready" &&
-      checkpoint.checkpointRef !== null &&
-      checkpoint.assistantMessageId !== null
-    ) {
-      checkpointTurnCountByAssistantMessageId.set(
-        checkpoint.assistantMessageId,
-        checkpoint.checkpointTurnCount,
-      );
-    }
-  }
-
-  const result = new Map<MessageId, number>();
-  const visibleMessages = thread.messages.filter((message) => !isCorrectionMessage(message));
-  for (let index = 0; index < visibleMessages.length; index += 1) {
-    const message = visibleMessages[index];
-    if (message?.role !== "user") continue;
-    for (let nextIndex = index + 1; nextIndex < visibleMessages.length; nextIndex += 1) {
-      const nextMessage = visibleMessages[nextIndex];
-      if (nextMessage?.role === "user") break;
-      if (nextMessage?.role !== "assistant") continue;
-      const checkpointTurnCount = checkpointTurnCountByAssistantMessageId.get(nextMessage.id);
-      if (checkpointTurnCount !== undefined) {
-        result.set(message.id, Math.max(0, checkpointTurnCount - 1));
-        break;
-      }
-    }
-  }
-  return result;
-}
-
 /**
  * Blocked-on-you work is derived from retained activities because the decider
  * read model does not carry the shell's pending-request flags. These clearing
@@ -279,7 +243,6 @@ export type ThreadMessageCorrectionRejectionReason =
   | "target-missing"
   | "target-not-visible-user-message"
   | "target-not-last-visible-user-message"
-  | "target-has-revert"
   | "thread-archived"
   | "session-active"
   | "queued-turn-start"
@@ -305,7 +268,6 @@ export function getThreadMessageCorrectionEligibility(input: {
   readonly targetMessageId: MessageId;
   readonly occurredAt: string;
   readonly replacementText?: string;
-  readonly revertTurnCountByUserMessageId?: ReadonlyMap<MessageId, number>;
 }): ThreadMessageCorrectionEligibility {
   const target = input.thread.messages.find((message) => message.id === input.targetMessageId);
   if (target === undefined) {
@@ -336,14 +298,6 @@ export function getThreadMessageCorrectionEligibility(input: {
     return rejectCorrection(
       "blocking-request",
       "Resolve the pending approval or question before editing.",
-    );
-  }
-  const revertTurnCountByUserMessageId =
-    input.revertTurnCountByUserMessageId ?? deriveRevertTurnCountByUserMessageId(input.thread);
-  if (revertTurnCountByUserMessageId.has(target.id)) {
-    return rejectCorrection(
-      "target-has-revert",
-      "Revert is available for this message instead of Edit.",
     );
   }
   if (input.replacementText !== undefined) {

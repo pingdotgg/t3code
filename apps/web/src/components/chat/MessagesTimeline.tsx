@@ -155,6 +155,7 @@ interface TimelineRowSharedState {
 
 interface TimelineMessageEditState {
   isSavingMessageEdit: boolean;
+  canSaveMessageEdit: boolean;
   readEditingDraft: () => string;
   onEditingDraftChange: (draft: string) => void;
   onCancelMessageEdit: () => void;
@@ -163,7 +164,6 @@ interface TimelineMessageEditState {
 
 interface TimelineRowActivityState {
   isWorking: boolean;
-  isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
   latestTurnId: TurnId | null;
   /** Current plan step label for the working row, when the turn has a plan. */
@@ -240,7 +240,6 @@ interface MessagesTimelineProps {
   onBeginMessageEdit?: (messageId: MessageId) => void;
   onCancelMessageEdit?: () => void;
   onSaveMessageEdit?: (draft: string) => void;
-  isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
@@ -293,7 +292,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onBeginMessageEdit = NOOP_MESSAGE_EDIT,
   onCancelMessageEdit = NOOP_MESSAGE_EDIT,
   onSaveMessageEdit = NOOP_MESSAGE_EDIT,
-  isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
   markdownCwd,
@@ -584,12 +582,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const messageEditState = useMemo<TimelineMessageEditState>(
     () => ({
       isSavingMessageEdit,
+      canSaveMessageEdit: editingMessageId !== null && editableMessageId === editingMessageId,
       readEditingDraft,
       onEditingDraftChange,
       onCancelMessageEdit,
       onSaveMessageEdit,
     }),
     [
+      editableMessageId,
+      editingMessageId,
       isSavingMessageEdit,
       onCancelMessageEdit,
       onEditingDraftChange,
@@ -600,12 +601,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
-      isRevertingCheckpoint,
       activeTurnInProgress,
       latestTurnId: latestTurn?.turnId ?? null,
       workingStepLabel,
     }),
-    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
+    [activeTurnInProgress, isWorking, latestTurn?.turnId, workingStepLabel],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -1037,7 +1037,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
-  const canEditMessage = !canRevertAgentWork && ctx.editableMessageId === row.message.id;
+  const canEditMessage = ctx.editableMessageId === row.message.id;
   const isEditing = ctx.editingMessageId === row.message.id;
   const wasEdited = row.message.originalText !== undefined;
 
@@ -1127,9 +1127,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           {wasEdited ? <span className="text-muted-foreground">Edited</span> : null}
           <div className="flex items-center gap-0.5">
-            {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
             {canEditMessage && !isEditing ? (
               <EditUserMessageButton messageId={row.message.id} />
+            ) : null}
+            {canRevertAgentWork && !isEditing ? (
+              <RevertUserMessageButton messageId={row.message.id} />
             ) : null}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
@@ -1143,14 +1145,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
 function InlineUserMessageEditor() {
   const edit = use(TimelineMessageEditCtx);
+  const activity = use(TimelineRowActivityCtx);
   const [draft, setDraft] = useState(edit.readEditingDraft);
+  const editingDisabled = edit.isSavingMessageEdit || activity.isWorking;
+  const submissionDisabled = editingDisabled || !edit.canSaveMessageEdit;
   return (
     <div className="w-full space-y-2">
       <Textarea
         autoFocus
         aria-label="Edit message"
         value={draft}
-        disabled={edit.isSavingMessageEdit}
+        disabled={editingDisabled}
         onChange={(event) => {
           const nextDraft = event.currentTarget.value;
           setDraft(nextDraft);
@@ -1161,7 +1166,7 @@ function InlineUserMessageEditor() {
             event.preventDefault();
             edit.onCancelMessageEdit();
           }
-          if (isCommentSubmitShortcut(event, draft, edit.isSavingMessageEdit)) {
+          if (isCommentSubmitShortcut(event, draft, submissionDisabled)) {
             event.preventDefault();
             edit.onSaveMessageEdit(draft);
           }
@@ -1181,7 +1186,7 @@ function InlineUserMessageEditor() {
         <Button
           type="button"
           size="xs"
-          disabled={edit.isSavingMessageEdit || draft.trim().length === 0}
+          disabled={submissionDisabled || draft.trim().length === 0}
           onClick={() => edit.onSaveMessageEdit(draft)}
         >
           {edit.isSavingMessageEdit ? "Saving…" : "Save"}
@@ -1193,6 +1198,7 @@ function InlineUserMessageEditor() {
 
 function EditUserMessageButton({ messageId }: { messageId: MessageId }) {
   const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -1201,6 +1207,7 @@ function EditUserMessageButton({ messageId }: { messageId: MessageId }) {
             type="button"
             size="xs"
             variant="ghost"
+            disabled={activity.isWorking}
             onClick={() => ctx.onBeginMessageEdit(messageId)}
             aria-label="Edit message"
           />
@@ -1225,7 +1232,7 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
             type="button"
             size="xs"
             variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            disabled={activity.isWorking}
             onClick={() => ctx.onRevertUserMessage(messageId)}
             aria-label="Revert to this message"
           />

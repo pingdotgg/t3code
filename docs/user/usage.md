@@ -8,10 +8,3 @@ cost shown here.
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart, and refreshing rescans every connected environment.
-
-## Edit or revert a message
-
-Revert returns both the conversation and workspace to an earlier completed turn. When Revert is not
-available, you can edit the last message after the thread becomes idle. Editing changes the wording
-shown in the conversation and sends a corrective follow-up; the earlier assistant response stays
-visible so the history remains clear.

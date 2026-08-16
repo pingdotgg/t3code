@@ -1085,7 +1085,7 @@ it.effect("materializes repeated corrections and reconciles retained revisions",
   }),
 );
 
-it.effect("rejects stale, active, empty, and unchanged corrections", () =>
+it.effect("validates correction eligibility for idle and unavailable thread states", () =>
   Effect.gen(function* () {
     const baseThread = yield* decodeOrchestrationThread({
       id: "thread-eligibility",
@@ -1213,6 +1213,39 @@ it.effect("rejects stale, active, empty, and unchanged corrections", () =>
       replacementText: "Corrected request",
     });
     assert.deepStrictEqual(nonReadyCheckpoint, { eligible: true });
+
+    const completedRevertibleTurn = getThreadMessageCorrectionEligibility({
+      thread: {
+        ...baseThread,
+        messages: [
+          ...baseThread.messages,
+          {
+            id: assistantId,
+            role: "assistant",
+            text: "Completed response",
+            turnId: "turn-ready" as never,
+            streaming: false,
+            createdAt: "2026-08-16T09:01:00.000Z",
+            updatedAt: "2026-08-16T09:01:00.000Z",
+          },
+        ],
+        checkpoints: [
+          {
+            turnId: "turn-ready" as never,
+            checkpointTurnCount: 1,
+            checkpointRef: "refs/t3/checkpoints/thread-ready/turn/1" as never,
+            status: "ready",
+            files: [],
+            assistantMessageId: assistantId,
+            completedAt: "2026-08-16T09:01:00.000Z",
+          },
+        ],
+      },
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      replacementText: "Corrected request",
+    });
+    assert.deepStrictEqual(completedRevertibleTurn, { eligible: true });
   }),
 );
 

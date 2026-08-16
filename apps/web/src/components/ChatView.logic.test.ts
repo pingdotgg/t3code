@@ -17,6 +17,7 @@ import {
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
+  deriveChatIsWorking,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
@@ -35,6 +36,19 @@ import {
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("deriveChatIsWorking", () => {
+  it("treats a checkpoint revert as working until it finishes", () => {
+    expect(
+      deriveChatIsWorking({
+        phase: "ready",
+        isSendBusy: false,
+        isConnecting: false,
+        isRevertingCheckpoint: true,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("editable user message text", () => {
   it("replaces only user prose while preserving every T3-owned byte", () => {

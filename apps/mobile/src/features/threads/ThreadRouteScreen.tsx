@@ -9,7 +9,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as Option from "effect/Option";
 import {
   EnvironmentId,
-  getLastVisibleUserMessage,
   getThreadMessageCorrectionEligibility,
   MessageId,
   ThreadId,
@@ -59,6 +58,7 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
+import { deriveMobileEditableMessageId } from "./message-correction";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -321,23 +321,14 @@ function ThreadRouteContent(
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
   );
   const editableMessageId = useMemo(() => {
-    if (
-      routeConnectionState !== "connected" ||
-      routeEnvironmentRuntime?.serverConfig?.environment.capabilities.threadMessageCorrection !==
-        true ||
-      selectedThreadDetail === null
-    ) {
-      return null;
-    }
-    const lastVisibleUserMessage = getLastVisibleUserMessage(selectedThreadDetail.messages);
-    if (!lastVisibleUserMessage) return null;
-    return getThreadMessageCorrectionEligibility({
+    return deriveMobileEditableMessageId({
+      connected: routeConnectionState === "connected",
+      correctionSupported:
+        routeEnvironmentRuntime?.serverConfig?.environment.capabilities.threadMessageCorrection ===
+        true,
       thread: selectedThreadDetail,
-      targetMessageId: lastVisibleUserMessage.id,
       occurredAt: new Date().toISOString(),
-    }).eligible
-      ? lastVisibleUserMessage.id
-      : null;
+    });
   }, [routeConnectionState, routeEnvironmentRuntime?.serverConfig, selectedThreadDetail]);
   const handleCorrectMessage = useCallback(
     async (input: {
