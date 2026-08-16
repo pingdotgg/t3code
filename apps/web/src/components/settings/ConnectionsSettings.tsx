@@ -853,7 +853,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                     </code>
                   }
                 />
-                <TooltipPopup side="top" className="max-w-80">
+                <TooltipPopup side="top" className="max-w-80 break-all">
                   {qrPairingUrl}
                 </TooltipPopup>
               </Tooltip>

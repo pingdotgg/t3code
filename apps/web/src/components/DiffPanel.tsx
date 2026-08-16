@@ -689,7 +689,11 @@ export default function DiffPanel({
                               <TooltipTrigger
                                 render={
                                   <span className="flex justify-end text-muted-foreground">
-                                    <CheckIcon aria-hidden="true" className="size-3" />
+                                    <CheckIcon
+                                      role="img"
+                                      aria-label="Remote only"
+                                      className="size-3"
+                                    />
                                   </span>
                                 }
                               />
