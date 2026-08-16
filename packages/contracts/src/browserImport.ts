@@ -38,6 +38,26 @@ export const BrowserImportUnavailableReason = Schema.Literals([
 ]);
 export type BrowserImportUnavailableReason = typeof BrowserImportUnavailableReason.Type;
 
+/**
+ * Why an import that was actually attempted failed.
+ *
+ * A superset of the unavailable reasons: a source can pass the pre-flight
+ * check and still fail, most often because the user declined the keychain
+ * prompt the read triggers.
+ */
+export const BrowserImportFailureReason = Schema.Literals([
+  ...BrowserImportUnavailableReason.literals,
+  /** No source registered under the requested id. */
+  "unknownSource",
+  /** The requested profile directory is not one the source reported. */
+  "unknownSourceProfile",
+  /** The target profile's Electron session could not be opened. */
+  "sessionUnavailable",
+  /** Anything else: a corrupt database, a failed decrypt, a vanished file. */
+  "readFailed",
+]);
+export type BrowserImportFailureReason = typeof BrowserImportFailureReason.Type;
+
 /** A profile inside the source browser, e.g. Chromium's "Default" directory. */
 export const BrowserImportSourceProfile = Schema.Struct({
   /** Directory name under the source's user-data dir. */
@@ -93,4 +113,13 @@ export const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<
     "No encryption key in your Keychain — sign in to that browser once, then retry.",
   browserRunning: "Quit the browser first so its cookie database can be read.",
   unsupportedPlatform: "Importing from this browser isn't possible on this platform.",
+};
+
+/** What to tell the user when an attempted import fails. */
+export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureReason, string>> = {
+  ...BROWSER_IMPORT_UNAVAILABLE_COPY,
+  unknownSource: "That browser is no longer available to import from.",
+  unknownSourceProfile: "That browser profile no longer exists.",
+  sessionUnavailable: "The target profile could not be opened.",
+  readFailed: "The browser's cookie database could not be read.",
 };

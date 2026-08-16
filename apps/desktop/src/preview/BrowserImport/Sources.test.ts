@@ -1,50 +1,133 @@
-// @effect-diagnostics nodeBuiltinImport:off - Drives the raw fs paths the module under test uses.
-import { afterEach, describe, expect, it } from "@effect/vitest";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
 
-import { BROWSER_IMPORT_SOURCES, cookieDatabasePath, isSourceRunning } from "./Sources.ts";
+import {
+  BROWSER_IMPORT_SOURCES,
+  cookieDatabasePath,
+  isSourceInstalled,
+  isSourceRunning,
+  listSourceProfiles,
+  sourcePaths,
+} from "./Sources.ts";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
-const realHome = process.env.HOME;
 
-// `userDataDirectory()` resolves `os.homedir()` on every call, and on POSIX
-// that reads $HOME, so a scratch home is enough to exercise the real function.
-const withScratchHome = async () => {
-  const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3code-sources-"));
-  process.env.HOME = home;
-  await NodeFSP.mkdir(helium.userDataDirectory(), { recursive: true });
-  return home;
-};
-
-afterEach(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
+/** A scratch home with the source's user-data directory already created. */
+const withSourceHome = Effect.fnUntraced(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-sources-" });
+  const paths = yield* sourcePaths.pipe(
+    Effect.provideService(HostProcessEnvironment, { HOME: home }),
+  );
+  yield* fileSystem.makeDirectory(helium.userDataDirectory(paths), { recursive: true });
+  return paths;
 });
 
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
+  effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
 describe("isSourceRunning", () => {
-  it("reads Chromium's dangling SingletonLock symlink as a running browser", async () => {
-    // Chromium points `SingletonLock` at `<host>-<pid>`, a target that never
-    // exists on disk. A check that follows the link reports a running browser
-    // as closed, which lets an import read a live, mid-write cookie database.
-    await withScratchHome();
-    expect(await isSourceRunning(helium)).toBe(false);
+  it.effect("reads Chromium's dangling SingletonLock symlink as a running browser", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        assert.isFalse(yield* isSourceRunning(helium, paths));
 
-    await NodeFSP.symlink(
-      "host-that-does-not-exist-1234",
-      NodePath.join(helium.userDataDirectory(), "SingletonLock"),
-    );
+        // Chromium points the lock at `<host>-<pid>`, a target that never
+        // exists on disk. A check that follows the link reports a running
+        // browser as closed, letting an import read a live, mid-write database.
+        yield* fileSystem.symlink(
+          "host-that-does-not-exist-1234",
+          `${helium.userDataDirectory(paths)}/SingletonLock`,
+        );
 
-    expect(await isSourceRunning(helium)).toBe(true);
-  });
+        assert.isTrue(yield* isSourceRunning(helium, paths));
+      }),
+    ),
+  );
+});
+
+describe("isSourceInstalled", () => {
+  it.effect("follows the presence of the user-data directory", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        assert.isTrue(yield* isSourceInstalled(helium, paths));
+
+        yield* fileSystem.remove(helium.userDataDirectory(paths), { recursive: true });
+        assert.isFalse(yield* isSourceInstalled(helium, paths));
+      }),
+    ),
+  );
+});
+
+describe("listSourceProfiles", () => {
+  it.effect("falls back to Default when Local State is absent", () =>
+    run(
+      Effect.gen(function* () {
+        const paths = yield* withSourceHome();
+        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
+          { directory: "Default", name: "Default" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("reads the profile names the browser shows", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        yield* fileSystem.writeFileString(
+          `${helium.userDataDirectory(paths)}/Local State`,
+          `{"profile":{"info_cache":{"Default":{"name":"You"},"Profile 2":{"name":"  "}}}}`,
+        );
+
+        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
+          { directory: "Default", name: "You" },
+          // Blank display name falls back to the directory rather than
+          // rendering an empty row.
+          { directory: "Profile 2", name: "Profile 2" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("falls back to Default when Local State is malformed", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        yield* fileSystem.writeFileString(
+          `${helium.userDataDirectory(paths)}/Local State`,
+          "{not-json",
+        );
+
+        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
+          { directory: "Default", name: "Default" },
+        ]);
+      }),
+    ),
+  );
 });
 
 describe("cookieDatabasePath", () => {
-  it("places the cookie database under the source profile directory", async () => {
-    const home = await withScratchHome();
-    expect(cookieDatabasePath(helium, "Profile 1")).toBe(
-      NodePath.join(home, "Library/Application Support/net.imput.helium/Profile 1/Cookies"),
-    );
-  });
+  it.effect("places the database under the requested source profile", () =>
+    run(
+      Effect.gen(function* () {
+        const paths = yield* withSourceHome();
+        assert.equal(
+          cookieDatabasePath(helium, paths, "Profile 1"),
+          `${paths.home}/Library/Application Support/net.imput.helium/Profile 1/Cookies`,
+        );
+      }),
+    ),
+  );
 });
