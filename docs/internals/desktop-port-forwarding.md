@@ -38,6 +38,11 @@ desktop loopback listener
   -> remote loopback service
 ```
 
+The ticket contract represents the remote loopback boundary as `127.0.0.1`,
+not as permission to dial an arbitrary host. At the final bridge boundary, the
+server tries both `127.0.0.1` and `::1` so a service using the platform's
+`localhost` default works whether it selected IPv4 or IPv6.
+
 Use one dedicated WebSocket per accepted TCP connection for the first version.
 This keeps framing, half-close behavior, cancellation, and backpressure simpler
 than a new multiplexing protocol and avoids head-of-line blocking the ordinary

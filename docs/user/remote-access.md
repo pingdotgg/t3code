@@ -218,10 +218,11 @@ desktop loopback listener but closes its active TCP sessions; applications that
 reconnect use the newly selected method. Existing TCP streams cannot be moved
 between transports without interruption.
 
-The forward is TCP-only and can reach only `127.0.0.1` on the remote
-environment. It is not exposed to your LAN or the public Internet. Manual
-forwards are currently runtime-only: they stop when you quit the desktop app,
-remove the environment, or choose **Stop**.
+The forward is TCP-only and can reach only the remote environment's loopback
+interface. Services bound to either IPv4 `127.0.0.1` or IPv6 `::1` through
+`localhost` are supported. The forward is not exposed to your LAN or the public
+Internet. Manual forwards are currently runtime-only: they stop when you quit
+the desktop app, remove the environment, or choose **Stop**.
 
 ## Updating a Remote Server
 
