@@ -356,7 +356,7 @@ describe("PreviewManager", () => {
   effectIt.effect("reports a failed navigation as unavailable automation", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const listeners = new Map<string, (...args: never[]) => void>();
+        const listeners = new Map<string, (...args: unknown[]) => void>();
         let url = "http://localhost:5173/";
         fromId.mockReturnValue({
           id: 42,
@@ -368,7 +368,7 @@ describe("PreviewManager", () => {
           getZoomFactor: () => 1,
           setZoomFactor: vi.fn(),
           loadURL: vi.fn(async () => undefined),
-          on: vi.fn((event: string, listener: (...args: never[]) => void) => {
+          on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
             listeners.set(event, listener);
           }),
           off: vi.fn(),
