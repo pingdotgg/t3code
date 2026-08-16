@@ -48,6 +48,7 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
+import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { useLoadingProgress } from "./useLoadingProgress";
@@ -145,6 +146,9 @@ export function PreviewView({
   const loadProgress = useLoadingProgress(loading);
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
+  const activeProfile = browserDefaults.profiles.find(
+    (profile) => profile.id === (snapshot?.profileId ?? browserDefaults.profileId),
+  );
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -686,16 +690,22 @@ export function PreviewView({
         pickDisabledReason={
           isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
         }
+        leadingActions={
+          // Only when it differs from the default: labelling every tab
+          // "Default" would be noise on the common case, while a tab in
+          // another profile is exactly what needs calling out.
+          activeProfile && activeProfile.id !== browserDefaults.profileId ? (
+            <Badge variant="outline" className="shrink-0">
+              {activeProfile.name}
+            </Badge>
+          ) : null
+        }
         trailingActions={
           previewBridge ? (
             <PreviewMoreMenu
               environmentId={threadRef.environmentId}
               profileId={snapshot?.profileId}
-              profileName={
-                browserDefaults.profiles.find(
-                  (profile) => profile.id === (snapshot?.profileId ?? browserDefaults.profileId),
-                )?.name
-              }
+              profileName={activeProfile?.name}
               tabId={runtimeTabId}
               hasWebContents={desktopOverlay?.hasWebContents ?? false}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
