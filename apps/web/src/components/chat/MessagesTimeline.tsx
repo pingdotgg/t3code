@@ -2150,8 +2150,8 @@ const ToolCallOutputBlock = memo(function ToolCallOutputBlock(props: {
           <Button
             type="button"
             size="xs"
-            variant="ghost"
-            className="h-5 px-1.5 text-[11px] text-muted-foreground"
+            variant="ghost-muted"
+            className="h-5 px-1.5 text-[11px]"
             onClick={props.onToggleExpanded}
           >
             {props.expanded ? "Show less" : "Show more"}
@@ -2423,6 +2423,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
+          onKeyDown={stopRowToggle}
         >
           {expandedSections.preamble ? (
             <pre className={toolCallExpandedBodyClassName}>{expandedSections.preamble}</pre>
@@ -2435,7 +2436,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             />
           ) : null}
           {expandedSections.files ? (
-            <pre className={toolCallExpandedBodyClassName}>{expandedSections.files}</pre>
+            <pre className={cn(toolCallExpandedBodyClassName, "mt-2")}>
+              {expandedSections.files}
+            </pre>
           ) : null}
         </div>
       ) : null}

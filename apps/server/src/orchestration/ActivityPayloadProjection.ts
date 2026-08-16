@@ -255,6 +255,29 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   return projectedData;
 }
 
+function isCommandLikeTool(
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+): boolean {
+  if (payload.itemType === "command_execution") {
+    return true;
+  }
+  const kind = asTrimmedString(data.kind)?.toLowerCase();
+  if (kind === "execute") {
+    return true;
+  }
+  const toolName = asTrimmedString(data.toolName)?.toLowerCase();
+  if (!toolName) {
+    return false;
+  }
+  return (
+    toolName.includes("bash") ||
+    toolName.includes("shell") ||
+    toolName.includes("terminal") ||
+    toolName.includes("command")
+  );
+}
+
 function projectCommandResult(result: unknown): Record<string, unknown> | undefined {
   const text = extractMcpResultText(result);
   if (!text) {
@@ -363,9 +386,11 @@ export function projectActivityPayload(
     }
   }
 
-  const commandResult = projectCommandResult(data.result);
-  if (commandResult) {
-    projectedData.result = commandResult;
+  if (isCommandLikeTool(payload, data)) {
+    const commandResult = projectCommandResult(data.result);
+    if (commandResult) {
+      projectedData.result = commandResult;
+    }
   }
 
   const changedFiles: string[] = [];

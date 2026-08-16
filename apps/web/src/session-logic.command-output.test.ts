@@ -95,6 +95,55 @@ describe("deriveWorkLogEntries command output", () => {
     expect(selectWorkLogToolOutput({ detail: entry!.detail, command: entry!.command })).toBeNull();
   });
 
+  it("keeps a trailing <exited with exit code 0> line in persisted output", () => {
+    const output = "hello\n<exited with exit code 0>";
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("claude-bash-exit-line", {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: "Bash: printf hello",
+        data: {
+          toolName: "Bash",
+          input: { command: "printf hello" },
+          result: {
+            type: "tool_result",
+            content: output,
+            is_error: false,
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.output).toBe(output);
+    expect(selectWorkLogToolOutput(entry!)).toBe(output);
+  });
+
+  it("does not copy MCP summarized result onto output", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("mcp-result", {
+        itemType: "mcp_tool_call",
+        title: "Call repository tool",
+        detail: "repository.search",
+        data: {
+          item: {
+            server: "repository",
+            tool: "search",
+            arguments: { query: "work log" },
+            result: { content: "first line of output" },
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.output).toBeUndefined();
+    expect(entry?.toolData).toEqual({
+      server: "repository",
+      tool: "search",
+      arguments: { query: "work log" },
+      result: { content: "first line of output" },
+    });
+  });
+
   it("reads Claude tool_result content blocks as output", () => {
     const [entry] = deriveWorkLogEntries([
       makeCommandActivity("claude-bash-blocks", {

@@ -673,6 +673,20 @@ describe("workEntryIndicatesToolFailure", () => {
     ).toBe(false);
   });
 
+  it("does not treat completed-success stdout phrases as failure", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Bash",
+        tone: "tool",
+        itemType: "command_execution",
+        toolLifecycleStatus: "completed",
+        command: "cat notes.txt",
+        output: "this tutorial mentions command not found, ENOENT, and exit code 1",
+      }),
+    ).toBe(false);
+  });
+
   it("treats successful tool rows as success candidates", () => {
     expect(
       workEntryIndicatesToolSuccess({

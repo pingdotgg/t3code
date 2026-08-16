@@ -174,6 +174,42 @@ describe("projectActivityPayload agent-field survival", () => {
     expect(data.toolName).toBeUndefined();
   });
 
+  it("does not attach result bodies for Read/Grep dynamic tools", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: {
+          toolName: "Read",
+          input: { file_path: "README.md" },
+          result: {
+            type: "tool_result",
+            content: `file body\n${"x".repeat(10_000)}`,
+            is_error: false,
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.result).toBeUndefined();
+    expect(data.toolName).toBeUndefined();
+  });
+
+  it("still attaches Bash-like dynamic tool result content", () => {
+    const output = "hello from bash";
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: {
+          toolName: "Bash",
+          input: { command: "printf hello" },
+          result: { content: output, is_error: false },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.result).toEqual({ content: output });
+  });
+
   it("bounds huge Claude Bash result content instead of dropping it", () => {
     const output = `first line\n${"y".repeat(40_000)}`;
     const projected = projectActivityPayload(

@@ -184,6 +184,22 @@ describe("projectActivityPayload", () => {
     });
   });
 
+  it("does not attach result bodies for Read/Grep dynamic tools", () => {
+    const source = makeActivity("read", "dynamic_tool_call", {
+      toolName: "Read",
+      input: { file_path: "README.md" },
+      result: {
+        type: "tool_result",
+        content: `file body\n${"x".repeat(8_000)}`,
+        is_error: false,
+      },
+    });
+    const projected = projectActivityPayload(source);
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.result).toBeUndefined();
+    expect(deriveWorkLogEntries([projected])[0]?.output).toBeUndefined();
+  });
+
   it("projects Claude Bash result content so the work-log can render it", () => {
     const output = `hello from bash\n${"x".repeat(200)}`;
     const source = makeActivity("claude-bash", "command_execution", {

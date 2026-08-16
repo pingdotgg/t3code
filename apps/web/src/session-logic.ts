@@ -244,9 +244,6 @@ export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
   if (entry.detail) {
     parts.push(entry.detail);
   }
-  if (entry.output) {
-    parts.push(entry.output);
-  }
   if (entry.command) {
     parts.push(entry.command);
   }
@@ -864,7 +861,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
   }
-  const output = extractPersistedToolResult(payload);
+  const output = itemType === "mcp_tool_call" ? null : extractPersistedToolResult(payload);
   if (output && output !== detail && output !== commandPreview.command) {
     entry.output = output;
   }
@@ -1398,8 +1395,12 @@ function summarizeToolRawOutput(payload: Record<string, unknown> | null): string
   return null;
 }
 
+function asPersistedResultText(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function extractToolResultText(result: unknown): string | null {
-  const direct = asTrimmedString(result);
+  const direct = asPersistedResultText(result);
   if (direct) {
     return direct;
   }
@@ -1410,7 +1411,7 @@ function extractToolResultText(result: unknown): string | null {
   }
 
   const content = record.content;
-  const contentText = asTrimmedString(content);
+  const contentText = asPersistedResultText(content);
   if (contentText) {
     return contentText;
   }
@@ -1421,7 +1422,8 @@ function extractToolResultText(result: unknown): string | null {
 
   const chunks: string[] = [];
   for (const entryValue of content) {
-    const text = asTrimmedString(entryValue) ?? asTrimmedString(asRecord(entryValue)?.text);
+    const text =
+      asPersistedResultText(entryValue) ?? asPersistedResultText(asRecord(entryValue)?.text);
     if (text) {
       chunks.push(text);
     }
@@ -1435,12 +1437,8 @@ function extractPersistedToolResult(payload: Record<string, unknown> | null): st
   const candidates = [data?.result, item?.result];
   for (const candidate of candidates) {
     const text = extractToolResultText(candidate);
-    if (!text) {
-      continue;
-    }
-    const output = stripTrailingExitCode(text).output;
-    if (output) {
-      return output;
+    if (text && text.trim().length > 0) {
+      return text;
     }
   }
   return null;
@@ -1453,7 +1451,7 @@ function extractPersistedToolResult(payload: Record<string, unknown> | null): st
 export function selectWorkLogToolOutput(
   entry: Pick<WorkLogEntry, "output" | "detail" | "command">,
 ): string | null {
-  return asTrimmedString(entry.output);
+  return typeof entry.output === "string" && entry.output.trim().length > 0 ? entry.output : null;
 }
 
 function extractAcpTextContent(value: unknown): string | null {

@@ -409,7 +409,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
   }
-  const output = extractPersistedToolResult(payload);
+  const output = itemType === "mcp_tool_call" ? null : extractPersistedToolResult(payload);
   if (output && output !== entry.detail && output !== commandPreview.command) {
     entry.output = output;
   }
@@ -736,8 +736,12 @@ function asTrimmedString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function asPersistedResultText(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function extractToolResultText(result: unknown): string | null {
-  const direct = asTrimmedString(result);
+  const direct = asPersistedResultText(result);
   if (direct) {
     return direct;
   }
@@ -748,7 +752,7 @@ function extractToolResultText(result: unknown): string | null {
   }
 
   const content = record.content;
-  const contentText = asTrimmedString(content);
+  const contentText = asPersistedResultText(content);
   if (contentText) {
     return contentText;
   }
@@ -759,7 +763,8 @@ function extractToolResultText(result: unknown): string | null {
 
   const chunks: string[] = [];
   for (const entryValue of content) {
-    const text = asTrimmedString(entryValue) ?? asTrimmedString(asRecord(entryValue)?.text);
+    const text =
+      asPersistedResultText(entryValue) ?? asPersistedResultText(asRecord(entryValue)?.text);
     if (text) {
       chunks.push(text);
     }
@@ -773,12 +778,8 @@ function extractPersistedToolResult(payload: Record<string, unknown> | null): st
   const candidates = [data?.result, item?.result];
   for (const candidate of candidates) {
     const text = extractToolResultText(candidate);
-    if (!text) {
-      continue;
-    }
-    const output = stripTrailingExitCode(text).output;
-    if (output) {
-      return output;
+    if (text && text.trim().length > 0) {
+      return text;
     }
   }
   return null;

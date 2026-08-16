@@ -376,6 +376,105 @@ describe("buildThreadFeed", () => {
     expect(group.activities[0]?.getFullDetail()).toBe(`printf hello\n\n${output}`);
   });
 
+  it("does not duplicate MCP summarized result as a separate output block", () => {
+    const turnId = TurnId.make("turn-mcp-result");
+    const item = {
+      server: "repository",
+      tool: "search",
+      arguments: { query: "work log" },
+      result: { content: "first line of output" },
+    };
+    const thread = makeThread({
+      id: ThreadId.make("thread-mcp-result"),
+      projectId: ProjectId.make("project-1"),
+      title: "MCP result",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("mcp-result-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Call repository tool",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            title: "Call repository tool",
+            itemType: "mcp_tool_call",
+            detail: "repository.search",
+            status: "completed",
+            data: { item },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+
+    expect(group.activities[0]?.getFullDetail()).toBe(
+      `MCP call\n${JSON.stringify(item, null, 2)}\n\nrepository.search`,
+    );
+    expect(group.activities[0]?.status).toBe("success");
+  });
+
+  it("does not mark completed commands failed from stdout phrases", () => {
+    const turnId = TurnId.make("turn-stdout-phrases");
+    const output = "this tutorial mentions command not found, ENOENT, and exit code 1";
+    const thread = makeThread({
+      id: ThreadId.make("thread-stdout-phrases"),
+      projectId: ProjectId.make("project-1"),
+      title: "Stdout phrases",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("bash-stdout-phrases"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Command run",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            title: "Command run",
+            itemType: "command_execution",
+            detail: "cat notes.txt",
+            status: "completed",
+            data: {
+              toolName: "Bash",
+              input: { command: "cat notes.txt" },
+              result: { content: output, is_error: false },
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+
+    expect(group.activities[0]?.status).toBe("success");
+    expect(group.activities[0]?.getFullDetail()).toBe(`cat notes.txt\n\n${output}`);
+  });
+
   it("defers large tool output expansion until a work row is opened or copied", () => {
     let serializedToolOutputs = 0;
     const activities = Array.from({ length: 5_000 }, (_, index) =>
