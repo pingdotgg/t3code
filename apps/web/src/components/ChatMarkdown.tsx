@@ -81,6 +81,7 @@ import {
   rewriteMarkdownFileUriHref,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
+import { findTaskListMarkerOffset } from "../markdown-task-list";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -145,17 +146,6 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
-
-function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
-  const firstLineEnd = markdown.indexOf("\n", listItemStart);
-  const firstLine = markdown.slice(
-    listItemStart,
-    firstLineEnd === -1 ? markdown.length : firstLineEnd,
-  );
-  const match = firstLine.match(/^(?:\s*(?:[-+*]|\d+[.)])\s+)(\[[ xX]\])/);
-  if (!match?.[1]) return null;
-  return listItemStart + firstLine.indexOf(match[1]);
-}
 
 /**
  * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits two-digit
@@ -1592,7 +1582,7 @@ function ChatMarkdown({
         const listItemStart = node?.position?.start.offset;
         const markerOffset =
           typeof listItemStart === "number"
-            ? findTaskListMarkerOffset(markdownSource, listItemStart)
+            ? findTaskListMarkerOffset(text, listItemStart, markdownSource)
             : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
@@ -1777,6 +1767,7 @@ function ChatMarkdown({
     markdownFileLinkMetaByHref,
     markdownSource,
     onTaskListChange,
+    text,
     openFileInPanel,
     openInPreferredEditor,
     openExternalLinkInPreview,

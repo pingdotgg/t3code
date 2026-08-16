@@ -140,13 +140,13 @@ const MARKDOWN_LINK_DEFINITION_PATTERN =
 const ANGLE_AUTOLINK_PATTERN = /<([^<>\n]+)>/g;
 const PROTECTED_MARKDOWN_SPAN_PATTERN = /!?\[[^\]]*]\([^)]*\)|!?\[[^\]]*]\[[^\]]*]|<[^>\n]+>/g;
 const BARE_WINDOWS_PATH_PATTERN =
-  /(?<![A-Za-z0-9_/])(?:[A-Za-z]:[\\/][^\s<>[\]()`]+|\\\\[^\s<>[\]()`\\/]+(?:[\\/][^\s<>[\]()`]+)+)/g;
+  /(?<![A-Za-z0-9_/])(?:[A-Za-z]:[\\/][^\s<>[\]()`*]+|\\\\[^\s<>[\]()`*\\/]+(?:[\\/][^\s<>[\]()`*]+)+)/g;
 const AUTOLINK_TRAILING_PUNCTUATION_PATTERN = /[.,;:!?')\]}"]+$/;
 
 /**
  * Rewrites Windows drive/UNC markdown destinations and bare paths to `file://`
  * URLs so rehype-sanitize does not treat `D:` as an unknown protocol.
- * Leaves fenced code, inline code, and non-file links alone.
+ * Leaves fenced code, indented code, inline code, and non-file links alone.
  */
 export function normalizeWindowsMarkdownFileLinks(markdown: string): string {
   if (markdown.length === 0 || !HAS_WINDOWS_FILESYSTEM_PATH_PATTERN.test(markdown)) {
@@ -258,8 +258,9 @@ function rewriteWindowsMarkdownInText(text: string): string {
   return autolinkBareWindowsPaths(rewriteWindowsAngleAutolinks(withDestinations));
 }
 
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$))/;
 const INLINE_CODE_SEGMENT_PATTERN = /(`[^`\n]+`)/;
+const OPEN_FENCE_PATTERN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const CLOSE_FENCE_PATTERN = /^( {0,3})(`{3,}|~{3,})[ \t]*$/;
 
 function mapOutsideInlineCode(text: string, transform: (chunk: string) => string): string {
   return text
@@ -268,11 +269,70 @@ function mapOutsideInlineCode(text: string, transform: (chunk: string) => string
     .join("");
 }
 
+function lineWithoutCarriageReturn(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+function openingFenceMarker(line: string): string | null {
+  const match = OPEN_FENCE_PATTERN.exec(line);
+  if (!match?.[2]) return null;
+  const marker = match[2];
+  const info = match[3] ?? "";
+  if (marker.startsWith("`") && info.includes("`")) return null;
+  return marker;
+}
+
+function isClosingFenceLine(line: string, openMarker: string): boolean {
+  const match = CLOSE_FENCE_PATTERN.exec(line);
+  if (!match?.[2]) return false;
+  const marker = match[2];
+  return marker[0] === openMarker[0] && marker.length >= openMarker.length;
+}
+
+function isIndentedCodeLine(line: string): boolean {
+  return line.startsWith("    ") || line.startsWith("\t");
+}
+
 function mapMarkdownOutsideCode(markdown: string, transform: (text: string) => string): string {
-  return markdown
-    .split(FENCED_CODE_SEGMENT_PATTERN)
-    .map((segment, index) => (index % 2 === 1 ? segment : mapOutsideInlineCode(segment, transform)))
-    .join("");
+  let output = "";
+  let index = 0;
+  let openFence: string | null = null;
+
+  while (index < markdown.length) {
+    const lineEnd = markdown.indexOf("\n", index);
+    const lineLimit = lineEnd === -1 ? markdown.length : lineEnd;
+    const line = markdown.slice(index, lineLimit);
+    const newline = lineEnd === -1 ? "" : "\n";
+    const matchLine = lineWithoutCarriageReturn(line);
+
+    if (openFence !== null) {
+      output += line + newline;
+      if (isClosingFenceLine(matchLine, openFence)) {
+        openFence = null;
+      }
+      index = lineLimit + newline.length;
+      continue;
+    }
+
+    const fence = openingFenceMarker(matchLine);
+    if (fence !== null) {
+      openFence = fence;
+      output += line + newline;
+      index = lineLimit + newline.length;
+      continue;
+    }
+
+    if (isIndentedCodeLine(matchLine)) {
+      output += line + newline;
+      index = lineLimit + newline.length;
+      continue;
+    }
+
+    output += mapOutsideInlineCode(line, transform) + newline;
+    index = lineLimit + newline.length;
+  }
+
+  return output;
 }
 
 function looksLikePosixFilesystemPath(path: string): boolean {

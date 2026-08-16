@@ -243,6 +243,27 @@ describe("normalizeWindowsMarkdownFileLinks", () => {
       "See [M:\\batches\\issue-40-v1\\docs\\prompt.md](file:///M:/batches/issue-40-v1/docs/prompt.md).",
     );
   });
+
+  it("does not consume emphasis markers around a bare windows path", () => {
+    expect(normalizeWindowsMarkdownFileLinks("**D:\\foo.md**")).toBe(
+      "**[D:\\foo.md](file:///D:/foo.md)**",
+    );
+  });
+
+  it("does not rewrite indented code or fenced code with a mid-line fence sequence", () => {
+    const indented = "    D:\\tmp\\file.md";
+    const tabIndented = "\tD:\\tmp\\file.md";
+    const fencedMidline = '```\nconst s = "```";\nD:\\tmp\\file.md\n```';
+    expect(normalizeWindowsMarkdownFileLinks(indented)).toBe(indented);
+    expect(normalizeWindowsMarkdownFileLinks(tabIndented)).toBe(tabIndented);
+    expect(normalizeWindowsMarkdownFileLinks(fencedMidline)).toBe(fencedMidline);
+  });
+
+  it("still autolinks a path after a closed fence", () => {
+    expect(normalizeWindowsMarkdownFileLinks("```\ncode\n```\nD:\\tmp\\file.md")).toBe(
+      "```\ncode\n```\n[D:\\tmp\\file.md](file:///D:/tmp/file.md)",
+    );
+  });
 });
 
 describe("resolveInlineCodeFileLinkMeta", () => {
