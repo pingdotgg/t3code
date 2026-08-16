@@ -5,6 +5,7 @@ import {
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -23,11 +24,15 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { ProviderRefreshButton } from "./ProviderRefreshButton";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onRefreshProviders?: (
+    environmentId: EnvironmentId,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -141,6 +146,11 @@ function CloudEnvironmentRowsContent(
               borderTop={index !== 0}
               onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
               onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
+              onRefreshProviders={
+                props.onRefreshProviders
+                  ? () => props.onRefreshProviders!(environment.environmentId)
+                  : undefined
+              }
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
             />
@@ -205,6 +215,7 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
   readonly onDisconnect: () => void;
+  readonly onRefreshProviders?: () => Promise<AtomCommandResult<unknown, unknown>>;
   readonly onToggleError: () => void;
 }) {
   return (
@@ -223,6 +234,7 @@ function ConnectedCloudEnvironmentRow(props: {
         props.onDisconnect();
       }}
       onToggleError={props.onToggleError}
+      onRefreshProviders={props.onRefreshProviders}
       value={props.environment.connectionState !== "available"}
     />
   );
@@ -272,6 +284,7 @@ function CloudEnvironmentRowShell(props: {
   readonly label: string;
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
+  readonly onRefreshProviders?: () => Promise<AtomCommandResult<unknown, unknown>>;
   readonly statusText?: string;
   readonly value: boolean;
 }) {
@@ -396,6 +409,9 @@ function CloudEnvironmentRowShell(props: {
         trackColor={{ false: track, true: activeTrack }}
         value={props.value}
       />
+      {props.onRefreshProviders ? (
+        <ProviderRefreshButton compact onRefresh={props.onRefreshProviders} />
+      ) : null}
     </View>
   );
 }
