@@ -361,21 +361,23 @@ export const ChatHeader = memo(function ChatHeader({
         data-chat-header-actions
         onContextMenu={handleHeaderActionsContextMenu}
         className={cn(
-          "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
+          "flex h-full min-w-6 shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
-        {visibility.scripts && activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            fileScripts={fileScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
+        {activeProjectScripts && (
+          <div className={cn(!visibility.scripts && "hidden")}>
+            <ProjectScriptsControl
+              scripts={activeProjectScripts}
+              fileScripts={fileScripts}
+              keybindings={keybindings}
+              preferredScriptId={preferredScriptId}
+              onRunScript={onRunProjectScript}
+              onAddScript={onAddProjectScript}
+              onUpdateScript={onUpdateProjectScript}
+              onDeleteScript={onDeleteProjectScript}
+            />
+          </div>
         )}
         {showOpenInPicker && (
           <div className={cn(!visibility.openIn && "hidden")}>
@@ -387,13 +389,15 @@ export const ChatHeader = memo(function ChatHeader({
             />
           </div>
         )}
-        {visibility.git && activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            onOpenPullRequest={onOpenPullRequest}
-            {...(draftId ? { draftId } : {})}
-          />
+        {activeProjectName && (
+          <div className={cn(!visibility.git && "hidden")}>
+            <GitActionsControl
+              gitCwd={gitCwd}
+              activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+              onOpenPullRequest={onOpenPullRequest}
+              {...(draftId ? { draftId } : {})}
+            />
+          </div>
         )}
       </div>
     </div>
