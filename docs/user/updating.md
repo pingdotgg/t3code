@@ -60,8 +60,9 @@ commands.
 ## After the Update
 
 Keep the web or desktop app open while the server restarts. The update completes only after the
-service launcher reports that exact update committed and the replacement server is ready to accept
-commands. A rollback is reported immediately instead of waiting for a generic reconnect timeout.
+service launcher reports that exact update as committed and the replacement server is ready to
+accept commands. A rollback is reported immediately instead of waiting for a generic reconnect
+timeout.
 
 If a step fails:
 
