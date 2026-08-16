@@ -101,12 +101,26 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
   return profiles.length === 0 ? DEFAULT_PROFILES : profiles;
 });
 
+/**
+ * Whether a directory entry exists, without following it or opening it.
+ *
+ * `stat` resolves symlinks and the locks below deliberately dangle, so
+ * `readLink` is the probe that answers for the entry itself.
+ */
+const entryExists = Effect.fnUntraced(function* (path: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.stat(path).pipe(
+    Effect.catchCause(() => fileSystem.readLink(path)),
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 /** Whether the browser is running, which leaves its cookie DB mid-write. */
 export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
   definition: BrowserImportSourceDefinition,
   paths: SourcePaths,
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
   const lock = paths.path.join(definition.userDataDirectory(paths), "SingletonLock");
   // Chromium writes a `SingletonLock` symlink for as long as an instance holds
   // the profile. Its presence is a far cheaper and more targeted signal than
@@ -116,19 +130,31 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   // `stat` and `exists` follow links — so they report every running browser as
   // closed, which would let an import read a live, mid-write database.
   // `readLink` is the one probe that answers for the entry itself.
-  return yield* fileSystem.stat(lock).pipe(
-    Effect.catchCause(() => fileSystem.readLink(lock)),
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
+  return yield* entryExists(lock);
 });
 
+/**
+ * Whether the source has cookies to import.
+ *
+ * Keyed off the cookie database rather than the user-data directory, because
+ * that directory is not evidence the browser exists: installers for native
+ * messaging hosts create an empty one for every Chromium fork they know about,
+ * so a machine with only Chrome reports Edge, Brave, Vivaldi, Opera and Arc as
+ * present. The database is the thing an import actually needs, so its absence
+ * is the honest answer either way.
+ *
+ * Existence is checked without opening the file, which matters for Safari: TCC
+ * permits `stat` on the jar inside its container but refuses a read, so this
+ * still sees it and the user gets the Full Disk Access prompt rather than
+ * having Safari disappear.
+ */
 export const isSourceInstalled = Effect.fn("BrowserImportSources.isSourceInstalled")(function* (
   definition: BrowserImportSourceDefinition,
   paths: SourcePaths,
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem
-    .exists(definition.userDataDirectory(paths))
-    .pipe(Effect.orElseSucceed(() => false));
+  const profiles = yield* listSourceProfiles(definition, paths);
+  const found = yield* Effect.forEach(profiles, (profile) =>
+    entryExists(cookieDatabasePath(definition, paths, profile.directory)),
+  );
+  return found.some(Boolean);
 });
