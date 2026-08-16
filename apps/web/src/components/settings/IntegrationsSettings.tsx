@@ -43,15 +43,6 @@ import { isElectron } from "../../env";
 
 import { Badge } from "../ui/badge";
 import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
-import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
@@ -514,27 +505,20 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
 }
 
 /**
- * Create, rename, and remove browser profiles.
- *
- * Built-ins render without controls: they are synthesized rather than stored,
- * so there is nothing to rename and removing them would strand every tab that
- * opened under them.
- */
-
-/**
- * Per-profile cookie import from a browser installed on this machine.
- *
- * Sources are listed lazily on open: detection touches the other browser's
- * files, and the answer changes while the app is running (quitting the browser
- * clears `browserRunning`), so a value cached at mount would go stale.
- */
-/**
  * Profile list, its header menu, and the import flow.
  *
  * One menu creates profiles and imports into them, because the two are the
  * same decision from the user's side: "I want a profile that has my Helium
  * logins in it". Import targets include "New profile" so that case does not
  * require creating one first and then finding a second control.
+ *
+ * Built-ins render without a rename field: they are synthesized rather than
+ * stored, so there is nothing to rename and removing them would strand every
+ * tab that opened under them.
+ *
+ * Sources are listed lazily on open: detection touches the other browser's
+ * files, and the answer changes while the app is running (quitting the browser
+ * clears `browserRunning`), so a value cached at mount would go stale.
  */
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
@@ -542,7 +526,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const updateSettings = useUpdatePrimarySettings();
   const environmentId = usePrimaryEnvironment()?.environmentId;
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
-  const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
   const [busy, setBusy] = useState(false);
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
 
