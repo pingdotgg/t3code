@@ -224,6 +224,7 @@ const currentStatus = async (
     return applyPreviewLoadFailureToAutomationStatus(
       { ...status, tabId, visible, ...viewportStatus },
       snapshot?.navStatus,
+      { preferLiveAvailability: true },
     );
   }
   const navStatus = snapshot?.navStatus;

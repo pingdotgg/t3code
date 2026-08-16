@@ -57,4 +57,20 @@ describe("previewAutomationStatus", () => {
       title: "ERR_NAME_NOT_RESOLVED",
     });
   });
+
+  it("does not let a stale LoadFailed snapshot override a live available guest", () => {
+    expect(
+      applyPreviewLoadFailureToAutomationStatus(
+        healthy,
+        {
+          _tag: "LoadFailed",
+          url: "http://localhost:5173/",
+          title: "localhost:5173",
+          code: -102,
+          description: "ERR_CONNECTION_REFUSED",
+        },
+        { preferLiveAvailability: true },
+      ),
+    ).toEqual(healthy);
+  });
 });
