@@ -26,7 +26,8 @@ import {
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
-  parseOpenCodeMessage,
+  parseOpenCodeUsageRow,
+  type OpenCodeUsageRow,
   type UsageRecord,
 } from "./usageTranscripts.ts";
 
@@ -146,16 +147,72 @@ export async function readTranscriptRecords(
 }
 
 /**
+ * OpenCode has kept usage on assistant messages across two projections: the
+ * legacy `message` table (role/model/tokens nested in `data`) and the current
+ * `session_message` table (a `type` column, model under `$.model.id`). Both
+ * select only usage scalars — message content never leaves the database.
+ */
+const OPEN_CODE_MESSAGE_TABLES_QUERY = `
+  SELECT name FROM sqlite_master
+  WHERE type = 'table' AND name IN ('session_message', 'message')
+`;
+
+const OPEN_CODE_LEGACY_USAGE_QUERY = `
+  SELECT
+    id AS messageId,
+    session_id AS sessionId,
+    time_created AS timestampMs,
+    json_extract(data, '$.modelID') AS modelId,
+    json_extract(data, '$.tokens.input') AS inputTokens,
+    json_extract(data, '$.tokens.output') AS outputTokens,
+    json_extract(data, '$.tokens.reasoning') AS reasoningTokens,
+    json_extract(data, '$.tokens.cache.read') AS cacheReadTokens,
+    json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens,
+    json_extract(data, '$.cost') AS costUsd
+  FROM message
+  WHERE time_updated >= ?
+    AND json_valid(data)
+    AND json_extract(data, '$.role') = 'assistant'
+    AND json_extract(data, '$.time.completed') IS NOT NULL
+`;
+
+const OPEN_CODE_CURRENT_USAGE_QUERY = `
+  SELECT
+    id AS messageId,
+    session_id AS sessionId,
+    time_created AS timestampMs,
+    json_extract(data, '$.model.id') AS modelId,
+    json_extract(data, '$.tokens.input') AS inputTokens,
+    json_extract(data, '$.tokens.output') AS outputTokens,
+    json_extract(data, '$.tokens.reasoning') AS reasoningTokens,
+    json_extract(data, '$.tokens.cache.read') AS cacheReadTokens,
+    json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens,
+    json_extract(data, '$.cost') AS costUsd
+  FROM session_message
+  WHERE time_created >= ?
+    AND type = 'assistant'
+    AND json_valid(data)
+`;
+
+const OPEN_CODE_TABLE_QUERIES = {
+  session_message: OPEN_CODE_CURRENT_USAGE_QUERY,
+  message: OPEN_CODE_LEGACY_USAGE_QUERY,
+} as const;
+
+type OpenCodeMessageTable = keyof typeof OPEN_CODE_TABLE_QUERIES;
+
+/**
  * Reads usage records from OpenCode's SQLite transcript store.
  *
  * Unlike the JSONL providers, OpenCode keeps one row per message in
  * `opencode.db`, so the whole source is one query. The window filter is pushed
- * into SQL via `time_updated`, which covers in-progress messages that predate
- * the window but complete inside it. The database is opened read-only, and
+ * into SQL (`time_updated` on the legacy table covers messages created before
+ * the window but completed inside it). The database is opened read-only, and
  * `-wal`/`-shm` siblings are never created because no write happens.
  *
- * Returns `null` when the database cannot be read, so the caller reports the
- * source as failed rather than zero usage.
+ * An upgraded database can carry the same message ID in both projections; the
+ * current `session_message` row wins. Returns `null` when the database cannot
+ * be read, so the caller reports the source as failed rather than zero usage.
  */
 export async function readOpenCodeRecords(
   dbPath: string,
@@ -169,25 +226,33 @@ export async function readOpenCodeRecords(
   }
 
   try {
-    const rows = database
-      .prepare(
-        `SELECT data FROM message
-         WHERE time_updated >= ?
-           AND json_extract(data, '$.role') = 'assistant'
-           AND json_extract(data, '$.tokens.total') > 0
-           AND json_extract(data, '$.modelID') IS NOT NULL
-           AND json_extract(data, '$.time.completed') IS NOT NULL`,
-      )
-      .all(sinceMs);
-
-    const records: UsageRecord[] = [];
-    for (const row of rows) {
-      const data = (row as Record<string, unknown>)["data"];
-      if (typeof data !== "string") continue;
-      const record = parseOpenCodeMessage(data);
-      if (record !== null) records.push(record);
+    const tables = new Set<OpenCodeMessageTable>();
+    for (const row of database.prepare(OPEN_CODE_MESSAGE_TABLES_QUERY).all()) {
+      const name = (row as Record<string, unknown>)["name"];
+      if (name === "session_message" || name === "message") tables.add(name);
     }
-    return records;
+    if (tables.size === 0) return null;
+
+    const recordsByKey = new Map<string, UsageRecord>();
+    let anonymous = 0;
+    for (const table of ["session_message", "message"] as const) {
+      if (!tables.has(table)) continue;
+      const rows = database.prepare(OPEN_CODE_TABLE_QUERIES[table]).all(sinceMs);
+      for (const row of rows) {
+        const record = parseOpenCodeUsageRow(row as OpenCodeUsageRow);
+        if (record === null) continue;
+        if (record.dedupeKey === null) {
+          // An anonymous record can still be unique; it just cannot dedupe
+          // across the two projections.
+          recordsByKey.set(`${table}#${anonymous++}`, record);
+          continue;
+        }
+        if (!recordsByKey.has(record.dedupeKey)) {
+          recordsByKey.set(record.dedupeKey, record);
+        }
+      }
+    }
+    return [...recordsByKey.values()];
   } catch {
     return null;
   } finally {

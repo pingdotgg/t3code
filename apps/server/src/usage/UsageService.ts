@@ -301,8 +301,8 @@ export const make = Effect.gen(function* () {
    * window-independent, which holds for the per-session JSONL transcripts.
    * OpenCode's source is one SQLite database queried with a window filter, so a
    * cached entry only ever covers the window it was scanned for and a wider
-   * window would silently reuse it. The windowed query is fast enough that the
-   * cache buys nothing, so OpenCode always scans fresh.
+   * window would silently reuse it. The scalar-only windowed query is fast
+   * enough that the cache buys nothing, so OpenCode always scans fresh.
    */
   const readFileRecords = (
     filePath: string,
