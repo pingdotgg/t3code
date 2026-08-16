@@ -57,10 +57,7 @@ import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRoute
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
-import {
-  SETTINGS_ARCHIVE_ROUTE_SCREENS,
-  SETTINGS_WAITLIST_ALIAS_ROUTE_SCREENS,
-} from "./features/settings/settingsRouteScreens";
+import { SETTINGS_CUSTOM_ROUTE_SCREENS_BY_STACK } from "./features/settings/settingsRouteScreens";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -194,7 +191,7 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Usage",
       },
     }),
-    ...SETTINGS_ARCHIVE_ROUTE_SCREENS,
+    ...SETTINGS_CUSTOM_ROUTE_SCREENS_BY_STACK.content,
   },
 });
 
@@ -215,7 +212,7 @@ const SettingsSheetStack = createNativeStackNavigator({
       screen: SettingsAuthRouteScreen,
       linking: "auth",
     }),
-    ...SETTINGS_WAITLIST_ALIAS_ROUTE_SCREENS,
+    ...SETTINGS_CUSTOM_ROUTE_SCREENS_BY_STACK.auth,
   },
 });
 
