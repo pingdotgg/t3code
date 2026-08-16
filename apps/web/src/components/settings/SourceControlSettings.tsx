@@ -1,10 +1,11 @@
 import {
+  ArrowUpRightIcon,
   ChevronDownIcon,
   GitBranchIcon,
   GitPullRequestIcon,
   RefreshCwIcon,
-  Trash2Icon,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -19,6 +20,7 @@ import type {
   VcsDriverKind,
   VcsDiscoveryItem,
   WorktreeInfo,
+  WorktreePruneBlocker,
 } from "@t3tools/contracts";
 import {
   getBackgroundActivityBaseProfile,
@@ -56,6 +58,16 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -88,6 +100,7 @@ import {
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { ProjectFavicon } from "../ProjectFavicon";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
@@ -529,6 +542,7 @@ function EmptySourceControlDiscovery({
 }
 
 type WorktreeManagementViewProps = {
+  readonly environmentId: EnvironmentId;
   readonly worktrees: ReadonlyArray<WorktreeInfo>;
   readonly onPrune: (worktree: WorktreeInfo) => void;
   readonly pendingPath: string | null;
@@ -581,33 +595,56 @@ function WorktreeRetentionSelect({
 }
 
 type WorktreeRowProps = {
+  readonly environmentId: EnvironmentId;
   readonly worktree: WorktreeInfo;
   readonly onPrune: (worktree: WorktreeInfo) => void;
   readonly pendingPath: string | null;
 };
 
-/** Rich, count-aware labels for every prune blocker (not just the first). */
-function worktreeBlockerDetails(worktree: WorktreeInfo): ReadonlyArray<string> {
-  return worktree.pruneBlockers.map((blocker) => {
-    switch (blocker) {
-      case "active_thread": {
-        const activeThreads = worktree.threads.filter((thread) => thread.status === "active");
-        return activeThreads.length > 1
-          ? `${activeThreads.length} active threads`
-          : "Active thread";
-      }
-      case "dirty":
-        return worktree.dirtyFileCount !== null && worktree.dirtyFileCount > 0
-          ? `${worktree.dirtyFileCount} changed file${worktree.dirtyFileCount === 1 ? "" : "s"}`
-          : "Uncommitted changes";
-      case "unpushed":
-        return worktree.aheadOfUpstreamCount !== null && worktree.aheadOfUpstreamCount > 0
-          ? `${worktree.aheadOfUpstreamCount} unpushed commit${worktree.aheadOfUpstreamCount === 1 ? "" : "s"}`
-          : "Unpushed commits";
-      case "status_unavailable":
-        return "Status unavailable";
+function worktreeBlockerDetail(worktree: WorktreeInfo, blocker: WorktreePruneBlocker): string {
+  switch (blocker) {
+    case "active_thread": {
+      const activeThreads = worktree.threads.filter((thread) => thread.status === "active");
+      return activeThreads.length > 1 ? `${activeThreads.length} active threads` : "In use";
     }
-  });
+    case "dirty":
+      return worktree.dirtyFileCount !== null && worktree.dirtyFileCount > 0
+        ? `${worktree.dirtyFileCount} changed file${worktree.dirtyFileCount === 1 ? "" : "s"}`
+        : "Local changes";
+    case "unpushed":
+      return worktree.aheadOfUpstreamCount !== null && worktree.aheadOfUpstreamCount > 0
+        ? `${worktree.aheadOfUpstreamCount} unpushed commit${worktree.aheadOfUpstreamCount === 1 ? "" : "s"}`
+        : "Unpushed commits";
+    case "status_unavailable":
+      return "Status unavailable";
+  }
+}
+
+function WorktreeProtectionStatus({ worktree }: { readonly worktree: WorktreeInfo }) {
+  if (worktree.safeToPrune) return null;
+
+  const priority: ReadonlyArray<WorktreePruneBlocker> = [
+    "status_unavailable",
+    "dirty",
+    "unpushed",
+    "active_thread",
+  ];
+  const primary = priority.find((blocker) => worktree.pruneBlockers.includes(blocker));
+  if (primary === undefined) return null;
+
+  const details = worktree.pruneBlockers.map((blocker) => worktreeBlockerDetail(worktree, blocker));
+  return (
+    <span
+      className={cn(
+        "shrink-0 text-[11px] tabular-nums",
+        primary === "active_thread" ? "text-muted-foreground" : "text-warning",
+      )}
+      title={details.join(", ")}
+    >
+      {worktreeBlockerDetail(worktree, primary)}
+      {details.length > 1 ? ` +${details.length - 1}` : null}
+    </span>
+  );
 }
 
 function WorktreeSyncCounters({ worktree }: { readonly worktree: WorktreeInfo }) {
@@ -626,16 +663,53 @@ function WorktreeSyncCounters({ worktree }: { readonly worktree: WorktreeInfo })
   );
 }
 
-function WorktreeRichMetadata({ worktree }: { readonly worktree: WorktreeInfo }) {
+function WorktreeRichMetadata({
+  environmentId,
+  worktree,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly worktree: WorktreeInfo;
+}) {
+  const linkedThreads = worktree.threads.filter((thread) => thread.status !== "deleted");
+  const firstThread =
+    linkedThreads.find((thread) => thread.status === "active") ?? linkedThreads[0] ?? null;
+  const otherThreadCount = firstThread === null ? 0 : linkedThreads.length - 1;
   const parts: ReadonlyArray<{ key: string; node: ReactNode }> = [
-    {
-      key: "project",
-      node: (
-        <span className="min-w-0 max-w-full truncate" title={worktree.path}>
-          {worktree.projectTitle}
-        </span>
-      ),
-    },
+    ...(firstThread
+      ? [
+          {
+            key: "thread",
+            node: (
+              <Link
+                to="/$environmentId/$threadId"
+                params={{ environmentId, threadId: firstThread.threadId }}
+                className="inline-flex min-w-0 max-w-full items-center gap-1 text-foreground/70 hover:text-foreground"
+                title={firstThread.title}
+              >
+                <ArrowUpRightIcon className="size-3 shrink-0" aria-hidden />
+                <span className="truncate">{firstThread.title || "Untitled thread"}</span>
+              </Link>
+            ),
+          },
+        ]
+      : [
+          {
+            key: "threads",
+            node: <span className="shrink-0">No linked threads</span>,
+          },
+        ]),
+    ...(otherThreadCount > 0
+      ? [
+          {
+            key: "other-threads",
+            node: (
+              <span className="shrink-0 tabular-nums">
+                +{otherThreadCount} thread{otherThreadCount === 1 ? "" : "s"}
+              </span>
+            ),
+          },
+        ]
+      : []),
     ...(worktree.lastActivityAt
       ? [
           {
@@ -643,18 +717,6 @@ function WorktreeRichMetadata({ worktree }: { readonly worktree: WorktreeInfo })
             node: (
               <span className="shrink-0">
                 Used {formatRelativeTimeLabel(worktree.lastActivityAt)}
-              </span>
-            ),
-          },
-        ]
-      : []),
-    ...(worktree.threads.length > 0
-      ? [
-          {
-            key: "threads",
-            node: (
-              <span className="shrink-0 tabular-nums">
-                {worktree.threads.length} thread{worktree.threads.length === 1 ? "" : "s"}
               </span>
             ),
           },
@@ -729,23 +791,16 @@ function WorktreeEmptyMedallion() {
 function WorktreeRemoveButton({ worktree, onPrune, pendingPath }: WorktreeRowProps) {
   if (!worktree.safeToPrune) return null;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            className="size-6 rounded-sm p-0 [--control-icon-color:currentColor] text-muted-foreground hover:text-destructive"
-            onClick={() => onPrune(worktree)}
-            disabled={pendingPath !== null}
-            aria-label={`Remove worktree ${worktree.branch ?? worktree.path}`}
-          >
-            <Trash2Icon className="size-3.5" />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">Remove worktree</TooltipPopup>
-    </Tooltip>
+    <Button
+      size="xs"
+      variant="ghost-muted"
+      className="h-6 px-1.5 text-[11px] hover:text-destructive"
+      onClick={() => onPrune(worktree)}
+      disabled={pendingPath !== null}
+      aria-label={`Remove worktree ${worktree.branch ?? worktree.path}`}
+    >
+      Remove
+    </Button>
   );
 }
 
@@ -772,8 +827,8 @@ function WorktreePolicyRows(props: WorktreeManagementViewProps) {
         }
       />
       <SettingsRow
-        title="Remove unlinked immediately"
-        description="Removes a worktree as soon as its last thread is deleted."
+        title="Clean up with last thread"
+        description="Removes a safe worktree as soon as its final linked thread is deleted."
         resetAction={
           props.canResetDeleteOrphaned ? (
             <SettingResetButton
@@ -798,34 +853,72 @@ function WorktreePolicyRows(props: WorktreeManagementViewProps) {
   );
 }
 
-/** Divided ledger with semantic badges. */
-function WorktreeLedgerRow({ worktree, onPrune, pendingPath }: WorktreeRowProps) {
+function WorktreePolicySummary(props: WorktreeManagementViewProps) {
+  const [open, setOpen] = useState(false);
+  const retention =
+    props.pruneAfterDays === null
+      ? "Do not remove inactive worktrees by age."
+      : `Remove safe worktrees after ${props.pruneAfterDays} ${props.pruneAfterDays === 1 ? "day" : "days"}.`;
+  const orphaned = props.deleteOrphanedImmediately ? " Clean up with the last linked thread." : "";
+
+  return (
+    <>
+      <SettingsRow
+        title="Automatic cleanup"
+        description={`${retention}${orphaned}`}
+        control={
+          <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
+            Change
+          </Button>
+        }
+      />
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogPopup className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Automatic worktree cleanup</DialogTitle>
+            <DialogDescription>
+              T3 Code removes a worktree only after verifying it has no active threads, local
+              changes, or unpushed commits.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-1 px-2 sm:px-3">
+            <WorktreePolicyRows {...props} />
+          </DialogPanel>
+          <DialogFooter>
+            <DialogClose render={<Button size="sm" />}>Done</DialogClose>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+    </>
+  );
+}
+
+function WorktreeLedgerRow({ environmentId, worktree, onPrune, pendingPath }: WorktreeRowProps) {
   const isPending = pendingPath === worktree.path;
   return (
     <div className="px-3 py-3 transition-colors hover:bg-muted/20 sm:px-4">
       <div className="flex min-w-0 items-center gap-3">
         <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="truncate text-sm font-medium tracking-[-0.005em] text-foreground"
+              title={worktree.path}
+            >
               {worktree.branch ?? "Detached HEAD"}
             </span>
-            {worktree.safeToPrune ? (
-              <Badge variant="success" size="sm">
-                Safe to remove
-              </Badge>
-            ) : (
-              worktreeBlockerDetails(worktree).map((detail) => (
-                <Badge key={detail} variant="warning" size="sm">
-                  {detail}
-                </Badge>
-              ))
-            )}
           </div>
-          <WorktreeRichMetadata worktree={worktree} />
+          <WorktreeRichMetadata environmentId={environmentId} worktree={worktree} />
         </div>
-        {isPending ? null : (
-          <WorktreeRemoveButton worktree={worktree} onPrune={onPrune} pendingPath={pendingPath} />
+        {isPending ? null : worktree.safeToPrune ? (
+          <WorktreeRemoveButton
+            environmentId={environmentId}
+            worktree={worktree}
+            onPrune={onPrune}
+            pendingPath={pendingPath}
+          />
+        ) : (
+          <WorktreeProtectionStatus worktree={worktree} />
         )}
       </div>
       {isPending ? (
@@ -837,25 +930,116 @@ function WorktreeLedgerRow({ worktree, onPrune, pendingPath }: WorktreeRowProps)
   );
 }
 
-function WorktreeLedgerView(props: WorktreeManagementViewProps) {
-  useRelativeTimeTick(30_000);
-  const ordered = [...props.worktrees].sort(
+type WorktreeProjectGroup = {
+  readonly projectId: WorktreeInfo["projectId"];
+  readonly projectTitle: string;
+  readonly projectTitles: ReadonlyArray<string>;
+  readonly workspaceRoot: string;
+  readonly worktrees: ReadonlyArray<WorktreeInfo>;
+};
+
+function groupWorktreesByProject(
+  worktrees: ReadonlyArray<WorktreeInfo>,
+): ReadonlyArray<WorktreeProjectGroup> {
+  const groups = new Map<
+    WorktreeInfo["projectId"],
+    Omit<WorktreeProjectGroup, "worktrees"> & { worktrees: WorktreeInfo[] }
+  >();
+  for (const worktree of worktrees) {
+    const existing = groups.get(worktree.projectId);
+    if (existing) {
+      existing.worktrees.push(worktree);
+    } else {
+      groups.set(worktree.projectId, {
+        projectId: worktree.projectId,
+        projectTitle: worktree.projectTitle,
+        projectTitles: worktree.projects.map((project) => project.projectTitle),
+        workspaceRoot: worktree.workspaceRoot,
+        worktrees: [worktree],
+      });
+    }
+  }
+  return [...groups.values()].toSorted(
+    (a, b) =>
+      a.projectTitle.localeCompare(b.projectTitle) ||
+      a.workspaceRoot.localeCompare(b.workspaceRoot),
+  );
+}
+
+function WorktreeProjectLedger({
+  environmentId,
+  group,
+  onPrune,
+  pendingPath,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly group: WorktreeProjectGroup;
+  readonly onPrune: (worktree: WorktreeInfo) => void;
+  readonly pendingPath: string | null;
+}) {
+  const ordered = [...group.worktrees].sort(
     (a, b) => Number(a.safeToPrune) - Number(b.safeToPrune),
   );
+  const otherProjectCount = group.projectTitles.length - 1;
+  return (
+    <section aria-label={`${group.projectTitle} worktrees`}>
+      <div className="flex min-w-0 items-center justify-between gap-4 border-b border-border/60 px-3 pt-4 pb-2 sm:px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <ProjectFavicon
+            environmentId={environmentId}
+            cwd={group.workspaceRoot}
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+          <h3 className="truncate text-xs font-medium text-foreground">{group.projectTitle}</h3>
+          {otherProjectCount > 0 ? (
+            <span
+              className="shrink-0 text-[10px] text-muted-foreground"
+              title={group.projectTitles.join(", ")}
+            >
+              +{otherProjectCount} project{otherProjectCount === 1 ? "" : "s"}
+            </span>
+          ) : null}
+        </div>
+        <code
+          className="max-w-[55%] truncate text-[10px] text-muted-foreground/60"
+          title={group.workspaceRoot}
+        >
+          {group.workspaceRoot}
+        </code>
+      </div>
+      <div className="mx-3 divide-y divide-border/60 sm:mx-4">
+        {ordered.map((worktree) => (
+          <WorktreeLedgerRow
+            key={worktree.path}
+            environmentId={environmentId}
+            worktree={worktree}
+            onPrune={onPrune}
+            pendingPath={pendingPath}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WorktreeLedgerView(props: WorktreeManagementViewProps) {
+  useRelativeTimeTick(30_000);
+  const groups = groupWorktreesByProject(props.worktrees);
   return (
     <div className="space-y-1">
-      <WorktreePolicyRows {...props} />
+      <WorktreePolicySummary {...props} />
       <WorktreeErrorStrip error={props.inventoryError} />
       {props.isPending ? (
         <WorktreePendingStrip label="Reading worktrees..." />
-      ) : ordered.length === 0 ? (
+      ) : groups.length === 0 ? (
         <WorktreeEmptyMedallion />
       ) : (
-        <div className="mx-3 divide-y divide-border/60 sm:mx-4">
-          {ordered.map((worktree) => (
-            <WorktreeLedgerRow
-              key={worktree.path}
-              worktree={worktree}
+        <div className="space-y-2">
+          {groups.map((group) => (
+            <WorktreeProjectLedger
+              key={group.projectId}
+              environmentId={props.environmentId}
+              group={group}
               onPrune={props.onPrune}
               pendingPath={props.pendingPath}
             />
@@ -972,6 +1156,7 @@ function WorktreeEnvironmentGroup({
   const deleteOrphanedImmediately = settings.worktrees.deleteOrphanedImmediately;
   const isInitialInventoryPending = inventory.isPending && inventory.data === null;
   const managementProps: WorktreeManagementViewProps = {
+    environmentId,
     worktrees,
     onPrune: handlePrune,
     pendingPath,
