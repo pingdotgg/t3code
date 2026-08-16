@@ -3,6 +3,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   GitPullRequestIcon,
+  LoaderCircleIcon,
   RefreshCwIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
@@ -1098,7 +1099,6 @@ type WorktreeEnvironmentTarget = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPrimary: boolean;
-  readonly isConnected: boolean;
 };
 
 /** Worktree inventory and cleanup policy for one environment. Mounted per
@@ -1144,8 +1144,8 @@ function WorktreeEnvironmentGroup({
   }, [inventory.refresh, refreshToken]);
 
   useEffect(() => {
-    onPendingChange(environmentId, target.isConnected && inventory.isPending);
-  }, [environmentId, inventory.isPending, onPendingChange, target.isConnected]);
+    onPendingChange(environmentId, inventory.isPending);
+  }, [environmentId, inventory.isPending, onPendingChange]);
 
   useEffect(
     () => () => {
@@ -1244,6 +1244,7 @@ function WorktreeManagementSection() {
   const targets: WorktreeEnvironmentTarget[] = environments
     .filter(
       (environment) =>
+        environment.connection.phase === "connected" &&
         serverConfigs.get(environment.environmentId)?.environment.capabilities
           .worktreeManagement === true,
     )
@@ -1251,7 +1252,6 @@ function WorktreeManagementSection() {
       environmentId: environment.environmentId,
       label: environment.label,
       isPrimary: environment.environmentId === primaryEnvironmentId,
-      isConnected: environment.connection.phase === "connected",
     }))
     .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.label.localeCompare(b.label));
 
@@ -1274,7 +1274,11 @@ function WorktreeManagementSection() {
                   isPending ? "Refreshing worktree inventory" : "Refresh worktree inventory"
                 }
               >
-                <RefreshCwIcon className="size-3" />
+                {isPending ? (
+                  <LoaderCircleIcon className="size-3" />
+                ) : (
+                  <RefreshCwIcon className="size-3" />
+                )}
               </Button>
             }
           />
@@ -1286,8 +1290,7 @@ function WorktreeManagementSection() {
     >
       {targets.length === 0 ? (
         <p className="px-3 py-3 text-[13px] leading-[1.45] text-muted-foreground/80 sm:px-4">
-          Worktree management needs a newer T3 Code server. Update the connected environments to
-          manage their worktrees here.
+          Connect an up-to-date T3 Code server to manage its worktrees here.
         </p>
       ) : (
         <div className="space-y-6">
