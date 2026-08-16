@@ -34,7 +34,9 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
@@ -42,6 +44,7 @@ import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
+  readOpenCodeRecords,
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
@@ -197,6 +200,32 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
+  /**
+   * OpenCode keeps its transcripts in a SQLite database at
+   * `<dataHome>/opencode.db`. The data home follows XDG, so a Linux default
+   * install lives in `~/.local/share/opencode` while macOS uses
+   * `~/Library/Application Support/opencode`. `OPENCODE_DATA_HOME` wins when
+   * set, matching the CLI.
+   */
+  const resolveOpenCodeDatabasePath = Effect.fn("UsageService.resolveOpenCodeDatabasePath")(
+    function* () {
+      const platform = yield* HostProcessPlatform;
+      const env = yield* HostProcessEnvironment;
+      const override = env["OPENCODE_DATA_HOME"]?.trim();
+      if (override !== undefined && override.length > 0) {
+        return path.join(path.resolve(expandHomePath(override)), "opencode.db");
+      }
+      const dataHome =
+        platform === "darwin"
+          ? path.join(NodeOS.homedir(), "Library", "Application Support", "opencode")
+          : path.join(
+              env["XDG_DATA_HOME"] ?? path.join(NodeOS.homedir(), ".local", "share"),
+              "opencode",
+            );
+      return path.join(dataHome, "opencode.db");
+    },
+  );
+
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
@@ -218,10 +247,12 @@ export const make = Effect.gen(function* () {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const openCodeDbPath = yield* resolveOpenCodeDatabasePath();
 
     return [
       { provider: "claude" as const, dir: claudeDir },
       { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "opencode" as const, dir: openCodeDbPath },
     ];
   });
 
@@ -257,18 +288,38 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** Parses one transcript, reusing the cached result when it is unchanged. */
+  /**
+   * Parses one transcript, reusing the cached result when it is unchanged.
+   *
+   * The `(size, mtime)` identity assumes a file's contents are
+   * window-independent, which holds for the per-session JSONL transcripts.
+   * OpenCode's source is one SQLite database queried with a window filter, so a
+   * cached entry only ever covers the window it was scanned for and a wider
+   * window would silently reuse it. The windowed query is fast enough that the
+   * cache buys nothing, so OpenCode always scans fresh.
+   */
   const readFileRecords = (
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
+    windowStartMs?: number,
   ): Effect.Effect<readonly UsageRecord[]> =>
     Effect.gen(function* () {
+      if (provider === "opencode") {
+        const parsed = yield* Effect.promise(() =>
+          readOpenCodeRecords(filePath, windowStartMs ?? 0),
+        );
+        // A read failure is not an empty transcript: reporting zero usage
+        // would silently drop the source's usage.
+        return parsed ?? [];
+      }
+
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
       // at one directory, a hit parsed by the other parser must not be reused.
       if (
+        mtimeMs !== 0 &&
         cached &&
         cached.size === size &&
         cached.mtimeMs === mtimeMs &&
@@ -285,8 +336,10 @@ export const make = Effect.gen(function* () {
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
-      cacheDirty = true;
+      if (mtimeMs !== 0) {
+        fileCache.set(filePath, { size, mtimeMs, provider, records });
+        cacheDirty = true;
+      }
       return records;
     });
 
@@ -368,6 +421,53 @@ export const make = Effect.gen(function* () {
           malformedRecords: 0,
           distinctSessions: 0,
           message: "No transcript directory on this environment.",
+        });
+        continue;
+      }
+
+      if (provider === "opencode") {
+        // The whole source is one database. Registering the file as live and
+        // its parent as a walked root lets the prune pass evict any entry an
+        // earlier version cached under a narrower window (a stale hit would
+        // silently cap the visible history at that first window).
+        livePaths.add(dir);
+        walkedRoots.push(path.dirname(dir));
+        const stats = yield* fileSystem.stat(dir).pipe(
+          Effect.map((info) => ({
+            size: Number(info.size),
+            mtimeMs: Option.match(info.mtime, {
+              onNone: () => 0,
+              onSome: (mtime) => mtime.getTime(),
+            }),
+          })),
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+
+        const records = yield* readFileRecords(
+          dir,
+          stats?.size ?? 0,
+          stats?.mtimeMs ?? 0,
+          provider,
+          windowStartMs,
+        );
+        // Distinct per database. Buckets carry per-cell session counts, but a
+        // session spans days and models, so clients total this figure instead.
+        const sessionIds = new Set<string>();
+        for (const record of records) {
+          // Only sessions that contributed in-window count: the query slack
+          // admits boundary rows whose timestamps fall outside the range.
+          if (aggregator.add(record) && record.sessionId.length > 0) {
+            sessionIds.add(record.sessionId);
+          }
+        }
+        sources.push({
+          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+          status: stats === null ? "failed" : "ok",
+          scannedFiles: records.length > 0 ? 1 : 0,
+          skippedFiles: records.length > 0 ? 0 : 1,
+          malformedRecords: 0,
+          distinctSessions: sessionIds.size,
+          message: stats === null ? "Transcript database could not be read." : null,
         });
         continue;
       }

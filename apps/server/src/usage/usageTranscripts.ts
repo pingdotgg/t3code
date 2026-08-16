@@ -68,7 +68,8 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  if (provider === "claude") return line.includes('"usage"');
+  return line.includes('"token_count"');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -294,6 +295,79 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
     dedupeKey: null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* OpenCode                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Projects one `data` payload from OpenCode's SQLite `message` table into a
+ * usage record.
+ *
+ * OpenCode moved its transcripts into `~/.local/share/opencode/opencode.db`:
+ * each row is one message with the payload stored as JSON in `data`. Usage
+ * sits on assistant messages as `tokens` with a `cache` breakdown; `input` is
+ * exclusive of the cached portions. The message `id` is the dedupe key.
+ *
+ * The `cost` field is trusted when positive: OpenCode prices against its own
+ * rate table, which covers its curated and subscription-served models that
+ * LiteLLM does not know. A zero cost on a subscription-backed provider falls
+ * back to LiteLLM like Codex.
+ */
+export function parseOpenCodeMessage(data: string): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  if (record["role"] !== "assistant") return null;
+
+  const tokens = record["tokens"];
+  if (typeof tokens !== "object" || tokens === null) return null;
+  const tokensRecord = tokens as Record<string, unknown>;
+  const cache =
+    typeof tokensRecord["cache"] === "object" && tokensRecord["cache"] !== null
+      ? (tokensRecord["cache"] as Record<string, unknown>)
+      : {};
+
+  const time = record["time"];
+  const completed =
+    typeof time === "object" && time !== null
+      ? (time as Record<string, unknown>)["completed"]
+      : undefined;
+  const timestampMs =
+    typeof completed === "number" && Number.isFinite(completed) ? Math.trunc(completed) : null;
+  if (timestampMs === null) return null;
+
+  const model = typeof record["modelID"] === "string" ? record["modelID"] : "";
+  if (model.length === 0) return null;
+
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: int(tokensRecord["input"]),
+    cachedInputTokens: int(cache["read"]),
+    cacheCreationTokens: int(cache["write"]),
+    outputTokens: int(tokensRecord["output"]),
+    reasoningTokens: Math.min(int(tokensRecord["output"]), int(tokensRecord["reasoning"])),
+  };
+
+  if (totalTokens(totals) === 0) return null;
+
+  const cost = record["cost"];
+
+  return {
+    provider: "opencode",
+    timestampMs,
+    model,
+    sessionId: typeof record["sessionID"] === "string" ? record["sessionID"] : "",
+    totals,
+    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+    dedupeKey: typeof record["id"] === "string" ? record["id"] : null,
   };
 }
 

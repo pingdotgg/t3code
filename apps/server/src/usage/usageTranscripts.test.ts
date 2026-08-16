@@ -4,6 +4,7 @@ import {
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseOpenCodeMessage,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -233,6 +234,93 @@ describe("parseCodexLine", () => {
       );
       expect(record).not.toBeNull();
     });
+  });
+});
+
+describe("parseOpenCodeMessage", () => {
+  /** Shaped after a real OpenCode assistant message row's `data` payload. */
+  function openCodeMessage(overrides: {
+    id: string;
+    role?: string;
+    modelID?: string;
+    completed?: number | null;
+    cost?: number;
+    input?: number;
+    output?: number;
+    reasoning?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  }): string {
+    return JSON.stringify({
+      id: overrides.id,
+      sessionID: "ses_3a6c0a5d3ffeg7BPjptjftbHYs",
+      role: overrides.role ?? "assistant",
+      time: {
+        created: 1771023850034,
+        completed:
+          overrides.completed === null ? undefined : (overrides.completed ?? 1771023853436),
+      },
+      modelID: overrides.modelID ?? "gpt-5.2-codex",
+      providerID: "github-copilot",
+      cost: overrides.cost ?? 0,
+      tokens: {
+        total: 9154,
+        input: overrides.input ?? 486,
+        output: overrides.output ?? 220,
+        reasoning: overrides.reasoning ?? 0,
+        cache: { read: overrides.cacheRead ?? 8448, write: overrides.cacheWrite ?? 0 },
+      },
+      finish: "stop",
+    });
+  }
+
+  it("extracts token totals from an assistant message", () => {
+    const record = parseOpenCodeMessage(openCodeMessage({ id: "msg_1", reasoning: 40 }));
+
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("opencode");
+    expect(record?.model).toBe("gpt-5.2-codex");
+    expect(record?.sessionId).toBe("ses_3a6c0a5d3ffeg7BPjptjftbHYs");
+    expect(record?.timestampMs).toBe(1771023853436);
+    // OpenCode's input is exclusive of the cached portions.
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 486,
+      cachedInputTokens: 8448,
+      cacheCreationTokens: 0,
+      outputTokens: 220,
+      reasoningTokens: 40,
+    });
+    expect(record?.dedupeKey).toBe("msg_1");
+  });
+
+  it("trusts a positive reported cost, and only a positive one", () => {
+    // OpenCode prices against its own rate table, which covers curated and
+    // subscription-served models LiteLLM does not know.
+    const priced = parseOpenCodeMessage(openCodeMessage({ id: "msg_2", cost: 0.023 }));
+    expect(priced?.reportedCostUsd).toBe(0.023);
+
+    // Subscription-backed providers leave cost at 0; those fall back to the
+    // LiteLLM rate table like Codex.
+    const subscription = parseOpenCodeMessage(openCodeMessage({ id: "msg_2b", cost: 0 }));
+    expect(subscription?.reportedCostUsd).toBeNull();
+  });
+
+  it("caps reasoning at output", () => {
+    const record = parseOpenCodeMessage(
+      openCodeMessage({ id: "msg_3", output: 10, reasoning: 99 }),
+    );
+    expect(record?.totals.reasoningTokens).toBe(10);
+  });
+
+  it("ignores user messages, unfinished turns, and token-less records", () => {
+    expect(parseOpenCodeMessage(openCodeMessage({ id: "msg_4", role: "user" }))).toBeNull();
+    expect(parseOpenCodeMessage(openCodeMessage({ id: "msg_5", completed: null }))).toBeNull();
+    expect(
+      parseOpenCodeMessage(
+        openCodeMessage({ id: "msg_6", input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }),
+      ),
+    ).toBeNull();
+    expect(parseOpenCodeMessage("not json")).toBeNull();
   });
 });
 
