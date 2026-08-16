@@ -7079,6 +7079,7 @@ function ChatViewContent(props: ChatViewProps) {
                             settings={settings}
                             keybindings={keybindings}
                             terminalOpen={Boolean(terminalUiState.terminalOpen)}
+                            previewOpen={activeRightPanelKind === "preview"}
                             gitCwd={gitCwd}
                             promptRef={promptRef}
                             composerImagesRef={composerImagesRef}

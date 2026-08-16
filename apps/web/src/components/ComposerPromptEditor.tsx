@@ -897,6 +897,7 @@ interface ComposerPromptEditorProps {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  resolvePickerNavigationKey?: (event: KeyboardEvent) => "ArrowDown" | "ArrowUp" | null;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -906,6 +907,7 @@ function ComposerCommandKeyPlugin(props: {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  resolvePickerNavigationKey?: (event: KeyboardEvent) => "ArrowDown" | "ArrowUp" | null;
 }) {
   const [editor] = useLexicalComposerContext();
 
@@ -951,12 +953,34 @@ function ComposerCommandKeyPlugin(props: {
       (event) => handleCommand("Tab", event),
       COMMAND_PRIORITY_HIGH,
     );
+    const unregisterPickerNavigation = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => {
+        if (
+          !props.resolvePickerNavigationKey ||
+          event.isComposing ||
+          event.key === "ArrowDown" ||
+          event.key === "ArrowUp"
+        ) {
+          return false;
+        }
+        const navigationKey = props.resolvePickerNavigationKey(event);
+        if (!navigationKey) return false;
+
+        handleCommand(navigationKey, event);
+        event.preventDefault();
+        event.stopPropagation();
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
 
     return () => {
       unregisterArrowDown();
       unregisterArrowUp();
       unregisterEnter();
       unregisterTab();
+      unregisterPickerNavigation();
     };
   }, [editor, props]);
 
@@ -1537,6 +1561,7 @@ function ComposerPromptEditorInner({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  resolvePickerNavigationKey,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1773,7 +1798,10 @@ function ComposerPromptEditorInner({
           ErrorBoundary={LexicalErrorBoundary}
         />
         <OnChangePlugin onChange={handleEditorChange} />
-        <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+        <ComposerCommandKeyPlugin
+          {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+          {...(resolvePickerNavigationKey ? { resolvePickerNavigationKey } : {})}
+        />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
@@ -1798,6 +1826,7 @@ export function ComposerPromptEditor({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  resolvePickerNavigationKey,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1837,6 +1866,7 @@ export function ComposerPromptEditor({
         onPaste={onPaste}
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+        {...(resolvePickerNavigationKey ? { resolvePickerNavigationKey } : {})}
         {...(className ? { className } : {})}
       />
     </LexicalComposer>
