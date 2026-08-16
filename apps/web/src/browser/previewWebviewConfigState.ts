@@ -62,14 +62,23 @@ export const loadPreviewWebviewConfig = (
  * `Atom.family` keys on its argument, so the environment and profile are
  * folded into one string: passing an object would allocate a fresh entry on
  * every render.
+ *
+ * The profile is the tail rather than a second field, so an id containing the
+ * delimiter round-trips whole instead of being truncated into a different
+ * profile's key. `BrowserProfileId` rejects control characters, which is what
+ * makes the environment side of the split unambiguous.
  */
+const CONFIG_KEY_DELIMITER = "\u0000";
+
 const configKey = (environmentId: EnvironmentId, profileId: string | undefined): string =>
-  `${environmentId}\u0000${profileId ?? ""}`;
+  `${environmentId}${CONFIG_KEY_DELIMITER}${profileId ?? ""}`;
 
 const parseConfigKey = (key: string): { environmentId: EnvironmentId; profileId?: string } => {
-  const [environmentId = "", profileId = ""] = key.split("\u0000");
+  const delimiter = key.indexOf(CONFIG_KEY_DELIMITER);
+  const environmentId = (delimiter === -1 ? key : key.slice(0, delimiter)) as EnvironmentId;
+  const profileId = delimiter === -1 ? "" : key.slice(delimiter + CONFIG_KEY_DELIMITER.length);
   return {
-    environmentId: environmentId as EnvironmentId,
+    environmentId,
     ...(profileId === "" ? {} : { profileId }),
   };
 };

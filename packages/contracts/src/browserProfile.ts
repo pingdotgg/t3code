@@ -19,7 +19,15 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const BROWSER_PROFILE_NAME_MAX_LENGTH = 48;
 export const BROWSER_PROFILE_MAX_COUNT = 24;
 
-export const BrowserProfileId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+/**
+ * Control characters are rejected because ids are folded into delimiter-joined
+ * cache keys on the client; one carrying the delimiter would resolve to a
+ * different profile's partition.
+ */
+export const BrowserProfileId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[^\p{Cc}]+$/u),
+);
 export type BrowserProfileId = typeof BrowserProfileId.Type;
 
 export const BrowserProfileName = TrimmedNonEmptyString.check(
@@ -57,17 +65,30 @@ export function isBuiltInBrowserProfileId(id: string): boolean {
 }
 
 /**
- * The full picker list: built-ins first, then the user's own profiles with any
- * entry that collides with a built-in id dropped, so a hand-edited settings
- * file cannot shadow "Default" or "Incognito".
+ * The full picker list: built-ins first, then the user's own profiles.
+ *
+ * Three things are normalized away, because each would present a profile the
+ * partition layer does not actually deliver:
+ *
+ * - Entries colliding with a built-in id, so a hand-edited settings file
+ *   cannot shadow "Default" or "Incognito".
+ * - Repeated ids, which map to one partition and would otherwise appear as
+ *   two isolated identities sharing every cookie. First entry wins.
+ * - `kind: "incognito"` on anything but the built-in, since persistence is
+ *   keyed off that one id; such a profile is labelled ephemeral while its
+ *   cookies survive restarts.
  */
 export function resolveBrowserProfiles(
   userProfiles: ReadonlyArray<BrowserProfile>,
 ): ReadonlyArray<BrowserProfile> {
-  return [
-    ...BUILT_IN_BROWSER_PROFILES,
-    ...userProfiles.filter((profile) => !isBuiltInBrowserProfileId(profile.id)),
-  ];
+  const seen = new Set(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id));
+  const resolved = [...BUILT_IN_BROWSER_PROFILES];
+  for (const profile of userProfiles) {
+    if (seen.has(profile.id)) continue;
+    seen.add(profile.id);
+    resolved.push(profile.kind === "persistent" ? profile : { ...profile, kind: "persistent" });
+  }
+  return resolved;
 }
 
 export function findBrowserProfile(

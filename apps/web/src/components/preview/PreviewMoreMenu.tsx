@@ -55,7 +55,12 @@ interface Props {
   /** Environment the tab belongs to; scopes storage clearing to its partitions. */
   environmentId: EnvironmentId;
   /** Profile the tab was opened under, if the server recorded one. */
-  profileId: string | undefined;
+  /**
+   * Required: the IPC layer reads an absent profile as "every profile", so a
+   * tab whose own profile is unknown must resolve the default before it gets
+   * here rather than passing the gap along.
+   */
+  profileId: string;
   /** Profile display name, shown so the menu says which data is being cleared. */
   profileName: string | undefined;
 }
