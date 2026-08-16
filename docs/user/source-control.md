@@ -103,7 +103,8 @@ export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
 ```
 
 Or an Atlassian account email plus API token, with read/write access to pull requests and
-repositories:
+repositories, plus read access to your user account (`read:user:bitbucket`, used to verify the
+connection):
 
 ```bash
 export T3CODE_BITBUCKET_EMAIL="you@example.com"

@@ -27,14 +27,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Platform, Pressable, ScrollView, Switch, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
@@ -46,10 +47,6 @@ import {
   nativeHeaderScrollEdgeEffects,
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
-import {
-  NATIVE_SHEET_SURFACE_COLOR,
-  NATIVE_SHEET_SURFACE_CONTENT_STYLE,
-} from "../../native/sheet-surface";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import {
   createNativeMailSearchToolbarItem,
@@ -270,7 +267,7 @@ function SwitchRow(props: {
       )}
     >
       <Text className="text-sm font-t3-medium text-foreground">{props.label}</Text>
-      <Switch
+      <ThemedSwitch
         accessibilityLabel={props.label}
         onValueChange={props.onValueChange}
         value={props.value}
@@ -994,7 +991,7 @@ function ThreadSettingsModelsScreen() {
   return (
     <>
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader
+        <AndroidScreenHeader
           actions={[
             {
               accessibilityLabel: session.pendingModel ? "Save thread settings" : "Done",
@@ -1120,7 +1117,7 @@ function ThreadSettingsChoiceScreen() {
     <>
       <NativeStackScreenOptions options={{ headerShown: Platform.OS !== "android" }} />
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader title={route.params.title} onBack={() => navigation.goBack()} />
+        <AndroidScreenHeader title={route.params.title} onBack={() => navigation.goBack()} />
       ) : null}
       <ThreadSettingsChoiceContent submenu={route.params} onSelected={() => navigation.goBack()} />
     </>
@@ -1128,9 +1125,8 @@ function ThreadSettingsChoiceScreen() {
 }
 
 function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) {
-  const sheetBackground = String(useThemeColor("--color-sheet"));
+  const solidSheetBackground = String(useThemeColor("--color-sheet-solid"));
   const foreground = String(useThemeColor("--color-foreground"));
-  const nativeSheetBackground = NATIVE_SHEET_SURFACE_COLOR ?? sheetBackground;
   const presentation = useMemo(
     () => ({
       onClose: props.onClose,
@@ -1144,17 +1140,13 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
         initialRouteName="ThreadSettingsModels"
         screenOptions={{
           animation: "slide_from_right",
-          contentStyle: NATIVE_SHEET_SURFACE_CONTENT_STYLE ?? {
-            backgroundColor: nativeSheetBackground,
-          },
+          contentStyle: { backgroundColor: solidSheetBackground },
           gestureEnabled: true,
           headerBackButtonDisplayMode: "minimal",
           headerBackTitle: "",
           headerShadowVisible: false,
           headerStyle: {
-            backgroundColor: (NATIVE_LIQUID_GLASS_SUPPORTED
-              ? "transparent"
-              : nativeSheetBackground) as unknown as string,
+            backgroundColor: NATIVE_LIQUID_GLASS_SUPPORTED ? "transparent" : solidSheetBackground,
           },
           headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
           headerTintColor: foreground,
