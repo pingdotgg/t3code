@@ -154,6 +154,12 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerSkillInvocations("$ui then $ui again $review")).toEqual(["ui", "review"]);
   });
 
+  it("collects skill invocations terminated by punctuation", () => {
+    expect(collectComposerSkillInvocations("Use $review.")).toEqual(["review"]);
+    expect(collectComposerSkillInvocations("$review, then continue")).toEqual(["review"]);
+    expect(collectComposerSkillInvocations("call $skill-name.")).toEqual(["skill-name"]);
+  });
+
   it("ignores non-skill dollar text and empty prompts", () => {
     expect(collectComposerSkillInvocations("")).toEqual([]);
     expect(collectComposerSkillInvocations("plain text")).toEqual([]);

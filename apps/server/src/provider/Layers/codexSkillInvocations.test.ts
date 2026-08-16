@@ -83,6 +83,71 @@ describe("bindCodexSkillInvocations", () => {
     });
   });
 
+  it("prefers an exact name match over an enabled case-insensitive skill", () => {
+    expect(
+      bindCodexSkillInvocations("$Foo go", [
+        { name: "foo", path: "/skills/foo/SKILL.md", enabled: true },
+        { name: "Foo", path: "/skills/Foo/SKILL.md", enabled: false },
+      ]),
+    ).toEqual({
+      ok: true,
+      inputs: [
+        {
+          type: "skill",
+          name: "Foo",
+          path: "/skills/Foo/SKILL.md",
+        },
+      ],
+    });
+  });
+
+  it("falls back to a case-insensitive match when no exact name exists", () => {
+    expect(
+      bindCodexSkillInvocations("$Foo go", [
+        { name: "foo", path: "/skills/foo/SKILL.md", enabled: true },
+      ]),
+    ).toEqual({
+      ok: true,
+      inputs: [
+        {
+          type: "skill",
+          name: "foo",
+          path: "/skills/foo/SKILL.md",
+        },
+      ],
+    });
+  });
+
+  it("attaches a skill invoked with trailing punctuation", () => {
+    expect(bindCodexSkillInvocations("Use $grill-with-docs.", [grillWithDocs])).toEqual({
+      ok: true,
+      inputs: [
+        {
+          type: "skill",
+          name: "grill-with-docs",
+          path: grillWithDocs.path,
+        },
+      ],
+    });
+  });
+
+  it("attaches one skill item when case variants resolve to the same path", () => {
+    expect(
+      bindCodexSkillInvocations("$Foo then $foo", [
+        { name: "foo", path: "/skills/foo/SKILL.md", enabled: true },
+      ]),
+    ).toEqual({
+      ok: true,
+      inputs: [
+        {
+          type: "skill",
+          name: "foo",
+          path: "/skills/foo/SKILL.md",
+        },
+      ],
+    });
+  });
+
   it("attaches each distinct skill once and keeps list order", () => {
     expect(
       bindCodexSkillInvocations("$grill-with-docs then $grilling then $grill-with-docs", [

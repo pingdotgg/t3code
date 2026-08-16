@@ -15,10 +15,12 @@ function findCodexSkill(
   name: string,
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "path" | "enabled">>,
 ): Pick<ServerProviderSkill, "name" | "path" | "enabled"> | undefined {
+  const exact = skills.find((skill) => skill.name === name);
+  if (exact) {
+    return exact;
+  }
   const lower = name.toLowerCase();
-  const matches = skills.filter(
-    (skill) => skill.name === name || skill.name.toLowerCase() === lower,
-  );
+  const matches = skills.filter((skill) => skill.name.toLowerCase() === lower);
   return matches.find((skill) => skill.enabled) ?? matches[0];
 }
 
@@ -33,6 +35,7 @@ export function bindCodexSkillInvocations(
 
   const inputs: CodexSkillUserInput[] = [];
   const unknown: string[] = [];
+  const seenPaths = new Set<string>();
 
   for (const name of invocations) {
     const skill = findCodexSkill(name, skills);
@@ -40,6 +43,10 @@ export function bindCodexSkillInvocations(
       unknown.push(name);
       continue;
     }
+    if (seenPaths.has(skill.path)) {
+      continue;
+    }
+    seenPaths.add(skill.path);
     inputs.push({
       type: "skill",
       name: skill.name,
