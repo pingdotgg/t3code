@@ -2097,6 +2097,65 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("does not let a hidden correction consume the visible user-turn page", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`
+        UPDATE projection_thread_messages
+        SET text = 'corrected prompt', original_text = 'prompt for turn-5'
+        WHERE message_id = 'user-msg-5'
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text,
+          correction_target_message_id, correction_replacement_text,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'correction-msg-6', 'thread-w', NULL, 'user', 'provider correction',
+          'user-msg-5', 'corrected prompt', 0,
+          '2026-03-01T00:05:00.000Z', '2026-03-01T00:05:00.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, pending_message_id, assistant_message_id, state,
+          requested_at, started_at, completed_at, checkpoint_files_json
+        ) VALUES (
+          'thread-w', 'turn-6', 'correction-msg-6', 'turn-6-reply', 'completed',
+          '2026-03-01T00:05:00.000Z', '2026-03-01T00:05:00.000Z',
+          '2026-03-01T00:05:00.000Z', '[]'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES (
+          'turn-6-reply', 'thread-w', 'turn-6', 'assistant', 'corrected reply', 0,
+          '2026-03-01T00:05:00.000Z', '2026-03-01T00:05:00.000Z'
+        )
+      `;
+
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 1 });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.deepEqual(messageIds(snapshot.value), [
+          "correction-msg-6",
+          "turn-5-reply",
+          "turn-6-reply",
+          "user-msg-5",
+        ]);
+        const target = snapshot.value.thread.messages.find(
+          (message) => message.id === "user-msg-5",
+        );
+        assert.equal(target?.text, "corrected prompt");
+        assert.equal(target?.originalText, "prompt for turn-5");
+      }
+    }),
+  );
+
   it.effect("subagent turns between user turns ride along inside the window", () =>
     Effect.gen(function* () {
       yield* seedFanOutThread();

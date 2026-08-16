@@ -2471,6 +2471,162 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       ]);
     }),
   );
+
+  it.effect("persists the newest stopped correction when a later correction is reverted", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-correction-revert");
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+      const eventBase = (id: string, occurredAt: string) => ({
+        eventId: EventId.make(`evt-correction-revert-${id}`),
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        occurredAt,
+        commandId: CommandId.make(`cmd-correction-revert-${id}`),
+        causationEventId: null,
+        correlationId: CorrelationId.make(`cmd-correction-revert-${id}`),
+        metadata: {},
+      });
+
+      yield* appendAndProject({
+        ...eventBase("original", "2026-08-16T10:00:00.000Z"),
+        type: "thread.message-sent",
+        payload: {
+          threadId,
+          messageId: MessageId.make("correction-target"),
+          role: "user",
+          text: "Original",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-08-16T10:00:00.000Z",
+          updatedAt: "2026-08-16T10:00:00.000Z",
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("correction-a", "2026-08-16T10:01:00.000Z"),
+        type: "thread.message-corrected",
+        payload: {
+          threadId,
+          targetMessageId: MessageId.make("correction-target"),
+          correctionMessageId: MessageId.make("correction-a"),
+          replacementText: "Correction A",
+          providerText: "Provider correction A",
+          createdAt: "2026-08-16T10:01:00.000Z",
+          updatedAt: "2026-08-16T10:01:00.000Z",
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("assistant-a", "2026-08-16T10:02:00.000Z"),
+        type: "thread.message-sent",
+        payload: {
+          threadId,
+          messageId: MessageId.make("assistant-a"),
+          role: "assistant",
+          text: "Stopped response A",
+          turnId: TurnId.make("turn-a"),
+          streaming: false,
+          createdAt: "2026-08-16T10:02:00.000Z",
+          updatedAt: "2026-08-16T10:02:00.000Z",
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("correction-b", "2026-08-16T10:03:00.000Z"),
+        type: "thread.message-corrected",
+        payload: {
+          threadId,
+          targetMessageId: MessageId.make("correction-target"),
+          correctionMessageId: MessageId.make("correction-b"),
+          replacementText: "Correction B",
+          providerText: "Provider correction B",
+          createdAt: "2026-08-16T10:03:00.000Z",
+          updatedAt: "2026-08-16T10:03:00.000Z",
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("start-b", "2026-08-16T10:03:00.000Z"),
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId,
+          messageId: MessageId.make("correction-b"),
+          runtimeMode: "full-access",
+          createdAt: "2026-08-16T10:03:00.000Z",
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("running-b", "2026-08-16T10:03:30.000Z"),
+        type: "thread.session-set",
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: TurnId.make("turn-b"),
+            lastError: null,
+            updatedAt: "2026-08-16T10:03:30.000Z",
+          },
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("assistant-b", "2026-08-16T10:04:00.000Z"),
+        type: "thread.message-sent",
+        payload: {
+          threadId,
+          messageId: MessageId.make("assistant-b"),
+          role: "assistant",
+          text: "Completed response B",
+          turnId: TurnId.make("turn-b"),
+          streaming: false,
+          createdAt: "2026-08-16T10:04:00.000Z",
+          updatedAt: "2026-08-16T10:04:00.000Z",
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("checkpoint-b", "2026-08-16T10:05:00.000Z"),
+        type: "thread.turn-diff-completed",
+        payload: {
+          threadId,
+          turnId: TurnId.make("turn-b"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-correction-revert/turn/1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("assistant-b"),
+          completedAt: "2026-08-16T10:05:00.000Z",
+        },
+      });
+      yield* appendAndProject({
+        ...eventBase("revert-b", "2026-08-16T10:06:00.000Z"),
+        type: "thread.reverted",
+        payload: { threadId, turnCount: 0 },
+      });
+
+      const rows = yield* sql<{
+        readonly messageId: string;
+        readonly text: string;
+        readonly originalText: string | null;
+      }>`
+        SELECT
+          message_id AS "messageId",
+          text,
+          original_text AS "originalText"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+        ORDER BY created_at ASC, message_id ASC
+      `;
+      assert.deepEqual(rows, [
+        { messageId: "correction-target", text: "Correction A", originalText: "Original" },
+        { messageId: "correction-a", text: "Provider correction A", originalText: null },
+        { messageId: "assistant-a", text: "Stopped response A", originalText: null },
+      ]);
+    }),
+  );
 });
 
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(

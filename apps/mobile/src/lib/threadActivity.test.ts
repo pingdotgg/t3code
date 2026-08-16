@@ -151,6 +151,52 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps correction prompts hidden while materializing edited metadata", () => {
+    const visibleMessageId = MessageId.make("visible-user");
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-correction"),
+        projectId: ProjectId.make("project-1"),
+        title: "Correction",
+        messages: [
+          {
+            id: visibleMessageId,
+            role: "user",
+            text: "Corrected wording",
+            originalText: "Original wording",
+            turnId: null,
+            createdAt: "2026-04-01T00:00:01.000Z",
+            updatedAt: "2026-04-01T00:00:02.000Z",
+            streaming: false,
+          },
+          {
+            id: MessageId.make("hidden-correction"),
+            role: "user",
+            text: "Provider correction prompt",
+            correction: {
+              targetMessageId: visibleMessageId,
+              replacementText: "Corrected wording",
+            },
+            turnId: null,
+            createdAt: "2026-04-01T00:00:02.000Z",
+            updatedAt: "2026-04-01T00:00:02.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    );
+
+    expect(feed).toHaveLength(1);
+    expect(feed[0]).toMatchObject({
+      type: "message",
+      message: {
+        id: visibleMessageId,
+        text: "Corrected wording",
+        originalText: "Original wording",
+      },
+    });
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

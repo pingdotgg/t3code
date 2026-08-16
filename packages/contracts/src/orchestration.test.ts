@@ -11,6 +11,7 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationMessage,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -25,6 +26,15 @@ import {
   ThreadTurnStartRequestedPayload,
   isProviderSendTurnSupportedImageMimeType,
 } from "./orchestration.ts";
+import {
+  applyThreadMessageCorrection,
+  buildThreadMessageCorrectionProviderText,
+  getThreadMessageCorrectionEligibility,
+  isCorrectionMessage,
+  reconcileThreadMessageCorrections,
+  replaceEditableUserText,
+  splitEditableUserMessage,
+} from "./messageCorrection.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
@@ -941,4 +951,280 @@ it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects 
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/png"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
+});
+
+it.effect("decodes correction commands, events, and historical messages", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.message.correct",
+      commandId: "cmd-correction-1",
+      threadId: "thread-1",
+      targetMessageId: "message-1",
+      correctionMessageId: "message-correction-1",
+      expectedText: "Original request",
+      replacementText: "Use the corrected request",
+      createdAt: "2026-08-16T10:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.message.correct");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-correction-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.message-corrected",
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      commandId: "cmd-correction-1",
+      causationEventId: null,
+      correlationId: "cmd-correction-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        targetMessageId: "message-1",
+        correctionMessageId: "message-correction-1",
+        replacementText: "Use the corrected request",
+        providerText: buildThreadMessageCorrectionProviderText("Use the corrected request"),
+        createdAt: "2026-08-16T10:00:00.000Z",
+        updatedAt: "2026-08-16T10:00:00.000Z",
+      },
+    });
+    assert.strictEqual(event.type, "thread.message-corrected");
+
+    const historical = yield* Schema.decodeUnknownEffect(Schema.Array(OrchestrationMessage))([
+      {
+        id: "message-1",
+        role: "user",
+        text: "Original request",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-08-16T09:00:00.000Z",
+        updatedAt: "2026-08-16T09:00:00.000Z",
+      },
+    ]);
+    assert.strictEqual(historical[0]?.originalText, undefined);
+    assert.strictEqual(historical[0]?.correction, undefined);
+  }),
+);
+
+it.effect("materializes repeated corrections and reconciles retained revisions", () =>
+  Effect.gen(function* () {
+    const thread = yield* decodeOrchestrationThread({
+      id: "thread-corrections",
+      projectId: "project-1",
+      title: "Corrections",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-08-16T09:00:00.000Z",
+      updatedAt: "2026-08-16T09:00:00.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          text: "Original request",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-08-16T09:00:00.000Z",
+          updatedAt: "2026-08-16T09:00:00.000Z",
+        },
+      ],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+    const first = applyThreadMessageCorrection(thread.messages, {
+      targetMessageId: thread.messages[0]!.id,
+      correctionMessageId: "correction-1" as never,
+      replacementText: "Correction A",
+      providerText: buildThreadMessageCorrectionProviderText("Correction A"),
+      createdAt: "2026-08-16T10:00:00.000Z",
+      updatedAt: "2026-08-16T10:00:00.000Z",
+    });
+    const second = applyThreadMessageCorrection(first, {
+      targetMessageId: thread.messages[0]!.id,
+      correctionMessageId: "correction-2" as never,
+      replacementText: "Correction B",
+      providerText: buildThreadMessageCorrectionProviderText("Correction B"),
+      createdAt: "2026-08-16T11:00:00.000Z",
+      updatedAt: "2026-08-16T11:00:00.000Z",
+    });
+
+    assert.strictEqual(second[0]?.text, "Correction B");
+    assert.strictEqual(second[0]?.originalText, "Original request");
+    assert.strictEqual(second[0]?.attachments, thread.messages[0]?.attachments);
+    assert.strictEqual(second.filter(isCorrectionMessage).length, 2);
+    const duplicateSecond = applyThreadMessageCorrection(second, {
+      targetMessageId: thread.messages[0]!.id,
+      correctionMessageId: "correction-2" as never,
+      replacementText: "Correction B",
+      providerText: buildThreadMessageCorrectionProviderText("Correction B"),
+      createdAt: "2026-08-16T11:00:00.000Z",
+      updatedAt: "2026-08-16T11:00:00.000Z",
+    });
+    assert.strictEqual(duplicateSecond.filter(isCorrectionMessage).length, 2);
+
+    const afterSecondRevert = reconcileThreadMessageCorrections(
+      second.filter((message) => message.id !== "correction-2"),
+    );
+    assert.strictEqual(afterSecondRevert[0]?.text, "Correction A");
+    assert.strictEqual(afterSecondRevert[0]?.originalText, "Original request");
+
+    const afterFinalRevert = reconcileThreadMessageCorrections(
+      afterSecondRevert.filter((message) => message.id !== "correction-1"),
+    );
+    assert.strictEqual(afterFinalRevert[0]?.text, "Original request");
+    assert.strictEqual(afterFinalRevert[0]?.originalText, undefined);
+  }),
+);
+
+it.effect("rejects stale, active, empty, and unchanged corrections", () =>
+  Effect.gen(function* () {
+    const baseThread = yield* decodeOrchestrationThread({
+      id: "thread-eligibility",
+      projectId: "project-1",
+      title: "Eligibility",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: {
+        turnId: "turn-1",
+        state: "interrupted",
+        requestedAt: "2026-08-16T09:00:00.000Z",
+        startedAt: "2026-08-16T09:00:00.000Z",
+        completedAt: "2026-08-16T09:01:00.000Z",
+        assistantMessageId: null,
+      },
+      createdAt: "2026-08-16T09:00:00.000Z",
+      updatedAt: "2026-08-16T09:01:00.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          text: "Original request",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-08-16T09:00:00.000Z",
+          updatedAt: "2026-08-16T09:00:00.000Z",
+        },
+      ],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+    const eligible = getThreadMessageCorrectionEligibility({
+      thread: baseThread,
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      replacementText: "Corrected request",
+    });
+    assert.deepStrictEqual(eligible, { eligible: true });
+
+    const unchanged = getThreadMessageCorrectionEligibility({
+      thread: baseThread,
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      replacementText: "Original request",
+    });
+    assert.strictEqual(unchanged.eligible, false);
+    if (!unchanged.eligible) assert.strictEqual(unchanged.reason, "replacement-unchanged");
+
+    const whitespaceOnlyChange = getThreadMessageCorrectionEligibility({
+      thread: baseThread,
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      replacementText: "  Original request  ",
+    });
+    assert.strictEqual(whitespaceOnlyChange.eligible, false);
+    if (!whitespaceOnlyChange.eligible) {
+      assert.strictEqual(whitespaceOnlyChange.reason, "replacement-unchanged");
+    }
+
+    const empty = getThreadMessageCorrectionEligibility({
+      thread: baseThread,
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      replacementText: "   ",
+    });
+    assert.strictEqual(empty.eligible, false);
+    if (!empty.eligible) assert.strictEqual(empty.reason, "replacement-empty");
+
+    const active = getThreadMessageCorrectionEligibility({
+      thread: {
+        ...baseThread,
+        session: {
+          threadId: baseThread.id,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: "turn-1" as never,
+          lastError: null,
+          updatedAt: "2026-08-16T10:00:00.000Z",
+        },
+      },
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+    });
+    assert.strictEqual(active.eligible, false);
+    if (!active.eligible) assert.strictEqual(active.reason, "session-active");
+
+    const assistantId = "assistant-error" as never;
+    const nonReadyCheckpoint = getThreadMessageCorrectionEligibility({
+      thread: {
+        ...baseThread,
+        messages: [
+          ...baseThread.messages,
+          {
+            id: assistantId,
+            role: "assistant",
+            text: "Partial response",
+            turnId: "turn-error" as never,
+            streaming: false,
+            createdAt: "2026-08-16T09:01:00.000Z",
+            updatedAt: "2026-08-16T09:01:00.000Z",
+          },
+        ],
+        checkpoints: [
+          {
+            turnId: "turn-error" as never,
+            checkpointTurnCount: 1,
+            checkpointRef: "refs/t3/checkpoints/thread-error/turn/1" as never,
+            status: "error",
+            files: [],
+            assistantMessageId: assistantId,
+            completedAt: "2026-08-16T09:01:00.000Z",
+          },
+        ],
+      },
+      targetMessageId: baseThread.messages[0]!.id,
+      occurredAt: "2026-08-16T10:00:00.000Z",
+      replacementText: "Corrected request",
+    });
+    assert.deepStrictEqual(nonReadyCheckpoint, { eligible: true });
+  }),
+);
+
+it("splits editable prose from owned prefixes and structured context", () => {
+  const context = "<terminal_context>\noutput\n</terminal_context>";
+  const message = `Ultrathink:\nOriginal request\n\n${context}`;
+  assert.deepStrictEqual(splitEditableUserMessage(message), {
+    prefix: "Ultrathink:\n",
+    editableText: "Original request",
+    suffix: `\n\n${context}`,
+  });
+  assert.strictEqual(
+    replaceEditableUserText(message, "Replacement request"),
+    `Ultrathink:\nReplacement request\n\n${context}`,
+  );
 });

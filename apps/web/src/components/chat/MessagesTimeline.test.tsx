@@ -475,6 +475,44 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
+  it("shows Edit only for the eligible message and displays explicit edited metadata", () => {
+    const entry = buildUserTimelineEntry("Corrected prompt.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        editableMessageId={entry.message.id}
+        timelineEntries={[
+          {
+            ...entry,
+            message: { ...entry.message, originalText: "Original prompt." },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Edit message"');
+    expect(markup).toContain("Edited");
+    expect(markup).not.toContain('aria-label="Revert to this message"');
+  });
+
+  it("renders an inline editor without using the primary composer", () => {
+    const entry = buildUserTimelineEntry("Original prompt.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        editableMessageId={entry.message.id}
+        editingMessageId={entry.message.id}
+        editingDraft="Draft correction"
+        timelineEntries={[entry]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Edit message"');
+    expect(markup).toContain("Draft correction");
+    expect(markup).toContain(">Cancel<");
+    expect(markup).toContain(">Save<");
+  });
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

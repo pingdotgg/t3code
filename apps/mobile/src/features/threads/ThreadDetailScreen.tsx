@@ -16,6 +16,7 @@ import type {
   ThreadId,
   UserInputQuestion,
 } from "@t3tools/contracts";
+import { replaceEditableUserText, splitEditableUserMessage } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import {
   memo,
@@ -30,8 +31,12 @@ import {
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import {
   AppState,
+  ActivityIndicator,
   Keyboard,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
+  Pressable,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -52,6 +57,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
@@ -105,6 +111,7 @@ export interface ThreadDetailScreenProps {
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
+  readonly editableMessageId: MessageId | null;
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
@@ -116,6 +123,11 @@ export interface ThreadDetailScreenProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onCorrectMessage: (input: {
+    readonly targetMessageId: MessageId;
+    readonly sourceText: string;
+    readonly replacementText: string;
+  }) => Promise<string | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
@@ -217,6 +229,70 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
+  const [messageEdit, setMessageEdit] = useState<{
+    readonly messageId: MessageId;
+    readonly sourceText: string;
+    readonly draft: string;
+    readonly error: string | null;
+    readonly saving: boolean;
+  } | null>(null);
+  const selectedThreadFeedRef = useRef(props.selectedThreadFeed);
+  selectedThreadFeedRef.current = props.selectedThreadFeed;
+  const beginMessageEdit = useCallback(
+    (messageId: MessageId) => {
+      if (messageId !== props.editableMessageId) return;
+      const entry = selectedThreadFeedRef.current.find(
+        (candidate) => candidate.type === "message" && candidate.message.id === messageId,
+      );
+      if (entry?.type !== "message") return;
+      setMessageEdit({
+        messageId,
+        sourceText: entry.message.text,
+        draft: splitEditableUserMessage(entry.message.text).editableText,
+        error: null,
+        saving: false,
+      });
+    },
+    [props.editableMessageId],
+  );
+  const cancelMessageEdit = useCallback(() => {
+    setMessageEdit((current) => (current?.saving ? current : null));
+  }, []);
+  const saveMessageEdit = useCallback(async () => {
+    if (!messageEdit || messageEdit.saving) return;
+    const replacementText = replaceEditableUserText(messageEdit.sourceText, messageEdit.draft);
+    setMessageEdit((current) => (current ? { ...current, error: null, saving: true } : null));
+    const error = await props.onCorrectMessage({
+      targetMessageId: messageEdit.messageId,
+      sourceText: messageEdit.sourceText,
+      replacementText,
+    });
+    if (error !== null) {
+      setMessageEdit((current) => (current ? { ...current, error, saving: false } : null));
+      return;
+    }
+    setMessageEdit(null);
+  }, [messageEdit, props.onCorrectMessage]);
+  const editingMessageId = messageEdit?.messageId ?? null;
+  const editingMessageSourceText = messageEdit?.sourceText ?? null;
+  const editingMessageSaving = messageEdit?.saving ?? false;
+  useEffect(() => {
+    if (editingMessageId === null || editingMessageSaving) return;
+    const entry = props.selectedThreadFeed.find(
+      (candidate) => candidate.type === "message" && candidate.message.id === editingMessageId,
+    );
+    if (entry?.type !== "message" || entry.message.text === editingMessageSourceText) return;
+    setMessageEdit((current) =>
+      current?.messageId === entry.message.id
+        ? {
+            ...current,
+            sourceText: entry.message.text,
+            error:
+              "This message changed on another client. Review the latest wording and try again.",
+          }
+        : current,
+    );
+  }, [editingMessageId, editingMessageSaving, editingMessageSourceText, props.selectedThreadFeed]);
   // Android can swallow the IME hide callbacks when the app is backgrounded
   // mid keyboard-hide (the reported repro: send — which blurs and starts the
   // hide — then Home within a second). The keyboard library's height AND
@@ -605,11 +681,69 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
             loadEarlier={props.loadEarlier ?? null}
+            editableMessageId={props.editableMessageId}
+            onEditMessage={beginMessageEdit}
           />
         </View>
       ) : (
         <View className="flex-1" />
       )}
+
+      <Modal
+        visible={messageEdit !== null}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={cancelMessageEdit}
+      >
+        {messageEdit ? (
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            className="flex-1 justify-end bg-backdrop px-4 pb-8"
+          >
+            <View className="rounded-[24px] bg-card px-5 pb-4 pt-5">
+              <Text className="font-t3-bold text-lg">Edit message</Text>
+              <TextInput
+                autoFocus
+                multiline
+                editable={!messageEdit.saving}
+                value={messageEdit.draft}
+                onChangeText={(draft) =>
+                  setMessageEdit((current) => (current ? { ...current, draft, error: null } : null))
+                }
+                className="mt-3 min-h-32"
+                textAlignVertical="top"
+              />
+              {messageEdit.error ? (
+                <Text className="mt-2 text-sm text-danger">{messageEdit.error}</Text>
+              ) : null}
+              <View className="mt-4 flex-row justify-end gap-2">
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={messageEdit.saving}
+                  onPress={cancelMessageEdit}
+                  className="min-h-10 items-center justify-center rounded-full px-4"
+                >
+                  <Text className="font-t3-medium">Cancel</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={messageEdit.saving || messageEdit.draft.trim().length === 0}
+                  onPress={() => void saveMessageEdit()}
+                  className="min-h-10 min-w-20 flex-row items-center justify-center rounded-full bg-accent px-4 disabled:opacity-50"
+                >
+                  {messageEdit.saving ? (
+                    <ActivityIndicator size="small" />
+                  ) : (
+                    <Text className="font-t3-medium text-accent-foreground">Save</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        ) : null}
+      </Modal>
 
       {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
       {showContent ? (

@@ -703,6 +703,163 @@ describe("orchestration projector", () => {
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
   });
 
+  it("restores a stopped correction when a later completed correction is reverted", async () => {
+    const createdAt = "2026-02-24T10:00:00.000Z";
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-corrections",
+          occurredAt: createdAt,
+          commandId: "cmd-create-corrections",
+          payload: {
+            threadId: "thread-corrections",
+            projectId: "project-1",
+            title: "Corrections",
+            modelSelection: { provider: "codex", model: "gpt-5.3-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+    const correctionEvents: ReadonlyArray<OrchestrationEvent> = [
+      makeEvent({
+        sequence: 2,
+        type: "thread.message-sent",
+        aggregateKind: "thread",
+        aggregateId: "thread-corrections",
+        occurredAt: "2026-02-24T10:00:01.000Z",
+        commandId: "cmd-original",
+        payload: {
+          threadId: "thread-corrections",
+          messageId: "target-message",
+          role: "user",
+          text: "Original",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-02-24T10:00:01.000Z",
+          updatedAt: "2026-02-24T10:00:01.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 3,
+        type: "thread.message-corrected",
+        aggregateKind: "thread",
+        aggregateId: "thread-corrections",
+        occurredAt: "2026-02-24T10:00:02.000Z",
+        commandId: "cmd-correction-a",
+        payload: {
+          threadId: "thread-corrections",
+          targetMessageId: "target-message",
+          correctionMessageId: "correction-a",
+          replacementText: "Correction A",
+          providerText: "Provider A",
+          createdAt: "2026-02-24T10:00:02.000Z",
+          updatedAt: "2026-02-24T10:00:02.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 4,
+        type: "thread.message-sent",
+        aggregateKind: "thread",
+        aggregateId: "thread-corrections",
+        occurredAt: "2026-02-24T10:00:03.000Z",
+        commandId: "cmd-assistant-a",
+        payload: {
+          threadId: "thread-corrections",
+          messageId: "assistant-a",
+          role: "assistant",
+          text: "Response A",
+          turnId: "turn-a",
+          streaming: false,
+          createdAt: "2026-02-24T10:00:03.000Z",
+          updatedAt: "2026-02-24T10:00:03.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 6,
+        type: "thread.message-corrected",
+        aggregateKind: "thread",
+        aggregateId: "thread-corrections",
+        occurredAt: "2026-02-24T10:00:04.000Z",
+        commandId: "cmd-correction-b",
+        payload: {
+          threadId: "thread-corrections",
+          targetMessageId: "target-message",
+          correctionMessageId: "correction-b",
+          replacementText: "Correction B",
+          providerText: "Provider B",
+          createdAt: "2026-02-24T10:00:04.000Z",
+          updatedAt: "2026-02-24T10:00:04.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 7,
+        type: "thread.message-sent",
+        aggregateKind: "thread",
+        aggregateId: "thread-corrections",
+        occurredAt: "2026-02-24T10:00:05.000Z",
+        commandId: "cmd-assistant-b",
+        payload: {
+          threadId: "thread-corrections",
+          messageId: "assistant-b",
+          role: "assistant",
+          text: "Response B",
+          turnId: "turn-b",
+          streaming: false,
+          createdAt: "2026-02-24T10:00:05.000Z",
+          updatedAt: "2026-02-24T10:00:05.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 8,
+        type: "thread.turn-diff-completed",
+        aggregateKind: "thread",
+        aggregateId: "thread-corrections",
+        occurredAt: "2026-02-24T10:00:05.500Z",
+        commandId: "cmd-checkpoint-b",
+        payload: {
+          threadId: "thread-corrections",
+          turnId: "turn-b",
+          checkpointTurnCount: 1,
+          checkpointRef: "ref-b",
+          status: "ready",
+          files: [],
+          assistantMessageId: "assistant-b",
+          completedAt: "2026-02-24T10:00:05.500Z",
+        },
+      }),
+      makeEvent({
+        sequence: 9,
+        type: "thread.reverted",
+        aggregateKind: "thread",
+        aggregateId: "thread-corrections",
+        occurredAt: "2026-02-24T10:00:06.000Z",
+        commandId: "cmd-revert-b",
+        payload: { threadId: "thread-corrections", turnCount: 0 },
+      }),
+    ];
+    const afterB = await correctionEvents.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
+      (state, event) => state.then((model) => Effect.runPromise(projectEvent(model, event))),
+      Promise.resolve(afterCreate),
+    );
+    const afterBMessages = afterB.threads[0]?.messages ?? [];
+    expect(afterBMessages.find((message) => message.id === "target-message")).toMatchObject({
+      text: "Correction A",
+      originalText: "Original",
+    });
+    expect(afterBMessages.some((message) => message.id === "correction-a")).toBe(true);
+    expect(afterBMessages.some((message) => message.id === "assistant-a")).toBe(true);
+    expect(afterBMessages.some((message) => message.id === "correction-b")).toBe(false);
+  });
+
   it("does not fallback-retain messages tied to removed turn IDs", async () => {
     const createdAt = "2026-02-26T12:00:00.000Z";
     const model = createEmptyReadModel(createdAt);

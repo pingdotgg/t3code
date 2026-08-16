@@ -880,6 +880,161 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
       }
     });
+
+    it("restores the newest retained correction and then the original revision", () => {
+      const targetMessageId = MessageId.make("corrected-target");
+      const correctionAId = MessageId.make("correction-a");
+      const correctionBId = MessageId.make("correction-b");
+      const turnA = TurnId.make("correction-turn-a");
+      const turnB = TurnId.make("correction-turn-b");
+      const threadWithCorrections: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: targetMessageId,
+            role: "user",
+            text: "Correction B",
+            originalText: "Original",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T01:00:00.000Z",
+            updatedAt: "2026-04-01T03:00:00.000Z",
+          },
+          {
+            id: correctionAId,
+            role: "user",
+            text: "Provider A",
+            correction: { targetMessageId, replacementText: "Correction A" },
+            turnId: turnA,
+            streaming: false,
+            createdAt: "2026-04-01T02:00:00.000Z",
+            updatedAt: "2026-04-01T02:00:00.000Z",
+          },
+          {
+            id: MessageId.make("assistant-a"),
+            role: "assistant",
+            text: "Response A",
+            turnId: turnA,
+            streaming: false,
+            createdAt: "2026-04-01T02:01:00.000Z",
+            updatedAt: "2026-04-01T02:01:00.000Z",
+          },
+          {
+            id: correctionBId,
+            role: "user",
+            text: "Provider B",
+            correction: { targetMessageId, replacementText: "Correction B" },
+            turnId: turnB,
+            streaming: false,
+            createdAt: "2026-04-01T03:00:00.000Z",
+            updatedAt: "2026-04-01T03:00:00.000Z",
+          },
+          {
+            id: MessageId.make("assistant-b"),
+            role: "assistant",
+            text: "Response B",
+            turnId: turnB,
+            streaming: false,
+            createdAt: "2026-04-01T03:01:00.000Z",
+            updatedAt: "2026-04-01T03:01:00.000Z",
+          },
+        ],
+        checkpoints: [
+          {
+            turnId: turnA,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("correction-ref-a"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("assistant-a"),
+            completedAt: "2026-04-01T02:01:00.000Z",
+          },
+          {
+            turnId: turnB,
+            checkpointTurnCount: 2,
+            checkpointRef: CheckpointRef.make("correction-ref-b"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("assistant-b"),
+            completedAt: "2026-04-01T03:01:00.000Z",
+          },
+        ],
+      };
+      const revert = (turnCount: number) =>
+        applyThreadDetailEvent(threadWithCorrections, {
+          ...baseEventFields,
+          sequence: 15 + turnCount,
+          occurredAt: "2026-04-01T04:00:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.reverted",
+          payload: { threadId: baseThread.id, turnCount },
+        });
+
+      const afterB = revert(1);
+      expect(afterB.kind).toBe("updated");
+      if (afterB.kind === "updated") {
+        expect(
+          afterB.thread.messages.find((message) => message.id === targetMessageId),
+        ).toMatchObject({ text: "Correction A", originalText: "Original" });
+        expect(afterB.thread.messages.some((message) => message.id === correctionAId)).toBe(true);
+        expect(afterB.thread.messages.some((message) => message.id === correctionBId)).toBe(false);
+      }
+
+      const afterA = revert(0);
+      expect(afterA.kind).toBe("updated");
+      if (afterA.kind === "updated") {
+        expect(
+          afterA.thread.messages.find((message) => message.id === targetMessageId),
+        ).toMatchObject({ text: "Original" });
+        expect(
+          afterA.thread.messages.find((message) => message.id === targetMessageId)?.originalText,
+        ).toBeUndefined();
+      }
+
+      const stoppedThenCompleted: OrchestrationThread = {
+        ...threadWithCorrections,
+        checkpoints: [
+          {
+            turnId: turnB,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("correction-ref-b"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("assistant-b"),
+            completedAt: "2026-04-01T03:01:00.000Z",
+          },
+        ],
+      };
+      const afterCompletedCorrection = applyThreadDetailEvent(stoppedThenCompleted, {
+        ...baseEventFields,
+        sequence: 18,
+        occurredAt: "2026-04-01T04:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.reverted",
+        payload: { threadId: baseThread.id, turnCount: 0 },
+      });
+      expect(afterCompletedCorrection.kind).toBe("updated");
+      if (afterCompletedCorrection.kind === "updated") {
+        expect(
+          afterCompletedCorrection.thread.messages.find(
+            (message) => message.id === targetMessageId,
+          ),
+        ).toMatchObject({ text: "Correction A", originalText: "Original" });
+        expect(
+          afterCompletedCorrection.thread.messages.some((message) => message.id === correctionAId),
+        ).toBe(true);
+        expect(
+          afterCompletedCorrection.thread.messages.some(
+            (message) => message.id === MessageId.make("assistant-a"),
+          ),
+        ).toBe(true);
+        expect(
+          afterCompletedCorrection.thread.messages.some((message) => message.id === correctionBId),
+        ).toBe(false);
+      }
+    });
   });
 
   describe("no-op events", () => {

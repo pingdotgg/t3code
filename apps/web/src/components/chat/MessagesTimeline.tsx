@@ -14,6 +14,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const NOOP_MESSAGE_EDIT = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -66,6 +67,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -139,12 +141,23 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  editableMessageId: MessageId | null;
+  editingMessageId: MessageId | null;
+  onBeginMessageEdit: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+}
+
+interface TimelineMessageEditState {
+  isSavingMessageEdit: boolean;
+  readEditingDraft: () => string;
+  onEditingDraftChange: (draft: string) => void;
+  onCancelMessageEdit: () => void;
+  onSaveMessageEdit: (draft: string) => void;
 }
 
 interface TimelineRowActivityState {
@@ -158,6 +171,7 @@ interface TimelineRowActivityState {
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+const TimelineMessageEditCtx = createContext<TimelineMessageEditState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 
@@ -218,6 +232,13 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  editableMessageId?: MessageId | null;
+  editingMessageId?: MessageId | null;
+  editingDraft?: string;
+  isSavingMessageEdit?: boolean;
+  onBeginMessageEdit?: (messageId: MessageId) => void;
+  onCancelMessageEdit?: () => void;
+  onSaveMessageEdit?: (draft: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -264,6 +285,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  editableMessageId = null,
+  editingMessageId = null,
+  editingDraft = "",
+  isSavingMessageEdit = false,
+  onBeginMessageEdit = NOOP_MESSAGE_EDIT,
+  onCancelMessageEdit = NOOP_MESSAGE_EDIT,
+  onSaveMessageEdit = NOOP_MESSAGE_EDIT,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -282,6 +310,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const editingDraftRef = useRef(editingDraft);
+  const editingDraftMessageIdRef = useRef(editingMessageId);
+  if (editingDraftMessageIdRef.current !== editingMessageId) {
+    editingDraftMessageIdRef.current = editingMessageId;
+    editingDraftRef.current = editingDraft;
+  }
+  const readEditingDraft = useCallback(() => editingDraftRef.current, []);
+  const onEditingDraftChange = useCallback((draft: string) => {
+    editingDraftRef.current = draft;
+  }, []);
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -512,6 +550,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      editableMessageId,
+      editingMessageId,
+      onBeginMessageEdit,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -528,12 +569,31 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      editableMessageId,
+      editingMessageId,
+      onBeginMessageEdit,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+    ],
+  );
+  const messageEditState = useMemo<TimelineMessageEditState>(
+    () => ({
+      isSavingMessageEdit,
+      readEditingDraft,
+      onEditingDraftChange,
+      onCancelMessageEdit,
+      onSaveMessageEdit,
+    }),
+    [
+      isSavingMessageEdit,
+      onCancelMessageEdit,
+      onEditingDraftChange,
+      onSaveMessageEdit,
+      readEditingDraft,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -570,62 +630,64 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }
 
   return (
-    <TimelineRowCtx value={sharedState}>
-      <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
-          <LegendList<MessagesTimelineRow>
-            ref={listRef}
-            data={rows}
-            keyExtractor={keyExtractor}
-            getItemType={getItemType}
-            renderItem={renderItem}
-            estimatedItemSize={90}
-            initialScrollAtEnd
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            contentInsetEndAdjustment={contentInsetEndAdjustment}
-            maintainScrollAtEnd={
-              anchoredEndSpace || !liveFollowEnabled || disclosureToggleSettling
-                ? false
-                : TIMELINE_MAINTAIN_SCROLL_AT_END
-            }
-            maintainVisibleContentPosition={maintainVisibleContentPosition}
-            onScroll={handleScroll}
-            className={cn(
-              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
-              topFadeEnabled && "topbar-scroll-fade",
-            )}
-            ListHeaderComponent={
-              loadEarlier !== null ? (
-                <TimelineLoadEarlierHeader
-                  loading={loadEarlier.loading}
-                  onLoadEarlier={loadEarlier.onLoadEarlier}
-                  fade={topFadeEnabled}
-                />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
-            }
-            ListFooterComponent={TIMELINE_LIST_FOOTER}
-          />
-          <TimelineMinimap
-            items={minimapItems}
-            hasPersistentGutter={minimapHasPersistentGutter}
-            hitStripWidth={minimapHitStripWidth}
-            stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
-          />
-        </div>
-      </TimelineRowActivityCtx>
-    </TimelineRowCtx>
+    <TimelineMessageEditCtx value={messageEditState}>
+      <TimelineRowCtx value={sharedState}>
+        <TimelineRowActivityCtx value={activityState}>
+          <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+            <LegendList<MessagesTimelineRow>
+              ref={listRef}
+              data={rows}
+              keyExtractor={keyExtractor}
+              getItemType={getItemType}
+              renderItem={renderItem}
+              estimatedItemSize={90}
+              initialScrollAtEnd
+              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+              contentInsetEndAdjustment={contentInsetEndAdjustment}
+              maintainScrollAtEnd={
+                anchoredEndSpace || !liveFollowEnabled || disclosureToggleSettling
+                  ? false
+                  : TIMELINE_MAINTAIN_SCROLL_AT_END
+              }
+              maintainVisibleContentPosition={maintainVisibleContentPosition}
+              onScroll={handleScroll}
+              className={cn(
+                "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+                topFadeEnabled && "topbar-scroll-fade",
+              )}
+              ListHeaderComponent={
+                loadEarlier !== null ? (
+                  <TimelineLoadEarlierHeader
+                    loading={loadEarlier.loading}
+                    onLoadEarlier={loadEarlier.onLoadEarlier}
+                    fade={topFadeEnabled}
+                  />
+                ) : topFadeEnabled ? (
+                  TIMELINE_LIST_FADE_HEADER
+                ) : (
+                  TIMELINE_LIST_HEADER
+                )
+              }
+              ListFooterComponent={TIMELINE_LIST_FOOTER}
+            />
+            <TimelineMinimap
+              items={minimapItems}
+              hasPersistentGutter={minimapHasPersistentGutter}
+              hitStripWidth={minimapHitStripWidth}
+              stripMap={minimapStripMap}
+              onSelect={(item) => {
+                onManualNavigation();
+                void listRef.current?.scrollToIndex({
+                  index: item.rowIndex,
+                  animated: true,
+                  viewOffset: 24,
+                });
+              }}
+            />
+          </div>
+        </TimelineRowActivityCtx>
+      </TimelineRowCtx>
+    </TimelineMessageEditCtx>
   );
 });
 
@@ -974,6 +1036,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const canEditMessage = !canRevertAgentWork && ctx.editableMessageId === row.message.id;
+  const isEditing = ctx.editingMessageId === row.message.id;
+  const wasEdited = row.message.originalText !== undefined;
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -1028,15 +1093,25 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         ) : null}
-        <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
-          terminalContexts={terminalContexts}
-          skills={ctx.skills}
-          markdownCwd={ctx.markdownCwd}
-        />
+        {isEditing ? (
+          <InlineUserMessageEditor />
+        ) : (
+          <CollapsibleUserMessageBody
+            text={elementContextState.promptText}
+            terminalContexts={terminalContexts}
+            skills={ctx.skills}
+            markdownCwd={ctx.markdownCwd}
+          />
+        )}
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
+      <div className="flex w-full max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums">
+        {wasEdited ? <span className="text-muted-foreground">Edited</span> : null}
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-2 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100",
+            isEditing ? "opacity-100" : "opacity-0",
+          )}
+        >
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
               {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
@@ -1047,6 +1122,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+            {canEditMessage && !isEditing ? (
+              <EditUserMessageButton messageId={row.message.id} />
+            ) : null}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
             )}
@@ -1054,6 +1132,74 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+function InlineUserMessageEditor() {
+  const edit = use(TimelineMessageEditCtx);
+  const [draft, setDraft] = useState(edit.readEditingDraft);
+  return (
+    <div className="min-w-[min(32rem,70vw)] space-y-2">
+      <Textarea
+        autoFocus
+        aria-label="Edit message"
+        value={draft}
+        disabled={edit.isSavingMessageEdit}
+        onChange={(event) => {
+          const nextDraft = event.currentTarget.value;
+          setDraft(nextDraft);
+          edit.onEditingDraftChange(nextDraft);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            edit.onCancelMessageEdit();
+          }
+        }}
+        className="bg-background/80 text-message-foreground"
+      />
+      <div className="flex justify-end gap-1.5">
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          disabled={edit.isSavingMessageEdit}
+          onClick={edit.onCancelMessageEdit}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          disabled={edit.isSavingMessageEdit || draft.trim().length === 0}
+          onClick={() => edit.onSaveMessageEdit(draft)}
+        >
+          {edit.isSavingMessageEdit ? "Saving…" : "Save"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function EditUserMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => ctx.onBeginMessageEdit(messageId)}
+            aria-label="Edit message"
+          />
+        }
+      >
+        <SquarePenIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Edit message</TooltipPopup>
+    </Tooltip>
   );
 }
 

@@ -160,6 +160,8 @@ export interface ThreadFeedProps {
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly editableMessageId?: MessageId | null;
+  readonly onEditMessage?: (messageId: MessageId) => void;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: {
     readonly loading: boolean;
@@ -794,7 +796,10 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
+  props: Pick<
+    ThreadFeedProps,
+    "environmentId" | "skills" | "editableMessageId" | "onEditMessage"
+  > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -918,9 +923,30 @@ function renderFeedEntry(
             })}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+            {message.originalText !== undefined ? (
+              <Text className="font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
+                Edited
+              </Text>
+            ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
+            {props.editableMessageId === message.id && props.onEditMessage ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Edit message"
+                hitSlop={6}
+                onPress={() => props.onEditMessage?.(message.id)}
+                className="size-7 items-center justify-center rounded-full"
+              >
+                <SymbolView
+                  name="square.and.pencil"
+                  size={13}
+                  tintColor={iconSubtleColor}
+                  type="monochrome"
+                />
+              </Pressable>
+            ) : null}
             {message.text.trim().length > 0 ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
@@ -1811,6 +1837,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         reviewCommentBubbleWidth,
         userBubbleMaxWidth,
         skills: props.skills,
+        editableMessageId: props.editableMessageId,
+        onEditMessage: props.onEditMessage,
       }),
     [
       copiedRowId,
@@ -1829,7 +1857,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleTurnFold,
       onToggleWorkGroup,
       onToggleWorkRow,
+      props.editableMessageId,
       props.environmentId,
+      props.onEditMessage,
       props.skills,
     ],
   );

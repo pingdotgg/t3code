@@ -252,11 +252,19 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+export const OrchestrationMessageCorrection = Schema.Struct({
+  targetMessageId: MessageId,
+  replacementText: Schema.String,
+});
+export type OrchestrationMessageCorrection = typeof OrchestrationMessageCorrection.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  originalText: Schema.optional(Schema.String),
+  correction: Schema.optional(OrchestrationMessageCorrection),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
@@ -862,6 +870,18 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadMessageCorrectCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.correct"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  targetMessageId: MessageId,
+  correctionMessageId: MessageId,
+  expectedText: Schema.String,
+  replacementText: Schema.String,
+  modelSelection: Schema.optional(ModelSelection),
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
@@ -928,6 +948,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadMessageCorrectCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -956,6 +977,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ThreadMessageCorrectCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -1074,6 +1096,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.message-corrected",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -1240,6 +1263,16 @@ export const ThreadMessageSentPayload = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadMessageCorrectedPayload = Schema.Struct({
+  threadId: ThreadId,
+  targetMessageId: MessageId,
+  correctionMessageId: MessageId,
+  replacementText: Schema.String,
+  providerText: Schema.String,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1430,6 +1463,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-corrected"),
+    payload: ThreadMessageCorrectedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

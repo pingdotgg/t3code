@@ -552,6 +552,65 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("sends the persisted correction prompt as an ordinary follow-up without first-turn work", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    const targetMessageId = asMessageId("user-message-to-correct");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-correction-original-turn"),
+        threadId,
+        message: {
+          messageId: targetMessageId,
+          role: "user",
+          text: "Original wording",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-stop-before-correction"),
+        threadId,
+        createdAt: "2026-01-01T00:00:00.500Z",
+      }),
+    );
+    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+    const titleGenerationCount = harness.generateThreadTitle.mock.calls.length;
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.correct",
+        commandId: CommandId.make("cmd-correct-message"),
+        threadId,
+        targetMessageId,
+        correctionMessageId: asMessageId("hidden-correction-message"),
+        expectedText: "Original wording",
+        replacementText: "Corrected wording",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt: "2026-01-01T00:03:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId,
+      input:
+        "Correction to my previous request. Treat the following as the complete replacement for that request:\n\nCorrected wording",
+    });
+    expect(harness.generateThreadTitle.mock.calls.length).toBe(titleGenerationCount);
+  });
+
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {
       const releaseStart = yield* Deferred.make<void>();

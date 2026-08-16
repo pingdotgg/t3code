@@ -10,6 +10,11 @@ import { SqlitePersistenceMemory } from "./Sqlite.ts";
 const layer = it.layer(
   ProjectionThreadMessageRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
 );
+const noCorrection = {
+  originalText: null,
+  correctionTargetMessageId: null,
+  correctionReplacementText: null,
+} as const;
 
 layer("ProjectionThreadMessageRepository", (it) => {
   it.effect("preserves existing attachments when upsert omits attachments", () =>
@@ -30,6 +35,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
       ];
 
       yield* repository.upsert({
+        ...noCorrection,
         messageId,
         threadId,
         turnId: null,
@@ -42,6 +48,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
       });
 
       yield* repository.upsert({
+        ...noCorrection,
         messageId,
         threadId,
         turnId: null,
@@ -74,6 +81,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
       const createdAt = "2026-02-28T19:10:00.000Z";
 
       yield* repository.upsert({
+        ...noCorrection,
         messageId,
         threadId,
         turnId: null,
@@ -94,6 +102,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
       });
 
       yield* repository.upsert({
+        ...noCorrection,
         messageId,
         threadId,
         turnId: null,
@@ -109,6 +118,36 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.text, "cleared");
       assert.deepEqual(rows[0]?.attachments, []);
+    }),
+  );
+
+  it.effect("round-trips message correction metadata", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-correction-metadata");
+      const targetMessageId = MessageId.make("message-target");
+      yield* repository.upsert({
+        messageId: MessageId.make("message-correction"),
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "provider correction prompt",
+        originalText: null,
+        correctionTargetMessageId: targetMessageId,
+        correctionReplacementText: "replacement",
+        isStreaming: false,
+        createdAt: "2026-08-16T10:00:00.000Z",
+        updatedAt: "2026-08-16T10:00:00.000Z",
+      });
+
+      const row = yield* repository.getByMessageId({
+        messageId: MessageId.make("message-correction"),
+      });
+      assert.equal(row._tag, "Some");
+      if (row._tag === "Some") {
+        assert.equal(row.value.correctionTargetMessageId, targetMessageId);
+        assert.equal(row.value.correctionReplacementText, "replacement");
+      }
     }),
   );
 });

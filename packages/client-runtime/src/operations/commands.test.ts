@@ -23,6 +23,7 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
+  correctThreadMessage,
   createProject,
   settleThread,
   stopThreadSession,
@@ -136,6 +137,36 @@ describe("environment commands", () => {
           type: "thread.archive",
           commandId: "archive-command",
           threadId: "thread-1",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches message corrections with caller-supplied ids and timestamps", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* correctThreadMessage({
+        commandId: CommandId.make("correction-command"),
+        threadId: ThreadId.make("thread-1"),
+        targetMessageId: "message-1" as never,
+        correctionMessageId: "message-correction-1" as never,
+        expectedText: "Original request",
+        replacementText: "Use the corrected request",
+        createdAt: "2026-08-16T10:00:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.message.correct",
+          commandId: "correction-command",
+          threadId: "thread-1",
+          targetMessageId: "message-1",
+          correctionMessageId: "message-correction-1",
+          expectedText: "Original request",
+          replacementText: "Use the corrected request",
+          createdAt: "2026-08-16T10:00:00.000Z",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

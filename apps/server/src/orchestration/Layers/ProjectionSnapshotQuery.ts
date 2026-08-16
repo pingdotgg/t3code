@@ -532,6 +532,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          original_text AS "originalText",
+          correction_target_message_id AS "correctionTargetMessageId",
+          correction_replacement_text AS "correctionReplacementText",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -813,6 +816,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             AND threads.archived_at IS NULL
             AND projects.deleted_at IS NULL
             AND messages.is_streaming = 0
+            AND messages.correction_target_message_id IS NULL
             AND (
               messages.role = 'user'
               OR (
@@ -975,6 +979,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          original_text AS "originalText",
+          correction_target_message_id AS "correctionTargetMessageId",
+          correction_replacement_text AS "correctionReplacementText",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1146,6 +1153,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND sequence <= ${maxSequence}
           AND event_type IN (
             'thread.message-sent',
+            'thread.message-corrected',
             'thread.proposed-plan-upserted',
             'thread.activity-appended',
             'thread.turn-diff-completed',
@@ -1181,8 +1189,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           SELECT
             candidates.anchor_at,
             candidates.turn_key,
-            CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END AS is_user_turn,
-            SUM(CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END) OVER (
+            CASE
+              WHEN messages.role = 'user'
+                AND messages.correction_target_message_id IS NULL
+              THEN 1 ELSE 0
+            END AS is_user_turn,
+            SUM(
+              CASE
+                WHEN messages.role = 'user'
+                  AND messages.correction_target_message_id IS NULL
+                THEN 1 ELSE 0
+              END
+            ) OVER (
               ORDER BY candidates.anchor_at DESC, candidates.turn_key DESC
             ) AS user_turns_seen
           FROM candidates
@@ -1218,6 +1236,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          original_text AS "originalText",
+          correction_target_message_id AS "correctionTargetMessageId",
+          correction_replacement_text AS "correctionReplacementText",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1560,6 +1581,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   role: row.role,
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+                  ...(row.originalText !== null ? { originalText: row.originalText } : {}),
+                  ...(row.correctionTargetMessageId !== null &&
+                  row.correctionReplacementText !== null
+                    ? {
+                        correction: {
+                          targetMessageId: row.correctionTargetMessageId,
+                          replacementText: row.correctionReplacementText,
+                        },
+                      }
+                    : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
                   createdAt: row.createdAt,
@@ -2619,6 +2650,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             id: row.messageId,
             role: row.role,
             text: row.text,
+            ...(row.originalText !== null ? { originalText: row.originalText } : {}),
+            ...(row.correctionTargetMessageId !== null && row.correctionReplacementText !== null
+              ? {
+                  correction: {
+                    targetMessageId: row.correctionTargetMessageId,
+                    replacementText: row.correctionReplacementText,
+                  },
+                }
+              : {}),
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
             createdAt: row.createdAt,
