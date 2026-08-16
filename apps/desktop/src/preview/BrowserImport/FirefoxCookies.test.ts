@@ -22,6 +22,7 @@ const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
     isSecure: number;
     isHttpOnly: number;
     sameSite: number;
+    originAttributes?: string;
   }>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -31,12 +32,14 @@ const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
   database.exec(
     `create table moz_cookies (
        id integer primary key, host text, name text, value text, path text,
-       expiry integer, isSecure integer, isHttpOnly integer, sameSite integer
+       expiry integer, isSecure integer, isHttpOnly integer, sameSite integer,
+       originAttributes text not null default ''
      )`,
   );
   const insert = database.prepare(
-    `insert into moz_cookies (host, name, value, path, expiry, isSecure, isHttpOnly, sameSite)
-     values (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `insert into moz_cookies
+       (host, name, value, path, expiry, isSecure, isHttpOnly, sameSite, originAttributes)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const row of rows) {
     insert.run(
@@ -48,6 +51,7 @@ const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
       row.isSecure,
       row.isHttpOnly,
       row.sameSite,
+      row.originAttributes ?? "",
     );
   }
   database.close();
@@ -116,6 +120,54 @@ describe("readFirefoxCookies", () => {
             sameSite: "no_restriction",
           },
         ]);
+      }),
+    ),
+  );
+
+  it.effect("imports only the default container", () =>
+    run(
+      Effect.gen(function* () {
+        const file = yield* writeFirefoxCookieDatabase([
+          {
+            host: "mail.test",
+            name: "session",
+            value: "default-container",
+            path: "/",
+            expiry: 1_800_000_000,
+            isSecure: 1,
+            isHttpOnly: 0,
+            sameSite: 1,
+          },
+          {
+            // Same host, name and path as above: Firefox keeps these apart by
+            // container, Electron cannot, so importing both would hand the
+            // profile whichever one happened to be written last.
+            host: "mail.test",
+            name: "session",
+            value: "work-container",
+            path: "/",
+            expiry: 1_800_000_000,
+            isSecure: 1,
+            isHttpOnly: 0,
+            sameSite: 1,
+            originAttributes: "^userContextId=2",
+          },
+          {
+            host: "mail.test",
+            name: "private",
+            value: "private-window",
+            path: "/",
+            expiry: 1_800_000_000,
+            isSecure: 1,
+            isHttpOnly: 0,
+            sameSite: 1,
+            originAttributes: "^privateBrowsingId=1",
+          },
+        ]);
+
+        const cookies = yield* readFirefoxCookies(file);
+
+        expect(cookies.map((cookie) => cookie.value)).toEqual(["default-container"]);
       }),
     ),
   );

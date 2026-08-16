@@ -49,9 +49,15 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
 
   const rows = yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // Only the default container. Firefox isolates cookies per container and
+    // per private window via `originAttributes` (`^userContextId=2`,
+    // `^privateBrowsingId=1`); Electron has no equivalent, so importing them
+    // all would collapse several identities onto one host/name/path and hand
+    // the profile an arbitrary container's session.
     const raw = yield* sql`
       select host, name, value, path, expiry, isSecure, isHttpOnly, sameSite
         from moz_cookies
+       where originAttributes = ''
     `;
     return yield* decodeCookieRows(raw);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));

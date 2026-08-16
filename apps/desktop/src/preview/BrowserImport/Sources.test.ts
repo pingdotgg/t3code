@@ -352,6 +352,36 @@ describe("cookieDatabaseCandidatePaths", () => {
   );
 });
 
+const firefox = BROWSER_IMPORT_SOURCES.find((source) => source.id === "firefox")!;
+
+describe("isSourceRunning for Firefox", () => {
+  it.effect("finds the lock inside the profile, not at the root", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const root = firefox.userDataDirectory(context)!;
+        const profile = `${root}/Profiles/abcd.default-release`;
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+
+        assert.isFalse(yield* isSourceRunning(firefox, context));
+
+        // Firefox keeps its locks per profile. A root-level lock is not one,
+        // and looking there was why a running Firefox read as importable.
+        yield* fileSystem.writeFileString(`${root}/lock`, "");
+        assert.isFalse(yield* isSourceRunning(firefox, context));
+
+        yield* fileSystem.writeFileString(`${profile}/.parentlock`, "");
+        assert.isTrue(yield* isSourceRunning(firefox, context));
+      }),
+    ),
+  );
+});
+
 describe("listSourceProfiles hardening", () => {
   it.effect("drops profile directories that are not a single plain segment", () =>
     run(
