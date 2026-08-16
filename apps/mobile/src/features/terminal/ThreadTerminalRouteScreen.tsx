@@ -4,7 +4,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, View } from "react-native";
 import {
   KeyboardController,
@@ -257,6 +257,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const firstNonEmptyBufferLoggedRef = useRef(false);
   const lastBufferReplayKeyRef = useRef<string | null>(null);
   const sentInitialInputKeyRef = useRef<string | null>(null);
+  const activePasteTargetRef = useRef<string | null>(null);
   const [readyBufferReplayKey, setReadyBufferReplayKey] = useState<string | null>(null);
   /** Default grid is always valid for attach; onResize refines cols/rows. Requiring a cached size blocked bootstrap for new terminal routes. */
   const [hasMeasuredSurface, setHasMeasuredSurface] = useState(true);
@@ -355,6 +356,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     readyReplayKey: readyBufferReplayKey,
   });
   const isRunning = terminal.status === "running" || terminal.status === "starting";
+
+  useLayoutEffect(() => {
+    activePasteTargetRef.current = isRunning ? terminalKey : null;
+    return () => {
+      if (activePasteTargetRef.current === terminalKey) {
+        activePasteTargetRef.current = null;
+      }
+    };
+  }, [isRunning, terminalKey]);
 
   // When the process ends while this screen is attached (e.g. typing `exit`),
   // close the session and leave the screen, mirroring the web drawer's
@@ -935,7 +945,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       return;
     }
 
+    const pasteTargetKey = terminalKey;
     void readTerminalClipboardText().then((result) => {
+      if (activePasteTargetRef.current !== pasteTargetKey) {
+        return;
+      }
       switch (result._tag) {
         case "text":
           setPendingModifierState({ terminalId, value: null });
@@ -950,7 +964,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           return;
       }
     });
-  }, [isRunning, terminalId, writeInput]);
+  }, [isRunning, terminalId, terminalKey, writeInput]);
 
   // Android mirror of the iOS NativeHeaderToolbar terminal menu below: text
   // size, session switching, and "Open new terminal", rendered through the
