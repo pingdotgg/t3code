@@ -1154,6 +1154,7 @@ function InlineUserMessageEditor() {
       <Textarea
         autoFocus
         aria-label="Edit message"
+        className="[&_[data-slot=textarea]]:max-h-50 [&_[data-slot=textarea]]:overflow-y-auto"
         value={draft}
         disabled={editingDisabled}
         onChange={(event) => {

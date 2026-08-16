@@ -580,6 +580,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Draft correction");
     expect(markup).toContain(">Cancel<");
     expect(markup).toContain(">Save<");
+    expect(markup).toContain("[&amp;_[data-slot=textarea]]:max-h-50");
+    expect(markup).toContain("[&amp;_[data-slot=textarea]]:overflow-y-auto");
   });
 
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
