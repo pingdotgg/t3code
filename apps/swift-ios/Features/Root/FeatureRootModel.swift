@@ -663,14 +663,6 @@ public final class FeatureRootModel {
         case let .thread(value):
             acknowledgeAuthoritativeThread(value.id)
             upsert(value)
-            mutateDetail(
-                id: value.id,
-                change: .delta(FeatureDetailDelta(changedMessages: [])),
-                invalidatesInFlightLoad: false
-            ) {
-                $0.thread = value
-            }
-            bumpDetailMetadataRevision(id: value.id)
         case let .threadRemoved(id):
             removeThread(id: id)
             removeDetail(id: id)
@@ -686,20 +678,36 @@ public final class FeatureRootModel {
     }
 
     private func upsert(_ thread: FeatureThread) {
+        var metadataChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) {
             let previous = snapshot.threads[index]
-            guard previous != thread else { return }
-            snapshot.threads[index] = thread
-            if previous.projectID != thread.projectID {
-                adjustProjectCount(id: previous.projectID, by: -1)
-                adjustProjectCount(id: thread.projectID, by: 1)
+            if previous != thread {
+                snapshot.threads[index] = thread
+                metadataChanged = true
+                if previous.projectID != thread.projectID {
+                    adjustProjectCount(id: previous.projectID, by: -1)
+                    adjustProjectCount(id: thread.projectID, by: 1)
+                }
             }
         } else {
             snapshot.threads.append(thread)
             adjustProjectCount(id: thread.projectID, by: 1)
+            metadataChanged = true
         }
-        threadCollectionRevision &+= 1
-        homePresentationRevision &+= 1
+        if metadataChanged {
+            threadCollectionRevision &+= 1
+            homePresentationRevision &+= 1
+        }
+        let detailChanged = mutateDetail(
+            id: thread.id,
+            change: .delta(FeatureDetailDelta(changedMessages: [])),
+            invalidatesInFlightLoad: false
+        ) {
+            $0.thread = thread
+        }
+        if metadataChanged || detailChanged {
+            bumpDetailMetadataRevision(id: thread.id)
+        }
     }
 
     private func removeThread(id: String) {

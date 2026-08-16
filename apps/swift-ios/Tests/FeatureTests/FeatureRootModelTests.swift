@@ -1007,6 +1007,71 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func initialDetailLoadKeepsMetadataFromThreadCreatedDuringLoad() async {
+        let client = FeatureClientStub()
+        let original = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let live = FeatureThread(id: original.id, projectID: original.projectID, title: "Live")
+        let created = FeatureThread(id: original.id, projectID: original.projectID, title: "Created")
+        client.snapshot = FeatureSnapshot(threads: [original])
+        client.threadDetail = FeatureThreadDetail(thread: original)
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: original.id)
+        let run = Task { await model.start() }
+        client.createdThread = created
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[original.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(live))
+            }
+            _ = await model.createThread(projectID: original.projectID, title: nil, selection: nil)
+        }
+
+        let loaded = await model.detail(for: original.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == created)
+        #expect(model.details[original.id]?.thread == created)
+        #expect(model.snapshot.threads == [created])
+    }
+
+    @Test
+    func duplicateThreadEventDuringRefreshDoesNotDiscardLoadedMetadata() async {
+        let client = FeatureClientStub()
+        let original = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let refreshed = FeatureThread(id: original.id, projectID: original.projectID, title: "Refreshed")
+        client.snapshot = FeatureSnapshot(threads: [original])
+        client.threadDetail = FeatureThreadDetail(thread: original)
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: original.id)
+        client.threadDetail = FeatureThreadDetail(thread: refreshed)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.snapshot.connection
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(original))
+                client.emit(.connection(.init(state: .connected)))
+            }
+        }
+
+        let loaded = await model.detail(for: original.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == refreshed)
+        #expect(model.details[original.id]?.thread == refreshed)
+        #expect(model.snapshot.threads == [refreshed])
+    }
+
+    @Test
     func initialDetailLoadDoesNotRestoreResolvedApproval() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
