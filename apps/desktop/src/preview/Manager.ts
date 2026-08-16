@@ -58,6 +58,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
+  MOUSE_NAVIGATE_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
@@ -1506,6 +1507,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
       runFork(handleHumanInput(rawSignal));
     };
+    const mouseNavigate = (_event: unknown, payload?: unknown): void => {
+      const direction =
+        typeof payload === "object" && payload !== null && "direction" in payload
+          ? (payload as { direction?: unknown }).direction
+          : undefined;
+      if (direction !== "back" && direction !== "forward") return;
+      runFork(
+        attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () => {
+          if (direction === "back") {
+            if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+          } else if (wc.navigationHistory.canGoForward()) {
+            wc.navigationHistory.goForward();
+          }
+        }).pipe(Effect.ignore),
+      );
+    };
     const forwardShortcut = Effect.fn("PreviewManager.forwardShortcut")(function* (
       event: Electron.Event,
       input: Electron.Input,
@@ -1552,6 +1569,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-fail-load", failed as never);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
       }).pipe(Effect.ignore),
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
@@ -1565,6 +1583,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-stop-loading", sync);
         wc.on("did-fail-load", failed as never);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler(({ url }) => {
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
