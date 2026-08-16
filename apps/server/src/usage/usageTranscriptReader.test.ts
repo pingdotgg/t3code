@@ -1,15 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { mkdtempSync, rmSync } from "node:fs";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
-import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
 
 import { readOpenCodeRecords } from "./usageTranscriptReader.ts";
 
 function createDatabase(): string {
-  const directory = mkdtempSync(NodePath.join(tmpdir(), "t3-opencode-"));
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-"));
   const dbPath = NodePath.join(directory, "opencode.db");
   const database = new NodeSqlite.DatabaseSync(dbPath);
   database.exec(`
@@ -93,7 +93,7 @@ describe("readOpenCodeRecords", () => {
         ["legacy-completed", 2_500],
       ]);
     } finally {
-      rmSync(NodePath.dirname(dbPath), { recursive: true, force: true });
+      NodeFS.rmSync(NodePath.dirname(dbPath), { recursive: true, force: true });
     }
   });
 });
