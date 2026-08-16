@@ -150,7 +150,8 @@ export async function readTranscriptRecords(
  * OpenCode has kept usage on assistant messages across two projections: the
  * legacy `message` table (role/model/tokens nested in `data`) and the current
  * `session_message` table (a `type` column, model under `$.model.id`). Both
- * select only usage scalars — message content never leaves the database.
+ * select only usage scalars and the completed timestamp — message content
+ * never leaves the database.
  */
 const OPEN_CODE_MESSAGE_TABLES_QUERY = `
   SELECT name FROM sqlite_master
@@ -161,7 +162,7 @@ const OPEN_CODE_LEGACY_USAGE_QUERY = `
   SELECT
     id AS messageId,
     session_id AS sessionId,
-    time_created AS timestampMs,
+    json_extract(data, '$.time.completed') AS timestampMs,
     json_extract(data, '$.modelID') AS modelId,
     json_extract(data, '$.tokens.input') AS inputTokens,
     json_extract(data, '$.tokens.output') AS outputTokens,
@@ -170,7 +171,7 @@ const OPEN_CODE_LEGACY_USAGE_QUERY = `
     json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens,
     json_extract(data, '$.cost') AS costUsd
   FROM message
-  WHERE time_updated >= ?
+  WHERE json_extract(data, '$.time.completed') >= ?
     AND json_valid(data)
     AND json_extract(data, '$.role') = 'assistant'
     AND json_extract(data, '$.time.completed') IS NOT NULL
@@ -180,7 +181,7 @@ const OPEN_CODE_CURRENT_USAGE_QUERY = `
   SELECT
     id AS messageId,
     session_id AS sessionId,
-    time_created AS timestampMs,
+    json_extract(data, '$.time.completed') AS timestampMs,
     json_extract(data, '$.model.id') AS modelId,
     json_extract(data, '$.tokens.input') AS inputTokens,
     json_extract(data, '$.tokens.output') AS outputTokens,
@@ -189,7 +190,7 @@ const OPEN_CODE_CURRENT_USAGE_QUERY = `
     json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens,
     json_extract(data, '$.cost') AS costUsd
   FROM session_message
-  WHERE time_created >= ?
+  WHERE json_extract(data, '$.time.completed') >= ?
     AND type = 'assistant'
     AND json_valid(data)
 `;
@@ -206,8 +207,8 @@ type OpenCodeMessageTable = keyof typeof OPEN_CODE_TABLE_QUERIES;
  *
  * Unlike the JSONL providers, OpenCode keeps one row per message in
  * `opencode.db`, so the whole source is one query. The window filter is pushed
- * into SQL (`time_updated` on the legacy table covers messages created before
- * the window but completed inside it). The database is opened read-only, and
+ * into SQL using the completed timestamp, so usage is attributed to the hour
+ * or day the turn finished. The database is opened read-only, and
  * `-wal`/`-shm` siblings are never created because no write happens.
  *
  * An upgraded database can carry the same message ID in both projections; the

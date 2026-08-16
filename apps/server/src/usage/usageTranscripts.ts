@@ -325,8 +325,10 @@ export interface OpenCodeUsageRow {
  * Projects one OpenCode usage row into a usage record.
  *
  * OpenCode moved its transcripts into `~/.local/share/opencode/opencode.db`,
- * with one row per message. `input` is exclusive of the cached portions and
- * `reasoning` is a subset of `output`, matching the shared token convention.
+ * with one row per message. The timestamp is the assistant turn's completion
+ * time, so usage is attributed to when the work finished. `input` is exclusive
+ * of the cached portions and `reasoning` is a subset of `output`, matching the
+ * shared token convention.
  * The message `id` is the dedupe key.
  *
  * A positive `cost` is trusted: OpenCode prices tokens against its own rate

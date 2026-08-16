@@ -242,6 +242,7 @@ describe("parseOpenCodeUsageRow", () => {
   function openCodeRow(overrides: {
     messageId?: string | null;
     sessionId?: string;
+    /** The assistant turn's completed timestamp, not its creation time. */
     timestampMs?: number | null;
     modelId?: string | null;
     inputTokens?: number;
