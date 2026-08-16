@@ -61,6 +61,19 @@ export class GitLabCliAuthenticationError extends Schema.TaggedErrorClass<GitLab
   }
 }
 
+export class GitLabCliRateLimitError extends Schema.TaggedErrorClass<GitLabCliRateLimitError>()(
+  "GitLabCliRateLimitError",
+  gitLabCliExecutionErrorContext,
+) {
+  get detail(): string {
+    return "GitLab API rate limit exceeded.";
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export class GitLabMergeRequestNotFoundError extends Schema.TaggedErrorClass<GitLabMergeRequestNotFoundError>()(
   "GitLabMergeRequestNotFoundError",
   {
@@ -126,8 +139,9 @@ export class GitLabCliCommandError extends Schema.TaggedErrorClass<GitLabCliComm
         switch (cause.failureKind) {
           case "authentication":
             return new GitLabCliAuthenticationError({ ...context, cause });
-          case "not-found":
           case "rate-limited":
+            return new GitLabCliRateLimitError({ ...context, cause });
+          case "not-found":
           case "command-failed":
           case undefined:
             return new GitLabCliCommandError({ ...context, cause });
@@ -214,6 +228,7 @@ export class GitLabNamespaceDecodeError extends Schema.TaggedErrorClass<GitLabNa
 export const GitLabCliError = Schema.Union([
   GitLabCliUnavailableError,
   GitLabCliAuthenticationError,
+  GitLabCliRateLimitError,
   GitLabMergeRequestNotFoundError,
   GitLabCliCommandError,
   GitLabMergeRequestListDecodeError,

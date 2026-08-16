@@ -55,6 +55,19 @@ export class AzureDevOpsCliAuthenticationError extends Schema.TaggedErrorClass<A
   }
 }
 
+export class AzureDevOpsCliRateLimitError extends Schema.TaggedErrorClass<AzureDevOpsCliRateLimitError>()(
+  "AzureDevOpsCliRateLimitError",
+  azureDevOpsCommandErrorFields,
+) {
+  get detail(): string {
+    return "Azure DevOps API rate limit exceeded.";
+  }
+
+  override get message(): string {
+    return `Azure DevOps CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export class AzureDevOpsPullRequestNotFoundError extends Schema.TaggedErrorClass<AzureDevOpsPullRequestNotFoundError>()(
   "AzureDevOpsPullRequestNotFoundError",
   azureDevOpsCommandErrorFields,
@@ -104,6 +117,9 @@ export class AzureDevOpsCommandFailedError extends Schema.TaggedErrorClass<Azure
     if (cause._tag === "VcsProcessExitError") {
       if (cause.failureKind === "authentication") {
         return new AzureDevOpsCliAuthenticationError(fields);
+      }
+      if (cause.failureKind === "rate-limited") {
+        return new AzureDevOpsCliRateLimitError(fields);
       }
       if (cause.failureKind === "not-found") {
         return new AzureDevOpsPullRequestNotFoundError(fields);
@@ -178,6 +194,7 @@ export class AzureDevOpsRepositoryDecodeError extends Schema.TaggedErrorClass<Az
 export const AzureDevOpsCliError = Schema.Union([
   AzureDevOpsCliUnavailableError,
   AzureDevOpsCliAuthenticationError,
+  AzureDevOpsCliRateLimitError,
   AzureDevOpsPullRequestNotFoundError,
   AzureDevOpsCommandFailedError,
   AzureDevOpsPullRequestListDecodeError,

@@ -18,11 +18,13 @@ import {
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerKind,
-  type PullRequestThreadComment,
+  type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
+import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
   ADD_REACTION_GRAPHQL_MUTATION,
@@ -247,6 +249,7 @@ export type GitHubPullRequestCliError =
   | GitHubDiffFileContentsUnavailableError
   | GitHubRepositorySelectorError
   | GitHubSubjectScopeError
+  | SourceControlRateLimit.SourceControlRateLimitPausedError
   | GitHubViewerLoginUnavailableError;
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
@@ -267,15 +270,6 @@ const DIFF_FILES_PAGE_SIZE = 100;
  * a person is reading has, and short of walking a repository-sized conversation forever.
  */
 const REVIEW_THREAD_PAGES = 10;
-
-/**
- * And pages of one thread's own comments, for the rare thread longer than a single page. A
- * thousand replies under one line is already a conversation nobody finishes reading.
- */
-const REVIEW_THREAD_COMMENT_PAGES = 10;
-
-/** How many over-long threads are finished at once, so a wide conversation is not read serially. */
-const REVIEW_THREAD_CONCURRENCY = 4;
 
 export interface GitHubPullRequestListBatch {
   readonly items: ReadonlyArray<GitHubPullRequestListItem>;
@@ -385,6 +379,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly number: number;
       /** Qualified `owner:branch`, which is the only form a fork's head resolves under. */
       readonly headRef: string;
+      /** Manual action checks may use the quota held back from automatic reads. */
+      readonly allowReserve?: boolean | undefined;
     }) => Effect.Effect<GitHubBaseComparison, GitHubPullRequestCliError>;
 
     readonly getPullRequestActivity: (input: {
@@ -434,6 +430,15 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly ids: ReadonlyArray<string>;
     }) => Effect.Effect<ReadonlyMap<string, string>, GitHubPullRequestCliError>;
 
+    readonly getReviewThreadComments: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly threadId: string;
+      readonly cursor: string;
+    }) => Effect.Effect<PullRequestThreadCommentsResult, GitHubPullRequestCliError>;
+
     /** One `gh repo view`, which answers what the repository allows and where the viewer stands. */
     readonly getRepositoryAccess: (input: {
       readonly cwd: string;
@@ -447,6 +452,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly host: string;
       readonly number: number;
+      /** Manual action checks may use the quota held back from automatic reads. */
+      readonly allowReserve?: boolean | undefined;
     }) => Effect.Effect<GitHubViewerAccess, GitHubPullRequestCliError>;
 
     /** Who this pull request may be sent to, and who it has already been sent to. */
@@ -824,6 +831,7 @@ function actionArgs(
 
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
+  const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
 
   /**
    * The pull request's own node id, which is what a mutation against the pull request itself is
@@ -841,6 +849,7 @@ export const make = Effect.gen(function* () {
       cwd: input.cwd,
       host: input.host,
       operation: input.operation,
+      allowReserve: true,
       variables: [
         ["-f", `owner=${owner}`],
         ["-f", `name=${name}`],
@@ -870,6 +879,7 @@ export const make = Effect.gen(function* () {
       cwd: input.cwd,
       host: input.host,
       operation: input.operation,
+      allowReserve: true,
       variables: [
         ["-f", `owner=${owner}`],
         ["-f", `name=${name}`],
@@ -916,6 +926,7 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly host: string;
     readonly operation: string;
+    readonly allowReserve?: boolean | undefined;
     /** Variables as `-f` flags, for values this module composed itself. */
     readonly variables?: ReadonlyArray<readonly [string, string]>;
     /**
@@ -926,32 +937,40 @@ export const make = Effect.gen(function* () {
     readonly privateVariables?: Readonly<Record<string, string>>;
     readonly query: string;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, GitHubPullRequestCliError> =>
-    github
-      .execute(
-        input.privateVariables === undefined
-          ? {
-              cwd: input.cwd,
-              args: [
-                "api",
-                "graphql",
-                "--hostname",
-                input.host,
-                ...(input.variables ?? []).flat(),
-                "-f",
-                `query=${input.query}`,
-              ],
-            }
-          : {
-              cwd: input.cwd,
-              args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
-              stdin: encodeGraphQlRequestJson({
-                query: input.query,
-                variables: input.privateVariables,
-              }),
-            },
+  }): Effect.Effect<A, GitHubPullRequestCliError> => {
+    return graphQlBudget
+      .query(
+        input.host,
+        input.query,
+        input.allowReserve === true ? { allowReserve: true } : undefined,
       )
       .pipe(
+        Effect.flatMap((query) =>
+          github.execute(
+            input.privateVariables === undefined
+              ? {
+                  cwd: input.cwd,
+                  args: [
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    input.host,
+                    ...(input.variables ?? []).flat(),
+                    "-f",
+                    `query=${query}`,
+                  ],
+                }
+              : {
+                  cwd: input.cwd,
+                  args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
+                  stdin: encodeGraphQlRequestJson({
+                    query,
+                    variables: input.privateVariables,
+                  }),
+                },
+          ),
+        ),
+        Effect.tap((result) => graphQlBudget.observe(input.host, result.stdout)),
         Effect.flatMap((result) => {
           const decoded = input.decode(result.stdout.trim());
           return Result.isSuccess(decoded)
@@ -966,6 +985,7 @@ export const make = Effect.gen(function* () {
               );
         }),
       );
+  };
 
   /**
    * One page of the patch, read from the files API. GitHub refuses `pr diff` outright past 300
@@ -1341,6 +1361,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         host: input.host,
         operation: "getPullRequestBaseComparison",
+        ...(input.allowReserve === true ? { allowReserve: true } : {}),
         variables: [
           ["-f", `owner=${owner}`],
           ["-f", `name=${name}`],
@@ -1438,6 +1459,36 @@ export const make = Effect.gen(function* () {
 
     getPullRequestDiffFileContents,
 
+    getReviewThreadComments: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getReviewThreadComments",
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+          ["-f", `threadId=${input.threadId}`],
+          cursorVariable(input.cursor),
+        ],
+        query: REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY,
+        decode: decodeReviewThreadCommentsJson,
+      }).pipe(
+        Effect.flatMap(({ belongsToPullRequest, comments, nextCursor }) =>
+          belongsToPullRequest
+            ? Effect.succeed({ comments, nextCursor })
+            : Effect.fail(
+                new GitHubSubjectScopeError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  operation: "getReviewThreadComments",
+                }),
+              ),
+        ),
+      );
+    },
+
     listReviewThreadComments: (input) =>
       Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
@@ -1457,25 +1508,6 @@ export const make = Effect.gen(function* () {
             query: REVIEW_THREADS_GRAPHQL_QUERY,
             decode: decodeReviewThreadsJson,
           });
-        const commentPage = (
-          threadId: string,
-          cursor: string,
-        ): Effect.Effect<
-          {
-            readonly comments: ReadonlyArray<PullRequestThreadComment>;
-            readonly nextCursor: string | null;
-          },
-          GitHubPullRequestCliError
-        > =>
-          graphqlRead({
-            cwd: input.cwd,
-            host: input.host,
-            operation: "listReviewThreadComments",
-            variables: [["-f", `threadId=${threadId}`], cursorVariable(cursor)],
-            query: REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY,
-            decode: decodeReviewThreadCommentsJson,
-          });
-
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
         const commitStats = new Map<
@@ -1540,39 +1572,21 @@ export const make = Effect.gen(function* () {
           dismissalPage += 1;
         }
 
-        // Only the threads GitHub said were unfinished cost a request; the rest arrived whole
-        // with the page they were listed on.
-        const finished = yield* Effect.forEach(
-          entries,
-          (entry) =>
-            Effect.gen(function* () {
-              const comments = [...entry.thread.comments];
-              let commentCursor = entry.nextCommentCursor;
-              let commentPageCount = 0;
-              while (commentCursor !== null && commentPageCount < REVIEW_THREAD_COMMENT_PAGES) {
-                const read = yield* commentPage(entry.thread.id, commentCursor);
-                comments.push(...read.comments);
-                commentCursor = read.nextCursor;
-                commentPageCount += 1;
-              }
-              return {
-                thread: { ...entry.thread, comments },
-                commentCount: entry.commentCount,
-                truncated: commentCursor !== null,
-              };
-            }),
-          { concurrency: REVIEW_THREAD_CONCURRENCY },
-        );
-
-        const reviewThreads = finished.map((entry) => entry.thread);
+        const reviewThreads = entries.map((entry) => ({
+          ...entry.thread,
+          commentCount: entry.commentCount,
+          ...(entry.nextCommentCursor === null
+            ? {}
+            : { nextCommentsCursor: entry.nextCommentCursor }),
+        }));
         return {
           comments: reviewThreadConversation(reviewThreads),
           dismissalsByReviewId,
           reviewThreads,
           // GitHub's own count of each thread, so the number the page shows is the host's even
           // where a bound kept some of the words on GitHub.
-          commentCount: finished.reduce((total, entry) => total + entry.commentCount, 0),
-          truncated: cursor !== null || finished.some((entry) => entry.truncated),
+          commentCount: entries.reduce((total, entry) => total + entry.commentCount, 0),
+          truncated: cursor !== null || entries.some((entry) => entry.nextCommentCursor !== null),
           reactions,
           reactionsById,
           reviewers,
@@ -1587,34 +1601,14 @@ export const make = Effect.gen(function* () {
       if (input.ids.length === 0) {
         return Effect.succeed(new Map<string, string>());
       }
-      return github
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "api",
-            "graphql",
-            "--hostname",
-            input.host,
-            ...input.ids.flatMap((id) => ["-f", `ids[]=${id}`]),
-            "-f",
-            `query=${ACTOR_AVATARS_GRAPHQL_QUERY}`,
-          ],
-        })
-        .pipe(
-          Effect.flatMap((result) => {
-            const decoded = decodeActorAvatarsJson(result.stdout.trim());
-            return Result.isSuccess(decoded)
-              ? Effect.succeed(decoded.success)
-              : Effect.fail(
-                  new GitHubPullRequestReadError({
-                    command: "gh",
-                    cwd: input.cwd,
-                    operation: "listActorAvatars",
-                    cause: decoded.failure,
-                  }),
-                );
-          }),
-        );
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "listActorAvatars",
+        variables: input.ids.map((id) => ["-f", `ids[]=${id}`]),
+        query: ACTOR_AVATARS_GRAPHQL_QUERY,
+        decode: decodeActorAvatarsJson,
+      });
     },
 
     getRepositoryAccess: (input) =>
@@ -1651,6 +1645,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         host: input.host,
         operation: "getViewerAccess",
+        ...(input.allowReserve === true ? { allowReserve: true } : {}),
         variables: [
           ["-f", `owner=${owner}`],
           ["-f", `name=${name}`],
@@ -1667,6 +1662,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         host: input.host,
         operation: "listReviewerCandidates",
+        allowReserve: true,
         variables: [
           ["-f", `owner=${owner}`],
           ["-f", `name=${name}`],

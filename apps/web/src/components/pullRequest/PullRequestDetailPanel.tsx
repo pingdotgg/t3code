@@ -111,6 +111,7 @@ import {
   readableFailure,
   resolveBaseFreshness,
   type PullRequestFinding,
+  shouldRefreshPullRequestActivity,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
 import {
@@ -511,6 +512,17 @@ export function PullRequestDetailPanel({
     detailQuery.refresh();
     activityQuery.refresh();
   }, [activityQuery.refresh, detailQuery.refresh]);
+  const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!coreDetail) return;
+    const next = { key: pullRequestKey, updatedAt: coreDetail.updatedAt };
+    if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
+      activityQuery.refresh();
+    }
+    activityRevision.current = next;
+  }, [activityQuery.refresh, coreDetail, pullRequestKey]);
   useEffect(() => {
     if (!detail) return;
     onStateChange?.({
@@ -521,11 +533,11 @@ export function PullRequestDetailPanel({
       isDraft: detail.isDraft,
     });
   }, [detail, onStateChange]);
-  // A pull request changes while it is open in front of somebody — a push lands, a check
-  // finishes, a review arrives — so the panel reads it again on the way back to the window and
-  // while a reader sits on it. Keyed by the pull request rather than by the panel, because this
-  // one panel shows a different pull request every time it is opened.
-  useLiveRefresh(refreshDetail, {
+  // Core detail is cheap enough to re-read while this stays open. Activity is heavier, so the
+  // revision effect above reads it only after this same pull request reports a change. Keyed by
+  // the pull request rather than by the panel, because this one panel shows a different pull
+  // request every time it is opened.
+  useLiveRefresh(detailQuery.refresh, {
     key: `pull-request:${reference.projectId}:${reference.repository}#${reference.number}`,
   });
   // The button, on the other hand, goes around the server's cache rather than through it: it is

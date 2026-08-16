@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -29,6 +30,7 @@ import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { retryAtFromHeader } from "./SourceControlRateLimit.ts";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 /** A response body past this is cut short, so one huge diff cannot exhaust the server. */
@@ -98,6 +100,7 @@ export class BitbucketResponseError extends Schema.TaggedErrorClass<BitbucketRes
     operation: BitbucketApiOperation,
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
+    retryAt: Schema.optional(Schema.Number),
   },
 ) {
   get detail(): string {
@@ -579,28 +582,28 @@ function responseError(
 ): Effect.Effect<never, BitbucketApiError> {
   // Bounded like any other body: an error response is no smaller than a successful one, and
   // only its length is reported anyway.
-  return collectUint8StreamText({
-    stream: response.stream,
-    maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new BitbucketResponseBodyReadError({
-          operation,
-          status: response.status,
-          cause,
-        }),
-    ),
-    Effect.flatMap((collected) =>
-      Effect.fail(
-        new BitbucketResponseError({
-          operation,
-          status: response.status,
-          responseBodyLength: collected.text.length,
-        }),
+  return Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const collected = yield* collectUint8StreamText({
+      stream: response.stream,
+      maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BitbucketResponseBodyReadError({
+            operation,
+            status: response.status,
+            cause,
+          }),
       ),
-    ),
-  );
+    );
+    return yield* new BitbucketResponseError({
+      operation,
+      status: response.status,
+      responseBodyLength: collected.text.length,
+      retryAt: retryAtFromHeader(response.headers["retry-after"], now),
+    });
+  });
 }
 
 export const make = Effect.gen(function* () {

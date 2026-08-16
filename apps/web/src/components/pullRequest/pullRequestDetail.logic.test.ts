@@ -17,6 +17,7 @@ import {
   handoffPrompt,
   handoffReviewComments,
   isThreadOwnPullRequest,
+  mergePullRequestThreadComments,
   orderPullRequestComments,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
@@ -24,9 +25,11 @@ import {
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   readableFailure,
+  shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
   describePullRequestState,
+  editPullRequestThreadComment,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -54,6 +57,65 @@ const TIMELINE_SOURCE: Pick<
   mergedAt: null,
   closedAt: null,
 };
+
+describe("pull request activity refresh", () => {
+  const first = {
+    key: "project:acme/web#7",
+    updatedAt: "2026-08-13T13:00:00Z",
+  };
+
+  it("refreshes activity only after the same pull request changes", () => {
+    expect(
+      shouldRefreshPullRequestActivity(first, {
+        ...first,
+        updatedAt: "2026-08-13T13:01:00Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not duplicate the first activity read or carry a revision across pull requests", () => {
+    expect(shouldRefreshPullRequestActivity(null, first)).toBe(false);
+    expect(shouldRefreshPullRequestActivity(first, first)).toBe(false);
+    expect(
+      shouldRefreshPullRequestActivity(first, {
+        key: "project:acme/web#8",
+        updatedAt: "2026-08-13T13:01:00Z",
+      }),
+    ).toBe(false);
+  });
+});
+describe("review thread comment pages", () => {
+  it("appends new comments once and keeps refreshed base comments", () => {
+    expect(
+      mergePullRequestThreadComments(
+        [
+          { id: "c1", body: "refreshed" },
+          { id: "c2", body: "already in base" },
+        ],
+        [
+          { id: "c2", body: "stale page copy" },
+          { id: "c3", body: "next page" },
+        ],
+      ),
+    ).toEqual([
+      { id: "c1", body: "refreshed" },
+      { id: "c2", body: "already in base" },
+      { id: "c3", body: "next page" },
+    ]);
+  });
+
+  it("keeps a loaded comment after its body is edited", () => {
+    const loaded = [
+      { id: "c2", body: "old body" },
+      { id: "c3", body: "another loaded comment" },
+    ];
+
+    expect(editPullRequestThreadComment(loaded, "c2", "saved body")).toEqual([
+      { id: "c2", body: "saved body" },
+      { id: "c3", body: "another loaded comment" },
+    ]);
+  });
+});
 
 describe("pull request action menu", () => {
   it("keeps the group divider when auto-merge is the only action", () => {

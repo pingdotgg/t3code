@@ -2,11 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import {
-  bitbucketErrorReason,
+  bitbucketProviderFailure,
   bitbucketViewerPermissions,
 } from "./BitbucketPullRequestProvider.ts";
 
-describe("bitbucketErrorReason", () => {
+describe("bitbucketProviderFailure", () => {
   it("treats only an HTTP 401 as unusable credentials", () => {
     const responseError = (status: number) =>
       new BitbucketApi.BitbucketResponseError({
@@ -15,8 +15,8 @@ describe("bitbucketErrorReason", () => {
         responseBodyLength: 0,
       });
 
-    expect(bitbucketErrorReason(responseError(401))).toBe("unauthenticated");
-    expect(bitbucketErrorReason(responseError(403))).toBe("failed");
+    expect(bitbucketProviderFailure(responseError(401)).reason).toBe("unauthenticated");
+    expect(bitbucketProviderFailure(responseError(403)).reason).toBe("failed");
   });
 });
 

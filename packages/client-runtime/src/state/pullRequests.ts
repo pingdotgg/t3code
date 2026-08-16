@@ -61,6 +61,16 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsActivity,
       staleTimeMs: 15_000,
     }),
+    threadComments: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:thread-comments",
+      tag: WS_METHODS.pullRequestsThreadComments,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.cursor]),
+      },
+    }),
     diff: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:diff",
       staleTimeMs: 60_000,

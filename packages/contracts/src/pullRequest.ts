@@ -241,6 +241,10 @@ export const PullRequestReviewThread = Schema.Struct({
    */
   isOutdated: Schema.Boolean,
   comments: Schema.Array(PullRequestThreadComment),
+  /** Host-reported total, when this thread was read in pages. */
+  commentCount: Schema.optional(NonNegativeInt),
+  /** Opaque cursor for the next comment page. Absent once this thread is whole. */
+  nextCommentsCursor: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
 
@@ -903,6 +907,19 @@ export const PullRequestSubmitReviewInput = Schema.Struct({
   comments: Schema.Array(PullRequestReviewCommentDraft),
 });
 export type PullRequestSubmitReviewInput = typeof PullRequestSubmitReviewInput.Type;
+
+export const PullRequestThreadCommentsInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  threadId: TrimmedNonEmptyString,
+  cursor: TrimmedNonEmptyString,
+});
+export type PullRequestThreadCommentsInput = typeof PullRequestThreadCommentsInput.Type;
+
+export const PullRequestThreadCommentsResult = Schema.Struct({
+  comments: Schema.Array(PullRequestThreadComment),
+  nextCursor: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
 
 export const PullRequestThreadReplyInput = Schema.Struct({
   ...PullRequestRef.fields,

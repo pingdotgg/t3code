@@ -4,6 +4,7 @@ import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3t
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   PullRequestProviderError,
+  type PullRequestProviderFailure,
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
@@ -64,12 +65,13 @@ export const AZURE_DEVOPS_VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
 };
 
 /** The CLI tags that mean the tool itself is unusable, rather than one request failing. */
-function reasonFor(
+export function azureDevOpsProviderFailure(
   error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError,
-): PullRequestProviderError["reason"] {
-  if (error._tag === "AzureDevOpsCliUnavailableError") return "missing-tool";
-  if (error._tag === "AzureDevOpsCliAuthenticationError") return "unauthenticated";
-  return "failed";
+): PullRequestProviderFailure {
+  if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
+  if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
+  if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
+  return { reason: "failed" };
 }
 
 function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeRequest {
@@ -103,7 +105,7 @@ export const make = Effect.gen(function* () {
       new PullRequestProviderError({
         provider: "azure-devops",
         operation,
-        reason: reasonFor(error),
+        ...azureDevOpsProviderFailure(error),
         detail: error.detail,
         cause: error,
       });

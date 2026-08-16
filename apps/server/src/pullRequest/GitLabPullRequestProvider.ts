@@ -8,6 +8,7 @@ import type {
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import {
   PullRequestProviderError,
+  type PullRequestProviderFailure,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
@@ -90,12 +91,13 @@ export function gitLabViewerPermissions(input: {
 }
 
 /** The CLI tags that mean the tool itself is unusable, rather than one request failing. */
-function reasonFor(
+export function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
-): PullRequestProviderError["reason"] {
-  if (error._tag === "GitLabCliUnavailableError") return "missing-tool";
-  if (error._tag === "GitLabCliAuthenticationError") return "unauthenticated";
-  return "failed";
+): PullRequestProviderFailure {
+  if (error._tag === "GitLabCliUnavailableError") return { reason: "missing-tool" };
+  if (error._tag === "GitLabCliAuthenticationError") return { reason: "unauthenticated" };
+  if (error._tag === "GitLabCliRateLimitError") return { reason: "rate-limited" };
+  return { reason: "failed" };
 }
 
 export const make = Effect.gen(function* () {
@@ -105,7 +107,7 @@ export const make = Effect.gen(function* () {
     new PullRequestProviderError({
       provider: "gitlab",
       operation,
-      reason: reasonFor(error),
+      ...gitLabProviderFailure(error),
       detail: error.detail,
       cause: error,
     });

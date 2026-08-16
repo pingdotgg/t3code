@@ -661,6 +661,10 @@ export function pullRequestSearchGraphQlQuery(rows: number): string {
  * null for the first page and the last page's `endCursor` after that, so a pull request with
  * more threads than one page holds is walked rather than cut off at the first fifty.
  *
+ * Only ten comments ride with each thread. A hundred threads times a hundred comments made
+ * GitHub reserve 10,000 nested rows and charge 104 points; unfinished threads are paged from
+ * their own cursor below.
+ *
  * Reviewers come from here rather than from `gh pr view --json reviewRequests` for two reasons:
  * that field holds only requests still outstanding, so anyone who has already reviewed drops off
  * it, and neither it nor any other `gh` JSON field carries an avatar. A reviewer can be a person
@@ -689,7 +693,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           path
           line
           diffSide
-          comments(first: ${GRAPHQL_PAGE_SIZE}) {
+          comments(first: 10) {
             totalCount
             pageInfo { hasNextPage endCursor }
             nodes { id author { login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
@@ -740,10 +744,12 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
  * from the inner node itself, so a thread longer than a page is followed on its own — a request
  * GitHub makes necessary, and one no ordinary pull request ever provokes.
  */
-export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($threadId: ID!, $cursor: String) {
+export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $threadId: ID!, $cursor: String) {
   viewer { login }
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { id } }
   node(id: $threadId) {
     ... on PullRequestReviewThread {
+      pullRequest { id }
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes { id author { login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
@@ -757,8 +763,16 @@ const RawReviewThreadCommentsSchema = Schema.Struct({
     viewer: Schema.optional(
       Schema.NullOr(Schema.Struct({ login: Schema.optional(Schema.NullOr(Schema.String)) })),
     ),
+    repository: Schema.NullOr(
+      Schema.Struct({ pullRequest: Schema.NullOr(Schema.Struct({ id: Schema.String })) }),
+    ),
     /** Null for an id that names nothing the viewer can read, which is not a thread to page. */
-    node: Schema.NullOr(Schema.Struct({ comments: Schema.optional(RawThreadCommentsSchema) })),
+    node: Schema.NullOr(
+      Schema.Struct({
+        pullRequest: Schema.optional(Schema.Struct({ id: Schema.String })),
+        comments: Schema.optional(RawThreadCommentsSchema),
+      }),
+    ),
   }),
 });
 
@@ -1820,6 +1834,7 @@ export function decodeReviewThreadsJson(
 /** The rest of one thread's comments, in the shape the first page already delivered them. */
 export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
   {
+    readonly belongsToPullRequest: boolean;
     readonly comments: ReadonlyArray<PullRequestThreadComment>;
     readonly nextCursor: string | null;
   },
@@ -1832,6 +1847,10 @@ export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
   const viewer = trimmed(decoded.success.data.viewer?.login);
   const comments = decoded.success.data.node?.comments;
   return Result.succeed({
+    belongsToPullRequest:
+      decoded.success.data.repository?.pullRequest?.id !== undefined &&
+      decoded.success.data.repository?.pullRequest?.id ===
+        decoded.success.data.node?.pullRequest?.id,
     comments: (comments?.nodes ?? []).map((comment) => ({
       id: comment.id,
       author: toActor(comment.author),
