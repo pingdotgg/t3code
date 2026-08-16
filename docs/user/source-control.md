@@ -77,6 +77,8 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
    ```
 3. Open **Settings → Source Control** in T3 Code and verify GitHub shows as authenticated
 
+If a repository uses an SSH host alias such as `github-personal` that points at `github.com`, T3 Code uses the real hostname for pull requests and keeps the alias for Git authentication.
+
 You can now clone, publish, and create pull requests.
 
 ### For GitLab

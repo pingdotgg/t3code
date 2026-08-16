@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type {
@@ -155,6 +156,7 @@ function makeService(input: {
   return PullRequestService.make.pipe(
     Effect.provide(
       Layer.mergeAll(
+        NodeServices.layer,
         Layer.succeed(PullRequestProviderRegistry, fromProviders(input.providers)),
         Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
           resolveHandle:
@@ -173,6 +175,56 @@ function makeService(input: {
     ),
   );
 }
+
+it("keeps a nonstandard port when deriving a host from a provider base URL", () => {
+  assert.strictEqual(
+    PullRequestService.hostnameFromProviderBaseUrl("https://github.company:8443"),
+    "github.company:8443",
+  );
+  assert.strictEqual(
+    PullRequestService.hostnameFromProviderBaseUrl("https://github.company:8443/api/v3"),
+    "github.company:8443",
+  );
+  assert.strictEqual(
+    PullRequestService.hostnameFromProviderBaseUrl("https://github.com"),
+    "github.com",
+  );
+});
+
+it.effect("keeps a nonstandard port on a detected self-hosted GitHub host", () =>
+  Effect.gen(function* () {
+    const hosts: string[] = [];
+    const selfHosted = project({
+      id: "p1",
+      title: "ghe",
+      workspaceRoot: "/ghe",
+      repository: "owner/repo",
+      provider: "unknown",
+      host: "github.company:8443",
+    });
+    const service = yield* makeService({
+      projects: [selfHosted],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: (input) => {
+            hosts.push(input.host);
+            return Effect.succeed({ items: [], truncated: false, continues: true });
+          },
+        }),
+      ],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          context: { ...context!, provider: { ...context!.provider, kind: "github" } },
+          provider: undefined as never,
+        }),
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.strictEqual(result.providers[0]?.host, "github.company:8443");
+    assert.deepStrictEqual(hosts, ["github.company:8443"]);
+  }),
+);
 
 it.effect("refines unknown self-hosted GitLab projects before listing merge requests", () =>
   Effect.gen(function* () {

@@ -88,6 +88,7 @@ function makeRegistry(input: {
       Layer.mergeAll(
         registryLayer,
         processLayer,
+        NodeServices.layer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),

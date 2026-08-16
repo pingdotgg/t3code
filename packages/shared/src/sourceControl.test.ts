@@ -5,6 +5,7 @@ import {
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
   resolveChangeRequestPresentation,
+  rewriteGitRemoteUrlHost,
 } from "./sourceControl.ts";
 
 describe("source control presentation", () => {
@@ -136,6 +137,61 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+  });
+
+  it("does not treat undotted SSH aliases as enterprise hosts", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("git@github-personal:owner/repo.git")).toEqual({
+      kind: "unknown",
+      name: "github-personal",
+      baseUrl: "https://github-personal",
+    });
+    expect(detectSourceControlProviderFromRemoteUrl("git@github:owner/repo.git")?.kind).toBe(
+      "unknown",
+    );
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@gitlab-work:group/project.git")?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@bitbucket-work:workspace/repo.git")?.kind,
+    ).toBe("unknown");
+  });
+
+  it("still classifies public and dotted enterprise hosts", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("git@github.com:owner/repo.git")).toEqual({
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://github.mycorp.com/owner/repo.git"),
+    ).toEqual({
+      kind: "github",
+      name: "GitHub Self-Hosted",
+      baseUrl: "https://github.mycorp.com",
+    });
+    expect(detectSourceControlProviderFromRemoteUrl("git@gitlab.com:group/project.git")?.kind).toBe(
+      "gitlab",
+    );
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
+    ).toBe("bitbucket");
+  });
+});
+
+describe("rewriteGitRemoteUrlHost", () => {
+  it("rewrites SCP-like SSH aliases and leaves HTTPS remotes alone", () => {
+    expect(rewriteGitRemoteUrlHost("git@github-personal:o/r.git", "github.com")).toBe(
+      "git@github.com:o/r.git",
+    );
+    expect(rewriteGitRemoteUrlHost("deploy@github-personal:Owner/Repo.git", "github.com")).toBe(
+      "deploy@github.com:Owner/Repo.git",
+    );
+    expect(rewriteGitRemoteUrlHost("ssh://git@github-personal/o/r.git", "github.com")).toBe(
+      "ssh://git@github.com/o/r.git",
+    );
+    expect(rewriteGitRemoteUrlHost("https://github.com/o/r.git", "example.com")).toBe(
+      "https://github.com/o/r.git",
+    );
   });
 });
 

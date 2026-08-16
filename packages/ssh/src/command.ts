@@ -327,6 +327,7 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
 
 export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(function* (
   alias: string,
+  options?: { readonly timeoutMs?: number; readonly fallbackOnError?: boolean },
 ): Effect.fn.Return<
   DesktopSshEnvironmentTarget,
   SshCommandError | SshInvalidTargetError,
@@ -338,19 +339,29 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
   }
 
   yield* Effect.logDebug("ssh.target.resolve.start", { alias: trimmedAlias });
-  return yield* runSshCommand(
+  const resolved = runSshCommand(
     {
       alias: trimmedAlias,
       hostname: trimmedAlias,
       username: null,
       port: null,
     },
-    { preHostArgs: ["-G"] },
+    {
+      preHostArgs: ["-G"],
+      ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    },
   ).pipe(
     Effect.map((result) => parseSshResolveOutput(trimmedAlias, result.stdout)),
     Effect.tap((target) =>
       Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(target)),
     ),
+  );
+
+  if (options?.fallbackOnError === false) {
+    return yield* resolved;
+  }
+
+  return yield* resolved.pipe(
     Effect.catch((cause) =>
       Effect.logDebug("ssh.target.resolve.fallback", { alias: trimmedAlias, cause }).pipe(
         Effect.as({
