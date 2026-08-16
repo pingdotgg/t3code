@@ -53,14 +53,16 @@ describe("desktopTabLifetime", () => {
     const first = acquireDesktopTab("tab_readiness");
     const second = acquireDesktopTab("tab_readiness");
 
-    expect(createTab).toHaveBeenCalledOnce();
+    // Both leases share one creation, and it is still in flight: creation now
+    // waits for client settings to hydrate so the guest is born at the user's
+    // zoom and appearance rather than painting at the defaults first.
     expect(first.ready).toBe(second.ready);
 
     let ready = false;
     void first.ready.then(() => {
       ready = true;
     });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(createTab).toHaveBeenCalledOnce());
     expect(ready).toBe(false);
 
     resolveCreation?.();

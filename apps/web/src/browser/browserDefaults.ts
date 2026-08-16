@@ -19,7 +19,11 @@ import type {
   PreviewViewportSetting,
 } from "@t3tools/contracts";
 
-import { getClientSettings, useClientSettings } from "~/hooks/useSettings";
+import {
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  useClientSettings,
+} from "~/hooks/useSettings";
 
 import { resolveResponsiveBrowserViewportSize } from "./browserViewportLayout";
 
@@ -45,6 +49,18 @@ const toBrowserDefaults = (settings: {
 /** Non-hook accessor for imperative open paths (menu actions, automation hosts). */
 export function getBrowserDefaults(): BrowserDefaults {
   return toBrowserDefaults(getClientSettings());
+}
+
+/**
+ * The defaults, once client settings have actually loaded.
+ *
+ * Opening a preview is asynchronous anyway, and before hydration the snapshot
+ * is the schema defaults rather than the user's — a tab opened in that window
+ * would be born at the wrong viewport, zoom and appearance and never corrected.
+ */
+export async function resolveBrowserDefaults(): Promise<BrowserDefaults> {
+  await ensureClientSettingsHydrated();
+  return getBrowserDefaults();
 }
 
 export function useBrowserDefaults(): BrowserDefaults {

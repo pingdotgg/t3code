@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
-import { browserDefaultOpenViewport } from "~/browser/browserDefaults";
+import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
@@ -29,7 +29,7 @@ export async function openPreviewSession<E>(
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
-      viewport: input.viewport ?? browserDefaultOpenViewport(),
+      viewport: input.viewport ?? browserDefaultOpenViewport(await resolveBrowserDefaults()),
     },
   });
   if (result._tag === "Failure") {
