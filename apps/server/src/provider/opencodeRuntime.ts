@@ -297,14 +297,21 @@ export function parseAgentListCliOutput(stdout: string): ParsedOpenCodeAgentList
   return { agents, truncated };
 }
 
-function pickAgentsFromCliParses(
+/** @internal */
+export function pickAgentsFromCliParses(
   first: ParsedOpenCodeAgentList | undefined,
   second: ParsedOpenCodeAgentList | undefined,
 ): ReadonlyArray<Agent> {
-  if (second && !second.truncated) return second.agents;
+  // An empty non-truncated retry is not authoritative: the first attempt may
+  // have been a usable partial list after a truncated flush. Prefer any
+  // non-empty complete parse, then the longer partial.
+  if (second && !second.truncated && second.agents.length > 0) return second.agents;
   if (first && !first.truncated) return first.agents;
   if (first && second) {
-    return first.agents.length > second.agents.length ? first.agents : second.agents;
+    if (!second.truncated && first.agents.length > 0 && second.agents.length === 0) {
+      return first.agents;
+    }
+    return first.agents.length >= second.agents.length ? first.agents : second.agents;
   }
   return second?.agents ?? first?.agents ?? [];
 }

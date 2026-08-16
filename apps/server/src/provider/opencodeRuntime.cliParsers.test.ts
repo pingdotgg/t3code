@@ -2,7 +2,11 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { parseModelsCliOutput, parseAgentListCliOutput } from "./opencodeRuntime.ts";
+import {
+  parseModelsCliOutput,
+  parseAgentListCliOutput,
+  pickAgentsFromCliParses,
+} from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -288,5 +292,41 @@ describe("parseAgentListCliOutput", () => {
     NodeAssert.equal(result.truncated, false);
     NodeAssert.equal(result.agents[0]!.hidden, true);
     NodeAssert.equal(result.agents[1]!.hidden, false);
+  });
+});
+
+describe("pickAgentsFromCliParses", () => {
+  const partial = parseAgentListCliOutput(
+    [
+      "build (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      "Pro Max (primary)",
+      "  {",
+    ].join("\n"),
+  );
+
+  it("keeps a usable first parse when the retry is empty and complete", () => {
+    NodeAssert.equal(partial.truncated, true);
+    NodeAssert.ok(partial.agents.length >= 1);
+    const picked = pickAgentsFromCliParses(partial, { agents: [], truncated: false });
+    NodeAssert.deepEqual(
+      picked.map((agent) => agent.name),
+      partial.agents.map((agent) => agent.name),
+    );
+  });
+
+  it("prefers a non-empty complete retry over a truncated first parse", () => {
+    const retry = parseAgentListCliOutput(
+      [
+        "build (primary)",
+        "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+        "Pro Max (primary)",
+        "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      ].join("\n"),
+    );
+    const picked = pickAgentsFromCliParses(partial, retry);
+    NodeAssert.equal(retry.truncated, false);
+    NodeAssert.equal(picked.length, 2);
+    NodeAssert.equal(picked[1]!.name, "Pro Max");
   });
 });
