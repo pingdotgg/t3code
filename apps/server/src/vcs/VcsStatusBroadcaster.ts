@@ -495,11 +495,17 @@ export const make = Effect.gen(function* () {
           }),
         );
       });
-      const result = yield* Fiber.join(inFlight.fiber);
+      const exit = yield* Fiber.await(inFlight.fiber);
       const latestGeneration = yield* invalidateGenerationOf(cwd);
-      if (inFlight.startedGeneration >= latestGeneration) {
-        return result;
+      // A stale run's failure must not surface: settleRefreshFiber may already
+      // have started the post-invalidation rerun this waiter should join.
+      if (inFlight.startedGeneration < latestGeneration) {
+        continue;
       }
+      if (Exit.isFailure(exit)) {
+        return yield* Effect.failCause(exit.cause);
+      }
+      return exit.value;
     }
   });
 
