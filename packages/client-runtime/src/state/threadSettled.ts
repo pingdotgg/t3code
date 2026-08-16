@@ -3,12 +3,14 @@ import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
-/** Returns whether the change request state settles the thread immediately. */
+/** Returns whether the change request state settles the thread immediately.
+ * Only a merge does, and only when auto-settle-on-merge is on. Closed-without-
+ * merge never short-circuits: continuing work after a close is real activity. */
 export function changeRequestAutoSettles(
   state: ChangeRequestStateLike | null | undefined,
   autoSettleOnMerge = true,
 ): boolean {
-  return state === "closed" || (state === "merged" && autoSettleOnMerge);
+  return state === "merged" && autoSettleOnMerge;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -94,7 +96,7 @@ export function canSettle(
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
   // Queued work is as blocked-on-progress as a live session: settling it
-  // (or auto-settling it on a closed PR) would hide a just-requested turn.
+  // (or auto-settling it on a merged PR) would hide a just-requested turn.
   if (hasQueuedTurnStart(shell, options)) return false;
   return true;
 }
@@ -230,10 +232,12 @@ export function threadWokeAt(
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
  * wins in both directions; without one, a thread can auto-settle on a
- * merged PR, always settles on a closed PR, or settles on inactivity past
- * the window. An open PR blocks the inactivity path entirely. The server
- * un-settles on real activity (user message, session start, approval/
- * user-input request), so an override never goes stale silently.
+ * merged PR or settle on inactivity past the window. An open PR blocks the
+ * inactivity path entirely. A closed-without-merge PR does not force settle
+ * — continuing work after a close is real activity — but inactivity can
+ * still apply if configured. The server un-settles on real activity (user
+ * message, session start, approval/user-input request), so an override
+ * never goes stale silently.
  */
 export function effectiveSettled(
   shell: OrchestrationThreadShell,
@@ -272,8 +276,9 @@ export function effectiveSettled(
   }
   // An open PR is unfinished business regardless of how long the thread has
   // been quiet: review can take days, and hiding the thread would bury the
-  // work waiting on it. A configured merge, a close, or an explicit user
-  // settle resolves it.
+  // work waiting on it. A configured merge or an explicit user settle
+  // resolves it. Closed-without-merge does not short-circuit — it can still
+  // settle later via the inactivity window if one is configured.
   if (options.changeRequestState === "open") return false;
   if (options.autoSettleAfterDays === null) return false;
 
