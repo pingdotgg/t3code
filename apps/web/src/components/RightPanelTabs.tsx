@@ -12,6 +12,7 @@ import {
   VolumeOff,
 } from "lucide-react";
 import {
+  Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -30,7 +31,17 @@ import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
-import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuShortcut,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
@@ -68,7 +79,7 @@ interface RightPanelTabsProps {
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
-  onAddBrowser: () => void;
+  onAddBrowser: (profileId?: string) => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -600,6 +611,7 @@ function SurfaceIcon({
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
+  const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
@@ -912,16 +924,40 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   {addSurfaceActions.map((action) => {
                     const Icon = action.icon;
                     return (
-                      <SurfaceMenuItem
-                        key={action.label}
-                        available={action.available}
-                        disabledReason={action.disabledReason}
-                        shortcut={action.shortcut}
-                        onClick={action.onClick}
-                      >
-                        <Icon />
-                        {action.label}
-                      </SurfaceMenuItem>
+                      <Fragment key={action.label}>
+                        <SurfaceMenuItem
+                          available={action.available}
+                          disabledReason={action.disabledReason}
+                          shortcut={action.shortcut}
+                          onClick={action.onClick}
+                        >
+                          <Icon />
+                          {action.label}
+                        </SurfaceMenuItem>
+                        {action.label === "Browser" && action.available ? (
+                          <MenuSub>
+                            {/*
+                              A tab's profile is fixed at open — Electron only honours
+                              a partition before the guest attaches — so the choice
+                              belongs here rather than on an already-open tab.
+                            */}
+                            <MenuSubTrigger>
+                              <Globe2 />
+                              Browser in profile
+                            </MenuSubTrigger>
+                            <MenuSubPopup className="min-w-40">
+                              {browserProfiles.map((profile) => (
+                                <MenuItem
+                                  key={profile.id}
+                                  onClick={() => props.onAddBrowser(profile.id)}
+                                >
+                                  {profile.name}
+                                </MenuItem>
+                              ))}
+                            </MenuSubPopup>
+                          </MenuSub>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </MenuPopup>
