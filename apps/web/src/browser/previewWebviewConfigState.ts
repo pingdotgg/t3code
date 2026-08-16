@@ -45,6 +45,7 @@ type PreviewConfigBridge = Pick<DesktopPreviewBridge, "getPreviewConfig">;
 
 export const loadPreviewWebviewConfig = (
   environmentId: EnvironmentId,
+  profileId?: string,
   bridge: PreviewConfigBridge | null = previewBridge,
 ): Effect.Effect<DesktopPreviewWebviewConfig, PreviewWebviewConfigError> => {
   if (bridge === null) {
@@ -52,25 +53,43 @@ export const loadPreviewWebviewConfig = (
   }
 
   return Effect.tryPromise({
-    try: () => bridge.getPreviewConfig(environmentId),
+    try: () => bridge.getPreviewConfig(environmentId, profileId),
     catch: (cause) => new PreviewWebviewConfigLoadError({ environmentId, cause }),
   });
 };
 
-const previewWebviewConfigAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make(loadPreviewWebviewConfig(environmentId)).pipe(
+/**
+ * `Atom.family` keys on its argument, so the environment and profile are
+ * folded into one string: passing an object would allocate a fresh entry on
+ * every render.
+ */
+const configKey = (environmentId: EnvironmentId, profileId: string | undefined): string =>
+  `${environmentId}\u0000${profileId ?? ""}`;
+
+const parseConfigKey = (key: string): { environmentId: EnvironmentId; profileId?: string } => {
+  const [environmentId = "", profileId = ""] = key.split("\u0000");
+  return {
+    environmentId: environmentId as EnvironmentId,
+    ...(profileId === "" ? {} : { profileId }),
+  };
+};
+
+const previewWebviewConfigAtom = Atom.family((key: string) => {
+  const { environmentId, profileId } = parseConfigKey(key);
+  return Atom.make(loadPreviewWebviewConfig(environmentId, profileId)).pipe(
     Atom.swr({
       staleTime: PREVIEW_CONFIG_STALE_TIME_MS,
       revalidateOnMount: true,
     }),
     Atom.setIdleTTL(PREVIEW_CONFIG_IDLE_TTL_MS),
-    Atom.withLabel(`preview:webview-config:${environmentId}`),
-  ),
-);
+    Atom.withLabel(`preview:webview-config:${key}`),
+  );
+});
 
 export function usePreviewWebviewConfig(
   environmentId: EnvironmentId,
+  profileId?: string,
 ): DesktopPreviewWebviewConfig | null {
-  const result = useAtomValue(previewWebviewConfigAtom(environmentId));
+  const result = useAtomValue(previewWebviewConfigAtom(configKey(environmentId, profileId)));
   return Option.getOrNull(AsyncResult.value(result));
 }

@@ -689,6 +689,13 @@ export function PreviewView({
         trailingActions={
           previewBridge ? (
             <PreviewMoreMenu
+              environmentId={threadRef.environmentId}
+              profileId={snapshot?.profileId}
+              profileName={
+                browserDefaults.profiles.find(
+                  (profile) => profile.id === (snapshot?.profileId ?? browserDefaults.profileId),
+                )?.name
+              }
               tabId={runtimeTabId}
               hasWebContents={desktopOverlay?.hasWebContents ?? false}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
