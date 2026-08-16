@@ -370,8 +370,9 @@ export const make = Effect.gen(function* () {
           const daemonRunning = Boolean(state.child && !state.child.killed);
           // Prefer in-memory merge over disk settings: disable can land in the
           // manager before `updateSettings` finishes persisting enabled:false.
-          const effectiveEnabled = lastMergedSettings?.enabled ?? settings.enabled;
-          const effectivePaused = lastMergedSettings?.paused ?? settings.paused;
+          const effectiveSettings = lastMergedSettings ?? settings;
+          const effectiveEnabled = effectiveSettings.enabled;
+          const effectivePaused = effectiveSettings.paused;
           const staleRunning =
             effectiveEnabled &&
             !daemonRunning &&
@@ -381,7 +382,7 @@ export const make = Effect.gen(function* () {
           }
           const liveFile = staleRunning ? await readStatusFile(root) : file;
           const memoriesPath = NodePath.join(root, "memories", "resources");
-          const codexMirrorPath = settings.mirrorToCodex
+          const codexMirrorPath = effectiveSettings.mirrorToCodex
             ? NodePath.join(defaultCodexHome(), "memories", "extensions", "skysight", "resources")
             : undefined;
           return {
@@ -421,10 +422,12 @@ export const make = Effect.gen(function* () {
       }),
     clear: (stateDir, scope, settings) =>
       Effect.tryPromise({
-        try: () =>
-          clearHistory(resolveComputerHistoryRoot(stateDir), scope, {
-            ...(settings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
-          }),
+        try: () => {
+          const effectiveSettings = lastMergedSettings ?? settings;
+          return clearHistory(resolveComputerHistoryRoot(stateDir), scope, {
+            ...(effectiveSettings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
+          });
+        },
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "clear",
@@ -434,10 +437,12 @@ export const make = Effect.gen(function* () {
       }),
     removeMemory: (stateDir, path, settings) =>
       Effect.tryPromise({
-        try: () =>
-          deleteMemory(resolveComputerHistoryRoot(stateDir), path, {
-            ...(settings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
-          }),
+        try: () => {
+          const effectiveSettings = lastMergedSettings ?? settings;
+          return deleteMemory(resolveComputerHistoryRoot(stateDir), path, {
+            ...(effectiveSettings.mirrorToCodex ? { codexHome: defaultCodexHome() } : {}),
+          });
+        },
         catch: (cause) =>
           new ComputerHistoryOperationError({
             operation: "removeMemory",

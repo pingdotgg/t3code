@@ -1404,6 +1404,9 @@ enum Chrome {
             // discarded: a reused window id after Chrome restart is unsafe.
             // Out-of-range chromePid would trap on pid_t conversion.
             try? FileManager.default.removeItem(at: stateURL)
+            cachedWindowID = nil
+            cachedChromePid = nil
+            cachedChromeLaunch = nil
             return
         }
         cachedWindowID = windowId

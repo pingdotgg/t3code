@@ -319,6 +319,7 @@ fn is_browser_app(app_name: &str) -> bool {
             | "chromium"
             | "brave browser"
             | "firefox"
+            | "mozilla firefox"
             | "firefox developer edition"
             | "firefox nightly"
             | "safari"
