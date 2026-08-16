@@ -1269,17 +1269,12 @@ function WorktreeManagementSection() {
                 variant="ghost-muted"
                 onClick={() => setRefreshToken((token) => token + 1)}
                 disabled={isPending}
+                aria-busy={isPending}
                 aria-label={
                   isPending ? "Refreshing worktree inventory" : "Refresh worktree inventory"
                 }
               >
-                {isPending ? (
-                  <span className="text-xs leading-none" aria-hidden>
-                    …
-                  </span>
-                ) : (
-                  <RefreshCwIcon className="size-3" />
-                )}
+                <RefreshCwIcon className="size-3" />
               </Button>
             }
           />
