@@ -58,12 +58,18 @@ export class ChromiumCookieReadError extends Schema.TaggedErrorClass<ChromiumCoo
   "ChromiumCookieReadError",
   {
     reason: ChromiumCookieReadReason,
+    /**
+     * Which database the read was for. Without it every `readFailed` and
+     * keychain failure logs identically, and a user with several browsers
+     * installed has no way to tell which one refused.
+     */
+    cookieDatabasePath: Schema.String,
     /** Kept for the log; never surfaced to the user. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Could not read Chromium cookies: ${this.reason}.`;
+    return `Could not read Chromium cookies at ${this.cookieDatabasePath}: ${this.reason}.`;
   }
 }
 
@@ -124,6 +130,7 @@ const toUnixSeconds = (webkitSeconds: number): number | undefined => {
 const readMacKeychainPassword = Effect.fn("ChromiumCookies.readMacKeychainPassword")(function* (
   service: string,
   account: string,
+  cookieDatabasePath: string,
 ) {
   const password = yield* Effect.try({
     try: () => new Keyring.Entry(service, account).getPassword(),
@@ -134,12 +141,16 @@ const readMacKeychainPassword = Effect.fn("ChromiumCookies.readMacKeychainPasswo
       const missing = /no (matching )?entry|not found/i.test(message);
       return new ChromiumCookieReadError({
         reason: missing ? "keychainItemMissing" : "needsKeychainApproval",
+        cookieDatabasePath,
         cause,
       });
     },
   });
   if (password === null || password === "") {
-    return yield* new ChromiumCookieReadError({ reason: "keychainItemMissing" });
+    return yield* new ChromiumCookieReadError({
+      reason: "keychainItemMissing",
+      cookieDatabasePath,
+    });
   }
   return password;
 });
@@ -210,10 +221,17 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
   if (source.platform !== "darwin") {
     // Linux (libsecret) and Windows (DPAPI, and App-Bound Encryption on
     // current Chrome) each need their own key path; only macOS is implemented.
-    return yield* new ChromiumCookieReadError({ reason: "unsupportedPlatform" });
+    return yield* new ChromiumCookieReadError({
+      reason: "unsupportedPlatform",
+      cookieDatabasePath: source.cookieDatabasePath,
+    });
   }
 
-  const password = yield* readMacKeychainPassword(source.keychainService, source.keychainAccount);
+  const password = yield* readMacKeychainPassword(
+    source.keychainService,
+    source.keychainAccount,
+    source.cookieDatabasePath,
+  );
   const key = NodeCrypto.pbkdf2Sync(
     password,
     MAC_KEY_SALT,
@@ -223,7 +241,14 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
   );
 
   const snapshotPath = yield* snapshotCookieDatabase(source.cookieDatabasePath).pipe(
-    Effect.mapError((cause) => new ChromiumCookieReadError({ reason: "readFailed", cause })),
+    Effect.mapError(
+      (cause) =>
+        new ChromiumCookieReadError({
+          reason: "readFailed",
+          cookieDatabasePath: source.cookieDatabasePath,
+          cause,
+        }),
+    ),
   );
 
   const rows = yield* Effect.gen(function* () {
@@ -237,7 +262,14 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
     return yield* decodeCookieRows(raw);
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
-    Effect.mapError((cause) => new ChromiumCookieReadError({ reason: "readFailed", cause })),
+    Effect.mapError(
+      (cause) =>
+        new ChromiumCookieReadError({
+          reason: "readFailed",
+          cookieDatabasePath: source.cookieDatabasePath,
+          cause,
+        }),
+    ),
   );
 
   const cookies: ChromiumCookie[] = [];
