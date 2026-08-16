@@ -8,6 +8,7 @@ import {
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
 } from "~/cloud/connectOnboarding";
+import { resolveManagedTunnelActive } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { usePrimarySessionState } from "~/environments/primary";
@@ -164,7 +165,7 @@ function ConfiguredConnectOnboardingDialog() {
     }
     prefilledFromLinkStateRef.current = true;
     if (linkStateData.linked && linkStateData.cloudUserId === openForAccount) {
-      setExposeEnvironment(linkStateData.managedTunnelActive ?? linkStateData.linked);
+      setExposeEnvironment(resolveManagedTunnelActive(linkStateData));
       setPublishAgentActivity(linkStateData.publishAgentActivity);
     }
   }, [linkStateData, openForAccount]);

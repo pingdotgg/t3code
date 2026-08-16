@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { HttpClient } from "effect/unstable/http";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";
 import { runtime } from "../lib/runtime";
@@ -48,6 +48,43 @@ export function refreshPrimaryCloudLinkState(target: CloudLinkTarget | null): vo
   }
 }
 
+// Older environment servers predate the managedTunnelActive field; for them a
+// link always implies a managed tunnel, so fall back to `linked`.
+export function resolveManagedTunnelActive(
+  state: Pick<EnvironmentCloudLinkStateResult, "managedTunnelActive" | "linked"> | null | undefined,
+): boolean {
+  return state?.managedTunnelActive ?? state?.linked ?? false;
+}
+
+// Startup reconcile applies relay config after routes are already live. The
+// first link-state read can cache `managedTunnelActive: false`; one delayed
+// refresh replaces that once reconcile has had a chance to finish.
+export const STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS = 2_000;
+
+const scheduledStartupReconcileRefreshKeys = new Set<string>();
+
+export function scheduleStartupReconcileLinkStateRefresh(
+  target: CloudLinkTarget | null,
+  refresh: (target: CloudLinkTarget | null) => void = refreshPrimaryCloudLinkState,
+): boolean {
+  if (!target) {
+    return false;
+  }
+  const key = targetKey(target);
+  if (scheduledStartupReconcileRefreshKeys.has(key)) {
+    return false;
+  }
+  scheduledStartupReconcileRefreshKeys.add(key);
+  setTimeout(() => {
+    refresh(target);
+  }, STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS);
+  return true;
+}
+
+export function __resetStartupCloudLinkRefreshForTests(): void {
+  scheduledStartupReconcileRefreshKeys.clear();
+}
+
 export function usePrimaryCloudLinkState() {
   const primary = usePrimaryEnvironment();
   const target = useMemo(
@@ -69,6 +106,13 @@ export function usePrimaryCloudLinkState() {
   const refresh = useCallback(() => {
     refreshPrimaryCloudLinkState(target);
   }, [target]);
+  const settled = result._tag === "Success" || result._tag === "Failure";
+  useEffect(() => {
+    if (!settled) {
+      return;
+    }
+    scheduleStartupReconcileLinkStateRefresh(target);
+  }, [settled, target]);
   let error: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
