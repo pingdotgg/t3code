@@ -804,10 +804,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
-  // reading a completion-triggered wake, clicking the pill, sending a
-  // message, settling, archiving, or a change request state that settles the
-  // thread. Timer wakes survive a mere visit. An unparseable visit timestamp
-  // counts as never-visited, so corrupt local data cannot eat the wake signal.
+  // visiting after a blocking early wake (approval / user-input / fresh
+  // error), clicking the pill, sending a message, settling, archiving, or a
+  // change request state that settles the thread. Timer wakes survive a mere
+  // visit. An unparseable visit timestamp counts as never-visited, so
+  // corrupt local data cannot eat the wake signal.
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =

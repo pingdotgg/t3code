@@ -1200,8 +1200,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // cleared here: snooze never pauses the agent, so its session starting
       // or erroring is not the user re-engaging. Blocked/failed work still
       // surfaces immediately — effectiveSnoozed refuses to classify a thread
-      // with a raised hand (approval / input / failure / fresh completion)
-      // as snoozed, without spending the return ticket.
+      // with a raised hand (approval / input / fresh failure) as snoozed,
+      // without spending the return ticket. Completion is not a raised hand.
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
       // Real activity resets ANY override (settled wakes, active unpins).

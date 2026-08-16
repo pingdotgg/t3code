@@ -122,13 +122,13 @@ describe("effectiveSnoozed", () => {
     ).toBe(true);
   });
 
-  it("wakes early when a run completes after the snooze was set", () => {
+  it("stays snoozed when a run completes after the snooze was set", () => {
     expect(
       effectiveSnoozed(
         makeShell({ snoozedUntil: FUTURE_WAKE, turnCompletedAt: "2026-04-10T10:30:00.000Z" }),
         { now: NOW },
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("ignores runs that completed before the snooze — the user saw that result", () => {
@@ -138,6 +138,19 @@ describe("effectiveSnoozed", () => {
         { now: NOW },
       ),
     ).toBe(true);
+  });
+
+  it("still wakes on a pending approval after work has finished", () => {
+    expect(
+      effectiveSnoozed(
+        makeShell({
+          snoozedUntil: FUTURE_WAKE,
+          pending: "approval",
+          turnCompletedAt: "2026-04-10T10:30:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(false);
   });
 });
 
@@ -158,6 +171,14 @@ describe("threadRaisedHandWhileSnoozed", () => {
         makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "error" }),
       ),
     ).toBe(true);
+  });
+
+  it("does not treat turn completion as a raised hand", () => {
+    expect(
+      threadRaisedHandWhileSnoozed(
+        makeShell({ snoozedUntil: FUTURE_WAKE, turnCompletedAt: "2026-04-10T10:30:00.000Z" }),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -212,13 +233,22 @@ describe("threadWokeAt", () => {
     expect(threadWokeAt(makeShell({ snoozedUntil: PAST_WAKE }), { now: NOW })).toBe(PAST_WAKE);
   });
 
-  it("reports the completion time for an early run-completed wake", () => {
+  it("does not treat a later completion as an early wake", () => {
     expect(
       threadWokeAt(
         makeShell({ snoozedUntil: FUTURE_WAKE, turnCompletedAt: "2026-04-10T10:30:00.000Z" }),
         { now: NOW },
       ),
-    ).toBe("2026-04-10T10:30:00.000Z");
+    ).toBe(null);
+  });
+
+  it("reports the scheduled wake time even if a turn completed after the snooze", () => {
+    expect(
+      threadWokeAt(
+        makeShell({ snoozedUntil: PAST_WAKE, turnCompletedAt: "2026-04-10T10:30:00.000Z" }),
+        { now: NOW },
+      ),
+    ).toBe(PAST_WAKE);
   });
 
   it("falls back to session activity for blocked/failed early wakes", () => {
@@ -230,16 +260,15 @@ describe("threadWokeAt", () => {
   });
 
   it("keeps the early wake authoritative after the scheduled time passes", () => {
-    // Woke early at 10:30 via run-completed; the scheduled wake (PAST_WAKE
-    // 10:00 relative to a later now) has ALSO passed. Reporting the
-    // scheduled time would resurface a Woke pill the user already cleared
-    // by visiting between the early wake and now.
+    // Woke early at 11:00 via a fresh session error; the scheduled wake
+    // (PAST_WAKE 10:00 relative to a later now) has ALSO passed. Reporting
+    // the scheduled time would resurface a Woke pill the user already
+    // cleared by visiting between the early wake and now.
     expect(
-      threadWokeAt(
-        makeShell({ snoozedUntil: PAST_WAKE, turnCompletedAt: "2026-04-10T09:30:00.000Z" }),
-        { now: NOW },
-      ),
-    ).toBe("2026-04-10T09:30:00.000Z");
+      threadWokeAt(makeShell({ snoozedUntil: PAST_WAKE, sessionStatus: "error" }), {
+        now: NOW,
+      }),
+    ).toBe("2026-04-10T11:00:00.000Z");
   });
 });
 
