@@ -1854,6 +1854,7 @@ dependencies = [
  "futures-lite",
  "image",
  "interprocess",
+ "libc",
  "serde",
  "serde_json",
  "uiautomation",

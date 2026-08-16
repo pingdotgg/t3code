@@ -53,13 +53,20 @@ impl LinuxDesktop {
     pub fn new() -> Result<Self> {
         // Neither half is fatal on its own: a session with no a11y bus can still
         // click by coordinate, and a session with no X11 can still read a tree.
-        let accessibility = block_on(AccessibilityConnection::new()).ok();
+        // AT-SPI starts unset and is retried lazily — a bus that appears after
+        // process start must not leave accessibility permanently disabled.
         let x11 = x11rb::connect(None).ok().map(|(conn, screen)| (conn, screen));
         Ok(Self {
-            accessibility,
+            accessibility: None,
             x11,
             registry: HashMap::new(),
         })
+    }
+
+    fn ensure_accessibility(&mut self) {
+        if self.accessibility.is_none() {
+            self.accessibility = block_on(AccessibilityConnection::new()).ok();
+        }
     }
 
     fn bus(&self) -> Result<&AccessibilityConnection> {
@@ -625,7 +632,8 @@ impl LinuxDesktop {
     }
 
     /// Top-level application objects on the a11y bus, with their pids.
-    fn applications(&self) -> Result<Vec<(ElementRef, String, u32)>> {
+    fn applications(&mut self) -> Result<Vec<(ElementRef, String, u32)>> {
+        self.ensure_accessibility();
         let connection = self.bus()?;
         let root = AccessibleProxy::builder(connection.connection())
             .destination("org.a11y.atspi.Registry")
@@ -1014,6 +1022,7 @@ impl Desktop for LinuxDesktop {
     }
 
     fn click(&mut self, target: Point, click_count: u32) -> Result<String> {
+        self.ensure_accessibility();
         // Prefer the element's own action. Wayland clients cannot learn their
         // absolute screen position, so AT-SPI reports geometry relative to the
         // window and synthetic clicks would land in the wrong place. Invoking
@@ -1061,14 +1070,20 @@ impl Desktop for LinuxDesktop {
     }
 
     fn right_click(&mut self, target: Point) -> Result<String> {
+        self.ensure_accessibility();
         let (x, y) = self.point_coordinates(target)?;
         AgentCursor::shared().press(x, y);
         self.move_pointer(x, y)?;
-        self.tap_button(BUTTON_RIGHT)?;
+        self.button(BUTTON_RIGHT, true)?;
+        if let Err(error) = self.button(BUTTON_RIGHT, false) {
+            let _ = self.button(BUTTON_RIGHT, false);
+            return Err(error);
+        }
         Ok(format!("right-clicked at ({x:.0}, {y:.0})"))
     }
 
     fn drag(&mut self, from: Point, to: Point) -> Result<String> {
+        self.ensure_accessibility();
         let (from_x, from_y) = self.point_coordinates(from)?;
         let (to_x, to_y) = self.point_coordinates(to)?;
         AgentCursor::shared().show(from_x, from_y);
@@ -1101,6 +1116,7 @@ impl Desktop for LinuxDesktop {
     }
 
     fn type_text(&mut self, text: &str, element: Option<u32>) -> Result<String> {
+        self.ensure_accessibility();
         // With a target element, write through AT-SPI: it does not depend on
         // which window the compositor considers focused, so it is reliable where
         // synthetic keys are not.
@@ -1260,6 +1276,7 @@ impl Desktop for LinuxDesktop {
         amount: i32,
         element: Option<u32>,
     ) -> Result<String> {
+        self.ensure_accessibility();
         if let Some(id) = element {
             // Route through point_coordinates so Wayland refuses window-relative
             // AT-SPI bounds the same way click / right_click / drag do.
@@ -1280,6 +1297,7 @@ impl Desktop for LinuxDesktop {
     }
 
     fn set_value(&mut self, element: u32, value: &str) -> Result<String> {
+        self.ensure_accessibility();
         let reference = self.element(element)?;
         self.insert_text(&reference, value, true).map_err(|error| {
             DesktopError::new(format!(
@@ -1291,6 +1309,7 @@ impl Desktop for LinuxDesktop {
     }
 
     fn select_text(&mut self, element: u32, start: usize, length: Option<usize>) -> Result<String> {
+        self.ensure_accessibility();
         let reference = self.element(element)?;
         let text = self.text_proxy(&reference)?;
         let total = block_on(text.character_count())

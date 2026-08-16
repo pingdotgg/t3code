@@ -12,7 +12,6 @@ import {
   loadRecentContextMarkdown,
   resolveComputerHistoryRoot,
   runSummarizationPass,
-  writeControlFile,
 } from "@t3tools/shared/computerHistory";
 
 import * as ServerConfig from "../config.ts";
@@ -48,24 +47,6 @@ export const loadComputerHistoryContextProvided = (
     Effect.orElseSucceed((): string | undefined => undefined),
   );
 
-export const syncComputerHistoryControl = Effect.fn("computerHistory.syncControl")(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const snapshot = yield* settings.getSettings;
-  const history = snapshot.computerHistory;
-  const root = resolveComputerHistoryRoot(config.stateDir);
-  yield* Effect.tryPromise(() =>
-    writeControlFile(root, {
-      enabled: history.enabled,
-      paused: history.paused,
-      appFilterMode: history.appFilterMode,
-      apps: [...history.apps],
-      websiteFilterMode: history.websiteFilterMode,
-      websites: [...history.websites],
-    }),
-  ).pipe(Effect.ignore);
-});
-
 export const runComputerHistorySummarization = Effect.fn("computerHistory.summarize")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
@@ -84,8 +65,12 @@ export const runComputerHistorySummarization = Effect.fn("computerHistory.summar
 });
 
 /**
- * Fork a lightweight loop that syncs control.json and summarizes segments.
+ * Fork a lightweight loop that summarizes segments.
  * Safe to install in any runtime; no-ops when Computer History is disabled.
+ *
+ * Desktop IPC owns `control.json` (enable/disable/filters). The server must not
+ * rewrite that file from ServerSettings — Settings can patch the daemon before
+ * `updateSettings` lands, and a stale sync would undo enable/disable.
  *
  * Canonical export is `layer` (same convention as BackgroundPolicy / UsageService).
  * Callers acquire state via `ServerConfig` / `ServerSettingsService` — never via
@@ -93,14 +78,10 @@ export const runComputerHistorySummarization = Effect.fn("computerHistory.summar
  */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    yield* syncComputerHistoryControl().pipe(Effect.ignore);
     yield* runComputerHistorySummarization().pipe(Effect.ignore);
 
     yield* Effect.repeat(
-      Effect.gen(function* () {
-        yield* syncComputerHistoryControl().pipe(Effect.ignore);
-        yield* runComputerHistorySummarization().pipe(Effect.ignore);
-      }),
+      runComputerHistorySummarization().pipe(Effect.ignore),
       Schedule.spaced(Duration.minutes(1)),
     ).pipe(Effect.forkScoped);
   }),

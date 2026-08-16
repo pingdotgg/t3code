@@ -162,7 +162,9 @@ private final class DaemonState {
     .map { $0.lowercased() }
     .filter { !$0.isEmpty }
     let hit = !needles.isEmpty && needles.contains { needle in
-      hay.contains { $0.contains(needle) || needle.contains($0) }
+      // Only test whether app metadata contains the filter token — never the
+      // reverse (a short name like "Code" must not match a longer bundle ID).
+      hay.contains { $0.contains(needle) }
     }
     let appOk: Bool
     if needles.isEmpty {
@@ -253,16 +255,59 @@ private final class DaemonState {
     return context
   }
 
+  private static let browserBundleIdentifiers: Set<String> = [
+    "com.google.chrome",
+    "com.google.chrome.canary",
+    "com.google.chrome.beta",
+    "com.google.chrome.dev",
+    "org.chromium.chromium",
+    "com.brave.browser",
+    "com.brave.browser.beta",
+    "com.brave.browser.nightly",
+    "org.mozilla.firefox",
+    "org.mozilla.firefoxdeveloperedition",
+    "org.mozilla.nightly",
+    "com.apple.safari",
+    "com.apple.safaritechnologypreview",
+    "com.microsoft.edgemac",
+    "com.microsoft.edgemac.beta",
+    "com.microsoft.edgemac.dev",
+    "com.operasoftware.opera",
+    "com.operasoftware.operagx",
+    "company.thebrowser.browser", // Arc
+    "company.thebrowser.dia",
+    "com.vivaldi.vivaldi",
+  ]
+
+  private static let browserDisplayNames: Set<String> = [
+    "google chrome",
+    "google chrome canary",
+    "google chrome beta",
+    "google chrome dev",
+    "chromium",
+    "brave browser",
+    "firefox",
+    "firefox developer edition",
+    "firefox nightly",
+    "safari",
+    "safari technology preview",
+    "microsoft edge",
+    "microsoft edge beta",
+    "microsoft edge dev",
+    "opera",
+    "opera gx",
+    "arc",
+    "vivaldi",
+  ]
+
   private static func isBrowser(_ app: NSRunningApplication) -> Bool {
-    let hay = [
-      app.bundleIdentifier ?? "",
-      app.localizedName ?? "",
-      app.bundleURL?.path ?? "",
-    ]
-    .map { $0.lowercased() }
-    return ["chrome", "chromium", "firefox", "safari", "edge", "brave", "opera", "arc", "vivaldi"].contains { needle in
-      hay.contains { $0.contains(needle) }
+    if let bid = app.bundleIdentifier?.lowercased(), browserBundleIdentifiers.contains(bid) {
+      return true
     }
+    if let name = app.localizedName?.lowercased(), browserDisplayNames.contains(name) {
+      return true
+    }
+    return false
   }
 
   private static func isPrivateBrowsing(text: String) -> Bool {

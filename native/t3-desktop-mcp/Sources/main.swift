@@ -461,9 +461,17 @@ func windowTarget(under point: CGPoint) -> WindowTarget? {
     return nil
 }
 
-func windowTarget(forPid pid: pid_t) -> WindowTarget? {
-    guard let window = (axCopy(AXUIElementCreateApplication(pid), kAXWindowsAttribute as String) as? [AXUIElement])?.first
-    else { return nil }
+func windowTarget(forPid pid: pid_t, containing point: CGPoint? = nil) -> WindowTarget? {
+    let windows = (axCopy(AXUIElementCreateApplication(pid), kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
+    if let point {
+        for window in windows {
+            guard let target = makeWindowTarget(pid: pid, window: window) else { continue }
+            if target.frame.contains(point) {
+                return target
+            }
+        }
+    }
+    guard let window = windows.first else { return nil }
     return makeWindowTarget(pid: pid, window: window)
 }
 
@@ -805,12 +813,16 @@ func toolGetAppState(_ args: [String: Any]) -> String {
 /// Order matters: an element knows its own owner, an explicit `app` argument is
 /// the caller's intent, and the last inspected app is the sensible default.
 /// Returning nil means global delivery, which moves the real cursor.
-func resolveTargetPid(_ args: [String: Any], element: AXUIElement? = nil) -> pid_t? {
-    if let element, let pid = pidOf(element) { return pid }
-    if let query = args["app"] as? String, let resolved = resolveApp(query) {
-        return resolved.app.processIdentifier
+/// An explicit `app` that does not resolve is an error — never fall through.
+func resolveTargetPid(_ args: [String: Any], element: AXUIElement? = nil) -> Result<pid_t?, String> {
+    if let element, let pid = pidOf(element) { return .success(pid) }
+    if let query = args["app"] as? String {
+        guard let resolved = resolveApp(query) else {
+            return .failure("error: no running app matching \(query)")
+        }
+        return .success(resolved.app.processIdentifier)
     }
-    return Registry.targetPid
+    return .success(Registry.targetPid)
 }
 
 func toolClick(_ args: [String: Any]) -> String {
@@ -878,10 +890,16 @@ func toolClick(_ args: [String: Any]) -> String {
             guard let resolved = resolveApp(query) else {
                 return "error: no running app matching \(query)"
             }
-            let appPid = resolved.processIdentifier
-            target = under.flatMap { $0.pid == appPid ? $0 : nil } ?? windowTarget(forPid: appPid)
+            let appPid = resolved.app.processIdentifier
+            target = under.flatMap { $0.pid == appPid ? $0 : nil }
+                ?? windowTarget(forPid: appPid, containing: point)
         } else {
-            target = under ?? resolveTargetPid(args).flatMap(windowTarget(forPid:))
+            switch resolveTargetPid(args) {
+            case .failure(let message):
+                return message
+            case .success(let pid):
+                target = under ?? pid.flatMap { windowTarget(forPid: $0, containing: point) }
+            }
         }
         if let target, backgroundClick(target, at: point, clickCount: clickCount) {
             return "clicked at (\(Int(x)), \(Int(y))) in background"
@@ -903,20 +921,35 @@ func toolTypeText(_ args: [String: Any]) -> String {
         AXUIElementSetAttributeValue(el, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         usleep(60_000)
     }
-    typeText(text, pid: resolveTargetPid(args, element: element))
+    let pid: pid_t?
+    switch resolveTargetPid(args, element: element) {
+    case .failure(let message):
+        return message
+    case .success(let resolved):
+        pid = resolved
+    }
+    typeText(text, pid: pid)
     return "typed \(text.count) characters"
 }
 
 func toolPressKey(_ args: [String: Any]) -> String {
     guard let key = args["key"] as? String else { return "error: missing required argument 'key'" }
     let mods = (args["modifiers"] as? [String]) ?? []
-    if let err = pressKey(key, modifiers: mods, pid: resolveTargetPid(args)) { return "error: \(err)" }
+    let pid: pid_t?
+    switch resolveTargetPid(args) {
+    case .failure(let message):
+        return message
+    case .success(let resolved):
+        pid = resolved
+    }
+    if let err = pressKey(key, modifiers: mods, pid: pid) { return "error: \(err)" }
     return "pressed \(mods.isEmpty ? key : mods.joined(separator: "+") + "+" + key)"
 }
 
 func toolScroll(_ args: [String: Any]) -> String {
     let direction = ((args["direction"] as? String) ?? "down").lowercased()
     let amount = (args["amount"] as? Int) ?? 5
+    guard amount != Int.min else { return "error: amount is out of range" }
 
     var dy: Int32 = 0
     var dx: Int32 = 0
@@ -928,9 +961,21 @@ func toolScroll(_ args: [String: Any]) -> String {
     default: return "error: direction must be up, down, left, or right"
     }
 
+    if let elementID = args["element_id"] as? String, Registry.get(elementID) == nil {
+        return "error: unknown element_id \(elementID) — call get_app_state again to refresh ids"
+    }
     let element = (args["element_id"] as? String).flatMap { Registry.get($0) }
-    let target = element.flatMap { windowTarget(for: $0) }
-        ?? resolveTargetPid(args).flatMap { windowTarget(forPid: $0) }
+    let target: WindowTarget?
+    if let element {
+        target = windowTarget(for: element)
+    } else {
+        switch resolveTargetPid(args) {
+        case .failure(let message):
+            return message
+        case .success(let pid):
+            target = pid.flatMap { windowTarget(forPid: $0) }
+        }
+    }
 
     if let target {
         // Scroll follows the pointer, so aim at the element when given one and
@@ -1082,21 +1127,35 @@ func captureDisplayPNG(index: Int, maxWidth: Int) -> (data: Data, width: Int, he
 
 func toolListDisplays(_ args: [String: Any]) -> String {
     let semaphore = DispatchSemaphore(value: 0)
-    var lines: [String] = []
-    Task.detached {
+    let lock = NSLock()
+    var lines: [String]?
+    let task = Task.detached {
         defer { semaphore.signal() }
+        var collected: [String] = []
         if let content = try? await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true) {
             for (i, display) in content.displays.enumerated() {
                 let frame = display.frame
-                lines.append("[\(i)] \(display.width)x\(display.height) "
+                collected.append("[\(i)] \(display.width)x\(display.height) "
                     + "at (\(Int(frame.origin.x)), \(Int(frame.origin.y)))")
             }
         }
+        lock.lock()
+        lines = collected
+        lock.unlock()
     }
-    _ = semaphore.wait(timeout: .now() + 20)
-    if lines.isEmpty { return "error: could not enumerate displays" }
-    return "\(lines.count) display\(lines.count == 1 ? "" : "s"):\n" + lines.joined(separator: "\n")
+    if semaphore.wait(timeout: .now() + 20) == .timedOut {
+        task.cancel()
+        // On timeout the task may still write `lines` — do not read it.
+        return "error: could not enumerate displays"
+    }
+    lock.lock()
+    let snapshot = lines
+    lock.unlock()
+    guard let snapshot, !snapshot.isEmpty else {
+        return "error: could not enumerate displays"
+    }
+    return "\(snapshot.count) display\(snapshot.count == 1 ? "" : "s"):\n" + snapshot.joined(separator: "\n")
 }
 
 // MARK: - Additional input synthesis
@@ -1151,6 +1210,11 @@ func resolvePoint(_ args: [String: Any], xKey: String, yKey: String, idKey: Stri
         return .success(point)
     }
     if let x = args[xKey] as? Double, let y = args[yKey] as? Double {
+        guard x.isFinite, y.isFinite,
+              Int(exactly: x.rounded(.towardZero)) != nil,
+              Int(exactly: y.rounded(.towardZero)) != nil else {
+            return .failure("error: coordinates must be finite and representable as integers")
+        }
         return .success(CGPoint(x: x, y: y))
     }
     return .failure("error: provide either \(idKey), or both \(xKey) and \(yKey)")
@@ -1165,8 +1229,17 @@ func toolRightClick(_ args: [String: Any]) -> String {
         point = resolved
     }
     let element = (args["element_id"] as? String).flatMap { Registry.get($0) }
-    let target = element.flatMap { windowTarget(for: $0) }
-        ?? resolveTargetPid(args).flatMap { windowTarget(forPid: $0) }
+    let target: WindowTarget?
+    if let element {
+        target = windowTarget(for: element)
+    } else {
+        switch resolveTargetPid(args) {
+        case .failure(let message):
+            return message
+        case .success(let pid):
+            target = pid.flatMap { windowTarget(forPid: $0, containing: point) }
+        }
+    }
     if let target, backgroundRightClick(target, at: point) {
         return "right-clicked at (\(Int(point.x)), \(Int(point.y))) in background"
     }
@@ -1199,8 +1272,9 @@ func toolDrag(_ args: [String: Any]) -> String {
         guard let resolved = resolveApp(query) else {
             return "error: no running app matching \(query)"
         }
-        let appPid = resolved.processIdentifier
-        target = underStart.flatMap { $0.pid == appPid ? $0 : nil } ?? windowTarget(forPid: appPid)
+        let appPid = resolved.app.processIdentifier
+        target = underStart.flatMap { $0.pid == appPid ? $0 : nil }
+            ?? windowTarget(forPid: appPid, containing: start)
     } else {
         target = underStart
     }
@@ -1613,7 +1687,9 @@ func toolBrowserOpenTab(_ args: [String: Any]) -> String {
         case .failure(let e):
             return "error: could not open the agent window: \(e)"
         case .success(let id):
-            let escaped = url.replacingOccurrences(of: "\"", with: "\\\"")
+            let escaped = url
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
             switch Chrome.run("""
             tell application "Google Chrome"
                 set w to window id \(id)

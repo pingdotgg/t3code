@@ -160,47 +160,6 @@ func writeAll(_ fd: Int32, _ data: Data, deadline: DispatchTime) -> Bool {
     }
 }
 
-/// Deadline-bounded write for MCP `call` that must not hang forever.
-///
-/// Uses `send(..., MSG_DONTWAIT)` so the socket's blocking mode is unchanged for
-/// the concurrent NativeHost reader. Retries on `EINTR` / `EAGAIN` via `poll`.
-func writeAll(_ fd: Int32, _ data: Data, deadline: DispatchTime) -> Bool {
-    data.withUnsafeBytes { rawBuffer -> Bool in
-        guard var ptr = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
-            return data.isEmpty
-        }
-        var remaining = data.count
-        while remaining > 0 {
-            if DispatchTime.now() >= deadline {
-                return false
-            }
-            let n = Darwin.send(fd, ptr, remaining, Int32(MSG_DONTWAIT))
-            if n < 0 {
-                if errno == EINTR { continue }
-                if errno == EAGAIN || errno == EWOULDBLOCK {
-                    var pollFd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-                    let now = DispatchTime.now().uptimeNanoseconds
-                    let end = deadline.uptimeNanoseconds
-                    if end <= now { return false }
-                    let waitMs = Int32(min((end - now) / 1_000_000, UInt64(Int32.max)))
-                    let ready = poll(&pollFd, 1, waitMs)
-                    if ready < 0 {
-                        if errno == EINTR { continue }
-                        return false
-                    }
-                    if ready == 0 { return false }
-                    continue
-                }
-                return false
-            }
-            if n == 0 { return false }
-            ptr += n
-            remaining -= n
-        }
-        return true
-    }
-}
-
 func enableNoSigPipe(_ fd: Int32) {
     var on: Int32 = 1
     _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
@@ -473,11 +432,23 @@ final class BrowserBridge {
         writeLock.unlock()
 
         if !wrote {
+            // A partial write corrupts newline framing for every later request —
+            // shut the socket down so `serve` tears down and the host reconnects.
             lock.lock()
             if clientFD == fd && connectionGeneration == generation {
                 pending.removeValue(forKey: id)
+                let stranded = pending
+                pending.removeAll()
+                clientFD = -1
+                lock.unlock()
+                _ = Darwin.shutdown(fd, SHUT_RDWR)
+                for (_, resume) in stranded {
+                    resume(.failure("the browser extension disconnected"))
+                }
+            } else {
+                pending.removeValue(forKey: id)
+                lock.unlock()
             }
-            lock.unlock()
             return .failure("the browser extension disconnected")
         }
 

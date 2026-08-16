@@ -76,6 +76,22 @@ async function writeUnavailableStatus(root: string, lastError: string): Promise<
   );
 }
 
+async function writeStoppedStatus(root: string): Promise<void> {
+  await ensureComputerHistoryLayout(root);
+  const payload = {
+    phase: "stopped",
+    accessibilityGranted: false,
+    eventCount: 0,
+    platform: process.platform,
+    updatedAt: new Date().toISOString(),
+  };
+  await NodeFs.promises.writeFile(
+    NodePath.join(root, "status.json"),
+    `${JSON.stringify(payload, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 // Errors stay in the Effect error channel so callers can catch/ignore.
 // Never convert these to defects — bootstrap and quit recover with Effect.catch.
 export class ComputerHistoryManager extends Context.Service<
@@ -230,6 +246,9 @@ export const make = Effect.gen(function* () {
 
     if (!settings.enabled) {
       await stopDaemonImpl();
+      // Clear stale running/paused status so polls do not treat an intentional
+      // stop as a crash while ServerSettings persistence is still catching up.
+      await writeStoppedStatus(root);
       return;
     }
 
@@ -349,8 +368,12 @@ export const make = Effect.gen(function* () {
           await ensureComputerHistoryLayout(root);
           const file = await readStatusFile(root);
           const daemonRunning = Boolean(state.child && !state.child.killed);
+          // Prefer in-memory merge over disk settings: disable can land in the
+          // manager before `updateSettings` finishes persisting enabled:false.
+          const effectiveEnabled = lastMergedSettings?.enabled ?? settings.enabled;
+          const effectivePaused = lastMergedSettings?.paused ?? settings.paused;
           const staleRunning =
-            settings.enabled &&
+            effectiveEnabled &&
             !daemonRunning &&
             (file?.phase === "running" || file?.phase === "paused");
           if (staleRunning) {
@@ -362,9 +385,9 @@ export const make = Effect.gen(function* () {
             ? NodePath.join(defaultCodexHome(), "memories", "extensions", "skysight", "resources")
             : undefined;
           return {
-            enabled: settings.enabled,
-            paused: settings.paused,
-            phase: !settings.enabled
+            enabled: effectiveEnabled,
+            paused: effectivePaused,
+            phase: !effectiveEnabled
               ? "stopped"
               : daemonRunning
                 ? (liveFile?.phase ?? "starting")

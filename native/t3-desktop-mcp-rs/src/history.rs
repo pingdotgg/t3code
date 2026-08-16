@@ -308,20 +308,31 @@ fn private_session_key(sample: &Sample) -> String {
 }
 
 fn is_browser_app(app_name: &str) -> bool {
-    let app = app_name.to_lowercase();
-    [
-        "chrome",
-        "chromium",
-        "firefox",
-        "safari",
-        "edge",
-        "brave",
-        "opera",
-        "arc",
-        "vivaldi",
-    ]
-    .iter()
-    .any(|needle| app.contains(needle))
+    let app = app_name.trim().to_lowercase();
+    // Exact display-name match only — substring "arc" must not hit "Archive Manager".
+    matches!(
+        app.as_str(),
+        "google chrome"
+            | "google chrome canary"
+            | "google chrome beta"
+            | "google chrome dev"
+            | "chromium"
+            | "brave browser"
+            | "firefox"
+            | "firefox developer edition"
+            | "firefox nightly"
+            | "safari"
+            | "microsoft edge"
+            | "microsoft edge beta"
+            | "microsoft edge dev"
+            | "opera"
+            | "opera gx"
+            | "arc"
+            | "vivaldi"
+            | "chrome"
+            | "brave"
+            | "edge"
+    )
 }
 
 fn clears_private_sticky(
@@ -496,10 +507,7 @@ fn app_allowed(app_id: &str, app_name: &str, control: &Control) -> bool {
         .into_iter()
         .filter(|h| !h.is_empty())
         .collect();
-    let hit = needles.iter().any(|needle| {
-        hay.iter()
-            .any(|h| h.contains(needle) || needle.contains(h.as_str()))
-    });
+    let hit = needles.iter().any(|needle| hay.iter().any(|h| h.contains(needle)));
     if needles.is_empty() {
         return control.app_filter_mode == "exclude";
     }

@@ -485,8 +485,18 @@ fn ui_thread(rx: Receiver<Cmd>) {
             state.visible || state.fading || state.path_active || state.alpha > 0.0
         };
 
-        // Swallow X events so the queue does not fill.
-        while overlay.conn.poll_for_event().ok().flatten().is_some() {}
+        // Swallow X events so the queue does not fill. A connection error means
+        // the overlay can never recover — clear UI_LIVE so callers stop waiting.
+        match overlay.conn.poll_for_event() {
+            Ok(Some(_)) => {
+                while overlay.conn.poll_for_event().ok().flatten().is_some() {}
+            }
+            Ok(None) => {}
+            Err(_) => {
+                UI_LIVE.store(false, Ordering::Relaxed);
+                return;
+            }
+        }
 
         let elapsed = tick_start.elapsed();
         let frame = Duration::from_millis(TICK_MS);
