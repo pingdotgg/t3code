@@ -28,6 +28,11 @@ import type { ImportedCookie } from "./CookieDatabase.ts";
 /** Safari's timestamps count seconds from 2001-01-01, not the UNIX epoch. */
 const APPLE_EPOCH_OFFSET_SECONDS = 978_307_200;
 
+/** `u32 0x00000100`, `u32le cookieCount`, then one `u32le` offset per cookie. */
+const COOKIE_PAGE_HEADER_SIZE = 12;
+/** Through the `f64 creation` field; string bytes follow. */
+const COOKIE_RECORD_HEADER_SIZE = 48;
+
 const FLAG_SECURE = 0x1;
 const FLAG_HTTP_ONLY = 0x4;
 
@@ -61,6 +66,14 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
   }
 
   const pageCount = buffer.readUInt32BE(4);
+  // Every declared structure is bounds-checked against what the file actually
+  // contains, and a mismatch fails the read. `Buffer.subarray` clamps silently,
+  // so accepting a short page or an overlong record would return a cookie set
+  // that is quietly missing entries or carrying fields read out of the next
+  // record — a partial import the user has no way to notice.
+  if (8 + pageCount * 4 > buffer.length) {
+    throw new SafariCookieReadError({ reason: "readFailed" });
+  }
   const pageSizes: number[] = [];
   for (let index = 0; index < pageCount; index += 1) {
     pageSizes.push(buffer.readUInt32BE(8 + index * 4));
@@ -70,16 +83,29 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
   let pageStart = 8 + pageCount * 4;
 
   for (const pageSize of pageSizes) {
+    if (pageSize < COOKIE_PAGE_HEADER_SIZE || pageStart + pageSize > buffer.length) {
+      throw new SafariCookieReadError({ reason: "readFailed" });
+    }
     const page = buffer.subarray(pageStart, pageStart + pageSize);
     pageStart += pageSize;
-    if (page.length < 12) continue;
 
     // Page bodies switch to little-endian after the big-endian header.
     const cookieCount = page.readUInt32LE(4);
+    if (COOKIE_PAGE_HEADER_SIZE + cookieCount * 4 > page.length) {
+      throw new SafariCookieReadError({ reason: "readFailed" });
+    }
     for (let index = 0; index < cookieCount; index += 1) {
       const cookieStart = page.readUInt32LE(8 + index * 4);
-      if (cookieStart + 48 > page.length) continue;
-      const cookie = page.subarray(cookieStart);
+      if (cookieStart + COOKIE_RECORD_HEADER_SIZE > page.length) {
+        throw new SafariCookieReadError({ reason: "readFailed" });
+      }
+      // Bounded by the record's own length so a string offset cannot run past
+      // it into the following record's bytes.
+      const recordSize = page.readUInt32LE(cookieStart);
+      if (recordSize < COOKIE_RECORD_HEADER_SIZE || cookieStart + recordSize > page.length) {
+        throw new SafariCookieReadError({ reason: "readFailed" });
+      }
+      const cookie = page.subarray(cookieStart, cookieStart + recordSize);
 
       const flags = cookie.readUInt32LE(8);
       const urlOffset = cookie.readUInt32LE(16);
@@ -88,6 +114,13 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
       const valueOffset = cookie.readUInt32LE(28);
       const expiry = cookie.readDoubleLE(40);
 
+      // Offsets are relative to the record; one pointing outside it would
+      // otherwise read a neighbouring cookie's bytes as this one's value.
+      if (
+        [urlOffset, nameOffset, pathOffset, valueOffset].some((offset) => offset >= cookie.length)
+      ) {
+        throw new SafariCookieReadError({ reason: "readFailed" });
+      }
       const domain = readCString(cookie, urlOffset);
       const name = readCString(cookie, nameOffset);
       const path = readCString(cookie, pathOffset);
