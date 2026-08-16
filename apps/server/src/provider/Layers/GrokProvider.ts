@@ -10,7 +10,9 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -43,6 +45,9 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const GROK_API_KEY_ENV = "XAI_API_KEY";
+const GROK_HOME_ENV = "GROK_HOME";
+const GROK_AUTH_TOKEN_MIN_LENGTH = 16;
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -158,13 +163,84 @@ const runGrokVersionCommand = (
     );
   });
 
+function isUsableGrokTokenValue(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length < GROK_AUTH_TOKEN_MIN_LENGTH) {
+    return false;
+  }
+
+  return !/^(bearer|oauth)$/i.test(trimmed) && !/^https?:\/\//i.test(trimmed);
+}
+
+function hasGrokTokenLikeValue(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasGrokTokenLikeValue(entry, depth + 1));
+  }
+
+  return Object.entries(value).some(([key, entry]) => {
+    const normalizedKey = key.replace(/[-_]/g, "").toLowerCase();
+    const isTokenKey =
+      normalizedKey === "token" ||
+      normalizedKey.endsWith("token") ||
+      normalizedKey.includes("accesstoken") ||
+      normalizedKey.includes("refreshtoken") ||
+      normalizedKey.includes("idtoken") ||
+      normalizedKey.includes("sessiontoken");
+
+    if (isTokenKey && isUsableGrokTokenValue(entry)) {
+      return true;
+    }
+
+    return hasGrokTokenLikeValue(entry, depth + 1);
+  });
+}
+
+function hasUsableGrokAuthJson(contents: string): boolean {
+  try {
+    return hasGrokTokenLikeValue(JSON.parse(contents));
+  } catch {
+    return false;
+  }
+}
+
+const hasGrokCachedAuth = (
+  environment: NodeJS.ProcessEnv = process.env,
+): Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    if (environment[GROK_API_KEY_ENV]?.trim()) {
+      return true;
+    }
+
+    const grokHome = environment[GROK_HOME_ENV]?.trim();
+    const home = grokHome || environment.HOME?.trim() || environment.USERPROFILE?.trim();
+    if (!home) {
+      return false;
+    }
+
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const authPath = grokHome
+      ? path.join(home, "auth.json")
+      : path.join(home, ".grok", "auth.json");
+    const contents = yield* fs.readFileString(authPath).pipe(Effect.orElseSucceed(() => ""));
+    return hasUsableGrokAuthJson(contents);
+  });
+
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
@@ -247,6 +323,23 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         status: "error",
         auth: { status: "unknown" },
         message: "Grok CLI is installed but failed to run.",
+      },
+    });
+  }
+
+  const hasCachedAuth = yield* hasGrokCachedAuth(environment);
+  if (!hasCachedAuth) {
+    return buildServerProvider({
+      presentation: GROK_PRESENTATION,
+      enabled: grokSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Grok CLI is installed but not authenticated. Run `grok login` and try again.",
       },
     });
   }
