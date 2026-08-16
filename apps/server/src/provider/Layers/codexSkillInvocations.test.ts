@@ -136,6 +136,10 @@ describe("bindCodexSkillInvocations", () => {
       ok: true,
       inputs: [],
     });
+    expect(bindCodexSkillInvocations("read $FOO/bar", [grillWithDocs])).toEqual({
+      ok: true,
+      inputs: [],
+    });
   });
 
   it("attaches one skill item when case variants resolve to the same path", () => {

@@ -22,11 +22,12 @@ const SKILL_NAME_PATTERN = "[a-zA-Z][a-zA-Z0-9:_-]*";
 // Trailing whitespace is required while typing so `$partial` does not become a chip.
 const SKILL_TOKEN_REGEX = new RegExp(`(^|\\s)\\$(${SKILL_NAME_PATTERN})(?=\\s)`, "g");
 // Submitted messages also accept sentence punctuation so `$review.` / `$review,`
-// bind. A period only terminates when it is not an extension (`$review.md`).
-// Path-like `$HOME/.config` stays plain text — `/` is not a terminator.
+// bind. A period only terminates when it is not an extension (`$review.md`,
+// `$review.配置`). Path-like `$HOME/.config` stays plain text — `/` is not a
+// terminator.
 const COMPLETE_SKILL_INVOCATION_REGEX = new RegExp(
-  `(^|\\s)\\$(${SKILL_NAME_PATTERN})(?=\\s|$|[,!?;)"']|\\.(?![a-zA-Z0-9]))`,
-  "g",
+  `(^|\\s)\\$(${SKILL_NAME_PATTERN})(?=\\s|$|[,!?;)"'\\]]|\\.(?![\\p{L}\\p{N}]))`,
+  "gu",
 );
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**

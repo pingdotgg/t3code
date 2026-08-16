@@ -163,7 +163,10 @@ describe("collectComposerInlineTokens", () => {
 
   it("does not treat shell paths or filenames as skill invocations", () => {
     expect(collectComposerSkillInvocations("check $HOME/.config")).toEqual([]);
+    expect(collectComposerSkillInvocations("read $FOO/bar")).toEqual([]);
     expect(collectComposerSkillInvocations("open $review.md")).toEqual([]);
+    expect(collectComposerSkillInvocations("open $review.配置")).toEqual([]);
+    expect(collectComposerSkillInvocations("open $review.é")).toEqual([]);
     expect(collectComposerSkillInvocations("$PATH/bin then $review.")).toEqual(["review"]);
   });
 
