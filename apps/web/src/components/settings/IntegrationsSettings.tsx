@@ -69,6 +69,15 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
@@ -383,7 +392,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
             if (next !== undefined) updateSettings({ browserDefaultZoomFactor: next });
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Default browser zoom">
+          <SelectTrigger className="w-full sm:w-40" aria-label="Default browser zoom">
             <SelectValue>{zoomLabel(zoomFactor)}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -425,11 +434,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
             }
           }}
         >
-          <SelectTrigger
-            size="sm"
-            className="w-full sm:w-40"
-            aria-label="Default browser appearance"
-          >
+          <SelectTrigger className="w-full sm:w-40" aria-label="Default browser appearance">
             <SelectValue>{APPEARANCE_LABELS[appearance]}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -474,11 +479,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
             }
           }}
         >
-          <SelectTrigger
-            size="sm"
-            className="w-full sm:w-40"
-            aria-label="Browser recording frame rate"
-          >
+          <SelectTrigger className="w-full sm:w-40" aria-label="Browser recording frame rate">
             <SelectValue>{frameRate} fps</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -670,8 +671,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const { environments, isReady: environmentsReady } = useEnvironments();
   const environmentId = usePrimaryEnvironment()?.environmentId;
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
-  const [busy, setBusy] = useState(false);
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
+  const [busy, setBusy] = useState(false);
   const [profileRemovalError, setProfileRemovalError] = useState<string | null>(null);
   const [profileRemovalInFlight, setProfileRemovalInFlight] = useState(false);
   const removalAvailable = browserProfileRemovalAvailable(
@@ -681,8 +682,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   );
 
   const profiles = resolveBrowserProfiles(userProfiles);
+  // Incognito is deliberately not a row — it holds nothing to manage — so the
+  // default has to resolve against the list that renders. A stored
+  // `browserDefaultProfileId` of "incognito" would otherwise leave the section
+  // with no Default badge at all.
+  const listedProfiles = profiles.filter((profile) => profile.kind !== "incognito");
   const resolvedDefaultId =
-    findBrowserProfile(profiles, defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID;
+    findBrowserProfile(listedProfiles, defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID;
 
   const createProfile = (baseName: string) => {
     const currentProfiles = getClientSettings().browserProfiles;
@@ -754,6 +760,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 
   const loadSources = () => {
     if (!previewBridge) return;
+    // Cleared first: availability changes while the app runs (quitting a
+    // browser clears `browserRunning`), and showing the previous answer during
+    // the refresh lets the user start an import the source no longer supports.
+    setSources(null);
     void previewBridge
       .listBrowserImportSources()
       .then(setSources)
@@ -895,89 +905,85 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       }
     >
       {/*
-        The bordered container groups rows unambiguously at any width, and
-        carries the bottom spacing `SettingsRow` leaves to its children
-        (`pt-3 pb-1`).
+        Dimmed as a whole when the section is unavailable. The built-in rows
+        are a plain span and a badge rather than `h3`/`p` or disabled controls,
+        so the block's own dimming does not reach them and they would be the
+        only full-contrast content inside "only available in the desktop app".
       */}
-      <div className="mt-2 mb-2 overflow-hidden rounded-lg border border-border/60">
-        {profiles
-          .filter((profile) => profile.kind !== "incognito")
-          .map((profile, index) => {
-            const builtIn = isBuiltInBrowserProfileId(profile.id);
-            const isDefault = profile.id === resolvedDefaultId;
-            return (
-              <div
-                key={profile.id}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2",
-                  index > 0 && "border-t border-border/60",
+      <div
+        className={cn(
+          "mt-2 overflow-hidden rounded-lg border border-border/60",
+          disabled && "opacity-64",
+        )}
+      >
+        {listedProfiles.map((profile, index) => {
+          const builtIn = isBuiltInBrowserProfileId(profile.id);
+          const isDefault = profile.id === resolvedDefaultId;
+          return (
+            <div
+              key={profile.id}
+              className={cn(
+                "flex items-center gap-3 px-3 py-2",
+                index > 0 && "border-t border-border/60",
+              )}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                {builtIn ? (
+                  <span className="truncate text-sm text-foreground">{profile.name}</span>
+                ) : (
+                  <DraftInput
+                    nativeInput
+                    size="sm"
+                    className="w-full max-w-56"
+                    aria-label={`Rename ${profile.name}`}
+                    disabled={disabled}
+                    maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
+                    value={profile.name}
+                    onCommit={(next) => renameProfile(profile.id, next)}
+                  />
                 )}
-              >
-                <span className="flex min-w-0 flex-1 items-center gap-2">
-                  {builtIn ? (
-                    // Dimmed here rather than on the table: a wrapper-level
-                    // dim stacks with the rename field's and the row menu
-                    // button's own, landing them near 0.41 while every other
-                    // disabled control in the block sits at 0.64.
-                    <span
-                      className={cn("truncate text-sm text-foreground", disabled && "opacity-64")}
-                    >
-                      {profile.name}
-                    </span>
-                  ) : (
-                    <DraftInput
-                      nativeInput
-                      size="sm"
-                      className="w-full max-w-56"
-                      aria-label={`Rename ${profile.name}`}
-                      disabled={disabled}
-                      maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
-                      value={profile.name}
-                      onCommit={(next) => renameProfile(profile.id, next)}
+                {isDefault ? <Badge>Default</Badge> : null}
+              </span>
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      size="icon-sm"
+                      variant="ghost-muted"
+                      disabled={disabled || !environmentsReady}
+                      aria-label={`${profile.name} options`}
                     />
-                  )}
-                  {isDefault ? <Badge>Default</Badge> : null}
-                </span>
-                <Menu>
-                  <MenuTrigger
-                    render={
-                      <Button
-                        size="icon-xs"
-                        variant="ghost-muted"
-                        disabled={disabled || !environmentsReady}
-                        aria-label={`${profile.name} options`}
-                      />
-                    }
+                  }
+                >
+                  <MoreVertical />
+                </MenuTrigger>
+                <MenuPopup align="end" className="min-w-44">
+                  <MenuItem
+                    disabled={isDefault}
+                    onClick={() => updateSettings({ browserDefaultProfileId: profile.id })}
                   >
-                    <MoreVertical />
-                  </MenuTrigger>
-                  <MenuPopup align="end" className="min-w-44">
+                    Set as default
+                  </MenuItem>
+                  <MenuItem
+                    disabled={!removalAvailable}
+                    onClick={() => clearProfileData(profile.id, profile.name)}
+                  >
+                    Clear cookies and cache
+                  </MenuItem>
+                  {builtIn ? null : (
                     <MenuItem
-                      disabled={isDefault}
-                      onClick={() => updateSettings({ browserDefaultProfileId: profile.id })}
-                    >
-                      Set as default
-                    </MenuItem>
-                    <MenuItem
+                      variant="destructive"
                       disabled={!removalAvailable}
-                      onClick={() => clearProfileData(profile.id, profile.name)}
+                      onClick={() => setProfilePendingRemoval(profile)}
                     >
-                      Clear cookies and cache
+                      Remove profile and data
                     </MenuItem>
-                    {builtIn ? null : (
-                      <MenuItem
-                        variant="destructive"
-                        disabled={!removalAvailable}
-                        onClick={() => setProfilePendingRemoval(profile)}
-                      >
-                        Remove profile and data
-                      </MenuItem>
-                    )}
-                  </MenuPopup>
-                </Menu>
-              </div>
-            );
-          })}
+                  )}
+                </MenuPopup>
+              </Menu>
+            </div>
+          );
+        })}
       </div>
       <AlertDialog
         open={profilePendingRemoval !== null}
