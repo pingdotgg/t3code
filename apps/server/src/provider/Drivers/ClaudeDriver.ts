@@ -175,7 +175,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         Effect.flatMap((snapshot) =>
           Effect.gen(function* () {
             const previous = yield* Ref.get(lastGoodSlashCommands);
-            const slashCommands = retainClaudeSlashCommands(snapshot.slashCommands, previous);
+            const slashCommands = retainClaudeSlashCommands(
+              snapshot.slashCommands,
+              previous,
+              snapshot.status !== "ready",
+            );
             if (slashCommands.length > 0) {
               yield* Ref.set(lastGoodSlashCommands, slashCommands);
             }
