@@ -967,7 +967,18 @@ function ComposerCommandKeyPlugin(props: {
         const navigationKey = props.resolvePickerNavigationKey(event);
         if (!navigationKey) return false;
 
-        return handleCommand(navigationKey, event);
+        const handled = handleCommand(navigationKey, event);
+        if (handled) return true;
+
+        // Keep non-text shortcuts scoped to the picker even when it has no items.
+        const insertsText =
+          event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey;
+        if (!insertsText) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
+        return false;
       },
       COMMAND_PRIORITY_HIGH,
     );
