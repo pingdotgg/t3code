@@ -1,17 +1,33 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+
+const makeElectronWindowLayer = (onDestroyAll: () => void) =>
+  Layer.succeed(ElectronWindow.ElectronWindow, {
+    create: () => Effect.die("unexpected window creation"),
+    main: Effect.succeed(Option.none()),
+    currentMainOrFirst: Effect.succeed(Option.none()),
+    focusedMainOrFirst: Effect.succeed(Option.none()),
+    setMain: () => Effect.void,
+    clearMain: () => Effect.void,
+    reveal: () => Effect.void,
+    sendAll: () => Effect.void,
+    destroyAll: Effect.sync(onDestroyAll),
+    syncAllAppearance: () => Effect.void,
+  } satisfies ElectronWindow.ElectronWindow["Service"]);
 
 describe("DesktopLifecycle", () => {
   for (const platform of ["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>) {
@@ -91,6 +107,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(electronAppLayer),
         Layer.provideMerge(electronThemeLayer),
         Layer.provideMerge(desktopWindowLayer),
+        Layer.provideMerge(makeElectronWindowLayer(() => {})),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
@@ -122,4 +139,119 @@ describe("DesktopLifecycle", () => {
       ).pipe(Effect.provide(layer));
     });
   }
+
+  it.effect("destroys windows before waiting for shutdown and quits after completion", () => {
+    const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+    const order: string[] = [];
+
+    const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
+      metadata: Effect.die("unexpected metadata read"),
+      name: Effect.succeed("T3 Code"),
+      whenReady: Effect.void,
+      quit: Effect.sync(() => {
+        order.push("quit");
+      }),
+      exit: () => Effect.void,
+      relaunch: () => Effect.void,
+      setPath: () => Effect.void,
+      setName: () => Effect.void,
+      setAboutPanelOptions: () => Effect.void,
+      setAppUserModelId: () => Effect.void,
+      getAppMetrics: Effect.succeed([]),
+      isDefaultProtocolClient: () => Effect.succeed(false),
+      setAsDefaultProtocolClient: () => Effect.succeed(true),
+      setDesktopName: () => Effect.void,
+      setDockIcon: () => Effect.void,
+      appendCommandLineSwitch: () => Effect.void,
+      removeCommandLineSwitch: () => Effect.void,
+      onBeforeQuitForUpdate: () => Effect.void,
+      on: (eventName, listener) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            appListeners.set(
+              eventName,
+              listener as unknown as (...args: readonly unknown[]) => void,
+            );
+          }),
+          () =>
+            Effect.sync(() => {
+              appListeners.delete(eventName);
+            }),
+        ).pipe(Effect.asVoid),
+    } satisfies ElectronApp.ElectronApp["Service"]);
+
+    const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
+      shouldUseDarkColors: Effect.succeed(false),
+      setSource: () => Effect.void,
+      onUpdated: () => Effect.void,
+    });
+
+    const desktopWindowLayer = Layer.succeed(DesktopWindow.DesktopWindow, {
+      createMain: Effect.die("unexpected window creation"),
+      ensureMain: Effect.die("unexpected window creation"),
+      revealOrCreateMain: Effect.die("unexpected window creation"),
+      activate: Effect.void,
+      createMainIfBackendReady: Effect.void,
+      showConnectingSplash: Effect.void,
+      handleBackendReady: () => Effect.void,
+      handleBackendNotReady: Effect.void,
+      flushMainWindowBounds: Effect.sync(() => {
+        order.push("flush-bounds");
+      }),
+      dispatchMenuAction: () => Effect.void,
+      zoomMain: () => Effect.void,
+      syncAppearance: Effect.void,
+    });
+
+    const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+      platform: "darwin",
+      isDevelopment: false,
+    } as DesktopEnvironment.DesktopEnvironment["Service"]);
+
+    const layer = DesktopLifecycle.layer.pipe(
+      Layer.provideMerge(electronAppLayer),
+      Layer.provideMerge(electronThemeLayer),
+      Layer.provideMerge(desktopWindowLayer),
+      Layer.provideMerge(
+        makeElectronWindowLayer(() => {
+          order.push("destroy-windows");
+        }),
+      ),
+      Layer.provideMerge(environmentLayer),
+      Layer.provideMerge(DesktopShutdown.layer),
+      Layer.provideMerge(DesktopState.layer),
+    );
+
+    const awaitOrderEntry = (entry: string) =>
+      Effect.yieldNow.pipe(
+        Effect.map(() => order.includes(entry)),
+        Effect.repeat({ until: (found) => found, times: 1_000 }),
+        Effect.asVoid,
+      );
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* lifecycle.register;
+
+        let prevented = false;
+        const event = {
+          preventDefault: () => {
+            prevented = true;
+          },
+        } as Electron.Event;
+        appListeners.get("before-quit")?.(event);
+        assert.isTrue(prevented, "the first quit must wait for backend shutdown");
+
+        const shutdown = yield* DesktopShutdown.DesktopShutdown;
+        // Windows must be gone while shutdown is still pending, not after.
+        yield* awaitOrderEntry("destroy-windows");
+        assert.deepEqual(order, ["flush-bounds", "destroy-windows"]);
+
+        yield* shutdown.markComplete;
+        yield* awaitOrderEntry("quit");
+        assert.deepEqual(order, ["flush-bounds", "destroy-windows", "quit"]);
+      }),
+    ).pipe(Effect.provide(layer));
+  });
 });

@@ -11,6 +11,7 @@ import * as DesktopShutdown from "../../app/DesktopShutdown.ts";
 import * as DesktopState from "../../app/DesktopState.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
@@ -69,6 +70,10 @@ const unusedLifecycleRuntimeLayer = Layer.mergeAll(
   Layer.succeed(
     ElectronTheme.ElectronTheme,
     ElectronTheme.ElectronTheme.of({} as ElectronTheme.ElectronTheme["Service"]),
+  ),
+  Layer.succeed(
+    ElectronWindow.ElectronWindow,
+    ElectronWindow.ElectronWindow.of({} as ElectronWindow.ElectronWindow["Service"]),
   ),
 );
 

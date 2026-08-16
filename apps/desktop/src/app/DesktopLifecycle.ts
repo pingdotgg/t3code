@@ -12,6 +12,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
@@ -33,10 +34,11 @@ export type DesktopLifecycleRuntimeServices =
   | DesktopState.DesktopState
   | DesktopWindow.DesktopWindow
   | ElectronApp.ElectronApp
-  | ElectronTheme.ElectronTheme;
+  | ElectronTheme.ElectronTheme
+  | ElectronWindow.ElectronWindow;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme
+ * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
@@ -76,11 +78,17 @@ const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdo
   function* (): Effect.fn.Return<
     void,
     never,
-    DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow
+    DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow | ElectronWindow.ElectronWindow
   > {
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
     yield* desktopWindow.flushMainWindowBounds;
+    // Close every window before waiting on backend teardown. The backend's
+    // SIGTERM grace runs for seconds; without this the last window sits
+    // frozen on screen for that entire wait and quit feels hung. Destroy
+    // (not close) so no close handler can re-cancel the quit.
+    yield* electronWindow.destroyAll;
     yield* shutdown.request;
     yield* shutdown.awaitComplete;
   },
@@ -204,7 +212,16 @@ export const make = DesktopLifecycle.of({
       );
     });
     yield* electronApp.on("activate", () => {
-      void runEffect(desktopWindow.activate.pipe(Effect.withSpan("desktop.lifecycle.activate")));
+      void runEffect(
+        Effect.gen(function* () {
+          const state = yield* DesktopState.DesktopState;
+          // Windows are destroyed at the start of quit while backend teardown
+          // finishes headless. A dock/taskbar activation in that window must
+          // not resurrect a main window against the dying backend.
+          if (yield* Ref.get(state.quitting)) return;
+          yield* desktopWindow.activate;
+        }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
+      );
     });
     yield* electronApp.on("window-all-closed", () => {
       void runEffect(
