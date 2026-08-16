@@ -31,6 +31,8 @@ export const clerkAppearance = {
     otpCodeFieldErrorText: { color: "var(--error-foreground)" },
     otpCodeFieldSuccessText: { color: "var(--success-foreground)" },
   },
+  // Clerk owns these non-interactive nodes. Keep their redaction permanent
+  // because revealing on hover can expose an identifier during screen sharing.
   userButton: {
     elements: {
       userPreviewMainIdentifier: {
