@@ -51,7 +51,6 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import "katex/dist/katex.min.css";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
@@ -288,7 +287,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
-  remarkMath,
+  [remarkMath, { singleDollarTextMath: false }],
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
@@ -297,7 +296,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
-  remarkMath,
+  [remarkMath, { singleDollarTextMath: false }],
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
@@ -309,6 +308,10 @@ const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
   rehypeNormalizeWindowsImageSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  [rehypeKatex, { output: "htmlAndMathml" }],
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW_HTML = [
   [rehypeKatex, { output: "htmlAndMathml" }],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -2256,7 +2259,11 @@ function ChatMarkdown({
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+        rehypePlugins={
+          parseRawHtml
+            ? CHAT_MARKDOWN_REHYPE_PLUGINS
+            : CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW_HTML
+        }
         skipHtml={false}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}

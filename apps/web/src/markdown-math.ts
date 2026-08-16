@@ -92,8 +92,8 @@ function collectTextNodeReplacements(
     if (match.delimiter !== expectedCloser) continue;
 
     if (opener.delimiter === "(") {
-      replacements.set(opener.index, "$ ");
-      replacements.set(match.index, " $");
+      replacements.set(opener.index, "$$");
+      replacements.set(match.index, "$$");
     } else {
       replacements.set(opener.index, "$$");
       replacements.set(match.index, "$$");

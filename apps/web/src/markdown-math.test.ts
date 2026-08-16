@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
@@ -7,22 +8,36 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { normalizeLatexMathDelimiters } from "./markdown-math";
 
+const MATH_PLUGINS = [[remarkMath, { singleDollarTextMath: false }]] satisfies NonNullable<
+  ReactMarkdownOptions["remarkPlugins"]
+>;
+
+function renderMarkdown(source: string): string {
+  return renderToStaticMarkup(
+    createElement(
+      ReactMarkdown,
+      { remarkPlugins: MATH_PLUGINS, rehypePlugins: [rehypeKatex] },
+      normalizeLatexMathDelimiters(source),
+    ),
+  );
+}
+
 describe("normalizeLatexMathDelimiters", () => {
   it("renders normalized delimiters through KaTeX", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ReactMarkdown,
-        { remarkPlugins: [remarkMath], rehypePlugins: [rehypeKatex] },
-        normalizeLatexMathDelimiters("Euler: \\(e^{i\\pi} + 1 = 0\\)"),
-      ),
-    );
+    const html = renderMarkdown("Euler: \\(e^{i\\pi} + 1 = 0\\)");
     expect(html).toContain('class="katex"');
     expect(html).toContain("mathml");
   });
 
+  it("leaves ordinary dollar amounts as text", () => {
+    const html = renderMarkdown("Costs rose from $20,000 to USD$30,000");
+    expect(html).not.toContain('class="katex"');
+    expect(html).toContain("$20,000 to USD$30,000");
+  });
+
   it("rewrites paired inline and display delimiters", () => {
     expect(normalizeLatexMathDelimiters("inline \\(a+b\\)\n\n\\[\nE=mc^2\n\\]")).toBe(
-      "inline $ a+b $\n\n$$\nE=mc^2\n$$",
+      "inline $$a+b$$\n\n$$\nE=mc^2\n$$",
     );
   });
 
@@ -52,7 +67,7 @@ describe("normalizeLatexMathDelimiters", () => {
       "prose \\(math\\)",
     ].join("\n");
     expect(normalizeLatexMathDelimiters(source)).toBe(
-      source.replace("prose \\(math\\)", "prose $ math $"),
+      source.replace("prose \\(math\\)", () => "prose $$math$$"),
     );
   });
 
@@ -64,7 +79,7 @@ describe("normalizeLatexMathDelimiters", () => {
       "[label \\(x\\)](https://example.com)",
     ].join("\n");
     expect(normalizeLatexMathDelimiters(source)).toBe(
-      source.replace("label \\(x\\)", "label $ x $"),
+      source.replace("label \\(x\\)", () => "label $$x$$"),
     );
   });
 

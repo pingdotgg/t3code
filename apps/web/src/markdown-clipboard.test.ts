@@ -22,6 +22,7 @@ class FakeElement {
   constructor(
     readonly tagName: string,
     private readonly classNames: ReadonlyArray<string> = [],
+    private readonly attributes: Readonly<Record<string, string>> = {},
   ) {}
 
   get localName(): string {
@@ -37,12 +38,29 @@ class FakeElement {
     return this;
   }
 
-  getAttribute(): string | null {
-    return null;
+  getAttribute(name: string): string | null {
+    return this.attributes[name] ?? null;
   }
 
   hasAttribute(): boolean {
     return false;
+  }
+
+  querySelector(selector: string): FakeElement | null {
+    if (
+      selector === 'annotation[encoding="application/x-tex"]' &&
+      this.tagName === "ANNOTATION" &&
+      this.getAttribute("encoding") === "application/x-tex"
+    ) {
+      return this;
+    }
+    for (const child of this.childNodes) {
+      if (child instanceof FakeElement) {
+        const match = child.querySelector(selector);
+        if (match) return match;
+      }
+    }
+    return null;
   }
 }
 
@@ -91,5 +109,30 @@ describe("serializeRenderedMarkdownFragment", () => {
     const container = new FakeElement("DIV").append(code);
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
+  });
+
+  it("serializes inline KaTeX back to explicit LaTeX delimiters", () => {
+    const annotation = new FakeElement("ANNOTATION", [], {
+      encoding: "application/x-tex",
+    }).append(new FakeText("e^{i\\pi} + 1 = 0"));
+    const math = new FakeElement("SPAN", ["katex"]).append(annotation);
+    const container = new FakeElement("DIV").append(new FakeText("Euler: "), math);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "Euler: \\(e^{i\\pi} + 1 = 0\\)",
+    );
+  });
+
+  it("serializes display KaTeX back to explicit LaTeX delimiters", () => {
+    const annotation = new FakeElement("ANNOTATION", [], {
+      encoding: "application/x-tex",
+    }).append(new FakeText("A_t = \\lambda_t A_t^{\\text{local}}"));
+    const math = new FakeElement("SPAN", ["katex"]).append(annotation);
+    const display = new FakeElement("SPAN", ["katex-display"]).append(math);
+    const container = new FakeElement("DIV").append(display);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "\\[\nA_t = \\lambda_t A_t^{\\text{local}}\n\\]",
+    );
   });
 });
