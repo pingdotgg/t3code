@@ -23,6 +23,11 @@ const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
 const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitXAiRateLimitThenHang = process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1";
+const emitXAiAskUserQuestionThenHang =
+  process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION_THEN_HANG === "1";
+const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
+const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
+const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -540,6 +545,58 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
+      if (emitContentThenHang) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "partial before stall" },
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitPlanThenHang) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [
+              {
+                content: "Wait for more ACP progress",
+                priority: "high",
+                status: "in_progress",
+              },
+            ],
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitActiveToolThenHang) {
+        const toolCallId = "tool-call-long-running-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Long-running tool",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: ["long-running-tool"] },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "in_progress",
+          },
+        });
+        return yield* Effect.never;
+      }
+
       if (emitXAiPromptCompleteThenHang) {
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
@@ -803,7 +860,7 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
-      if (emitXAiAskUserQuestion) {
+      if (emitXAiAskUserQuestion || emitXAiAskUserQuestionThenHang) {
         const result = yield* agent.client.extRequest("_x.ai/ask_user_question", {
           method: "x.ai/ask_user_question",
           params: {
@@ -835,6 +892,10 @@ const program = Effect.gen(function* () {
           result.answers === null
         ) {
           throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
+        }
+
+        if (emitXAiAskUserQuestionThenHang) {
+          return yield* Effect.never;
         }
 
         return { stopReason: "end_turn" };
