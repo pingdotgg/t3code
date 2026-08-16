@@ -47,10 +47,10 @@ export function ContextWindowMeter(props: {
                 : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
             }
           >
-            <span className="relative flex size-5 items-center justify-center">
+            <span className="flex size-5 items-center justify-center">
               <svg
                 viewBox="0 0 24 24"
-                className="-rotate-90 absolute inset-0 size-full transform-gpu"
+                className="-rotate-90 size-full shrink-0 transform-gpu"
                 aria-hidden="true"
               >
                 <circle
