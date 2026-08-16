@@ -7,7 +7,7 @@ import {
   SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT,
 } from "./settingsContract";
 
-export const SETTINGS_ARCHIVE_AND_WAITLIST_ROUTE_SCREENS = {
+export const SETTINGS_ARCHIVE_ROUTE_SCREENS = {
   [SETTINGS_ARCHIVE_ROUTE_CONTRACT.name]: createNativeStackScreen({
     screen: ArchivedThreadsRouteScreen,
     linking: SETTINGS_ARCHIVE_ROUTE_CONTRACT.linking,
@@ -15,6 +15,9 @@ export const SETTINGS_ARCHIVE_AND_WAITLIST_ROUTE_SCREENS = {
       title: SETTINGS_ARCHIVE_ROUTE_CONTRACT.title,
     },
   }),
+} as const;
+
+export const SETTINGS_WAITLIST_ALIAS_ROUTE_SCREENS = {
   [SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name]: createNativeStackScreen({
     // Keep the old deep link working after the Connect GA launch.
     screen: SettingsAuthRouteScreen,

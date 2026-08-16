@@ -22,7 +22,10 @@ import {
   SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT,
   SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE,
 } from "./settingsContract";
-import { SETTINGS_ARCHIVE_AND_WAITLIST_ROUTE_SCREENS } from "./settingsRouteScreens";
+import {
+  SETTINGS_ARCHIVE_ROUTE_SCREENS,
+  SETTINGS_WAITLIST_ALIAS_ROUTE_SCREENS,
+} from "./settingsRouteScreens";
 
 describe("native settings contract", () => {
   it.each(["local", "configured"] as const)("exposes archived threads in %s settings", (mode) => {
@@ -55,7 +58,7 @@ describe("native settings contract", () => {
   });
 
   it("wires the production Archive screen separately from the legacy waitlist alias", () => {
-    expect(SETTINGS_ARCHIVE_AND_WAITLIST_ROUTE_SCREENS).toEqual({
+    expect(SETTINGS_ARCHIVE_ROUTE_SCREENS).toEqual({
       [SETTINGS_ARCHIVE_ROUTE_CONTRACT.name]: {
         screen: routeScreens.archive,
         linking: SETTINGS_ARCHIVE_ROUTE_CONTRACT.linking,
@@ -63,6 +66,8 @@ describe("native settings contract", () => {
           title: SETTINGS_ARCHIVE_ROUTE_CONTRACT.title,
         },
       },
+    });
+    expect(SETTINGS_WAITLIST_ALIAS_ROUTE_SCREENS).toEqual({
       [SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name]: {
         screen: routeScreens.waitlistAlias,
         linking: SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.linking,
