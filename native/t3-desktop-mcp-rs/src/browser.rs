@@ -52,18 +52,45 @@ fn bridge_socket_path() -> Option<PathBuf> {
         std::env::temp_dir().join(format!("t3-desktop-mcp-{uid}"))
     };
 
-    if let Err(error) = std::fs::create_dir_all(&dir) {
-        eprintln!("t3-desktop-mcp: bridge dir create failed: {error}");
-        return None;
-    }
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let metadata = match std::fs::metadata(&dir) {
+
+    // `create_dir_all` / `metadata` / `set_permissions` follow symlinks. A
+    // pre-planted `/tmp/t3-desktop-mcp-{uid}` → victim-dir symlink would let us
+    // chmod someone else's directory and drop `bridge.sock` there. Reject
+    // symlinks via `symlink_metadata` before and after create.
+    match std::fs::symlink_metadata(&dir) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            eprintln!("t3-desktop-mcp: bridge dir is a symlink; refusing");
+            return None;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if let Err(error) = std::fs::create_dir_all(&dir) {
+                eprintln!("t3-desktop-mcp: bridge dir create failed: {error}");
+                return None;
+            }
+        }
+        Err(error) => {
+            eprintln!("t3-desktop-mcp: bridge dir metadata failed: {error}");
+            return None;
+        }
+    }
+
+    let metadata = match std::fs::symlink_metadata(&dir) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            eprintln!("t3-desktop-mcp: bridge dir became a symlink; refusing");
+            return None;
+        }
         Ok(metadata) => metadata,
         Err(error) => {
             eprintln!("t3-desktop-mcp: bridge dir metadata failed: {error}");
             return None;
         }
     };
+    if !metadata.is_dir() {
+        eprintln!("t3-desktop-mcp: bridge path is not a directory");
+        return None;
+    }
     if metadata.uid() != unsafe { libc::getuid() } {
         eprintln!("t3-desktop-mcp: bridge dir not owned by current user");
         return None;
@@ -73,7 +100,11 @@ fn bridge_socket_path() -> Option<PathBuf> {
         return None;
     }
     // Re-check mode after chmod — refuse a sticky/world-writable directory.
-    let mode = match std::fs::metadata(&dir) {
+    let mode = match std::fs::symlink_metadata(&dir) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            eprintln!("t3-desktop-mcp: bridge dir became a symlink after chmod; refusing");
+            return None;
+        }
         Ok(metadata) => metadata.mode() & 0o777,
         Err(error) => {
             eprintln!("t3-desktop-mcp: bridge dir re-stat failed: {error}");

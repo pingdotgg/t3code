@@ -1278,6 +1278,16 @@ func toolDrag(_ args: [String: Any]) -> String {
     } else {
         target = underStart
     }
+    // Reject element→element drags across windows even when the destination
+    // center still lies inside the source frame (overlapping windows).
+    if let target,
+       let toElementID = args["to_element_id"] as? String,
+       let destinationElement = Registry.get(toElementID),
+       let destination = windowTarget(for: destinationElement),
+       destination.pid != target.pid || destination.wid != target.wid
+    {
+        return "error: cross-window drag is not supported — keep the drag inside one window"
+    }
     // Only treat as cross-window when the endpoint is outside the source frame.
     // `windowTarget(under:)` is frontmost-first, so using it for every drag would
     // reject legitimate background drags under an occluding window.
