@@ -7,7 +7,6 @@ import { Alert, Platform } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-import { useClerkSettingsSheetDetent } from "../cloud/ClerkSettingsSheetDetent";
 import { useArchivedThreadListActions } from "../home/useThreadListActions";
 import {
   ArchivedThreadsScreen,
@@ -56,7 +55,6 @@ function confirmArchivedProjectAction(input: {
 }
 
 export function ArchivedThreadsRouteScreen() {
-  const { expand } = useClerkSettingsSheetDetent();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
@@ -238,9 +236,8 @@ export function ArchivedThreadsRouteScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      expand();
       refresh();
-    }, [expand, refresh]),
+    }, [refresh]),
   );
 
   return (

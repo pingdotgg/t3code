@@ -3,6 +3,7 @@ import {
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -14,6 +15,19 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
+
+export function browseInputEndPaddingClass(input: {
+  readonly willCreateProjectPath: boolean;
+  readonly hasHighlightedBrowseItem: boolean;
+}): string {
+  if (input.willCreateProjectPath) {
+    return "*:data-[slot=autocomplete-input]:pe-38!";
+  }
+  if (input.hasHighlightedBrowseItem) {
+    return "*:data-[slot=autocomplete-input]:pe-30!";
+  }
+  return "*:data-[slot=autocomplete-input]:pe-24!";
+}
 
 /**
  * The global search overlay hosts three mutually exclusive surfaces: the
@@ -154,7 +168,16 @@ export function buildProjectActionItems(input: {
 
 export type BuildThreadActionItemsThread = Pick<
   SidebarThreadSummary,
-  "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
+  | "archivedAt"
+  | "branch"
+  | "createdAt"
+  | "environmentId"
+  | "id"
+  | "modelSelection"
+  | "projectId"
+  | "session"
+  | "title"
+  | "worktreePath"
 > & {
   updatedAt: string;
   latestUserMessageAt?: string | null;
@@ -170,6 +193,8 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   renderLeadingContent?: (thread: TThread) => ReactNode;
   /** Optional content rendered inline after the title text per-thread. */
   renderTrailingContent?: (thread: TThread) => ReactNode;
+  /** Optional rich description (e.g. favicon + workspace icons). Falls back to text. */
+  renderDescription?: (thread: TThread, meta: { projectTitle: string | undefined }) => ReactNode;
   getContentMatch?: (thread: TThread) => CommandPaletteThreadContentMatch | undefined;
   runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
   limit?: number;
@@ -198,6 +223,9 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     const leadingContent = input.renderLeadingContent?.(thread);
     const trailingContent = input.renderTrailingContent?.(thread);
     const contentMatch = input.getContentMatch?.(thread);
+    const description = input.renderDescription
+      ? input.renderDescription(thread, { projectTitle })
+      : descriptionParts.join(` · `);
 
     return Object.assign(
       {
@@ -210,7 +238,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
           contentMatch?.snippet ?? ``,
         ],
         title: thread.title,
-        description: descriptionParts.join(` · `),
+        description,
         timestamp: formatRelativeTimeLabel(
           thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
         ),
@@ -368,6 +396,25 @@ export function buildBrowseGroups(input: {
   }
 
   return [{ value: "directories", label: "Directories", items }];
+}
+
+export function filterPinnedBrowseEntries(input: {
+  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  filterQuery: string;
+  pinnedDirectoryName: string;
+  caseSensitive: boolean;
+}): ReturnType<typeof filterFilesystemBrowseEntries> {
+  const namesMatch = (left: string, right: string) =>
+    input.caseSensitive ? left === right : left.toLowerCase() === right.toLowerCase();
+  const visibleFilterQuery = namesMatch(input.filterQuery, input.pinnedDirectoryName)
+    ? ""
+    : input.filterQuery;
+  const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
+  const exactEntry =
+    input.filterQuery.length > 0
+      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
+      : null;
+  return { visibleEntries, exactEntry };
 }
 
 export function getCommandPaletteMode(input: {
