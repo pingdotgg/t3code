@@ -46,6 +46,7 @@ import { environmentServerConfigsAtom } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { worktreeEnvironment } from "../../state/worktrees";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -679,13 +680,10 @@ function WorktreeRichMetadata({ worktree }: { readonly worktree: WorktreeInfo })
 function WorktreeErrorStrip({ error }: { readonly error: string | null }) {
   if (error === null) return null;
   return (
-    <div
-      role="alert"
-      className="mx-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive sm:mx-4"
-    >
-      <span className="font-medium">Couldn't load worktrees.</span>{" "}
-      <span className="text-destructive/90">{error}</span>
-    </div>
+    <Alert variant="error" className="mx-3 px-3 py-2 text-xs sm:mx-4">
+      <AlertTitle>Couldn't load worktrees.</AlertTitle>
+      <AlertDescription>{error}</AlertDescription>
+    </Alert>
   );
 }
 

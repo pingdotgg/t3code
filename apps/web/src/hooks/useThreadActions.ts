@@ -481,7 +481,9 @@ export function useThreadActions() {
             description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
           }),
         );
-        return cleanupFailure;
+        // The thread deletion succeeded. Cleanup reports its own error above,
+        // but must not abort a caller deleting several threads.
+        return deleteResult;
       }
 
       return deleteResult;
