@@ -54,7 +54,7 @@ describe("native settings contract", () => {
     );
   });
 
-  it("keeps Archive in the content stack and the waitlist alias in the auth stack", () => {
+  it("groups Archive under content and the waitlist alias under auth", () => {
     expect(SETTINGS_CUSTOM_ROUTE_SCREENS_BY_STACK).toEqual({
       content: {
         [SETTINGS_ARCHIVE_ROUTE_CONTRACT.name]: {
