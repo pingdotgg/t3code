@@ -116,7 +116,7 @@ export const make = Effect.gen(function* () {
           Stream.fromEffect(
             Effect.logWarning("worktree.deletion-cleanup.stream-failed", {
               cause,
-            }).pipe(Effect.andThen(Effect.fail(cause))),
+            }).pipe(Effect.andThen(Effect.failCause(cause))),
           ),
       ),
       Stream.retry(Schedule.exponential("1 second")),
