@@ -1,6 +1,7 @@
-import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -14,9 +15,9 @@ function formatPercentage(value: number | null): string | null {
 
 export function ContextWindowMeter(props: {
   usage: ContextWindowSnapshot;
-  providerDisplayName?: string | null;
+  modelDisplayName?: string | null;
 }) {
-  const { usage, providerDisplayName } = props;
+  const { usage, modelDisplayName } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
@@ -36,13 +37,10 @@ export function ContextWindowMeter(props: {
         delay={150}
         closeDelay={0}
         render={
-          <button
-            type="button"
-            className={cn(
-              "inline-flex size-7 cursor-pointer items-center justify-center rounded-full border border-transparent text-muted-foreground outline-none transition-colors",
-              "hover:bg-accent data-[pressed]:bg-accent",
-              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-            )}
+          <Button
+            size="icon-sm"
+            variant="ghost-muted"
+            className="size-7 rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground"
             aria-label={
               usage.maxTokens !== null && usedPercentage
                 ? `Context window ${usedPercentage} used`
@@ -77,7 +75,7 @@ export function ContextWindowMeter(props: {
                 />
               </svg>
             </span>
-          </button>
+          </Button>
         }
       />
       <PopoverPopup
@@ -130,7 +128,7 @@ export function ContextWindowMeter(props: {
           ) : null}
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-secondary-label text-[11px] font-medium">
-              {providerDisplayName ?? "It"} automatically compacts its context when needed.
+              {formatContextWindowCompactionMessage(modelDisplayName)}
             </div>
           ) : null}
         </div>

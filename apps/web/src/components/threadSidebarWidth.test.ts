@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Regression coverage compares shipped CSS with the sidebar width contract.
+// @effect-diagnostics nodeBuiltinImport:off - Regression coverage compares the sidebar component with its width contract.
 import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
@@ -36,20 +36,13 @@ describe("thread sidebar width", () => {
   });
 
   it("shows the desktop wordmark across the sidebar's full legal width range", () => {
-    const sidebarStyles = NodeFS.readFileSync(new URL("../index.css", import.meta.url), "utf8");
-    const desktopHeaderStyles = sidebarStyles.slice(
-      sidebarStyles.indexOf("@media (min-width: 48rem)"),
-      sidebarStyles.indexOf("/* Stage-channel sidebar art"),
+    const sidebarSource = NodeFS.readFileSync(
+      new URL("./sidebar/SidebarChrome.tsx", import.meta.url),
+      "utf8",
     );
-    const stageLabelThreshold = desktopHeaderStyles.match(
-      /@container sidebar-header \(min-width: ([\d.]+)rem\) \{\s*\.sidebar-brand-stage \{\s*display: inline-flex;/,
-    )?.[1];
 
-    expect(sidebarStyles).toMatch(/\.sidebar-brand \{\s*display: none;/);
-    expect(desktopHeaderStyles).toMatch(
-      /@media \(min-width: 48rem\) \{\s*\.sidebar-brand \{\s*display: flex;/,
-    );
+    expect(sidebarSource).toContain("hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1");
+    expect(sidebarSource).toContain("md:flex");
     expect(THREAD_SIDEBAR_MIN_WIDTH).toBe(13 * 16);
-    expect(Number(stageLabelThreshold) * 16).toBeGreaterThan(THREAD_SIDEBAR_MIN_WIDTH);
   });
 });

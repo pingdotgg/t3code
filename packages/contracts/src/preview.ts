@@ -11,7 +11,14 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-const Url = TrimmedNonEmptyString.check(Schema.isMaxLength(2048));
+export const PREVIEW_URL_MAX_LENGTH = 2_048;
+export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
+
+const Url = TrimmedNonEmptyString.check(Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH));
+
+export const ConfiguredLocalServerUrls = Schema.Array(Url).check(
+  Schema.isMaxLength(CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS),
+);
 const Title = Schema.String.check(Schema.isMaxLength(512));
 
 export const PreviewTabId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
@@ -272,6 +279,7 @@ export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),
   scannedAt: Schema.String,
+  configuredUrlProbing: Schema.optional(Schema.Literal(true)),
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
 

@@ -24,6 +24,7 @@ import type { ElementType } from "react";
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 
 import {
   Menu,
@@ -34,6 +35,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface PullRequestFilterOption<Value extends string> {
   readonly value: Value;
@@ -79,29 +81,18 @@ export function PullRequestSearchInput({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="relative min-w-0 flex-1">
-      {busy ? (
-        <LoaderIcon
-          aria-hidden
-          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 animate-spin text-muted-foreground"
-        />
-      ) : (
-        <SearchIcon
-          aria-hidden
-          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-        />
-      )}
-      <input
-        type="text"
+    <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
+      <InputGroupAddon>
+        {busy ? <LoaderIcon aria-hidden className="animate-spin" /> : <SearchIcon aria-hidden />}
+      </InputGroupAddon>
+      <InputGroupInput
+        type="search"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
         placeholder="Search pull requests, or label:bug"
         aria-label="Search pull requests"
-        // Tracks the shared input's height at both widths, so it stays level with the icon
-        // button beside it rather than towering over it on wide screens.
-        className="h-9 w-full rounded-lg border border-input bg-background pr-3 pl-9 text-sm outline-none placeholder:text-muted-foreground/72 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24 sm:h-8"
       />
-    </div>
+    </InputGroup>
   );
 }
 
@@ -122,10 +113,10 @@ const UNFILTERED_VALUE = "all";
  * A project's own radio value, carrying the server along with the id: the id alone is only
  * unique within its own server, so two rows sharing one would otherwise both read as checked.
  */
-const projectMenuValue = (project: {
+export const pullRequestProjectKey = (project: {
   readonly id: ProjectId;
   readonly environmentId: EnvironmentId;
-}) => `${project.environmentId} ${project.id}`;
+}) => JSON.stringify([project.environmentId, project.id]);
 
 const DRAFT_OPTIONS = [
   { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
@@ -166,21 +157,32 @@ function PullRequestFilterRadioGroup<Value extends string>({
       }}
     >
       <MenuGroupLabel>{label}</MenuGroupLabel>
-      {options.map((option) => (
-        <MenuRadioItem
-          key={option.value}
-          value={option.value}
-          // A host the server has already said it cannot read is not a choice here: offering
-          // it would answer the press by replacing a working list with that failure.
-          disabled={option.unavailable !== undefined}
-          title={option.unavailable}
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <option.Icon aria-hidden className="size-3.5" />
-            {option.label}
-          </span>
-        </MenuRadioItem>
-      ))}
+      {options.map((option) => {
+        // A host the server has already said it cannot read is not a choice here: offering
+        // it would answer the press by replacing a working list with that failure.
+        const item = (
+          <MenuRadioItem
+            key={option.value}
+            value={option.value}
+            className={option.unavailable ? "data-disabled:pointer-events-auto" : undefined}
+            disabled={option.unavailable !== undefined}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <option.Icon aria-hidden className="size-3.5" />
+              {option.label}
+            </span>
+          </MenuRadioItem>
+        );
+        if (!option.unavailable) return item;
+        return (
+          <Tooltip key={option.value}>
+            <TooltipTrigger render={item} />
+            <TooltipPopup side="top" className="max-w-80">
+              {option.unavailable}
+            </TooltipPopup>
+          </Tooltip>
+        );
+      })}
     </MenuRadioGroup>
   );
 }
@@ -247,7 +249,7 @@ export function PullRequestFiltersMenu({
    * the reader is already choosing between projects, rather than as a count above the list
    * that says something is missing without saying which.
    */
-  unavailable: ReadonlyMap<ProjectId, string>;
+  unavailable: ReadonlyMap<string, string>;
   /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
 }) {
@@ -350,7 +352,7 @@ export function PullRequestFiltersMenu({
           value={
             projectId === undefined || projectEnvironmentId === undefined
               ? ALL_PROJECTS_VALUE
-              : projectMenuValue({ id: projectId, environmentId: projectEnvironmentId })
+              : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId })
           }
           onValueChange={(next) => {
             if (next === ALL_PROJECTS_VALUE) {
@@ -359,7 +361,7 @@ export function PullRequestFiltersMenu({
             }
             // The value carries both halves, since the id alone cannot tell two servers' rows
             // apart once they share one.
-            const project = projects.find((candidate) => projectMenuValue(candidate) === next);
+            const project = projects.find((candidate) => pullRequestProjectKey(candidate) === next);
             if (
               project !== undefined &&
               (project.id !== projectId || project.environmentId !== projectEnvironmentId)
@@ -379,16 +381,18 @@ export function PullRequestFiltersMenu({
               as a broken menu rather than as a workspace with three unreadable repositories. */}
           {projects
             .toSorted(
-              (left, right) => Number(unavailable.has(left.id)) - Number(unavailable.has(right.id)),
+              (left, right) =>
+                Number(unavailable.has(pullRequestProjectKey(left))) -
+                Number(unavailable.has(pullRequestProjectKey(right))),
             )
             .map((project) => {
-              const reason = unavailable.get(project.id);
-              return (
+              const reason = unavailable.get(pullRequestProjectKey(project));
+              const item = (
                 <MenuRadioItem
-                  key={projectMenuValue(project)}
-                  value={projectMenuValue(project)}
+                  key={pullRequestProjectKey(project)}
+                  value={pullRequestProjectKey(project)}
+                  className={reason !== undefined ? "data-disabled:pointer-events-auto" : undefined}
                   disabled={reason !== undefined}
-                  title={reason}
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-2">
                     <ProjectFavicon
@@ -405,6 +409,15 @@ export function PullRequestFiltersMenu({
                     )}
                   </span>
                 </MenuRadioItem>
+              );
+              if (reason === undefined) return item;
+              return (
+                <Tooltip key={pullRequestProjectKey(project)}>
+                  <TooltipTrigger render={item} />
+                  <TooltipPopup side="top" className="max-w-80">
+                    {reason}
+                  </TooltipPopup>
+                </Tooltip>
               );
             })}
         </MenuRadioGroup>
