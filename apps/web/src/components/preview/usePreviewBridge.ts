@@ -121,6 +121,8 @@ export function projectDesktopState(state: DesktopPreviewTabState): DesktopPrevi
     zoomFactor: state.zoomFactor,
     pictureInPicture: state.pictureInPicture,
     colorScheme: state.colorScheme,
+    audioMuted: state.audioMuted,
+    audible: state.audible,
     controller: state.controller,
     favicon: state.favicon && originOf(state.favicon.pageUrl) === navOrigin ? state.favicon : null,
   };
