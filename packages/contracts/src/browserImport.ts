@@ -1,0 +1,96 @@
+/**
+ * Browser import - pulling cookies from a browser already installed on the
+ * machine into a T3 Code browser profile.
+ *
+ * Only cookies are imported. They carry the logged-in sessions, which is what
+ * makes an imported profile useful; saved passwords are deliberately out of
+ * scope because Electron exposes no password store to put them in.
+ *
+ * Availability is per source and per platform, and the reasons are modelled
+ * explicitly: some are a permission the user can grant, one is a limitation
+ * no amount of consent works around. The UI needs to tell those apart.
+ *
+ * @module BrowserImport
+ */
+import { Schema } from "effect";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BrowserProfileId } from "./browserProfile.ts";
+
+export const BROWSER_IMPORT_SOURCE_IDS = ["helium"] as const;
+
+export const BrowserImportSourceId = Schema.Literals(BROWSER_IMPORT_SOURCE_IDS);
+export type BrowserImportSourceId = typeof BrowserImportSourceId.Type;
+
+/**
+ * Why a detected source cannot be imported right now.
+ *
+ * `needsKeychainApproval` and `browserRunning` are recoverable — the user
+ * grants access or quits the browser. `unsupportedPlatform` is not: it covers
+ * cases like Chrome on Windows, whose App-Bound Encryption is designed to stop
+ * exactly this, and which we will not work around.
+ */
+export const BrowserImportUnavailableReason = Schema.Literals([
+  "notInstalled",
+  "needsKeychainApproval",
+  "keychainItemMissing",
+  "browserRunning",
+  "unsupportedPlatform",
+]);
+export type BrowserImportUnavailableReason = typeof BrowserImportUnavailableReason.Type;
+
+/** A profile inside the source browser, e.g. Chromium's "Default" directory. */
+export const BrowserImportSourceProfile = Schema.Struct({
+  /** Directory name under the source's user-data dir. */
+  directory: TrimmedNonEmptyString,
+  /** The name the source browser shows for it. */
+  name: TrimmedNonEmptyString,
+});
+export type BrowserImportSourceProfile = typeof BrowserImportSourceProfile.Type;
+
+export const BrowserImportSource = Schema.Struct({
+  id: BrowserImportSourceId,
+  name: TrimmedNonEmptyString,
+  profiles: Schema.Array(BrowserImportSourceProfile),
+  /** Absent when the source is importable. */
+  unavailable: Schema.optional(BrowserImportUnavailableReason),
+});
+export type BrowserImportSource = typeof BrowserImportSource.Type;
+
+export const BrowserImportInput = Schema.Struct({
+  sourceId: BrowserImportSourceId,
+  sourceProfileDirectory: TrimmedNonEmptyString,
+  /** T3 Code profile the cookies are written into. */
+  targetProfileId: BrowserProfileId,
+});
+export type BrowserImportInput = typeof BrowserImportInput.Type;
+
+/** IPC payload: the import input plus the environment the partition belongs to. */
+export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
+  environmentId: TrimmedNonEmptyString,
+  sourceId: BrowserImportSourceId,
+  sourceProfileDirectory: TrimmedNonEmptyString,
+  targetProfileId: BrowserProfileId,
+});
+
+export const BrowserImportResult = Schema.Struct({
+  /** Cookies successfully written into the target partition. */
+  imported: Schema.Int,
+  /**
+   * Cookies read but not written — expired, or rejected by Chromium as
+   * malformed. Surfaced rather than hidden so a mostly-failed import doesn't
+   * look like a success.
+   */
+  skipped: Schema.Int,
+});
+export type BrowserImportResult = typeof BrowserImportResult.Type;
+
+export const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<
+  Record<BrowserImportUnavailableReason, string>
+> = {
+  notInstalled: "Not installed on this machine.",
+  needsKeychainApproval: "Needs Keychain access to read its cookies.",
+  keychainItemMissing:
+    "No encryption key in your Keychain — sign in to that browser once, then retry.",
+  browserRunning: "Quit the browser first so its cookie database can be read.",
+  unsupportedPlatform: "Importing from this browser isn't possible on this platform.",
+};
