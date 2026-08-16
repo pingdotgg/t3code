@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
+  isSshRemoteUrl,
   resolveChangeRequestPresentation,
 } from "./sourceControl.ts";
 
@@ -90,5 +91,72 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       name: "self-hosted.example.test:8443",
       baseUrl: "https://self-hosted.example.test:8443",
     });
+  });
+
+  it("matches self-hosted providers by complete DNS labels", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://github.example.com/owner/repo.git")?.kind,
+    ).toBe("github");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitlab.example.com/group/repo.git")?.kind,
+    ).toBe("gitlab");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://bitbucket.example.com/workspace/repo.git")
+        ?.kind,
+    ).toBe("bitbucket");
+  });
+
+  it("does not match provider names embedded in unrelated DNS labels", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://notgithub.example.com/owner/repo.git")
+        ?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://notgitlab.example.com/group/repo.git")
+        ?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl(
+        "https://notbitbucket.example.com/workspace/repo.git",
+      )?.kind,
+    ).toBe("unknown");
+  });
+
+  it("detects SSH remotes with non-git SSH users (e.g. gitlab@, deploy@)", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("gitlab@gitlab.example.com:group/project.git")?.kind,
+    ).toBe("gitlab");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("gitlab@gitlab.example.com:group/project.git")
+        ?.baseUrl,
+    ).toBe("https://gitlab.example.com");
+    expect(detectSourceControlProviderFromRemoteUrl("deploy@github.com:owner/repo.git")?.kind).toBe(
+      "github",
+    );
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
+    ).toBe("bitbucket");
+  });
+});
+
+describe("isSshRemoteUrl", () => {
+  it("recognises SCP-like SSH URLs with any SSH user prefix", () => {
+    expect(isSshRemoteUrl("git@github.com:owner/repo.git")).toBe(true);
+    expect(isSshRemoteUrl("gitlab@gitlab.example.com:group/project.git")).toBe(true);
+    expect(isSshRemoteUrl("deploy@bitbucket.org:workspace/repo.git")).toBe(true);
+  });
+
+  it("recognises ssh:// URLs with any case", () => {
+    expect(isSshRemoteUrl("ssh://git@gitlab.example.com/group/project.git")).toBe(true);
+    expect(isSshRemoteUrl("ssh://git@gitlab.example.com:22/group/project.git")).toBe(true);
+    expect(isSshRemoteUrl("SSH://git@gitlab.example.com/group/project.git")).toBe(true);
+    expect(isSshRemoteUrl("SsH://git@gitlab.example.com/group/project.git")).toBe(true);
+  });
+
+  it("returns false for HTTPS, local paths, and SCP-like paths without a colon", () => {
+    expect(isSshRemoteUrl("https://gitlab.example.com/group/project.git")).toBe(false);
+    expect(isSshRemoteUrl("/home/user/repos/project")).toBe(false);
+    expect(isSshRemoteUrl("")).toBe(false);
+    expect(isSshRemoteUrl("deploy@github.com/project/repo")).toBe(false);
   });
 });
