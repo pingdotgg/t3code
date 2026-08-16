@@ -14,6 +14,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -239,19 +240,12 @@ export function selectGrokPermissionOptionId(
   return undefined;
 }
 
-function selectPermissionOptionId(
-  request: EffectAcpSchema.RequestPermissionRequest,
-  decision: Exclude<ProviderApprovalDecision, "cancel">,
-): string | undefined {
-  return selectGrokPermissionOptionId(request, decision);
-}
-
 function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
   return (
-    selectPermissionOptionId(request, "acceptForSession") ??
-    selectPermissionOptionId(request, "accept")
+    selectGrokPermissionOptionId(request, "acceptForSession") ??
+    selectGrokPermissionOptionId(request, "accept")
   );
 }
 
@@ -725,6 +719,44 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 }),
             ),
           );
+          const pendingSessionNotifications: Array<{
+            readonly method: "x.ai/session_notification" | "_x.ai/session_notification";
+            readonly params: unknown;
+          }> = [];
+          const applySessionNotification = (
+            ctx: GrokSessionContext,
+            method: "x.ai/session_notification" | "_x.ai/session_notification",
+            params: unknown,
+          ) =>
+            Effect.gen(function* () {
+              const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+              const workflow = parseXAiWorkflowUpdated(params);
+              if (workflow) {
+                const applied = applyGrokWorkflowUpdate(ctx.workflowTrack, workflow);
+                ctx.workflowTrack = applied.state;
+                yield* emitGrokTaskSpecs({
+                  threadId: input.threadId,
+                  turnId,
+                  method,
+                  payload: params,
+                  specs: applied.events,
+                });
+                return;
+              }
+              const subagent = parseXAiSubagentUpdate(params);
+              if (!subagent) {
+                return;
+              }
+              const applied = applyGrokSubagentUpdate(ctx.workflowTrack, subagent);
+              ctx.workflowTrack = applied.state;
+              yield* emitGrokTaskSpecs({
+                threadId: input.threadId,
+                turnId,
+                method,
+                payload: params,
+                specs: applied.events,
+              });
+            });
           const started = yield* Effect.gen(function* () {
             yield* Effect.forEach(
               ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
@@ -792,35 +824,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       yield* logNative(input.threadId, method, params);
                       const ctx = sessions.get(input.threadId);
                       if (!ctx) {
+                        pendingSessionNotifications.push({ method, params });
                         return;
                       }
-                      const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
-                      const workflow = parseXAiWorkflowUpdated(params);
-                      if (workflow) {
-                        const applied = applyGrokWorkflowUpdate(ctx.workflowTrack, workflow);
-                        ctx.workflowTrack = applied.state;
-                        yield* emitGrokTaskSpecs({
-                          threadId: input.threadId,
-                          turnId,
-                          method,
-                          payload: params,
-                          specs: applied.events,
-                        });
-                        return;
-                      }
-                      const subagent = parseXAiSubagentUpdate(params);
-                      if (!subagent) {
-                        return;
-                      }
-                      const applied = applyGrokSubagentUpdate(ctx.workflowTrack, subagent);
-                      ctx.workflowTrack = applied.state;
-                      yield* emitGrokTaskSpecs({
-                        threadId: input.threadId,
-                        turnId,
-                        method,
-                        payload: params,
-                        specs: applied.events,
-                      });
+                      yield* applySessionNotification(ctx, method, params);
                     }),
                   ),
                 ),
@@ -879,7 +886,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     }),
                   );
                   const selectedOptionId =
-                    resolved === "cancel" ? undefined : selectPermissionOptionId(params, resolved);
+                    resolved === "cancel"
+                      ? undefined
+                      : selectGrokPermissionOptionId(params, resolved);
                   return {
                     outcome: selectedOptionId
                       ? {
@@ -1033,7 +1042,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     );
                     return;
                   case "ToolCallUpdated": {
-                    const nowMs = Date.now();
+                    const nowMs = yield* Clock.currentTimeMillis;
                     if (
                       !shouldEmitGrokToolUpdate({
                         toolCall: event.toolCall,
@@ -1095,6 +1104,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
           sessionScopeTransferred = true;
+          yield* Effect.forEach(pendingSessionNotifications, (pending) =>
+            applySessionNotification(ctx, pending.method, pending.params),
+          );
+          pendingSessionNotifications.length = 0;
 
           yield* offerRuntimeEvent({
             type: "session.started",
@@ -1744,7 +1757,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             return yield* new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "_x.ai/rewind/execute",
-              detail: executed?.error ?? "Grok rewind did not succeed.",
+              detail: "Grok rewind did not succeed.",
+              ...(executed?.error ? { cause: executed.error } : {}),
             });
           }
           committedCtx.turns = committedCtx.turns.slice(

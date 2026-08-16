@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   GROK_TOOL_CONTENT_CHAR_LIMIT,
   boundGrokToolCallForEvent,
+  grokToolCallFingerprint,
   shouldEmitGrokToolUpdate,
 } from "./GrokAcpToolUpdates.ts";
 
@@ -20,12 +21,25 @@ describe("GrokAcpToolUpdates", () => {
       shouldEmitGrokToolUpdate({
         toolCall: running,
         previous: {
-          fingerprint: `${running.toolCallId}\u001finProgress\u001fTerminal\u001f200`,
+          fingerprint: grokToolCallFingerprint(running),
           lastEmittedAt: 0,
         },
         nowMs: 1_000,
       }),
     ).toBe(false);
+  });
+
+  it("emits same-length content changes after the interval", () => {
+    expect(
+      shouldEmitGrokToolUpdate({
+        toolCall: { ...running, data: { content: "y".repeat(200) } },
+        previous: {
+          fingerprint: grokToolCallFingerprint(running),
+          lastEmittedAt: 0,
+        },
+        nowMs: 1_000,
+      }),
+    ).toBe(true);
   });
 
   it("rate-limits growing in-progress terminal output", () => {
@@ -60,5 +74,20 @@ describe("GrokAcpToolUpdates", () => {
       toolCallId: "term-1",
       status: "inProgress",
     });
+  });
+
+  it("bounds an array of many short strings by serialized size", () => {
+    const bounded = boundGrokToolCallForEvent({
+      toolCall: {
+        ...running,
+        data: { lines: Array.from({ length: 4_000 }, (_, index) => `line-${index}`) },
+      },
+      rawPayload: { lines: Array.from({ length: 4_000 }, (_, index) => `line-${index}`) },
+    });
+    expect(bounded.toolCall.data).toMatchObject({ truncated: true });
+    expect(String(bounded.toolCall.data.tail).length).toBeLessThanOrEqual(
+      GROK_TOOL_CONTENT_CHAR_LIMIT,
+    );
+    expect(bounded.rawPayload).toMatchObject({ truncated: true, toolCallId: "term-1" });
   });
 });

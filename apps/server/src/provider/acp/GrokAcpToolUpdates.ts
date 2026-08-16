@@ -11,12 +11,15 @@ export interface GrokToolUpdateGate {
 }
 
 export function grokToolCallFingerprint(toolCall: AcpToolCallState): string {
-  const content = toolCall.data.content;
-  const contentLength =
-    typeof content === "string" ? content.length : JSON.stringify(content ?? "").length;
-  return [toolCall.toolCallId, toolCall.status ?? "", toolCall.title ?? "", contentLength].join(
-    "\u001f",
-  );
+  const data = JSON.stringify(toolCall.data) ?? "";
+  return [
+    toolCall.toolCallId,
+    toolCall.status ?? "",
+    toolCall.title ?? "",
+    toolCall.detail ?? "",
+    String(data.length),
+    data.slice(-128),
+  ].join("\u001f");
 }
 
 export function shouldEmitGrokToolUpdate(input: {
@@ -66,6 +69,18 @@ function boundUnknown(value: unknown): unknown {
   return value;
 }
 
+function boundDataToBudget(data: Record<string, unknown>): Record<string, unknown> {
+  const perField = boundUnknown(data) as Record<string, unknown>;
+  const serialized = JSON.stringify(perField) ?? "";
+  if (serialized.length <= GROK_TOOL_CONTENT_CHAR_LIMIT + 256) {
+    return perField;
+  }
+  return {
+    truncated: true,
+    tail: serialized.slice(-(GROK_TOOL_CONTENT_CHAR_LIMIT - 64)),
+  };
+}
+
 /** Shrink cumulative Grok terminal payloads before they hit ingestion / NDJSON. */
 export function boundGrokToolCallForEvent(input: {
   readonly toolCall: AcpToolCallState;
@@ -82,7 +97,7 @@ export function boundGrokToolCallForEvent(input: {
   return {
     toolCall: {
       ...input.toolCall,
-      data: boundUnknown(input.toolCall.data) as Record<string, unknown>,
+      data: boundDataToBudget(input.toolCall.data),
       ...(typeof input.toolCall.detail === "string"
         ? { detail: truncateText(input.toolCall.detail) }
         : {}),

@@ -109,31 +109,4 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
-
-  it.effect("does not start ACP when Grok has no saved credentials", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-unauth-" });
-          const grokPath = path.join(dir, "grok");
-          yield* fs.writeFileString(
-            grokPath,
-            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
-          );
-          yield* fs.chmod(grokPath, 0o755);
-
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            { HOME: dir, PATH: process.env.PATH ?? "" },
-          );
-        }),
-      );
-
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.auth.status).toBe("unauthenticated");
-      expect(snapshot.message).toContain("grok login");
-    }),
-  );
 });

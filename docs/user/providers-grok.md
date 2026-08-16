@@ -10,8 +10,8 @@ grok login
 ```
 
 You can also set `XAI_API_KEY` in the server environment instead of running `grok login`.
-Background provider checks do not start a Grok browser login. If the CLI is installed but has no
-saved credentials, Settings shows an unauthenticated status and asks you to run `grok login`.
+Background provider checks start ACP with browser login disabled (`CI` / `NO_BROWSER`). If
+authenticate fails, Settings shows an unauthenticated status and asks you to run `grok login`.
 
 In T3 Code Settings, the default Grok provider can stay like this:
 
