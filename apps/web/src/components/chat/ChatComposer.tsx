@@ -1142,6 +1142,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const isComposerApprovalState = activePendingApproval !== null;
+  const stashControlsAvailable = !composerMenuOpen && !isComposerApprovalState;
+  const isStashMenuVisible = isStashMenuOpen && stashControlsAvailable;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const hasComposerHeader =
     isComposerApprovalState ||
@@ -2270,14 +2272,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsStashMenuOpen((open) => !open);
   }, []);
 
-  // Close the stash menu whenever the trigger-driven command menu opens so
-  // the two popovers never stack in the same layer, and when the user
-  // resumes typing (the menu is a transient picker, not a panel).
+  // Close the stash menu when another composer state takes over its layer.
+  // This also prevents a hidden menu from reappearing after approval ends.
   useEffect(() => {
-    if (composerMenuOpen) {
+    if (composerMenuOpen || isComposerApprovalState) {
       setIsStashMenuOpen(false);
     }
-  }, [composerMenuOpen]);
+  }, [composerMenuOpen, isComposerApprovalState]);
+  // The menu is a transient picker, not a panel, so typing dismisses it.
   useEffect(() => {
     setIsStashMenuOpen(false);
   }, [prompt]);
@@ -2881,15 +2883,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               isComposerCollapsedMobile && "hidden",
             )}
           >
-            <ComposerStashBadge
-              count={stashQueue.length}
-              pulseKey={stashPulse.key}
-              pulsing={stashPulse.active}
-              menuOpen={isStashMenuOpen}
-              onToggleMenu={toggleStashMenu}
-            />
+            {stashControlsAvailable && (
+              <ComposerStashBadge
+                count={stashQueue.length}
+                pulseKey={stashPulse.key}
+                pulsing={stashPulse.active}
+                menuOpen={isStashMenuVisible}
+                onToggleMenu={toggleStashMenu}
+              />
+            )}
 
-            {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
+            {isStashMenuVisible && (
               <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                 <ComposerStashMenu
                   entries={stashQueue}
