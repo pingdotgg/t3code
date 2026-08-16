@@ -90,7 +90,7 @@ import {
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
-import { normalizeLatexMathDelimiters } from "../markdown-math";
+import { normalizeLatexMathDelimiters, remarkPromoteBracketDisplayMath } from "../markdown-math";
 import {
   extractMarkdownLinkHrefs,
   normalizeMarkdownLinkDestination,
@@ -284,25 +284,6 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     src: [...(defaultSchema.protocols?.src ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
-
-const CHAT_MARKDOWN_REMARK_PLUGINS = [
-  remarkGfm,
-  [remarkMath, { singleDollarTextMath: false }],
-  remarkGithubAlerts,
-  remarkNormalizeListItemIndentation,
-  remarkPreserveCodeMeta,
-  remarkNormalizeLinksAndTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-
-const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
-  remarkGfm,
-  [remarkMath, { singleDollarTextMath: false }],
-  remarkGithubAlerts,
-  remarkNormalizeListItemIndentation,
-  remarkBreaks,
-  remarkPreserveCodeMeta,
-  remarkNormalizeLinksAndTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
@@ -1706,6 +1687,20 @@ function ChatMarkdown({
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownSource = useMemo(() => normalizeLatexMathDelimiters(text), [text]);
+  const remarkPlugins = useMemo(
+    () =>
+      [
+        remarkGfm,
+        [remarkMath, { singleDollarTextMath: false }],
+        [remarkPromoteBracketDisplayMath, { source: text }],
+        remarkGithubAlerts,
+        remarkNormalizeListItemIndentation,
+        ...(lineBreaks ? [remarkBreaks] : []),
+        remarkPreserveCodeMeta,
+        remarkNormalizeLinksAndTagInlineCode,
+      ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>,
+    [lineBreaks, text],
+  );
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -2256,9 +2251,7 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
+        remarkPlugins={remarkPlugins}
         rehypePlugins={
           parseRawHtml
             ? CHAT_MARKDOWN_REHYPE_PLUGINS

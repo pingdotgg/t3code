@@ -6,17 +6,17 @@ import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeLatexMathDelimiters } from "./markdown-math";
-
-const MATH_PLUGINS = [[remarkMath, { singleDollarTextMath: false }]] satisfies NonNullable<
-  ReactMarkdownOptions["remarkPlugins"]
->;
+import { normalizeLatexMathDelimiters, remarkPromoteBracketDisplayMath } from "./markdown-math";
 
 function renderMarkdown(source: string): string {
+  const remarkPlugins = [
+    [remarkMath, { singleDollarTextMath: false }],
+    [remarkPromoteBracketDisplayMath, { source }],
+  ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   return renderToStaticMarkup(
     createElement(
       ReactMarkdown,
-      { remarkPlugins: MATH_PLUGINS, rehypePlugins: [rehypeKatex] },
+      { remarkPlugins, rehypePlugins: [rehypeKatex] },
       normalizeLatexMathDelimiters(source),
     ),
   );
@@ -27,6 +27,17 @@ describe("normalizeLatexMathDelimiters", () => {
     const html = renderMarkdown("Euler: \\(e^{i\\pi} + 1 = 0\\)");
     expect(html).toContain('class="katex"');
     expect(html).toContain("mathml");
+  });
+
+  it("renders same-line bracket delimiters as display math", () => {
+    const html = renderMarkdown("Before \\[E=mc^2\\] after");
+    expect(html).toContain('class="katex-display"');
+  });
+
+  it("keeps parenthesized delimiters inline", () => {
+    const html = renderMarkdown("Before \\(E=mc^2\\) after");
+    expect(html).toContain('class="katex"');
+    expect(html).not.toContain('class="katex-display"');
   });
 
   it("leaves ordinary dollar amounts as text", () => {
@@ -42,7 +53,7 @@ describe("normalizeLatexMathDelimiters", () => {
   });
 
   it("preserves source length and task-list offsets", () => {
-    const source = "- [ ] task with \\(a+b\\) inline";
+    const source = "Display \\[a+b\\]\n\n- [ ] task with \\(c+d\\) inline";
     const normalized = normalizeLatexMathDelimiters(source);
     expect(normalized).toHaveLength(source.length);
     expect(normalized.indexOf("[ ]")).toBe(source.indexOf("[ ]"));

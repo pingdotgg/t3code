@@ -6,11 +6,18 @@ interface MarkdownNode {
   readonly type?: string;
   readonly value?: unknown;
   readonly url?: unknown;
+  data?: {
+    hProperties?: Record<string, unknown>;
+  };
   readonly position?: {
     readonly start?: { readonly offset?: number };
     readonly end?: { readonly offset?: number };
   };
   readonly children?: readonly MarkdownNode[];
+}
+
+interface PromoteBracketDisplayMathOptions {
+  readonly source: string;
 }
 
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
@@ -60,6 +67,43 @@ export function normalizeLatexMathDelimiters(source: string): string {
     output[index + 1] = replacement[1]!;
   }
   return output.join("");
+}
+
+/**
+ * Preserves the display semantics of same-line `\[...\]` expressions.
+ *
+ * `remark-math` parses their length-preserving `$$...$$` normalization as
+ * inline math unless the delimiters occupy their own lines. The original
+ * source has matching offsets, so it can distinguish bracket-display math
+ * without inserting newlines and invalidating task-list source positions.
+ */
+export function remarkPromoteBracketDisplayMath(options: PromoteBracketDisplayMathOptions) {
+  return (tree: MarkdownNode): void => {
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "inlineMath") {
+        const start = node.position?.start?.offset;
+        const end = node.position?.end?.offset;
+        if (
+          start !== undefined &&
+          end !== undefined &&
+          options.source.slice(start, start + 2) === "\\[" &&
+          options.source.slice(end - 2, end) === "\\]"
+        ) {
+          node.data = {
+            ...node.data,
+            hProperties: {
+              ...node.data?.hProperties,
+              className: ["language-math", "math-display"],
+            },
+          };
+        }
+      }
+
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
 }
 
 function collectTextNodeReplacements(
