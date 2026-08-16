@@ -205,12 +205,23 @@ export const make = Effect.gen(function* () {
         return;
       }
       timer = setTimeout(() => {
+        let signaled = false;
         try {
-          child.kill("SIGKILL");
+          // `kill` returns false when the process is already gone (ESRCH).
+          signaled = child.kill("SIGKILL");
         } catch {
-          // ignore
+          finish();
+          return;
         }
-        finish();
+        if (!signaled) {
+          finish();
+          return;
+        }
+        // Only clear after confirmed exit — do not treat signal delivery as stop.
+        timer = setTimeout(() => {
+          // Failsafe if the OS never emits `exit` after SIGKILL.
+          finish();
+        }, 3_000);
       }, 2_000);
     });
 
