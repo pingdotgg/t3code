@@ -389,7 +389,8 @@ fn parse_app_line(line: &str) -> Option<(String, String, u32)> {
     // contain `[` are not truncated at the first bracket.
     let marker = line.rfind("  [")?;
     let id_start = marker + 3;
-    let id_end = line[id_start..].find(']')? + id_start;
+    // Id may contain escaped `\]` — close at the first unescaped `]`.
+    let id_end = find_unescaped_char(&line[id_start..], ']')? + id_start;
     let name = unescape_app_field(line[..marker].trim());
     let id = unescape_app_field(line[id_start..id_end].trim());
     let tail = line[id_end + 1..].trim();
@@ -403,6 +404,25 @@ fn parse_app_line(line: &str) -> Option<(String, String, u32)> {
     } else {
         Some((name, id, pid))
     }
+}
+
+/// Index of the first `needle` not preceded by an odd-length run of `\`.
+fn find_unescaped_char(haystack: &str, needle: char) -> Option<usize> {
+    let mut escaped = false;
+    for (index, ch) in haystack.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == needle {
+            return Some(index);
+        }
+    }
+    None
 }
 
 /// Prefer a document/address-bar URL from the outline; otherwise the frame title.
