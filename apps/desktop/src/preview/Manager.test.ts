@@ -353,6 +353,71 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("reports a failed navigation as unavailable automation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, (...args: never[]) => void>();
+        let url = "http://localhost:5173/";
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => url,
+          getTitle: () => "localhost:5173",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          loadURL: vi.fn(async () => undefined),
+          on: vi.fn((event: string, listener: (...args: never[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_failed");
+        yield* manager.registerWebview("tab_failed", 42);
+        listeners.get("did-fail-load")?.(
+          {},
+          -102,
+          "ERR_CONNECTION_REFUSED",
+          "http://localhost:5173/",
+          true,
+        );
+        yield* Effect.yieldNow;
+
+        expect(yield* manager.automationStatus("tab_failed")).toEqual({
+          available: false,
+          visible: true,
+          tabId: "tab_failed",
+          url: "http://localhost:5173/",
+          title: "ERR_CONNECTION_REFUSED",
+          loading: false,
+        });
+
+        url = "chrome-error://chromewebdata/";
+        expect(yield* manager.automationStatus("tab_failed")).toEqual({
+          available: false,
+          visible: true,
+          tabId: "tab_failed",
+          url: "chrome-error://chromewebdata/",
+          title: "ERR_CONNECTION_REFUSED",
+          loading: false,
+        });
+      }),
+    ),
+  );
+
   effectIt.effect("rejects a destroyed webview during registration", () =>
     withManager((manager) =>
       Effect.gen(function* () {

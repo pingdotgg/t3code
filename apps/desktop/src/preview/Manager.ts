@@ -2838,28 +2838,48 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         visible: true,
         tabId,
         url: !navStatus || navStatus.kind === "Idle" ? null : navStatus.url,
-        title: !navStatus || navStatus.kind === "Idle" ? null : navStatus.title,
+        title:
+          navStatus?.kind === "LoadFailed"
+            ? navStatus.description || navStatus.title
+            : !navStatus || navStatus.kind === "Idle"
+              ? null
+              : navStatus.title,
         loading: navStatus?.kind === "Loading",
       };
     }
     const wc = webContents.fromId(tab.webContentsId);
-    return !wc || wc.isDestroyed()
-      ? {
-          available: false,
-          visible: true,
-          tabId,
-          url: null,
-          title: null,
-          loading: false,
-        }
-      : {
-          available: true,
-          visible: true,
-          tabId,
-          url: wc.getURL() || null,
-          title: wc.getTitle() || null,
-          loading: wc.isLoading(),
-        };
+    if (!wc || wc.isDestroyed()) {
+      return {
+        available: false,
+        visible: true,
+        tabId,
+        url: tab.navStatus.kind === "Idle" ? null : tab.navStatus.url,
+        title:
+          tab.navStatus.kind === "LoadFailed"
+            ? tab.navStatus.description || tab.navStatus.title
+            : null,
+        loading: false,
+      };
+    }
+    if (tab.navStatus.kind === "LoadFailed") {
+      const guestUrl = wc.getURL() || null;
+      return {
+        available: false,
+        visible: true,
+        tabId,
+        url: guestUrl?.startsWith("chrome-error:") ? guestUrl : tab.navStatus.url,
+        title: tab.navStatus.description || wc.getTitle() || tab.navStatus.title,
+        loading: false,
+      };
+    }
+    return {
+      available: true,
+      visible: true,
+      tabId,
+      url: wc.getURL() || null,
+      title: wc.getTitle() || null,
+      loading: wc.isLoading(),
+    };
   });
 
   const captureAutomationSnapshot = Effect.fn("PreviewManager.captureAutomationSnapshot")(

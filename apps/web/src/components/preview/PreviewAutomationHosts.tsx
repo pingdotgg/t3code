@@ -66,6 +66,7 @@ import {
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { applyPreviewLoadFailureToAutomationStatus } from "./previewAutomationStatus";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -220,18 +221,24 @@ const currentStatus = async (
   };
   if (runtimeTabId && tabId && previewBridge && state.desktopByTabId[tabId]) {
     const status = await previewBridge.automation.status(runtimeTabId);
-    return { ...status, tabId, visible, ...viewportStatus };
+    return applyPreviewLoadFailureToAutomationStatus(
+      { ...status, tabId, visible, ...viewportStatus },
+      snapshot?.navStatus,
+    );
   }
   const navStatus = snapshot?.navStatus;
-  return {
-    available: Boolean(previewBridge?.automation),
-    visible,
-    tabId,
-    url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
-    title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
-    loading: navStatus?._tag === "Loading",
-    ...viewportStatus,
-  };
+  return applyPreviewLoadFailureToAutomationStatus(
+    {
+      available: Boolean(previewBridge?.automation),
+      visible,
+      tabId,
+      url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
+      title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
+      loading: navStatus?._tag === "Loading",
+      ...viewportStatus,
+    },
+    navStatus,
+  );
 };
 
 const raiseAtomCommandFailure = (result: Parameters<typeof squashAtomCommandFailure>[0]): never => {
