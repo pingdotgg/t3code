@@ -1408,14 +1408,22 @@ export function PullRequestDetailPanel({
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}
               {autoMergeArmed ? (
-                <Badge
-                  variant="info"
-                  className="h-5 shrink-0 gap-1 rounded px-1.5 text-[10px]"
-                  title="The host will merge this on its own once its requirements are met"
-                >
-                  <GitMergeIcon aria-hidden className="size-3" />
-                  Auto-merge
-                </Badge>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Badge
+                        variant="info"
+                        className="h-5 shrink-0 gap-1 rounded px-1.5 text-[10px]"
+                      >
+                        <GitMergeIcon aria-hidden className="size-3" />
+                        Auto-merge
+                      </Badge>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    The host will merge this on its own once its requirements are met
+                  </TooltipPopup>
+                </Tooltip>
               ) : null}
               {primaryAction === "ready" ? (
                 <Button size="xs" disabled={actionPending} onClick={() => void perform("ready")}>
