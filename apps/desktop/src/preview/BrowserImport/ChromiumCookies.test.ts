@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { cookieScope } from "./ChromiumCookies.ts";
+import { cookieScope } from "./CookieDatabase.ts";
 
 describe("cookieScope", () => {
   it("keeps a host-only cookie host-only", () => {
