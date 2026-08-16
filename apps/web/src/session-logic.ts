@@ -845,8 +845,11 @@ export function deriveUserInputExchanges(
   const openIndexByRequestId = new Map<string, number>();
   // compareActivitiesByOrder sorts sequenced activities after unsequenced
   // ones, so with mixed sequence presence a resolution can process before its
-  // request — remember it and pair when the request shows up.
+  // request — remember it and pair when the request shows up. Answerless
+  // resolutions (question.rejected-style) render nothing standalone but must
+  // still settle their later-sorting request.
   const orphanResolvedIndexByRequestId = new Map<string, number>();
+  const answerlessResolvedRequestIds = new Set<string>();
   for (const activity of ordered) {
     if (
       activity.kind !== "user-input.requested" &&
@@ -899,7 +902,9 @@ export function deriveUserInputExchanges(
         };
         continue;
       }
-      if (requestId) {
+      const resolvedAnswerless =
+        requestId !== null && answerlessResolvedRequestIds.delete(requestId);
+      if (requestId && !resolvedAnswerless) {
         openIndexByRequestId.set(requestId, entries.length);
       }
       entries.push({
@@ -909,7 +914,7 @@ export function deriveUserInputExchanges(
         ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
         ...(requestId !== null ? { requestId } : {}),
         questions,
-        resolved: false,
+        resolved: resolvedAnswerless,
       });
       continue;
     }
@@ -949,6 +954,8 @@ export function deriveUserInputExchanges(
         answers,
         resolved: true,
       });
+    } else if (requestId !== null) {
+      answerlessResolvedRequestIds.add(requestId);
     }
   }
   return entries;

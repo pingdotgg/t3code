@@ -2340,3 +2340,49 @@ describe("deriveUserInputExchanges mixed sequence presence", () => {
     expect(exchanges[0]?.answers).toEqual({ "Continue?": "Yes" });
   });
 });
+
+describe("deriveUserInputExchanges answerless resolutions", () => {
+  it("settles a request whose answerless resolution sorted before it", () => {
+    // question.rejected-style resolutions carry empty answers; when mixed
+    // sequence presence sorts the resolution first, the later request must
+    // not open a forever-pending card.
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-seq-rejected",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        sequence: 10,
+        payload: {
+          requestId: "req-rejected-1",
+          questions: [
+            {
+              id: "Continue?",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "ui-resolved-empty",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          requestId: "req-rejected-1",
+          answers: {},
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.id).toBe("ui-requested-seq-rejected");
+    expect(exchanges[0]?.resolved).toBe(true);
+    expect(exchanges[0]?.answers).toBeUndefined();
+  });
+});

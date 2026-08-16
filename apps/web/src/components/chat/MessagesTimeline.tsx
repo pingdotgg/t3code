@@ -73,6 +73,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -2193,20 +2194,14 @@ const UserInputExchangeTimelineRow = memo(function UserInputExchangeTimelineRow(
     <section className="-mx-1 px-1 py-0.5" aria-label={label}>
       {/* Trigger hover tints the whole accordion (has-variant) — tinting only
           the header strip while the card stays flat reads as a seam. */}
-      <div className="overflow-hidden rounded-md border border-border/60 bg-card/50 transition-colors has-[[role=button]:hover]:bg-accent/50">
-        <div
-          role="button"
-          tabIndex={0}
+      <Collapsible
+        open={expanded}
+        onOpenChange={setExpanded}
+        className="overflow-hidden rounded-md border border-border/60 bg-card/50 transition-colors has-[button:hover]:bg-accent/50"
+      >
+        <CollapsibleTrigger
           aria-label={label}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-          onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setExpanded((v) => !v);
-            }
-          }}
-          className="flex cursor-pointer select-none items-center gap-1.5 px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          className="flex w-full select-none items-center gap-1.5 px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         >
           <span className="flex size-5 shrink-0 items-center justify-center text-icon-muted">
             <MessageCircleIcon
@@ -2214,9 +2209,9 @@ const UserInputExchangeTimelineRow = memo(function UserInputExchangeTimelineRow(
               aria-hidden
             />
           </span>
-          <p className="min-w-0 flex-1 truncate font-medium text-[12px] text-foreground leading-5">
+          <span className="min-w-0 flex-1 truncate font-medium text-[12px] text-foreground leading-5">
             {label}
-          </p>
+          </span>
           <span className="flex size-4 shrink-0 items-center justify-center text-icon-muted">
             <ChevronDownIcon
               className={cn(
@@ -2226,13 +2221,9 @@ const UserInputExchangeTimelineRow = memo(function UserInputExchangeTimelineRow(
               aria-hidden
             />
           </span>
-        </div>
-        {expanded ? (
-          <div
-            className="m-2 mt-0 cursor-default rounded-md border border-border/60 bg-card/50 divide-y divide-border/45"
-            onClick={stopRowToggle}
-            onPointerDown={stopRowToggle}
-          >
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="m-2 mt-0 rounded-md border border-border/60 bg-card/50 divide-y divide-border/45">
             {items.map((item) => (
               <div key={item.key} className="px-3 py-2 text-[12px] leading-5">
                 <p className="font-semibold text-foreground select-text">{item.question}</p>
@@ -2248,8 +2239,8 @@ const UserInputExchangeTimelineRow = memo(function UserInputExchangeTimelineRow(
               </div>
             ))}
           </div>
-        ) : null}
-      </div>
+        </CollapsiblePanel>
+      </Collapsible>
     </section>
   );
 });
