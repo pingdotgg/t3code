@@ -159,6 +159,7 @@ describe("ProviderCommandReactor", () => {
     readonly interruptResolutionActivityDispatchFailures?: number;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly beforeListSessions?: (sessions: Array<ProviderSession>) => void;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -324,7 +325,11 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
-      listSessions: () => Effect.succeed(runtimeSessions),
+      listSessions: () =>
+        Effect.sync(() => {
+          input?.beforeListSessions?.(runtimeSessions);
+          return runtimeSessions;
+        }),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -2812,6 +2817,15 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("turn-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -2854,6 +2868,75 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("rejects a guarded interrupt when provider work changes at dispatch time", async () => {
+    const initialUpdatedAt = "2026-01-01T00:00:00.000Z";
+    const currentUpdatedAt = "2026-01-01T00:00:01.000Z";
+    const harness = await createHarness({
+      beforeListSessions: (sessions) => {
+        sessions.splice(0, sessions.length, {
+          provider: ProviderDriverKind.make("codex"),
+          status: "running",
+          runtimeMode: "approval-required",
+          threadId: ThreadId.make("thread-1"),
+          activeTurnId: asTurnId("turn-2"),
+          createdAt: initialUpdatedAt,
+          updatedAt: currentUpdatedAt,
+        });
+      },
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-dispatch-race"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: initialUpdatedAt,
+        },
+        createdAt: initialUpdatedAt,
+      }),
+    );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("turn-1"),
+      createdAt: initialUpdatedAt,
+      updatedAt: initialUpdatedAt,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-dispatch-race"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        expectedSessionUpdatedAt: initialUpdatedAt,
+        createdAt: currentUpdatedAt,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-dispatch-race",
+      outcome: "work-changed",
+      expectedTurnId: "turn-1",
+      actualTurnId: "turn-2",
+      createdAt: currentUpdatedAt,
+    });
+  });
+
   it("publishes a guarded interrupt outcome when durable resolution activity fails", async () => {
     const harness = await createHarness({
       interruptResolutionActivityDispatchFailures: 1,
@@ -2877,6 +2960,15 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("turn-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
 
     await harness.runEffect(
       harness.engine.dispatch({

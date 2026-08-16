@@ -196,7 +196,10 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    | ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -258,6 +261,9 @@ describe("ProviderRuntimeIngestion", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const backgroundLiveness = await runtime.runPromise(
+      Effect.service(ThreadBackgroundLiveness.ThreadBackgroundLivenessService),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -322,6 +328,8 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      liveTaskActivityIds: (threadId: ThreadId) =>
+        backgroundLiveness.getThreadLiveTaskActivityIds(threadId),
       drain,
     };
   }
@@ -3318,6 +3326,53 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+  });
+
+  it("anchors task progress liveness to the persisted synthetic activity ids", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-task-usage-anchor"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId,
+      payload: {
+        taskId: "usage-monitor",
+        taskType: "local_bash",
+        description: "Watch token usage",
+        typedUsage: { totalTokens: 4200 },
+      },
+    });
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-task-progress-anchor"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId,
+      payload: {
+        taskId: "progress-monitor",
+        taskType: "local_bash",
+        description: "Watch CI",
+        summary: "Still watching CI",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.activities.some((activity) => activity.id === "task-usage:thread-1:usage-monitor") &&
+        thread.activities.some(
+          (activity) => activity.id === "task-progress:thread-1:progress-monitor",
+        ),
+    );
+
+    expect([...harness.liveTaskActivityIds(threadId)].toSorted()).toEqual([
+      "task-progress:thread-1:progress-monitor",
+      "task-usage:thread-1:usage-monitor",
+    ]);
   });
 
   it("titles task activities with the task description, including on completion", async () => {

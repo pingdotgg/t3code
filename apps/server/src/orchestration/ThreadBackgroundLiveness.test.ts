@@ -230,6 +230,45 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
   });
 
+  it("resumes idle tasks from status-less progress and updated events", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-idle-resume";
+    for (const kind of ["progress", "updated"] as const) {
+      const taskId = `resumable-${kind}`;
+      liveness.recordTaskLiveness({
+        threadId,
+        taskId,
+        taskType: "subagent",
+        status: "running",
+        kind: "started",
+      });
+      liveness.recordTaskLiveness({
+        threadId,
+        taskId,
+        taskType: "subagent",
+        status: "idle",
+        kind: "updated",
+      });
+      expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+      liveness.recordTaskLiveness({
+        threadId,
+        taskId,
+        taskType: "subagent",
+        status: undefined,
+        kind,
+      });
+      expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+      liveness.recordTaskLiveness({
+        threadId,
+        taskId,
+        taskType: "subagent",
+        status: "completed",
+        kind: "completed",
+      });
+    }
+  });
+
   it("retains terminal tombstones across session exit", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-terminal-session-exit";

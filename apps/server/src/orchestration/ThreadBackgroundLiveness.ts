@@ -177,9 +177,12 @@ export function make(
     const previousMonitorActivityId = stateByThreadId
       .get(input.threadId)
       ?.monitors.get(input.taskId);
+    if (input.status === "idle") {
+      drop(input.threadId, input.taskId);
+      return;
+    }
     const terminal =
       input.kind === "completed" ||
-      input.status === "idle" ||
       (input.status !== undefined && TERMINAL_STATUSES.has(input.status));
     if (terminal) {
       drop(input.threadId, input.taskId);

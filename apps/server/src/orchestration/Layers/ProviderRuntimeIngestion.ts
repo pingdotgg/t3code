@@ -360,6 +360,26 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
   return fields;
 }
 
+function hasTaskProgressState(
+  event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
+): boolean {
+  return (
+    event.payload.typedUsage === undefined ||
+    event.payload.summary !== undefined ||
+    event.payload.lastToolName !== undefined ||
+    event.payload.status !== undefined ||
+    event.payload.error !== undefined
+  );
+}
+
+function taskProgressActivityId(
+  event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
+): EventId {
+  return EventId.make(
+    `${hasTaskProgressState(event) ? "task-progress" : "task-usage"}:${event.threadId}:${event.payload.taskId}`,
+  );
+}
+
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
@@ -580,12 +600,7 @@ export function runtimeEventToActivities(
         event.payload.description.trim().length > 0
           ? { title: truncateDetail(event.payload.description, 120) }
           : {};
-      const hasProgressState =
-        event.payload.typedUsage === undefined ||
-        event.payload.summary !== undefined ||
-        event.payload.lastToolName !== undefined ||
-        event.payload.status !== undefined ||
-        event.payload.error !== undefined;
+      const hasProgressState = hasTaskProgressState(event);
       return [
         ...(hasProgressState
           ? [
@@ -2002,7 +2017,9 @@ const make = Effect.gen(function* () {
             taskType: payload.taskType,
             status: payload.status,
             agentId: payload.agentId,
-            activityId: String(event.eventId),
+            activityId: String(
+              event.type === "task.progress" ? taskProgressActivityId(event) : event.eventId,
+            ),
             kind:
               event.type === "task.started"
                 ? "started"
