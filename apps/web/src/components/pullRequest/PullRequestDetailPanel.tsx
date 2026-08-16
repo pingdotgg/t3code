@@ -1497,6 +1497,12 @@ export function PullRequestDetailPanel({
                   ))}
                 </nav>
                 <span className="ml-auto inline-flex min-w-0 shrink items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="truncate" />}>
+                      {detail.baseBranch}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{`${detail.baseBranch} ← ${detail.headBranch}`}</TooltipPopup>
+                  </Tooltip>
                   {freshness ? (
                     <PullRequestBaseFreshnessWarning
                       baseBranch={detail.baseBranch}
@@ -1506,16 +1512,10 @@ export function PullRequestDetailPanel({
                       iconClassName="size-3"
                     />
                   ) : null}
+                  <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
                   <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="inline-flex min-w-0 items-center gap-1" />}
-                    >
-                      <span className="truncate">{detail.baseBranch}</span>
-                      <ArrowLeftIcon
-                        aria-label="receives changes from"
-                        className="size-3 shrink-0"
-                      />
-                      <span className="truncate">{detail.headBranch}</span>
+                    <TooltipTrigger render={<span className="truncate" />}>
+                      {detail.headBranch}
                     </TooltipTrigger>
                     <TooltipPopup side="top">{`${detail.baseBranch} ← ${detail.headBranch}`}</TooltipPopup>
                   </Tooltip>
