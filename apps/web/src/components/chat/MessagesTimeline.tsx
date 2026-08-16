@@ -1167,6 +1167,7 @@ function InlineUserMessageEditor() {
           type="button"
           size="xs"
           variant="ghost"
+          className="text-secondary-label hover:bg-muted/55 hover:text-message-foreground"
           disabled={edit.isSavingMessageEdit}
           onClick={edit.onCancelMessageEdit}
         >
