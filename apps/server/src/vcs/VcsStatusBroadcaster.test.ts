@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -91,6 +92,75 @@ function makeTestLayer(state: {
             state.remoteStatusCalls += 1;
             state.remoteStatusRefreshUpstreamValues?.push(options?.refreshUpstream);
             return state.currentRemoteStatus;
+          }),
+        invalidateLocalStatus: () =>
+          Effect.sync(() => {
+            state.localInvalidationCalls += 1;
+          }),
+        invalidateRemoteStatus: () =>
+          Effect.sync(() => {
+            state.remoteInvalidationCalls += 1;
+          }),
+        invalidateStatus: () =>
+          Effect.sync(() => {
+            state.localInvalidationCalls += 1;
+            state.remoteInvalidationCalls += 1;
+          }),
+      }),
+    ),
+  );
+}
+
+interface GatedRefreshState {
+  currentLocalStatus: VcsStatusLocalResult;
+  currentRemoteStatus: VcsStatusRemoteResult | null;
+  localStatusCalls: number;
+  remoteStatusCalls: number;
+  localInvalidationCalls: number;
+  remoteInvalidationCalls: number;
+  seenCwds?: Array<string>;
+}
+
+interface GatedRefreshGates {
+  started: Deferred.Deferred<void> | null;
+  release: Deferred.Deferred<void> | null;
+  startedAfter?: number;
+}
+
+function makeGatedRefreshLayer(state: GatedRefreshState, gates: GatedRefreshGates) {
+  const startedAfter = gates.startedAfter ?? 1;
+  const identityRealPath = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (fs) => ({
+      ...fs,
+      realPath: (path: string) => Effect.succeed(path),
+    })),
+  );
+  return VcsStatusBroadcaster.layer.pipe(
+    Layer.provide(identityRealPath),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(makeBackgroundPolicyLayer(() => true)),
+    Layer.provide(
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
+        localStatus: (input) =>
+          Effect.suspend(() => {
+            state.seenCwds?.push(input.cwd);
+            state.localStatusCalls += 1;
+            return (
+              gates.started === null || state.localStatusCalls < startedAfter
+                ? Effect.void
+                : Deferred.succeed(gates.started, undefined).pipe(Effect.ignore)
+            ).pipe(
+              Effect.andThen(gates.release === null ? Effect.void : Deferred.await(gates.release)),
+              Effect.as(state.currentLocalStatus),
+            );
+          }),
+        remoteStatus: () =>
+          Effect.suspend(() => {
+            state.remoteStatusCalls += 1;
+            return (gates.release === null ? Effect.void : Deferred.await(gates.release)).pipe(
+              Effect.as(state.currentRemoteStatus),
+            );
           }),
         invalidateLocalStatus: () =>
           Effect.sync(() => {
@@ -816,5 +886,130 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(remoteInterrupted);
       assert.isTrue(Option.isSome(yield* Deferred.poll(remoteInterrupted)));
     }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("shares one in-flight explicit refresh per repository", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    const gates: GatedRefreshGates = { started: null, release: null };
+
+    return Effect.gen(function* () {
+      gates.started = yield* Deferred.make<void>();
+      gates.release = yield* Deferred.make<void>();
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      const first = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(gates.started);
+      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 1);
+
+      yield* Deferred.succeed(gates.release, undefined);
+      const firstResult = yield* Fiber.join(first);
+      const secondResult = yield* Fiber.join(second);
+
+      assert.deepStrictEqual(firstResult, baseStatus);
+      assert.deepStrictEqual(secondResult, baseStatus);
+      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 1);
+
+      const later = yield* broadcaster.refreshStatus("/repo");
+      assert.deepStrictEqual(later, baseStatus);
+      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 2);
+      assert.equal(state.localInvalidationCalls, 2);
+      assert.equal(state.remoteInvalidationCalls, 2);
+    }).pipe(Effect.provide(makeGatedRefreshLayer(state, gates)));
+  });
+
+  it.effect("keeps a shared refresh running after one waiter is interrupted", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    const gates: GatedRefreshGates = { started: null, release: null };
+
+    return Effect.gen(function* () {
+      gates.started = yield* Deferred.make<void>();
+      gates.release = yield* Deferred.make<void>();
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      const interruptedWaiter = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const remainingWaiter = yield* broadcaster
+        .refreshStatus("/repo")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(gates.started);
+      yield* Fiber.interrupt(interruptedWaiter);
+      const interruptedExit = yield* Fiber.await(interruptedWaiter);
+      assert.isTrue(Exit.hasInterrupts(interruptedExit));
+      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.localInvalidationCalls, 1);
+
+      yield* Deferred.succeed(gates.release, undefined);
+      const remaining = yield* Fiber.join(remainingWaiter);
+
+      assert.deepStrictEqual(remaining, baseStatus);
+      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 1);
+    }).pipe(Effect.provide(makeGatedRefreshLayer(state, gates)));
+  });
+
+  it.effect("does not share explicit refreshes across different repositories", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      seenCwds: [] as Array<string>,
+    };
+    const gates: GatedRefreshGates = { started: null, release: null, startedAfter: 2 };
+
+    return Effect.gen(function* () {
+      gates.started = yield* Deferred.make<void>();
+      gates.release = yield* Deferred.make<void>();
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      const first = yield* broadcaster
+        .refreshStatus("/repo-a")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* broadcaster
+        .refreshStatus("/repo-b")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(gates.started);
+      yield* Deferred.succeed(gates.release, undefined);
+      assert.deepStrictEqual(yield* Fiber.join(first), baseStatus);
+      assert.deepStrictEqual(yield* Fiber.join(second), baseStatus);
+      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 2);
+      assert.equal(state.localInvalidationCalls, 2);
+      assert.equal(state.remoteInvalidationCalls, 2);
+      assert.deepStrictEqual([...state.seenCwds].toSorted(), ["/repo-a", "/repo-b"]);
+    }).pipe(Effect.provide(makeGatedRefreshLayer(state, gates)));
   });
 });

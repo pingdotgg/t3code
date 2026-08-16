@@ -193,6 +193,9 @@ export const make = Effect.gen(function* () {
   );
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+  const inFlightRefreshesRef = yield* SynchronizedRef.make(
+    new Map<string, Fiber.Fiber<VcsStatusResult, GitManagerServiceError>>(),
+  );
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -365,10 +368,9 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
   });
 
-  const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
-    "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd) {
-    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+  const refreshStatusCore = Effect.fn("VcsStatusBroadcaster.refreshStatusCore")(function* (
+    cwd: string,
+  ) {
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.
     yield* workflow.invalidateStatus(cwd);
@@ -377,6 +379,37 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
     return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+  });
+
+  const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.refreshStatus",
+  )(function* (rawCwd) {
+    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    // Overlapping callers share one invalidate+recompute. The work is forked
+    // into the broadcaster scope so interrupting a waiter cannot cancel it.
+    const fiber = yield* SynchronizedRef.modifyEffect(inFlightRefreshesRef, (inFlight) => {
+      const existing = inFlight.get(cwd);
+      if (existing) {
+        return Effect.succeed([existing, inFlight] as const);
+      }
+
+      return refreshStatusCore(cwd).pipe(
+        Effect.ensuring(
+          SynchronizedRef.update(inFlightRefreshesRef, (current) => {
+            const next = new Map(current);
+            next.delete(cwd);
+            return next;
+          }),
+        ),
+        Effect.forkIn(broadcasterScope),
+        Effect.map((started) => {
+          const next = new Map(inFlight);
+          next.set(cwd, started);
+          return [started, next] as const;
+        }),
+      );
+    });
+    return yield* Fiber.join(fiber);
   });
 
   const makeRemoteRefreshLoop = (
