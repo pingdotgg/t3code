@@ -238,12 +238,12 @@ effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fall
       const { port } = yield* commonDevServer;
       const received: number[] = [];
       const scanner = yield* PortScanner.PortDiscovery;
-      yield* scanner.subscribe({ configuredUrls: [], initialSnapshot: [] }, (servers) =>
+      yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
         Effect.sync(() => {
           for (const server of servers) received.push(server.port);
         }),
       );
-      yield* scanner.retain;
+      yield* scanner.retain();
       expect(received).toContain(port);
     }),
   );
@@ -364,13 +364,13 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
     const scanner = yield* PortScanner.PortDiscovery;
     const docsSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
     const adminSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
-    yield* scanner.subscribe({ configuredUrls: [docsUrl], initialSnapshot: [] }, (servers) =>
+    yield* scanner.subscribe({ configuredUrls: [docsUrl] }, (servers) =>
       Effect.sync(() => docsSnapshots.push(servers)),
     );
-    yield* scanner.subscribe({ configuredUrls: [adminUrl], initialSnapshot: [] }, (servers) =>
+    yield* scanner.subscribe({ configuredUrls: [adminUrl] }, (servers) =>
       Effect.sync(() => adminSnapshots.push(servers)),
     );
-    yield* scanner.retain;
+    yield* scanner.retain();
 
     expect(docsSnapshots.at(-1)?.[0]?.url).toBe(docsUrl);
     expect(adminSnapshots.at(-1)?.[0]?.url).toBe(adminUrl);
@@ -397,14 +397,14 @@ effectIt.effect(
       const scanner = yield* PortScanner.PortDiscovery;
       const secondSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
       yield* scanner.subscribe(
-        { configuredUrls: firstSubscriberUrls, initialSnapshot: [] },
+        { configuredUrls: firstSubscriberUrls },
         () => Effect.void,
       );
       yield* scanner.subscribe(
-        { configuredUrls: [secondSubscriberUrl], initialSnapshot: [] },
+        { configuredUrls: [secondSubscriberUrl] },
         (servers) => Effect.sync(() => secondSnapshots.push(servers)),
       );
-      yield* scanner.retain;
+      yield* scanner.retain();
 
       expect(secondSnapshots.at(-1)?.[0]?.url).toBe(secondSubscriberUrl);
     }).pipe(Effect.scoped, Effect.provide(layer));
@@ -430,17 +430,20 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     const scanner = yield* PortScanner.PortDiscovery;
     const docsScope = yield* Scope.make();
     yield* scanner
-      .subscribe({ configuredUrls: [docsUrl], initialSnapshot: [] }, () => Effect.void)
+      .subscribe({ configuredUrls: [docsUrl] }, () => Effect.void)
       .pipe(Effect.provideService(Scope.Scope, docsScope));
     yield* scanner.subscribe(
-      { configuredUrls: [adminUrl], initialSnapshot: [] },
+      { configuredUrls: [adminUrl] },
       () => Effect.void,
     );
-    yield* scanner.retain;
+    yield* scanner.retain();
     yield* Scope.close(docsScope, Exit.void);
 
     requests.length = 0;
-    yield* TestClock.adjust(Duration.seconds(20));
+    yield* TestClock.adjust(Duration.seconds(10));
+    expect(requests).toEqual([]);
+
+    yield* TestClock.adjust(Duration.seconds(10));
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
   }).pipe(Effect.scoped, Effect.provide(layer));
@@ -692,8 +695,8 @@ effectIt("rescans once after terminal PIDs settle without repeating unchanged pr
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.subscribe(() => Effect.void);
-    yield* scanner.retain;
+    yield* scanner.subscribe({ configuredUrls: [] }, () => Effect.void);
+    yield* scanner.retain();
     yield* scanner.registerTerminalProcesses({
       threadId: "thread-1",
       terminalId: "terminal-1",
@@ -709,7 +712,7 @@ effectIt("rescans once after terminal PIDs settle without repeating unchanged pr
       terminalId: "terminal-1",
       processIds: [42],
     });
-    yield* scanner.subscribe((servers) =>
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
       Effect.sync(() => {
         replayedPorts.push(servers.map((server) => server.port));
       }),
@@ -740,7 +743,7 @@ effectIt("uses the active polling interval after the initial scan finds a server
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.retain;
+    yield* scanner.retain();
     expect(probeCount).toBe(1);
 
     yield* TestClock.adjust("9 seconds");
@@ -771,7 +774,7 @@ effectIt("uses the active interval after a terminal scan finds a server", () => 
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.retain;
+    yield* scanner.retain();
     yield* scanner.registerTerminalProcesses({
       threadId: "thread-1",
       terminalId: "terminal-1",
@@ -817,10 +820,10 @@ effectIt("serializes snapshot replay with concurrent broadcasts", () =>
 
     yield* Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
-      yield* scanner.retain;
+      yield* scanner.retain();
 
       const subscription = yield* scanner
-        .subscribe((servers) =>
+        .subscribe({ configuredUrls: [] }, (servers) =>
           Effect.gen(function* () {
             deliveryCount += 1;
             if (deliveryCount === 1) {
@@ -878,8 +881,8 @@ effectIt("allows snapshot listeners to trigger scans without deadlocking", () =>
 
   return Effect.gen(function* () {
     scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.retain;
-    yield* scanner.subscribe((servers) =>
+    yield* scanner.retain();
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
       Effect.gen(function* () {
         deliveries.push(servers.map((server) => server.port));
         if (deliveries.length === 1) {
@@ -922,7 +925,7 @@ effectIt("allows scan-broadcast listeners to trigger scans without deadlocking",
 
   return Effect.gen(function* () {
     scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.subscribe((servers) =>
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
       Effect.gen(function* () {
         deliveries.push(servers.map((server) => server.port));
         if (deliveries.length === 2) {
@@ -936,7 +939,7 @@ effectIt("allows scan-broadcast listeners to trigger scans without deadlocking",
         }
       }),
     );
-    yield* scanner.retain;
+    yield* scanner.retain();
     yield* Deferred.await(reentrantDeliveryCompleted);
 
     expect(deliveries).toEqual([[], [3000], [3001]]);
@@ -966,10 +969,10 @@ effectIt("removes listeners when initial snapshot replay fails", () => {
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.retain;
+    yield* scanner.retain();
 
     const failedSubscription = yield* scanner
-      .subscribe(() =>
+      .subscribe({ configuredUrls: [] }, () =>
         Effect.sync(() => {
           failedListenerCalls += 1;
           throw defect;
@@ -981,7 +984,7 @@ effectIt("removes listeners when initial snapshot replay fails", () => {
       expect(Cause.squash(failedSubscription.cause)).toBe(defect);
     }
 
-    yield* scanner.subscribe((servers) =>
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
       Effect.sync(() => {
         healthyDeliveries.push(servers.map((server) => server.port));
       }),
@@ -1019,10 +1022,10 @@ effectIt("removes listeners when initial snapshot replay is interrupted", () => 
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.retain;
+    yield* scanner.retain();
     const subscriptionScope = yield* Scope.make();
     const interruptedSubscription = yield* scanner
-      .subscribe(() =>
+      .subscribe({ configuredUrls: [] }, () =>
         Deferred.succeed(replayStarted, undefined).pipe(Effect.andThen(Effect.never)),
       )
       .pipe(Effect.provideService(Scope.Scope, subscriptionScope), Effect.forkScoped);
@@ -1031,7 +1034,7 @@ effectIt("removes listeners when initial snapshot replay is interrupted", () => 
     yield* Scope.close(subscriptionScope, Exit.void);
     yield* Fiber.await(interruptedSubscription);
 
-    yield* scanner.subscribe((servers) =>
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
       Effect.sync(() => {
         healthyDeliveries.push(servers.map((server) => server.port));
       }),
@@ -1066,7 +1069,7 @@ effectIt("interrupts blocked listeners when their subscription scope closes", ()
     const scanner = yield* PortScanner.PortDiscovery;
     const subscriptionScope = yield* Scope.make();
     yield* scanner
-      .subscribe(() =>
+      .subscribe({ configuredUrls: [] }, () =>
         Effect.gen(function* () {
           deliveryCount += 1;
           if (deliveryCount === 2) {
@@ -1077,7 +1080,7 @@ effectIt("interrupts blocked listeners when their subscription scope closes", ()
       )
       .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
 
-    const retainFiber = yield* scanner.retain.pipe(Effect.forkScoped);
+    const retainFiber = yield* scanner.retain().pipe(Effect.forkScoped);
     yield* Deferred.await(broadcastStarted);
     const closeFiber = yield* Scope.close(subscriptionScope, Exit.void).pipe(Effect.forkScoped);
     yield* Effect.yieldNow;
@@ -1108,7 +1111,7 @@ effectIt("acknowledges delivery when a listener stops after its callback complet
     const scanner = yield* PortScanner.PortDiscovery;
     const subscriptionScope = yield* Scope.make();
     yield* scanner
-      .subscribe(() => {
+      .subscribe({ configuredUrls: [] }, () => {
         deliveryCount += 1;
         return deliveryCount === 2
           ? Deferred.succeed(callbackCompleted, undefined).pipe(Effect.asVoid)
@@ -1120,7 +1123,7 @@ effectIt("acknowledges delivery when a listener stops after its callback complet
       Effect.andThen(Scope.close(subscriptionScope, Exit.void)),
       Effect.forkScoped,
     );
-    const retainFiber = yield* scanner.retain.pipe(Effect.forkScoped);
+    const retainFiber = yield* scanner.retain().pipe(Effect.forkScoped);
 
     yield* Fiber.join(retainFiber);
     yield* Fiber.join(closeFiber);
@@ -1160,8 +1163,8 @@ effectIt("serializes concurrent scans before publishing snapshots", () =>
 
     yield* Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
-      yield* scanner.retain;
-      yield* scanner.subscribe((servers) =>
+      yield* scanner.retain();
+      yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
         Effect.sync(() => {
           deliveries.push(servers.map((server) => server.port));
         }),

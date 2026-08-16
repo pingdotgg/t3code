@@ -49,21 +49,12 @@ export class PortDiscovery extends Context.Service<
     readonly scan: (
       configuredUrls?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
-    readonly subscribe: {
-      (
-        input: {
-          readonly configuredUrls: ReadonlyArray<string>;
-          readonly initialSnapshot?: ReadonlyArray<DiscoveredLocalServer>;
-        },
-        listener: (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>,
-      ): Effect.Effect<void, never, Scope.Scope>;
-      (
-        listener: (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>,
-      ): Effect.Effect<void, never, Scope.Scope>;
-    };
-    readonly retain: Effect.Effect<void, never, Scope.Scope>;
-    readonly retainConfigured: (
-      configuredUrls: ReadonlyArray<string>,
+    readonly subscribe: (
+      input: { readonly configuredUrls: ReadonlyArray<string> },
+      listener: (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly retain: (
+      configuredUrls?: ReadonlyArray<string>,
     ) => Effect.Effect<void, never, Scope.Scope>;
     readonly registerTerminalProcesses: (input: {
       readonly threadId: string;
@@ -775,12 +766,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     if (becameIdle) yield* wakePollSchedule;
   });
 
-  const retainConfigured: PortDiscovery["Service"]["retainConfigured"] = (configuredUrls) => {
+  const retain: PortDiscovery["Service"]["retain"] = (configuredUrls = []) => {
     const normalized = normalizeConfiguredUrls(configuredUrls);
     return Effect.acquireRelease(acquireRetention(normalized), () => releaseRetention(normalized));
   };
-
-  const retain: PortDiscovery["Service"]["retain"] = retainConfigured([]);
 
   const removeListener = (registration: ListenerRegistration) =>
     Ref.update(stateRef, (state) => {
@@ -889,26 +878,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }
   });
 
-  const subscribe: PortDiscovery["Service"]["subscribe"] = (
-    inputOrListener:
-      | Listener
-      | {
-          readonly configuredUrls: ReadonlyArray<string>;
-          readonly initialSnapshot?: ReadonlyArray<DiscoveredLocalServer>;
-        },
-    maybeListener?: Listener,
-  ) => {
-    if (typeof inputOrListener === "function") {
-      return subscribeConfigured([], inputOrListener);
-    }
-    if (maybeListener === undefined) {
-      return Effect.die(new Error("PortDiscovery.subscribe requires a listener"));
-    }
-    return subscribeConfigured(
-      normalizeConfiguredUrls(inputOrListener.configuredUrls),
-      maybeListener,
-    );
-  };
+  const subscribe: PortDiscovery["Service"]["subscribe"] = (input, listener) =>
+    subscribeConfigured(normalizeConfiguredUrls(input.configuredUrls), listener);
 
   const registerTerminalProcesses: PortDiscovery["Service"]["registerTerminalProcesses"] =
     Effect.fn("PortDiscovery.registerTerminalProcesses")(function* (input) {
@@ -954,7 +925,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     scan: scanOnce,
     subscribe,
     retain,
-    retainConfigured,
     registerTerminalProcesses,
     unregisterTerminal,
   });

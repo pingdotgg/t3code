@@ -2147,7 +2147,7 @@ const makeWsRpcLayer = (
                 // Retention performs one immediate scan when discovery was
                 // idle (or when this connection introduces configured URLs).
                 // Subscribe then replays that snapshot instead of rescanning.
-                yield* portDiscovery.retainConfigured(configuredUrls);
+                yield* portDiscovery.retain(configuredUrls);
                 yield* portDiscovery.subscribe(
                   { configuredUrls },
                   (servers) =>
