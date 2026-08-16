@@ -394,10 +394,14 @@ export function repositoryIdentityOf(project: OrchestrationProjectShell): string
   return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
 }
 
-function hostnameFromProviderBaseUrl(baseUrl: string): string | null {
+/**
+ * Host a detected provider base URL should be stored as. `URL.hostname` drops a
+ * nonstandard port, so `https://github.company:8443` must use `URL.host`.
+ */
+export function hostnameFromProviderBaseUrl(baseUrl: string): string | null {
   try {
-    const hostname = new URL(baseUrl).hostname.toLowerCase();
-    return hostname.length > 0 ? hostname : null;
+    const host = new URL(baseUrl).host.toLowerCase();
+    return host.length > 0 ? host : null;
   } catch {
     return null;
   }

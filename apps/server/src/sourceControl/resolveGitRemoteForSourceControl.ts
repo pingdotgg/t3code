@@ -58,8 +58,14 @@ export function gitRemoteSshAliasToResolve(remoteUrl: string): string | null {
   return hostname;
 }
 
+/** Same budget as `RepositoryIdentityResolver`'s `ssh -G` probe. */
+export const SSH_CONFIG_RESOLVE_TIMEOUT_MS = 5_000;
+
 export const resolveSshHostnameFromConfig: ResolveSshHostname<ResolveGitRemoteServices> = (alias) =>
-  resolveSshTarget(alias).pipe(
+  resolveSshTarget(alias, {
+    timeoutMs: SSH_CONFIG_RESOLVE_TIMEOUT_MS,
+    fallbackOnError: false,
+  }).pipe(
     Effect.map((target) => {
       const hostname = target.hostname.trim();
       return hostname.length > 0 ? hostname : null;
