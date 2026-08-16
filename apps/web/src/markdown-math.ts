@@ -20,6 +20,14 @@ interface PromoteBracketDisplayMathOptions {
   readonly source: string;
 }
 
+interface HtmlNode {
+  readonly type?: string;
+  properties?: Record<string, unknown>;
+  readonly children?: readonly HtmlNode[];
+}
+
+export const MARKDOWN_MATH_CODE_CLASS_NAMES = ["math-inline", "math-display"] as const;
+
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 
 type Delimiter = "(" | ")" | "[" | "]";
@@ -99,6 +107,25 @@ export function remarkPromoteBracketDisplayMath(options: PromoteBracketDisplayMa
         }
       }
 
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
+}
+
+/** Removes KaTeX's native parse-error tooltip after KaTeX generates its HTML. */
+export function rehypeStripKatexErrorTitle() {
+  return (tree: HtmlNode): void => {
+    const visit = (node: HtmlNode) => {
+      const className = node.properties?.className;
+      if (
+        node.type === "element" &&
+        Array.isArray(className) &&
+        className.includes("katex-error")
+      ) {
+        delete node.properties?.title;
+      }
       node.children?.forEach(visit);
     };
 

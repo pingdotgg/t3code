@@ -2131,6 +2131,14 @@ code {
   scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
 }
 
+.chat-markdown :not(.katex-display) > .katex {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
+
 .chat-markdown .katex-display > .katex {
   text-align: left;
 }

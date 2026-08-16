@@ -3,12 +3,41 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkMath from "remark-math";
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeLatexMathDelimiters, remarkPromoteBracketDisplayMath } from "./markdown-math";
+import {
+  MARKDOWN_MATH_CODE_CLASS_NAMES,
+  normalizeLatexMathDelimiters,
+  rehypeStripKatexErrorTitle,
+  remarkPromoteBracketDisplayMath,
+} from "./markdown-math";
 
-function renderMarkdown(source: string): string {
+const MATH_SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [
+      ...(defaultSchema.attributes?.code ?? []).filter(
+        (attribute) => !Array.isArray(attribute) || attribute[0] !== "className",
+      ),
+      ["className", /^language-./, ...MARKDOWN_MATH_CODE_CLASS_NAMES],
+    ],
+  },
+} satisfies Parameters<typeof rehypeSanitize>[0];
+
+const MATH_REHYPE_PLUGINS = [
+  [rehypeKatex, { output: "htmlAndMathml", errorColor: "var(--destructive)" }],
+  rehypeStripKatexErrorTitle,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const SANITIZED_MATH_REHYPE_PLUGINS = [
+  [rehypeSanitize, MATH_SANITIZE_SCHEMA],
+  ...MATH_REHYPE_PLUGINS,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+function renderMarkdown(source: string, sanitize = false): string {
   const remarkPlugins = [
     [remarkMath, { singleDollarTextMath: false }],
     [remarkPromoteBracketDisplayMath, { source }],
@@ -16,7 +45,10 @@ function renderMarkdown(source: string): string {
   return renderToStaticMarkup(
     createElement(
       ReactMarkdown,
-      { remarkPlugins, rehypePlugins: [rehypeKatex] },
+      {
+        remarkPlugins,
+        rehypePlugins: sanitize ? SANITIZED_MATH_REHYPE_PLUGINS : MATH_REHYPE_PLUGINS,
+      },
       normalizeLatexMathDelimiters(source),
     ),
   );
@@ -30,8 +62,15 @@ describe("normalizeLatexMathDelimiters", () => {
   });
 
   it("renders same-line bracket delimiters as display math", () => {
-    const html = renderMarkdown("Before \\[E=mc^2\\] after");
+    const html = renderMarkdown("Before \\[E=mc^2\\] after", true);
     expect(html).toContain('class="katex-display"');
+  });
+
+  it("uses the theme error color without a native parse-error title", () => {
+    const html = renderMarkdown("Broken: \\(x^\\)", true);
+    expect(html).toContain('class="katex-error"');
+    expect(html).toContain('style="color:var(--destructive)"');
+    expect(html).not.toContain("title=");
   });
 
   it("keeps parenthesized delimiters inline", () => {
