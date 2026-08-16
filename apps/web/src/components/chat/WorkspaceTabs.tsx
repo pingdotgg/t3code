@@ -17,6 +17,7 @@ import type { DraftId } from "~/composerDraftStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "../ui/button";
+import { Group, GroupSeparator } from "../ui/group";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -122,69 +123,76 @@ function ServerThreadTabItem({
       onAuxClick={onAuxClick}
       onContextMenu={onContextMenu}
       className={cn(
-        "group/tab relative flex h-7 max-w-48 min-w-24 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-2 text-xs transition-all duration-150 [-webkit-app-region:no-drag]",
-        isActive
-          ? "border border-border/80 bg-accent text-foreground shadow-2xs font-medium"
-          : "border border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+        "group/tab shrink-0 transition-opacity duration-150 [-webkit-app-region:no-drag]",
+        isActive ? "opacity-100" : "opacity-60 hover:opacity-100",
         isDragged && "opacity-40 scale-95",
-        isDragOver && !isDragged && "ring-2 ring-primary/80 bg-accent/90",
+        isDragOver && !isDragged && "ring-2 ring-primary/80 opacity-100",
       )}
     >
-      {isRenaming ? (
-        <input
-          autoFocus
-          aria-label="Thread title"
-          className="min-w-0 flex-1 rounded-sm bg-transparent text-xs font-medium text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
-          defaultValue={renamingTitle}
-          onBlur={(event) => {
-            onCommitRename?.(event.currentTarget.value);
-          }}
-          onFocus={(event) => event.currentTarget.select()}
-          onKeyDown={onRenameKeyDown}
-        />
-      ) : (
-        <button
-          ref={triggerRef}
-          type="button"
-          aria-label={fullLabel}
-          aria-haspopup={isActive ? "menu" : undefined}
-          onClick={handleActivationClick}
-          className="group/tab-trigger flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <ProjectFavicon
-            environmentId={tab.environmentId}
-            cwd={tab.projectCwd ?? ""}
-            faviconPath={tab.faviconPath}
-            className="size-3.5 shrink-0"
-          />
+      <Group aria-label={fullLabel} className="shrink-0">
+        {isRenaming ? (
+          <div className="flex h-7 items-center rounded-s-[var(--control-radius)] border border-e-0 border-input bg-popover px-2 text-xs dark:bg-input/32">
+            <input
+              autoFocus
+              aria-label="Thread title"
+              className="w-28 bg-transparent text-xs font-medium text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
+              defaultValue={renamingTitle}
+              onBlur={(event) => {
+                onCommitRename?.(event.currentTarget.value);
+              }}
+              onFocus={(event) => event.currentTarget.select()}
+              onKeyDown={onRenameKeyDown}
+            />
+          </div>
+        ) : (
           <Tooltip>
-            <TooltipTrigger render={<span className="truncate">{title}</span>} />
+            <TooltipTrigger
+              render={
+                <Button
+                  ref={triggerRef}
+                  size="xs"
+                  variant="outline"
+                  aria-label={fullLabel}
+                  aria-haspopup={isActive ? "menu" : undefined}
+                  onClick={handleActivationClick}
+                  className={cn(
+                    "max-w-44 ps-[8.5px] text-xs font-normal",
+                    isActive
+                      ? "bg-accent font-medium text-foreground ring-1 ring-ring/40 shadow-xs"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <ProjectFavicon
+                    environmentId={tab.environmentId}
+                    cwd={tab.projectCwd ?? ""}
+                    faviconPath={tab.faviconPath}
+                    className="size-3.5 shrink-0"
+                  />
+                  <span className="truncate">{title}</span>
+                  {isActive ? (
+                    <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                  ) : null}
+                  {tab.pinned ? <Pin className="size-2.5 shrink-0 rotate-45 opacity-60" /> : null}
+                </Button>
+              }
+            />
             <TooltipPopup side="bottom">{fullLabel}</TooltipPopup>
           </Tooltip>
-          {isActive ? (
-            <ChevronDown
-              aria-hidden
-              className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/tab:opacity-100 group-focus-visible/tab-trigger:opacity-100"
-            />
-          ) : null}
-          {tab.pinned ? <Pin className="size-2.5 shrink-0 rotate-45 opacity-60" /> : null}
-        </button>
-      )}
-
-      <Button
-        size="icon-micro"
-        variant="ghost-muted"
-        aria-label={`Close ${title}`}
-        onClick={onClose}
-        className={cn(
-          "shrink-0",
-          isActive
-            ? "opacity-60 hover:opacity-100"
-            : "opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
         )}
-      >
-        <X className="size-3" />
-      </Button>
+        <GroupSeparator />
+        <Button
+          size="icon-xs"
+          variant="outline"
+          aria-label={`Close ${title}`}
+          onClick={onClose}
+          className={cn(
+            "text-muted-foreground hover:text-foreground",
+            isActive && "bg-accent ring-1 ring-ring/40 shadow-xs text-foreground",
+          )}
+        >
+          <X className="size-3.5" />
+        </Button>
+      </Group>
     </div>
   );
 }
@@ -444,36 +452,39 @@ export function WorkspaceTabs({
   }, []);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden" data-workspace-tabs="">
+    <div
+      className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
+      data-workspace-tabs=""
+    >
       <ScrollArea
         hideScrollbars
-        scrollFade
-        className="min-w-0 flex-1 rounded-none"
+        className="h-full min-w-0 flex-1 rounded-none"
         data-workspace-tab-list=""
       >
         <div
           onWheel={handleWheel}
-          className="flex h-full w-max min-w-full items-center gap-1 py-0.5"
+          className="flex h-full w-max min-w-full items-center gap-1.5 px-0.5"
         >
           <Tooltip>
             <TooltipTrigger
               render={
-                <button
-                  type="button"
+                <Button
+                  size="xs"
+                  variant="outline"
                   aria-label="New thread"
                   data-active-tab={isDraftActive ? "true" : "false"}
                   data-tab-key="new-thread"
                   onClick={onNewTab}
                   className={cn(
-                    "group/tab relative flex h-7 max-w-40 min-w-24 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors duration-150 [-webkit-app-region:no-drag] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+                    "shrink-0 ps-[8.5px] text-xs font-normal [-webkit-app-region:no-drag]",
                     isDraftActive
-                      ? "border border-border/80 bg-accent text-foreground shadow-2xs font-medium"
-                      : "border border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      ? "bg-accent font-medium text-foreground ring-1 ring-ring/40 shadow-xs"
+                      : "text-foreground",
                   )}
                 >
-                  <Plus className="size-3.5 shrink-0 text-muted-foreground group-hover/tab:text-foreground" />
+                  <Plus className="size-3.5 shrink-0" />
                   <span className="truncate">New thread</span>
-                </button>
+                </Button>
               }
             />
             <TooltipPopup side="bottom">New thread</TooltipPopup>
