@@ -17,5 +17,6 @@ describe("PreviewMiniPlayerUnreachable", () => {
     expect(html).toContain("Retry");
     expect(html).toContain("Close");
     expect(html).toContain("Connection refused");
+    expect(html).toContain("pointer-events-auto");
   });
 });

@@ -15,7 +15,7 @@ export function PreviewMiniPlayerUnreachable({ url, description, onRetry, onClos
   const friendly = describePreviewError(description);
 
   return (
-    <div className="absolute inset-0 z-[32] flex flex-col items-center justify-center gap-3 rounded-xl bg-background px-4 text-center">
+    <div className="pointer-events-auto absolute inset-0 z-[32] flex flex-col items-center justify-center gap-3 rounded-xl bg-background px-4 text-center">
       <p className="text-xs font-medium text-foreground">Can&apos;t reach {host}</p>
       <p className="text-[11px] leading-snug text-muted-foreground">{friendly}</p>
       <div className="flex items-center gap-2">
