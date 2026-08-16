@@ -40,19 +40,51 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(20);
 /// User-private filesystem socket (Unix) or user-scoped named pipe (Windows).
 /// Abstract / global names are intentionally avoided — they have no ownership.
 #[cfg(unix)]
-fn bridge_socket_path() -> PathBuf {
+fn bridge_socket_path() -> Option<PathBuf> {
     let dir = if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
         PathBuf::from(runtime).join("t3-desktop-mcp")
     } else if let Some(home) = std::env::var_os("HOME") {
         PathBuf::from(home).join(".local/share/t3-desktop-mcp")
     } else {
-        let user = std::env::var("USER").unwrap_or_else(|_| "user".into());
-        std::env::temp_dir().join(format!("t3-desktop-mcp-{user}"))
+        // Prefer a UID-owned private dir over a USER-named /tmp path another
+        // local account can pre-create. Fail closed if we cannot claim it.
+        let uid = unsafe { libc::getuid() };
+        std::env::temp_dir().join(format!("t3-desktop-mcp-{uid}"))
     };
-    let _ = std::fs::create_dir_all(&dir);
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    dir.join("bridge.sock")
+
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        eprintln!("t3-desktop-mcp: bridge dir create failed: {error}");
+        return None;
+    }
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let metadata = match std::fs::metadata(&dir) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            eprintln!("t3-desktop-mcp: bridge dir metadata failed: {error}");
+            return None;
+        }
+    };
+    if metadata.uid() != unsafe { libc::getuid() } {
+        eprintln!("t3-desktop-mcp: bridge dir not owned by current user");
+        return None;
+    }
+    if let Err(error) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
+        eprintln!("t3-desktop-mcp: bridge dir chmod failed: {error}");
+        return None;
+    }
+    // Re-check mode after chmod — refuse a sticky/world-writable directory.
+    let mode = match std::fs::metadata(&dir) {
+        Ok(metadata) => metadata.mode() & 0o777,
+        Err(error) => {
+            eprintln!("t3-desktop-mcp: bridge dir re-stat failed: {error}");
+            return None;
+        }
+    };
+    if mode != 0o700 {
+        eprintln!("t3-desktop-mcp: bridge dir mode {mode:o} is not 0700");
+        return None;
+    }
+    Some(dir.join("bridge.sock"))
 }
 
 #[cfg(windows)]
@@ -277,7 +309,10 @@ fn spawn_listener(
 ) {
     std::thread::spawn(move || {
         #[cfg(unix)]
-        let path = bridge_socket_path();
+        let path = match bridge_socket_path() {
+            Some(path) => path,
+            None => return,
+        };
         #[cfg(unix)]
         let name = match path.as_os_str().to_fs_name::<GenericFilePath>() {
             Ok(name) => name,
@@ -319,7 +354,12 @@ fn spawn_listener(
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            if let Err(error) =
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            {
+                eprintln!("t3-desktop-mcp: bridge socket chmod failed: {error}");
+                return;
+            }
         }
 
         let mut accept_failures: u32 = 0;
@@ -526,7 +566,12 @@ fn describe_snapshot(result: &Value) -> String {
 /// side is newline-delimited JSON, which keeps the server's reader trivial.
 pub fn run_native_host() -> std::io::Result<()> {
     #[cfg(unix)]
-    let path = bridge_socket_path();
+    let path = bridge_socket_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no safe bridge socket path (HOME/XDG_RUNTIME_DIR unset or chmod failed)",
+        )
+    })?;
     #[cfg(unix)]
     let name = path.as_os_str().to_fs_name::<GenericFilePath>()?;
     #[cfg(windows)]

@@ -432,11 +432,23 @@ final class BrowserBridge {
         writeLock.unlock()
 
         if !wrote {
+            // A partial write corrupts newline framing for every later request —
+            // shut the socket down so `serve` tears down and the host reconnects.
             lock.lock()
             if clientFD == fd && connectionGeneration == generation {
                 pending.removeValue(forKey: id)
+                let stranded = pending
+                pending.removeAll()
+                clientFD = -1
+                lock.unlock()
+                _ = Darwin.shutdown(fd, SHUT_RDWR)
+                for (_, resume) in stranded {
+                    resume(.failure("the browser extension disconnected"))
+                }
+            } else {
+                pending.removeValue(forKey: id)
+                lock.unlock()
             }
-            lock.unlock()
             return .failure("the browser extension disconnected")
         }
 

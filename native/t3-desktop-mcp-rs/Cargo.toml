@@ -35,6 +35,9 @@ windows = { version = "0.62.2", features = [
   "Win32_Graphics_Gdi",
 ] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # AT-SPI is the only general accessibility surface on Linux. It is async-first,
 # so tool handlers block on a tiny executor rather than dragging tokio in.
