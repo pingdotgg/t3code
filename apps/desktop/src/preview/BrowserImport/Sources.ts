@@ -42,6 +42,19 @@ const pathExists = (path: string): Promise<boolean> =>
     () => false,
   );
 
+/**
+ * Tests the directory entry itself rather than whatever it points at.
+ *
+ * Chromium points `SingletonLock` at `<host>-<pid>`, a target that never
+ * exists, so following the link reports a running browser as closed — exactly
+ * backwards, and it would let an import read a live, mid-write database.
+ */
+const entryExists = (path: string): Promise<boolean> =>
+  NodeFSP.lstat(path).then(
+    () => true,
+    () => false,
+  );
+
 export const cookieDatabasePath = (
   definition: BrowserImportSourceDefinition,
   profileDirectory: string,
@@ -85,7 +98,7 @@ export async function isSourceRunning(definition: BrowserImportSourceDefinition)
   // Chromium writes a `SingletonLock` symlink for as long as an instance holds
   // the profile. Its presence is a far cheaper and more targeted signal than
   // scanning the process table for a name.
-  return pathExists(NodePath.join(definition.userDataDirectory(), "SingletonLock"));
+  return entryExists(NodePath.join(definition.userDataDirectory(), "SingletonLock"));
 }
 
 export async function isSourceInstalled(
