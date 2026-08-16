@@ -59,6 +59,7 @@ import {
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  shouldForwardComposerArrowToTimeline,
 } from "~/composer-logic";
 import {
   selectionTouchesMentionBoundary,
@@ -897,6 +898,12 @@ interface ComposerPromptEditorProps {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  /**
+   * Called for an Arrow Up/Down that the composer itself cannot act on (caret
+   * already at the edge, composer scrolled to its own limit). Return true to
+   * claim the key — the chat uses it to scroll the transcript.
+   */
+  onArrowBeyondEdge?: (direction: "up" | "down") => boolean;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -959,6 +966,64 @@ function ComposerCommandKeyPlugin(props: {
       unregisterTab();
     };
   }, [editor, props]);
+
+  return null;
+}
+
+/**
+ * Hands Arrow Up/Down to the host when the caret is already at the composer's
+ * first/last offset and the composer is scrolled to that same edge. Runs at low
+ * priority so menus and the command-key plugin still get the key first.
+ */
+function ComposerEdgeArrowPlugin(props: {
+  onArrowBeyondEdge: (direction: "up" | "down") => boolean;
+}) {
+  const [editor] = useLexicalComposerContext();
+  const onArrowBeyondEdge = useEffectEvent(props.onArrowBeyondEdge);
+
+  useEffect(() => {
+    const handle = (direction: "up" | "down", event: KeyboardEvent | null): boolean => {
+      if (!event || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+        return false;
+      }
+      const rootElement = editor.getRootElement();
+      if (!rootElement) return false;
+      let shouldForward = false;
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        shouldForward = shouldForwardComposerArrowToTimeline({
+          direction,
+          hasModifier: false,
+          isCollapsed: selection.isCollapsed(),
+          cursor: $readSelectionOffsetFromEditorState(0),
+          length: $getComposerRootLength(),
+          editorScrollTop: rootElement.scrollTop,
+          editorScrollHeight: rootElement.scrollHeight,
+          editorClientHeight: rootElement.clientHeight,
+        });
+      });
+      if (!shouldForward || !onArrowBeyondEdge(direction)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    };
+
+    const unregisterUp = editor.registerCommand(
+      KEY_ARROW_UP_COMMAND,
+      (event) => handle("up", event),
+      COMMAND_PRIORITY_LOW,
+    );
+    const unregisterDown = editor.registerCommand(
+      KEY_ARROW_DOWN_COMMAND,
+      (event) => handle("down", event),
+      COMMAND_PRIORITY_LOW,
+    );
+    return () => {
+      unregisterUp();
+      unregisterDown();
+    };
+  }, [editor]);
 
   return null;
 }
@@ -1537,6 +1602,7 @@ function ComposerPromptEditorInner({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onArrowBeyondEdge,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1774,6 +1840,9 @@ function ComposerPromptEditorInner({
         />
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+        {onArrowBeyondEdge ? (
+          <ComposerEdgeArrowPlugin onArrowBeyondEdge={onArrowBeyondEdge} />
+        ) : null}
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
@@ -1798,6 +1867,7 @@ export function ComposerPromptEditor({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onArrowBeyondEdge,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1837,6 +1907,7 @@ export function ComposerPromptEditor({
         onPaste={onPaste}
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+        {...(onArrowBeyondEdge ? { onArrowBeyondEdge } : {})}
         {...(className ? { className } : {})}
       />
     </LexicalComposer>

@@ -510,6 +510,8 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+// Roughly one line of transcript per arrow press, matching native key scroll.
+const TIMELINE_ARROW_SCROLL_STEP_PX = 40;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -3777,6 +3779,26 @@ function ChatViewContent(props: ChatViewProps) {
       void legendListRef.current?.scrollToEnd?.({ animated });
     });
   }, []);
+  // Arrow keys the composer cannot use scroll the transcript by roughly a
+  // line, the same as if the list itself held focus. Returns false when the
+  // transcript is already at that edge so the key falls through untouched.
+  const scrollTimelineByArrowKey = useCallback(
+    (direction: "up" | "down") => {
+      const scrollNode = legendListRef.current?.getScrollableNode();
+      if (!(scrollNode instanceof HTMLElement)) return false;
+      const maxScrollTop = Math.max(0, scrollNode.scrollHeight - scrollNode.clientHeight);
+      const delta =
+        direction === "up" ? -TIMELINE_ARROW_SCROLL_STEP_PX : TIMELINE_ARROW_SCROLL_STEP_PX;
+      const nextScrollTop = Math.max(0, Math.min(maxScrollTop, scrollNode.scrollTop + delta));
+      if (Math.abs(nextScrollTop - scrollNode.scrollTop) < 1) return false;
+      if (direction === "up") {
+        cancelTimelineLiveFollowForUserNavigation();
+      }
+      scrollNode.scrollTop = nextScrollTop;
+      return true;
+    },
+    [cancelTimelineLiveFollowForUserNavigation],
+  );
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -6487,6 +6509,7 @@ function ChatViewContent(props: ChatViewProps) {
                             handleInteractionModeChange={handleInteractionModeChange}
                             focusComposer={focusComposer}
                             scheduleComposerFocus={scheduleComposerFocus}
+                            scrollTimelineByArrowKey={scrollTimelineByArrowKey}
                             setThreadError={setThreadError}
                             onExpandImage={onExpandTimelineImage}
                           />

@@ -602,6 +602,11 @@ export interface ChatComposerProps {
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
+  /**
+   * Scrolls the transcript one step. Used for Arrow Up/Down the composer
+   * cannot act on; returns false when the transcript cannot move either.
+   */
+  scrollTimelineByArrowKey: (direction: "up" | "down") => boolean;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
 }
@@ -673,6 +678,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     handleInteractionModeChange,
     focusComposer,
     scheduleComposerFocus,
+    scrollTimelineByArrowKey,
     setThreadError,
     onExpandImage,
   } = props;
@@ -1946,6 +1952,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return false;
   };
 
+  // An arrow the composer cannot act on (caret parked at its first/last
+  // offset) scrolls the transcript instead of doing nothing — the common case
+  // after a keyboard thread switch, which focuses the composer. Menus own the
+  // arrows while they are open.
+  const onComposerArrowBeyondEdge = (direction: "up" | "down") => {
+    if (composerMenuOpenRef.current || resolveActiveComposerTrigger().trigger !== null) {
+      return false;
+    }
+    return scrollTimelineByArrowKey(direction);
+  };
+
   // ------------------------------------------------------------------
   // Prompt stash (⌘S)
   // ------------------------------------------------------------------
@@ -3062,6 +3079,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}
+                onArrowBeyondEdge={onComposerArrowBeyondEdge}
                 onPaste={onComposerPaste}
                 placeholder={
                   isComposerApprovalState

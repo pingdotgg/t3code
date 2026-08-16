@@ -8,6 +8,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  shouldForwardComposerArrowToTimeline,
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -370,5 +371,70 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+});
+
+describe("shouldForwardComposerArrowToTimeline", () => {
+  // Empty composer, nothing scrolled: the state a keyboard thread switch lands in.
+  const atRest = {
+    hasModifier: false,
+    isCollapsed: true,
+    cursor: 0,
+    length: 0,
+    editorScrollTop: 0,
+    editorScrollHeight: 100,
+    editorClientHeight: 100,
+  };
+
+  it("forwards both arrows from an empty composer", () => {
+    expect(shouldForwardComposerArrowToTimeline({ ...atRest, direction: "up" })).toBe(true);
+    expect(shouldForwardComposerArrowToTimeline({ ...atRest, direction: "down" })).toBe(true);
+  });
+
+  it("keeps arrows that still move the caret", () => {
+    expect(
+      shouldForwardComposerArrowToTimeline({
+        ...atRest,
+        direction: "up",
+        cursor: 3,
+        length: 10,
+      }),
+    ).toBe(false);
+    expect(
+      shouldForwardComposerArrowToTimeline({
+        ...atRest,
+        direction: "down",
+        cursor: 3,
+        length: 10,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps arrows while the composer can still scroll itself", () => {
+    expect(
+      shouldForwardComposerArrowToTimeline({
+        ...atRest,
+        direction: "up",
+        editorScrollTop: 20,
+        editorScrollHeight: 400,
+      }),
+    ).toBe(false);
+    expect(
+      shouldForwardComposerArrowToTimeline({
+        ...atRest,
+        direction: "down",
+        editorScrollTop: 20,
+        editorScrollHeight: 400,
+      }),
+    ).toBe(false);
+  });
+
+  it("leaves modified and selecting arrows alone", () => {
+    expect(
+      shouldForwardComposerArrowToTimeline({ ...atRest, direction: "up", hasModifier: true }),
+    ).toBe(false);
+    expect(
+      shouldForwardComposerArrowToTimeline({ ...atRest, direction: "up", isCollapsed: false }),
+    ).toBe(false);
   });
 });

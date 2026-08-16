@@ -18,6 +18,31 @@ export function shouldSubmitComposerOnEnter(input: {
   return !input.isMobileViewport && !input.shiftKey;
 }
 
+/**
+ * True when an Arrow Up/Down press in the composer cannot move the caret or
+ * scroll the composer itself, so the transcript should take the key instead.
+ * Keyboard thread switches focus the composer, and without this the arrows
+ * silently do nothing.
+ */
+export function shouldForwardComposerArrowToTimeline(input: {
+  direction: "up" | "down";
+  hasModifier: boolean;
+  isCollapsed: boolean;
+  cursor: number;
+  length: number;
+  editorScrollTop: number;
+  editorScrollHeight: number;
+  editorClientHeight: number;
+}): boolean {
+  if (input.hasModifier || !input.isCollapsed) return false;
+  if (input.direction === "up") {
+    if (input.cursor > 0) return false;
+    return input.editorScrollTop <= 0;
+  }
+  if (input.cursor < input.length) return false;
+  return input.editorScrollTop >= input.editorScrollHeight - input.editorClientHeight - 1;
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }
