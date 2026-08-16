@@ -57,8 +57,9 @@ const macApplicationSupport = (
 
 /**
  * One Chromium fork across the three platforms. The macOS and Linux leaves
- * differ per fork, and Windows nests everything under a `User Data` directory.
- * Omitting a platform's segments marks the fork as unavailable there.
+ * differ per fork, and Windows usually nests everything under a `User Data`
+ * directory in local AppData. Omitting a platform's segments marks the fork as
+ * unavailable there.
  */
 const chromiumSource = (input: {
   readonly id: BrowserImportSourceId;
@@ -67,6 +68,12 @@ const chromiumSource = (input: {
   readonly keychainAccount: string;
   readonly macSegments: ReadonlyArray<string>;
   readonly windowsSegments?: ReadonlyArray<string>;
+  /**
+   * Forks that sit under roaming `%APPDATA%` with no `User Data` level. Opera
+   * is the one that does this; everything else follows the local-AppData
+   * convention above.
+   */
+  readonly windowsRoamingSegments?: ReadonlyArray<string>;
   readonly linuxSegments?: ReadonlyArray<string>;
 }): BrowserImportSourceDefinition => ({
   id: input.id,
@@ -74,7 +81,7 @@ const chromiumSource = (input: {
   engine: "chromium",
   platforms: [
     "darwin" as NodeJS.Platform,
-    ...(input.windowsSegments ? ["win32" as NodeJS.Platform] : []),
+    ...(input.windowsSegments || input.windowsRoamingSegments ? ["win32" as NodeJS.Platform] : []),
     ...(input.linuxSegments ? ["linux" as NodeJS.Platform] : []),
   ],
   keychainService: input.keychainService,
@@ -82,6 +89,11 @@ const chromiumSource = (input: {
   userDataDirectory: (context) => {
     if (context.platform === "darwin") return macApplicationSupport(context, ...input.macSegments);
     if (context.platform === "win32") {
+      if (input.windowsRoamingSegments) {
+        return context.appData
+          ? context.path.join(context.appData, ...input.windowsRoamingSegments)
+          : undefined;
+      }
       return input.windowsSegments && context.localAppData
         ? context.path.join(context.localAppData, ...input.windowsSegments, "User Data")
         : undefined;
@@ -135,7 +147,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainService: "Opera Safe Storage",
     keychainAccount: "Opera",
     macSegments: ["com.operasoftware.Opera"],
-    windowsSegments: ["Programs", "Opera"],
+    windowsRoamingSegments: ["Opera Software", "Opera Stable"],
     linuxSegments: ["opera"],
   }),
   // Arc and Helium ship macOS-only builds.
@@ -345,6 +357,8 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
   return found.filter((profile) => profile !== undefined);
 });
 
+const FIREFOX_LOCK_NAMES = ["lock", ".parentlock", "parent.lock"] as const;
+
 /** Whether the browser is running, which leaves its cookie DB mid-write. */
 export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
   definition: BrowserImportSourceDefinition,
@@ -352,11 +366,27 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
 ): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
   const root = definition.userDataDirectory(context);
   if (root === undefined) return false;
-  // Chromium writes a `SingletonLock` symlink and Firefox a `lock` /
-  // `parent.lock` for as long as an instance holds the profile. Far cheaper
-  // and more targeted than scanning the process table for a name.
-  const locks = definition.engine === "firefox" ? ["lock", "parent.lock"] : ["SingletonLock"];
-  const found = yield* Effect.forEach(locks, (lock) => entryExists(context.path.join(root, lock)));
+  // Both engines leave a lock file for as long as an instance holds a profile,
+  // which is far cheaper and more targeted than scanning the process table.
+  //
+  // They differ in where: Chromium keeps one `SingletonLock` for the whole
+  // user-data directory, Firefox keeps its locks inside each profile, under
+  // three names across platforms (`lock` on macOS and Linux, `.parentlock`
+  // beside it, `parent.lock` on Windows). Looking for Firefox's at the root
+  // finds nothing and reports a running browser as importable.
+  if (definition.engine !== "firefox") {
+    return yield* entryExists(context.path.join(root, "SingletonLock"));
+  }
+
+  const profiles = yield* listSourceProfiles(definition, context);
+  const found = yield* Effect.forEach(profiles, (profile) => {
+    const directory = context.path.isAbsolute(profile.directory)
+      ? profile.directory
+      : context.path.join(root, profile.directory);
+    return Effect.forEach(FIREFOX_LOCK_NAMES, (lock) =>
+      entryExists(context.path.join(directory, lock)),
+    ).pipe(Effect.map((results) => results.some(Boolean)));
+  });
   return found.some(Boolean);
 });
 

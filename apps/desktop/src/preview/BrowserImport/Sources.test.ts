@@ -175,6 +175,64 @@ describe("cookieDatabasePath", () => {
   );
 });
 
+const firefox = BROWSER_IMPORT_SOURCES.find((source) => source.id === "firefox")!;
+const opera = BROWSER_IMPORT_SOURCES.find((source) => source.id === "opera")!;
+
+describe("isSourceRunning for Firefox", () => {
+  it.effect("finds the lock inside the profile, not at the root", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const root = firefox.userDataDirectory(context)!;
+        const profile = `${root}/Profiles/abcd.default-release`;
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+
+        assert.isFalse(yield* isSourceRunning(firefox, context));
+
+        // Firefox keeps its locks per profile. A root-level lock is not one,
+        // and looking there was why a running Firefox read as importable.
+        yield* fileSystem.writeFileString(`${root}/lock`, "");
+        assert.isFalse(yield* isSourceRunning(firefox, context));
+
+        yield* fileSystem.writeFileString(`${profile}/.parentlock`, "");
+        assert.isTrue(yield* isSourceRunning(firefox, context));
+      }),
+    ),
+  );
+});
+
+describe("Windows user-data directories", () => {
+  it.effect("puts Opera under roaming AppData without a User Data level", () =>
+    run(
+      Effect.gen(function* () {
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            USERPROFILE: "C:\\Users\\u",
+            APPDATA: "C:\\Users\\u\\AppData\\Roaming",
+            LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local",
+          }),
+          Effect.provideService(HostProcessPlatform, "win32"),
+        );
+
+        // Opera does not follow the local-AppData `User Data` convention its
+        // Chromium relatives use, so deriving it that way never found it.
+        assert.include(opera.userDataDirectory(context) ?? "", "Roaming");
+        assert.include(opera.userDataDirectory(context) ?? "", "Opera Stable");
+        assert.notInclude(opera.userDataDirectory(context) ?? "", "User Data");
+
+        const chrome = BROWSER_IMPORT_SOURCES.find((source) => source.id === "chrome")!;
+        assert.include(chrome.userDataDirectory(context) ?? "", "Local");
+        assert.include(chrome.userDataDirectory(context) ?? "", "User Data");
+      }),
+    ),
+  );
+});
+
 describe("listSourceProfiles hardening", () => {
   it.effect("drops profile directories that are not a single plain segment", () =>
     run(

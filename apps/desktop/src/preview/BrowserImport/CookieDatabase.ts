@@ -73,10 +73,17 @@ export const snapshotCookieDatabase = Effect.fn("CookieDatabase.snapshotCookieDa
   });
   const target = path.join(directory, path.basename(cookiePath));
   yield* fileSystem.copyFile(cookiePath, target);
-  // The sidecars only exist while the browser holds the database open, so a
-  // missing one is normal rather than a failure.
+  // A sidecar only exists while the browser holds the database open, so an
+  // absent one is normal. Anything else — a permission error, a partial read
+  // — is not: SQLite would then open the snapshot without the write-ahead
+  // log and quietly return a cookie set missing its newest transactions.
   yield* Effect.forEach(["-wal", "-shm"], (suffix) =>
-    fileSystem.copyFile(`${cookiePath}${suffix}`, `${target}${suffix}`).pipe(Effect.ignore),
+    fileSystem.copyFile(`${cookiePath}${suffix}`, `${target}${suffix}`).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.void,
+      ),
+    ),
   );
   return target;
 });
