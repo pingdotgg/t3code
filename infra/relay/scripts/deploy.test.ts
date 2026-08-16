@@ -9,7 +9,6 @@ import {
   missingRelayPublicConfigFields,
   publicConfigFromOutput,
   reconcileRootEnvPublicConfig,
-  reconcileRootEnvRelayUrl,
   RelayDeployError,
   RelayDeployPublicConfigUnavailableError,
   serializeGithubOutput,
@@ -84,25 +83,6 @@ describe("hasDeployChanges", () => {
         },
       } as never),
     ).toBe(true);
-  });
-});
-
-describe("reconcileRootEnvRelayUrl", () => {
-  it("adds the relay URL to an empty root env file", () => {
-    expect(reconcileRootEnvRelayUrl("", "https://relay.example.test")).toBe(
-      "T3CODE_RELAY_URL=https://relay.example.test\n",
-    );
-  });
-
-  it("preserves unrelated root env entries while replacing a previous relay URL", () => {
-    expect(
-      reconcileRootEnvRelayUrl(
-        "T3CODE_CLERK_PUBLISHABLE_KEY=pk_test_example\nT3CODE_RELAY_URL=https://old.example.test\n",
-        "https://relay.example.test",
-      ),
-    ).toBe(
-      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_test_example\nT3CODE_RELAY_URL=https://relay.example.test\n",
-    );
   });
 });
 

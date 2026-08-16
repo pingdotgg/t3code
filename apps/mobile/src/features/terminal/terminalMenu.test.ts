@@ -8,7 +8,6 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
-  nextTerminalId,
   previousLiveTerminalId,
   resolveProjectScriptTerminalId,
   type TerminalMenuSession,
@@ -122,16 +121,6 @@ describe("buildTerminalMenuSessions", () => {
         updatedAt: "2026-04-15T20:07:00.000Z",
       },
     ]);
-  });
-});
-
-describe("nextTerminalId", () => {
-  it("uses the primary id when no terminals are listed yet", () => {
-    expect(nextTerminalId([])).toBe(DEFAULT_TERMINAL_ID);
-  });
-
-  it("allocates term-2 when only the primary shell exists", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID])).toBe("term-2");
   });
 });
 
