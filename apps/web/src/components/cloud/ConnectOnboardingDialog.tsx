@@ -7,6 +7,7 @@ import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
+  resolveOnboardingManagedTunnelActive,
   resolveOnboardingReconcileDesired,
   shouldSyncOnboardingToggleFromLinkState,
 } from "~/cloud/connectOnboarding";
@@ -208,7 +209,11 @@ function ConfiguredConnectOnboardingDialog() {
     const desired = resolveOnboardingReconcileDesired({
       exposeEnvironment,
       publishAgentActivity,
-      managedTunnelActive: controller.managedTunnelActive,
+      managedTunnelActive: resolveOnboardingManagedTunnelActive({
+        managedTunnelActive: controller.managedTunnelActive,
+        cloudUserId: linkStateData?.cloudUserId,
+        openForAccount,
+      }),
     });
     if (desired === null) {
       setStep("devices");

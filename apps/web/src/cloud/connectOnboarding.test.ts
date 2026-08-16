@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveOnboardingManagedTunnelActive,
   resolveOnboardingReconcileDesired,
   shouldSyncOnboardingToggleFromLinkState,
 } from "./connectOnboarding";
@@ -56,6 +57,39 @@ describe("shouldSyncOnboardingToggleFromLinkState", () => {
         cloudUserId: "user-1",
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveOnboardingManagedTunnelActive", () => {
+  it("uses the current tunnel only when the cached link belongs to this account", () => {
+    expect(
+      resolveOnboardingManagedTunnelActive({
+        managedTunnelActive: true,
+        cloudUserId: "user-1",
+        openForAccount: "user-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores a previous account's active tunnel after an account switch", () => {
+    expect(
+      resolveOnboardingManagedTunnelActive({
+        managedTunnelActive: true,
+        cloudUserId: "user-1",
+        openForAccount: "user-2",
+      }),
+    ).toBe(false);
+    expect(
+      resolveOnboardingReconcileDesired({
+        exposeEnvironment: false,
+        publishAgentActivity: true,
+        managedTunnelActive: resolveOnboardingManagedTunnelActive({
+          managedTunnelActive: true,
+          cloudUserId: "user-1",
+          openForAccount: "user-2",
+        }),
+      }),
+    ).toEqual({ managedTunnel: false, publish: true });
   });
 });
 

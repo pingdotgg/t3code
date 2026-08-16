@@ -2,6 +2,7 @@ import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  isInitialCloudLinkStatePending,
   isQrShareableEndpoint,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
@@ -14,6 +15,20 @@ const baseWslState: DesktopWslState = {
   distros: [],
   preflightError: null,
 };
+
+describe("isInitialCloudLinkStatePending", () => {
+  it("treats SWR revalidation of a cached snapshot as ready", () => {
+    expect(isInitialCloudLinkStatePending({ isPending: true, data: { linked: true } })).toBe(false);
+    expect(isInitialCloudLinkStatePending({ isPending: false, data: { linked: true } })).toBe(
+      false,
+    );
+  });
+
+  it("is pending only before the first link-state value arrives", () => {
+    expect(isInitialCloudLinkStatePending({ isPending: true, data: null })).toBe(true);
+    expect(isInitialCloudLinkStatePending({ isPending: false, data: null })).toBe(false);
+  });
+});
 
 describe("applyWslEnableSelection", () => {
   it("clears WSL-only and updates the distro before enabling both backends", async () => {

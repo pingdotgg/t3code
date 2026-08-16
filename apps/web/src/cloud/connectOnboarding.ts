@@ -31,6 +31,17 @@ export function shouldSyncOnboardingToggleFromLinkState(input: {
   );
 }
 
+// controller.managedTunnelActive is environment-global. After an account
+// switch the cached link can still belong to the previous user — only treat
+// it as this wizard's tunnel when the linked user matches.
+export function resolveOnboardingManagedTunnelActive(input: {
+  readonly managedTunnelActive: boolean;
+  readonly cloudUserId: string | null | undefined;
+  readonly openForAccount: string | null;
+}): boolean {
+  return input.cloudUserId === input.openForAccount ? input.managedTunnelActive : false;
+}
+
 // The wizard only ever enables. Both toggles off means skip — do not unlink,
 // downgrade, or rewrite publish. A stale expose=false after startup
 // reconcile must also not submit publish_only and tear the tunnel down.
