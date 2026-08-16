@@ -30,7 +30,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
-import { collectStreamAsString } from "./providerSnapshot.ts";
+import { drainChildProcessStdio } from "../stream/collectUint8StreamText.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -246,12 +246,18 @@ export function parseModelsCliOutput(stdout: string): {
   return { providers, connected: [...providers.keys()] };
 }
 
+export interface ParsedOpenCodeAgentList {
+  readonly agents: ReadonlyArray<Agent>;
+  readonly truncated: boolean;
+}
+
 /** @internal */
-export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
+export function parseAgentListCliOutput(stdout: string): ParsedOpenCodeAgentList {
   const agents: Array<Agent> = [];
   const lines = stdout.split("\n");
   let currentHeader: { name: string; mode: string } | null = null;
   const blockLines: Array<string> = [];
+  let truncated = false;
 
   const flushAgent = () => {
     if (currentHeader !== null) {
@@ -267,8 +273,10 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
             options: {},
           });
         } catch {
-          // Skip unparseable agent
+          truncated = true;
         }
+      } else {
+        truncated = true;
       }
     }
     currentHeader = null;
@@ -286,7 +294,19 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
   }
   flushAgent();
 
-  return agents;
+  return { agents, truncated };
+}
+
+function pickAgentsFromCliParses(
+  first: ParsedOpenCodeAgentList | undefined,
+  second: ParsedOpenCodeAgentList | undefined,
+): ReadonlyArray<Agent> {
+  if (second && !second.truncated) return second.agents;
+  if (first && !first.truncated) return first.agents;
+  if (first && second) {
+    return first.agents.length > second.agents.length ? first.agents : second.agents;
+  }
+  return second?.agents ?? first?.agents ?? [];
 }
 
 export function parseOpenCodeModelSlug(
@@ -420,11 +440,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
       );
-      const [stdout, stderr, code] = yield* Effect.all(
-        [collectStreamAsString(child.stdout), collectStreamAsString(child.stderr), child.exitCode],
-        { concurrency: "unbounded" },
-      );
-      const exitCode = Number(code);
+      const {
+        stdout,
+        stderr,
+        code: exitCode,
+      } = yield* drainChildProcessStdio({
+        stdout: child.stdout,
+        stderr: child.stderr,
+        exitCode: child.exitCode,
+      });
       if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
         return yield* new OpenCodeRuntimeError({
           operation: "runOpenCodeCommand",
@@ -698,9 +722,18 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         concurrency: "unbounded",
       });
 
+      let firstAgentParse: ParsedOpenCodeAgentList | undefined;
+      if (agentsResult._tag === "Success" && agentsResult.value.code === 0) {
+        firstAgentParse = parseAgentListCliOutput(agentsResult.value.stdout);
+      }
+
       // Retry once after 1s on transient failures (e.g. SQLite "database is locked")
+      // or a truncated agent-list parse.
       const needsModelsRetry = modelsResult._tag === "Failure" || modelsResult.value.code !== 0;
-      const needsAgentsRetry = agentsResult._tag === "Failure" || agentsResult.value.code !== 0;
+      const needsAgentsRetry =
+        agentsResult._tag === "Failure" ||
+        agentsResult.value.code !== 0 ||
+        firstAgentParse?.truncated === true;
       if (needsModelsRetry || needsAgentsRetry) {
         yield* Effect.sleep("1 second");
         const [m2, a2] = yield* Effect.all(
@@ -746,7 +779,12 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       // authoritative model inventory, so it may still degrade to an empty list.
       let agents: ReadonlyArray<Agent> = [];
       if (agentsResult._tag === "Success" && agentsResult.value.code === 0) {
-        agents = parseAgentListCliOutput(agentsResult.value.stdout);
+        agents = pickAgentsFromCliParses(
+          firstAgentParse,
+          needsAgentsRetry ? parseAgentListCliOutput(agentsResult.value.stdout) : undefined,
+        );
+      } else {
+        agents = pickAgentsFromCliParses(firstAgentParse, undefined);
       }
 
       return {

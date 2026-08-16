@@ -81,3 +81,33 @@ export const collectUint8StreamText = <E>(input: {
     }),
   );
 };
+
+export interface DrainedChildProcessStdio {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly code: number;
+}
+
+/**
+ * Drain stdout/stderr to completion before observing exit. Used so scoped
+ * process teardown cannot drop the piped tail after the child exits.
+ */
+export const drainChildProcessStdio = <E, E2>(input: {
+  readonly stdout: Stream.Stream<Uint8Array, E>;
+  readonly stderr: Stream.Stream<Uint8Array, E>;
+  readonly exitCode: Effect.Effect<unknown, E2>;
+}): Effect.Effect<DrainedChildProcessStdio, E | E2> =>
+  Effect.gen(function* () {
+    const [stdout, stderr] = yield* Effect.all(
+      [
+        collectUint8StreamText({ stream: input.stdout }),
+        collectUint8StreamText({ stream: input.stderr }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return {
+      stdout: stdout.text,
+      stderr: stderr.text,
+      code: Number(yield* input.exitCode),
+    };
+  }).pipe(Effect.withSpan("drainChildProcessStdio"));

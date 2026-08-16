@@ -1,8 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { collectUint8StreamText } from "./collectUint8StreamText.ts";
+import { collectUint8StreamText, drainChildProcessStdio } from "./collectUint8StreamText.ts";
 
 const encoder = new TextEncoder();
 
@@ -52,6 +54,51 @@ describe("collectUint8StreamText", () => {
       assert.strictEqual(invalid.text, "f\uFFFDo");
       assert.strictEqual(literal.invalidUtf8, false);
       assert.strictEqual(literal.text, "before\uFFFDafter");
+    }),
+  );
+});
+
+describe("drainChildProcessStdio", () => {
+  it.effect("keeps every chunk after the producer ends", () =>
+    Effect.gen(function* () {
+      const result = yield* drainChildProcessStdio({
+        stdout: Stream.make(
+          encoder.encode("alpha"),
+          encoder.encode("beta"),
+          encoder.encode("gamma"),
+          encoder.encode("tail"),
+        ),
+        stderr: Stream.make(encoder.encode("err")),
+        exitCode: Effect.succeed(0),
+      });
+
+      assert.strictEqual(result.stdout, "alphabetagammatail");
+      assert.strictEqual(result.stderr, "err");
+      assert.strictEqual(result.code, 0);
+    }),
+  );
+
+  it.effect("finishes draining stdout before surfacing a failed exitCode", () =>
+    Effect.gen(function* () {
+      const seen = yield* Ref.make("");
+      const stdout = Stream.make(
+        encoder.encode("one"),
+        encoder.encode("two"),
+        encoder.encode("three"),
+      ).pipe(
+        Stream.tap((chunk) =>
+          Ref.update(seen, (text) => `${text}${Buffer.from(chunk).toString()}`),
+        ),
+      );
+
+      const result = yield* drainChildProcessStdio({
+        stdout,
+        stderr: Stream.empty,
+        exitCode: Effect.fail("exited"),
+      }).pipe(Effect.exit);
+
+      assert.strictEqual(yield* Ref.get(seen), "onetwothree");
+      assert.strictEqual(Exit.isFailure(result), true);
     }),
   );
 });
