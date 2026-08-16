@@ -980,42 +980,44 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   return (
     <div
       className={cn(
-        "shrink-0 overflow-hidden transition-[height,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
-        !visible && "pointer-events-none translate-y-2 opacity-0",
+        "terminal-drawer-motion grid shrink-0 grid-rows-[1fr] transition-[grid-template-rows,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
+        !visible && "pointer-events-none grid-rows-[0fr] translate-y-2 opacity-0",
       )}
-      style={{ height: visible ? `${terminalUiState.terminalHeight}px` : 0 }}
+      data-hidden={!visible ? "" : undefined}
       aria-hidden={!visible ? true : undefined}
       inert={!visible ? true : undefined}
     >
-      <ThreadTerminalDrawer
-        threadRef={threadRef}
-        threadId={threadId}
-        cwd={cwd}
-        worktreePath={effectiveWorktreePath}
-        runtimeEnv={runtimeEnv}
-        visible={visible}
-        height={terminalUiState.terminalHeight}
-        // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
-        terminalIds={terminalUiState.terminalIds}
-        activeTerminalId={terminalUiState.activeTerminalId}
-        terminalGroups={terminalUiState.terminalGroups}
-        activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
-        focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
-        onSplitTerminal={splitTerminal}
-        onSplitTerminalVertical={splitTerminalVertical}
-        onNewTerminal={createNewTerminal}
-        splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-        splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
-        newShortcutLabel={visible ? newShortcutLabel : undefined}
-        closeShortcutLabel={visible ? closeShortcutLabel : undefined}
-        keybindings={keybindings}
-        onActiveTerminalChange={activateTerminal}
-        onCloseTerminal={closeTerminal}
-        onHeightChange={setTerminalHeight}
-        onAddTerminalContext={handleAddTerminalContext}
-        terminalLabelsById={terminalLabelsById}
-        terminalLaunchLocationsById={terminalLaunchLocationsById}
-      />
+      <div className="min-h-0 min-w-0 overflow-hidden">
+        <ThreadTerminalDrawer
+          threadRef={threadRef}
+          threadId={threadId}
+          cwd={cwd}
+          worktreePath={effectiveWorktreePath}
+          runtimeEnv={runtimeEnv}
+          visible={visible}
+          height={terminalUiState.terminalHeight}
+          // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
+          terminalIds={terminalUiState.terminalIds}
+          activeTerminalId={terminalUiState.activeTerminalId}
+          terminalGroups={terminalUiState.terminalGroups}
+          activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
+          focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
+          onSplitTerminal={splitTerminal}
+          onSplitTerminalVertical={splitTerminalVertical}
+          onNewTerminal={createNewTerminal}
+          splitShortcutLabel={visible ? splitShortcutLabel : undefined}
+          splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
+          newShortcutLabel={visible ? newShortcutLabel : undefined}
+          closeShortcutLabel={visible ? closeShortcutLabel : undefined}
+          keybindings={keybindings}
+          onActiveTerminalChange={activateTerminal}
+          onCloseTerminal={closeTerminal}
+          onHeightChange={setTerminalHeight}
+          onAddTerminalContext={handleAddTerminalContext}
+          terminalLabelsById={terminalLabelsById}
+          terminalLaunchLocationsById={terminalLaunchLocationsById}
+        />
+      </div>
     </div>
   );
 });
@@ -1688,7 +1690,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [retainedRightPanelThreadKey, rightPanelOpen, routeThreadKey]);
   const retainClosedRightPanelContent = retainedRightPanelThreadKey === routeThreadKey;
   useEffect(() => {
-    if (rightPanelOpen || maximizedRightPanelThreadKey !== routeThreadKey) return;
+    if (maximizedRightPanelThreadKey === null) return;
+    if (maximizedRightPanelThreadKey !== routeThreadKey) {
+      setMaximizedRightPanelThreadKey(null);
+      return;
+    }
+    if (rightPanelOpen) return;
     const timeout = window.setTimeout(
       () => setMaximizedRightPanelThreadKey(null),
       RIGHT_PANEL_EXIT_DURATION_MS,
@@ -6248,7 +6255,9 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
+      {(rightPanelOpen || rightPanelMaximized) && !shouldUseRightPanelSheet
+        ? panelLayoutControls
+        : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-hidden",
@@ -6272,7 +6281,7 @@ function ChatViewContent(props: ChatViewProps) {
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {!rightPanelOpen ? panelLayoutControls : null}
+          {!rightPanelOpen && !rightPanelMaximized ? panelLayoutControls : null}
           <ChatHeader
             {...(!supportsPullRequests || threadRepository === null
               ? {}

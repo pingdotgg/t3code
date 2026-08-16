@@ -1653,6 +1653,14 @@ code {
   }
 }
 
+@starting-style {
+  .terminal-drawer-motion:not([data-hidden]) {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    translate: 0 0.5rem;
+  }
+}
+
 .chat-markdown p,
 .chat-markdown ul,
 .chat-markdown ol,

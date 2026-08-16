@@ -21,6 +21,14 @@ describe("getPreviewPanelMaxWidth", () => {
     expect(markup).toContain("max-w-full");
   });
 
+  it("keeps the resize handle outside the panel content clip", () => {
+    const markup = renderToStaticMarkup(
+      jsx(PreviewPanelShell, { mode: "inline", children: "Panel" }),
+    );
+
+    expect(markup.indexOf('role="separator"')).toBeLessThan(markup.indexOf("overflow-hidden"));
+  });
+
   it("reserves the sibling column minimum when the flex row is known", () => {
     // Fullscreen 14" MacBook: viewport 1512, sidebar ~256 → row of 1256.
     // The 70% fraction (1058) would leave the chat column only ~198px;

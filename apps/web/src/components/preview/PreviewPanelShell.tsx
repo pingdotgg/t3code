@@ -91,7 +91,7 @@ export function PreviewPanelShell(props: {
                 !visible && "pointer-events-none translate-x-3 opacity-0",
               )
             : cn(
-                "shrink-0 overflow-hidden border-l border-border transition-[width,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
+                "shrink-0 border-l border-border transition-[width,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
                 !visible && "pointer-events-none translate-x-3 border-l-transparent opacity-0",
               )
           : "w-full",
@@ -102,16 +102,18 @@ export function PreviewPanelShell(props: {
       data-preview-panel-maximized={props.maximized ? "true" : "false"}
       inert={isInline && !visible ? true : undefined}
     >
-      <div
-        className={cn(
-          "relative flex h-full min-h-0 min-w-0 flex-col [contain:layout_paint]",
-          isInline && !props.maximized ? "shrink-0" : "w-full",
-        )}
-        style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
-      >
-        {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-        {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
-        {props.children}
+      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
+      <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden [contain:layout_paint]">
+        <div
+          className={cn(
+            "relative flex h-full min-h-0 min-w-0 flex-col",
+            isInline && !props.maximized ? "shrink-0" : "w-full",
+          )}
+          style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
+        >
+          {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
+          {props.children}
+        </div>
       </div>
     </div>
   );
