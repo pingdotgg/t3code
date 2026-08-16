@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftUI
 import Testing
 import UIKit
@@ -889,6 +890,40 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func initialDetailLoadDoesNotOverwriteNewerLiveUpdate() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let initial = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let live = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Live")]
+        )
+        client.threadDetail = initial
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.detail(live))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == live)
+        #expect(model.details[thread.id] == live)
+    }
+
+    @Test
     func environmentScopedCatalogAndPreferencesInvalidateHomePresentation() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
@@ -1336,6 +1371,7 @@ private final class FeatureClientStub: FeatureClient {
     var removedEnvironmentID: String?
     var beforeSendMessage: (() throws -> Void)?
     var loadThreadError: (any Error)?
+    var beforeLoadThreadReturn: (() async -> Void)?
     var loadEarlierCallCount = 0
     var resolvedInputID: String?
     var resolvedInputAnswers: [String: FeatureInputAnswer]?
@@ -1445,6 +1481,7 @@ private final class FeatureClientStub: FeatureClient {
         if let loadThreadError {
             throw loadThreadError
         }
+        await beforeLoadThreadReturn?()
         if let threadDetail {
             return threadDetail
         }
