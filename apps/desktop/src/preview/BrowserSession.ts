@@ -10,6 +10,13 @@ import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
+/**
+ * Incognito partitions deliberately omit the `persist:` prefix, which is what
+ * makes Chromium keep them in memory and discard them with the process. They
+ * still carry the product prefix so `isPartition` can admit them — the
+ * `will-attach-webview` gate rejects anything it does not recognise.
+ */
+const PREVIEW_EPHEMERAL_PARTITION_PREFIX = "t3code-preview-ephemeral-";
 
 // Permissions granted to preview web content. `clipboard-sanitized-write` is the
 // Electron permission behind `navigator.clipboard.writeText()` — note it is NOT
@@ -99,19 +106,44 @@ export class BrowserSession extends Context.Service<
   {
     readonly getPartition: (
       scope?: string,
+      persistent?: boolean,
     ) => Effect.Effect<string, BrowserSessionPartitionDerivationError>;
     readonly isPartition: (partition: string) => boolean;
-    readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionGetSessionError>;
-    readonly clearCookies: () => Effect.Effect<void, BrowserSessionStorageClearError>;
-    readonly clearCache: () => Effect.Effect<void, BrowserSessionCacheClearError>;
+    readonly getSession: (
+      scope?: string,
+      persistent?: boolean,
+    ) => Effect.Effect<Session, BrowserSessionGetSessionError>;
+    /** Omit `partitions` to clear every known partition. */
+    readonly clearCookies: (
+      partitions?: ReadonlyArray<string>,
+    ) => Effect.Effect<void, BrowserSessionStorageClearError>;
+    readonly clearCache: (
+      partitions?: ReadonlyArray<string>,
+    ) => Effect.Effect<void, BrowserSessionCacheClearError>;
   }
 >()("@t3tools/desktop/preview/BrowserSession") {}
+
+/**
+ * Restricts a clear to the given partitions. Omitting them keeps the historical
+ * "every partition" behaviour, which callers now only use for an explicit
+ * "all profiles" action — a per-profile clear must never reach across profiles.
+ */
+const selectSessions = (
+  sessions: ReadonlyMap<string, Session>,
+  partitions: ReadonlyArray<string> | undefined,
+): ReadonlyArray<readonly [string, Session]> =>
+  [...sessions.entries()].filter(
+    ([partition]) => partitions === undefined || partitions.includes(partition),
+  );
 
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
-  const getPartition = Effect.fn("BrowserSession.getPartition")(function* (scope = "shared") {
+  const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
+    scope = "shared",
+    persistent = true,
+  ) {
     const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(scope)).pipe(
       Effect.mapError(
         (cause) =>
@@ -121,11 +153,15 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           }),
       ),
     );
-    return `${PREVIEW_PARTITION_PREFIX}${Encoding.encodeHex(digest).slice(0, 20)}`;
+    const prefix = persistent ? PREVIEW_PARTITION_PREFIX : PREVIEW_EPHEMERAL_PARTITION_PREFIX;
+    return `${prefix}${Encoding.encodeHex(digest).slice(0, 20)}`;
   });
 
-  const getSession = Effect.fn("BrowserSession.getSession")(function* (scope = "shared") {
-    const partition = yield* getPartition(scope);
+  const getSession = Effect.fn("BrowserSession.getSession")(function* (
+    scope = "shared",
+    persistent = true,
+  ) {
+    const partition = yield* getPartition(scope, persistent);
     return yield* SynchronizedRef.modifyEffect(sessionsRef, (sessions) => {
       const existing = sessions.get(partition);
       if (existing) return Effect.succeed([existing, sessions] as const);
@@ -159,12 +195,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
 
   return BrowserSession.of({
     getPartition,
-    isPartition: (partition) => partition.startsWith(PREVIEW_PARTITION_PREFIX),
+    isPartition: (partition) =>
+      partition.startsWith(PREVIEW_PARTITION_PREFIX) ||
+      partition.startsWith(PREVIEW_EPHEMERAL_PARTITION_PREFIX),
     getSession,
-    clearCookies: Effect.fn("BrowserSession.clearCookies")(function* () {
+    clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       yield* Effect.all(
-        [...sessions.entries()].map(([partition, browserSession]) =>
+        selectSessions(sessions, partitions).map(([partition, browserSession]) =>
           Effect.tryPromise({
             try: () =>
               browserSession.clearStorageData({
@@ -180,10 +218,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         { concurrency: "unbounded", discard: true },
       );
     }),
-    clearCache: Effect.fn("BrowserSession.clearCache")(function* () {
+    clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       yield* Effect.all(
-        [...sessions.entries()].map(([partition, browserSession]) =>
+        selectSessions(sessions, partitions).map(([partition, browserSession]) =>
           Effect.tryPromise({
             try: () => browserSession.clearCache(),
             catch: (cause) =>

@@ -1,6 +1,6 @@
 "use client";
 
-import type { DesktopPreviewColorScheme } from "@t3tools/contracts";
+import type { DesktopPreviewColorScheme, EnvironmentId } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -50,6 +50,12 @@ interface Props {
   nativePictureInPicture: boolean;
   /** Toggles the optional native always-on-top preview window. */
   onNativePictureInPicture: () => void;
+  /** Environment the tab belongs to; scopes storage clearing to its partitions. */
+  environmentId: EnvironmentId;
+  /** Profile the tab was opened under, if the server recorded one. */
+  profileId: string | undefined;
+  /** Profile display name, shown so the menu says which data is being cleared. */
+  profileName: string | undefined;
 }
 
 /**
@@ -66,6 +72,9 @@ export function PreviewMoreMenu({
   onToggleDeviceToolbar,
   nativePictureInPicture,
   onNativePictureInPicture,
+  environmentId,
+  profileId,
+  profileName,
 }: Props) {
   if (!previewBridge) return null;
   const bridge = previewBridge;
@@ -177,11 +186,15 @@ export function PreviewMoreMenu({
           </span>
         </MenuItem>
         <MenuSeparator />
-        <MenuItem onClick={() => void bridge.clearCookies().catch(() => undefined)}>
-          Clear cookies
+        <MenuItem
+          onClick={() => void bridge.clearCookies(environmentId, profileId).catch(() => undefined)}
+        >
+          {profileName ? `Clear cookies (${profileName})` : "Clear cookies"}
         </MenuItem>
-        <MenuItem onClick={() => void bridge.clearCache().catch(() => undefined)}>
-          Clear cache
+        <MenuItem
+          onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
+        >
+          {profileName ? `Clear cache (${profileName})` : "Clear cache"}
         </MenuItem>
       </MenuPopup>
     </Menu>
