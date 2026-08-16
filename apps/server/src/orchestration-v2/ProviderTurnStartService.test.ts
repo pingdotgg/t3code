@@ -18,6 +18,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -128,6 +129,7 @@ function makeProviderTurnStartFixture(input: {
       order.push("close");
     }),
   );
+  const get = vi.fn(() => Effect.succeed(Option.none<ProviderAdapterV2SessionRuntime>()));
   const reviveForThread = vi.fn(() =>
     Effect.sync(() => {
       order.push("revive");
@@ -161,7 +163,7 @@ function makeProviderTurnStartFixture(input: {
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadProjection,
         }),
-        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open, close }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open, close, get }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({
           startRootRun,
         }),
@@ -302,17 +304,21 @@ const makeSharedProviderSessionFixture = Effect.gen(function* () {
     resumeThread: () => Effect.succeed(first.providerThread),
     forkThread: () => Effect.succeed(first.providerThread),
   } as unknown as ProviderAdapterV2SessionRuntime;
+  let liveSession: ProviderAdapterV2SessionRuntime | undefined;
   const open = vi.fn((input: { readonly threadId: ThreadId }) =>
     Effect.sync(() => {
       order.push(`open:${keyByThreadId.get(input.threadId)}`);
+      liveSession = session;
       return session;
     }),
   );
   const close = vi.fn(() =>
     Effect.sync(() => {
       order.push("close");
+      liveSession = undefined;
     }),
   );
+  const get = vi.fn(() => Effect.succeed(Option.fromNullishOr(liveSession)));
   const reviveForThread = vi.fn((input: { readonly threadId: ThreadId }) => {
     const key = keyByThreadId.get(input.threadId);
     return Effect.sync(() => {
@@ -361,7 +367,7 @@ const makeSharedProviderSessionFixture = Effect.gen(function* () {
               return projection;
             }),
         }),
-        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open, close }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open, close, get }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () =>

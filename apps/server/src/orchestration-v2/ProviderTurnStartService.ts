@@ -13,7 +13,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { EventSinkV2 } from "./EventSink.ts";
@@ -23,6 +23,7 @@ import {
 } from "./ContextHandoffService.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
+import type { ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
@@ -78,9 +79,10 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicyV2;
     const worktreeRevival = yield* WorktreeRevivalService;
     const providerSessionStarts = yield* makeKeyedSerialExecutor<ProviderSessionId>();
-    const worktreeGenerationByProviderSession = yield* Ref.make(
-      new Map<ProviderSessionId, { readonly path: string; readonly generation: number }>(),
-    );
+    const worktreeGenerationBySession = new WeakMap<
+      ProviderAdapterV2SessionRuntime,
+      { readonly path: string; readonly generation: number }
+    >();
 
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
       readonly threadId: ThreadId;
@@ -193,9 +195,10 @@ export const layer: Layer.Layer<
 
           let closedForRestart = false;
           if (observedWorktreeGeneration !== undefined) {
-            const previousWorktreeGeneration = (yield* Ref.get(
-              worktreeGenerationByProviderSession,
-            )).get(providerSessionId);
+            const liveSession = yield* providerSessions.get(providerSessionId);
+            const previousWorktreeGeneration = Option.isSome(liveSession)
+              ? worktreeGenerationBySession.get(liveSession.value)
+              : undefined;
             if (
               revivedWorktree ||
               (previousWorktreeGeneration !== undefined &&
@@ -226,10 +229,8 @@ export const layer: Layer.Layer<
               : { resumeFromSession: existingSessionProjection }),
           });
           if (observedWorktreeGeneration !== undefined) {
-            yield* Ref.update(worktreeGenerationByProviderSession, (current) => {
-              const next = new Map(current);
-              next.set(providerSessionId, observedWorktreeGeneration);
-              return next;
+            yield* Effect.sync(() => {
+              worktreeGenerationBySession.set(session, observedWorktreeGeneration);
             });
           }
           // A restart must restore the shared session even when this attempt was

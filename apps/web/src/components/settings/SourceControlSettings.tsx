@@ -690,12 +690,21 @@ function WorktreeErrorStrip({ error }: { readonly error: string | null }) {
 }
 
 /** House pending strip: live label, no skeletons. */
-function WorktreePendingStrip({ label }: { readonly label: string }) {
+function WorktreePendingStrip({
+  label,
+  className,
+}: {
+  readonly label: string;
+  readonly className?: string;
+}) {
   return (
     <div
       role="status"
       aria-live="polite"
-      className="mx-3 rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground sm:mx-4 dark:border-transparent dark:bg-white/[0.035]"
+      className={cn(
+        "mx-3 rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground sm:mx-4 dark:border-transparent dark:bg-white/[0.035]",
+        className,
+      )}
     >
       {label}
     </div>
@@ -728,7 +737,7 @@ function WorktreeRemoveButton({ worktree, onPrune, pendingPath }: WorktreeRowPro
           <Button
             size="icon-xs"
             variant="ghost"
-            className="size-6 rounded-sm p-0 text-muted-foreground hover:text-destructive"
+            className="size-6 rounded-sm p-0 [--control-icon-color:currentColor] text-muted-foreground hover:text-destructive"
             onClick={() => onPrune(worktree)}
             disabled={pendingPath !== null}
             aria-label={`Remove worktree ${worktree.branch ?? worktree.path}`}
@@ -823,13 +832,7 @@ function WorktreeLedgerRow({ worktree, onPrune, pendingPath }: WorktreeRowProps)
       </div>
       {isPending ? (
         <div className="pt-2">
-          <div
-            role="status"
-            aria-live="polite"
-            className="rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]"
-          >
-            Removing worktree...
-          </div>
+          <WorktreePendingStrip label="Removing worktree..." className="mx-0 sm:mx-0" />
         </div>
       ) : null}
     </div>
@@ -1045,9 +1048,8 @@ function WorktreeManagementSection() {
           <TooltipTrigger
             render={
               <Button
-                size="icon-xs"
-                variant="ghost"
-                className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                size="icon-micro"
+                variant="ghost-muted"
                 onClick={() => setRefreshToken((token) => token + 1)}
                 aria-label="Refresh worktree inventory"
               >
