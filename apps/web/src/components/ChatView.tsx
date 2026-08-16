@@ -1695,13 +1695,22 @@ function ChatViewContent(props: ChatViewProps) {
   const retainClosedRightPanelContent = retainedRightPanelThreadKey === routeThreadKey;
   useEffect(() => {
     if (maximizedRightPanelThreadKey === null) return;
-    if (maximizedRightPanelThreadKey !== routeThreadKey || !rightPanelOpen) {
+    if (maximizedRightPanelThreadKey !== routeThreadKey) {
       setMaximizedRightPanelThreadKey(null);
+      return;
     }
+    if (rightPanelOpen) return;
+    const timeout = window.setTimeout(
+      () => setMaximizedRightPanelThreadKey(null),
+      RIGHT_PANEL_EXIT_DURATION_MS,
+    );
+    return () => window.clearTimeout(timeout);
   }, [maximizedRightPanelThreadKey, rightPanelOpen, routeThreadKey]);
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
-    !shouldUseRightPanelSheet && maximizedRightPanelThreadKey === routeThreadKey && rightPanelOpen;
+    !shouldUseRightPanelSheet &&
+    maximizedRightPanelThreadKey === routeThreadKey &&
+    (rightPanelOpen || retainClosedRightPanelContent);
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -6259,9 +6268,9 @@ function ChatViewContent(props: ChatViewProps) {
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-hidden",
-          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+          rightPanelMaximized && rightPanelOpen ? "w-0 flex-none" : "flex-1",
         )}
-        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column-maximized-away={rightPanelMaximized && rightPanelOpen ? "true" : "false"}
       >
         {/* Top bar */}
         <header

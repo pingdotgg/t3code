@@ -88,7 +88,7 @@ export function PreviewPanelShell(props: {
           ? props.maximized
             ? cn(
                 "flex-1 border-l border-border transition-[opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
-                !visible && "pointer-events-none translate-x-3 opacity-0",
+                !visible && "absolute inset-0 pointer-events-none translate-x-3 opacity-0",
               )
             : cn(
                 "shrink-0 border-l border-border transition-[width,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
