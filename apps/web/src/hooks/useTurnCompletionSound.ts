@@ -25,14 +25,19 @@ export function detectNewTurnCompletions(
     }
     const previousState = previousCompletions[threadKey];
 
-    const isSettled =
+    const isSuccessfulCompletion =
       isLatestTurnSettled(thread.latestTurn, thread.session) &&
-      thread.latestTurn?.state !== "running" &&
+      thread.latestTurn?.state === "completed" &&
+      thread.session?.status !== "interrupted" &&
+      thread.session?.status !== "stopped" &&
+      thread.session?.status !== "error" &&
       Boolean(thread.latestTurn?.completedAt);
 
-    if (!isSettled) {
+    if (!isSuccessfulCompletion) {
       if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
         nextCompletions[threadKey] = "running";
+      } else if (thread.latestTurn?.completedAt) {
+        nextCompletions[threadKey] = thread.latestTurn.completedAt;
       }
       continue;
     }
