@@ -5,7 +5,7 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 
 describe("ComposerStashMenu", () => {
-  it("always renders a close control", () => {
+  it("renders the close control outside the scrollable list", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu
         entries={[]}
@@ -16,6 +16,9 @@ describe("ComposerStashMenu", () => {
     );
 
     expect(markup).toContain('aria-label="Close stashed prompts"');
+    expect(markup.indexOf('aria-label="Close stashed prompts"')).toBeLessThan(
+      markup.indexOf('data-slot="command-list"'),
+    );
   });
 });
 

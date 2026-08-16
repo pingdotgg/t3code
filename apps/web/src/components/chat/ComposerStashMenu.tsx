@@ -4,7 +4,7 @@ import { memo, useEffect, useState } from "react";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "~/lib/utils";
 import { type PromptStashEntry } from "../../promptStashStore";
-import { Command, CommandGroup, CommandGroupLabel, CommandItem, CommandList } from "../ui/command";
+import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { Button } from "../ui/button";
 
 const SNIPPET_MAX_CHARS = 90;
@@ -91,23 +91,25 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
 
   return (
     <Command autoHighlight={false} mode="none">
-      <div className="dropdown-glass relative w-full overflow-hidden rounded-[20px] shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          className="absolute top-2 right-2 z-10"
-          aria-label="Close stashed prompts"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={onClose}
-        >
-          <XIcon />
-        </Button>
+      <div className="dropdown-glass w-full overflow-hidden rounded-[20px] shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]">
+        <div className="flex min-h-11 items-center gap-1.5 px-3">
+          <BookmarkIcon className="size-3 text-secondary-label" aria-hidden="true" />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
+            Stashed prompts
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="ml-auto"
+            aria-label="Close stashed prompts"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onClose}
+          >
+            <XIcon />
+          </Button>
+        </div>
         <CommandList className="max-h-72">
           <CommandGroup>
-            <CommandGroupLabel className="flex items-center gap-1.5 pt-2 pr-10 pb-1 pl-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
-              <BookmarkIcon className="size-3" aria-hidden="true" />
-              Stashed prompts
-            </CommandGroupLabel>
             {entries.length === 0 ? (
               <p className="px-3 pb-3 pt-1 text-secondary-label text-xs">
                 Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.
