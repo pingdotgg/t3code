@@ -219,6 +219,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
           t3_write_pty: (_terminal: number, _userdata: number, pointer: number, length: number) => {
             reply += new TextDecoder().decode(new Uint8Array(memory.buffer, pointer, length));
           },
+          t3_device_attributes: () => 0,
         },
       },
     );
@@ -255,6 +256,110 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_terminal_vt_write", terminal, queryPointer, query.length);
     expect(reply).toBe("\u001b[0n");
     call("ghostty_wasm_free_u8_array", queryPointer, query.length);
+    call("ghostty_terminal_free", terminal);
+    call("ghostty_wasm_free_opaque", terminalSlot);
+    call("ghostty_wasm_free_u8_array", options, 8);
+  });
+
+  it("answers Primary Device Attribute queries with a fish-compatible CSI", async () => {
+    const mainResult = await WebAssembly.instantiate(
+      decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
+      { env: { log: () => {} } },
+    );
+    const main = mainResult instanceof WebAssembly.Instance ? mainResult : mainResult.instance;
+    const memory = main.exports.memory as WebAssembly.Memory;
+    const jsonPointer = (main.exports.ghostty_type_json as WasmFunction)();
+    const jsonBytes = new Uint8Array(memory.buffer, jsonPointer);
+    const layouts = JSON.parse(
+      new TextDecoder().decode(jsonBytes.subarray(0, jsonBytes.indexOf(0))),
+    ) as Record<string, { fields: Record<string, { offset: number; size: number }> }>;
+    let reply = "";
+    const trampolineResult = await WebAssembly.instantiate(
+      decodeWasmDataUrl(writePtyWasmDataUrl).buffer as ArrayBuffer,
+      {
+        env: {
+          t3_write_pty: (_terminal: number, _userdata: number, pointer: number, length: number) => {
+            reply += new TextDecoder().decode(new Uint8Array(memory.buffer, pointer, length));
+          },
+          t3_device_attributes: (_terminal: number, _userdata: number, outAttrs: number) => {
+            const attrs = layouts.GhosttyDeviceAttributes?.fields;
+            const primaryLayout = layouts.GhosttyDeviceAttributesPrimary?.fields;
+            const secondaryLayout = layouts.GhosttyDeviceAttributesSecondary?.fields;
+            const tertiaryLayout = layouts.GhosttyDeviceAttributesTertiary?.fields;
+            if (!attrs || !primaryLayout || !secondaryLayout || !tertiaryLayout) {
+              throw new Error("GhosttyDeviceAttributes layout is incomplete");
+            }
+            const primary = outAttrs + attrs.primary.offset;
+            const view = new DataView(memory.buffer);
+            view.setUint16(primary + primaryLayout.conformance_level.offset, 62, true);
+            view.setUint16(primary + primaryLayout.features.offset, 1, true);
+            view.setUint16(primary + primaryLayout.features.offset + 2, 6, true);
+            view.setUint16(primary + primaryLayout.features.offset + 4, 22, true);
+            view.setUint32(primary + primaryLayout.num_features.offset, 3, true);
+            const secondary = outAttrs + attrs.secondary.offset;
+            view.setUint16(secondary + secondaryLayout.device_type.offset, 1, true);
+            view.setUint16(secondary + secondaryLayout.firmware_version.offset, 0, true);
+            view.setUint16(secondary + secondaryLayout.rom_cartridge.offset, 0, true);
+            view.setUint32(
+              outAttrs + attrs.tertiary.offset + tertiaryLayout.unit_id.offset,
+              0,
+              true,
+            );
+            return 1;
+          },
+        },
+      },
+    );
+    const trampoline =
+      trampolineResult instanceof WebAssembly.Instance
+        ? trampolineResult
+        : trampolineResult.instance;
+    const table = main.exports.__indirect_function_table as WebAssembly.Table;
+    const writePtyIndex = table.length;
+    table.grow(1);
+    table.set(writePtyIndex, trampoline.exports.ghostty_write_pty as CallableFunction);
+    const deviceAttributesIndex = table.length;
+    table.grow(1);
+    table.set(
+      deviceAttributesIndex,
+      trampoline.exports.ghostty_device_attributes as CallableFunction,
+    );
+    const call = (name: string, ...args: number[]) => (main.exports[name] as WasmFunction)(...args);
+    const options = call("ghostty_wasm_alloc_u8_array", 8);
+    const optionsView = new DataView(memory.buffer, options, 8);
+    optionsView.setUint16(0, 80, true);
+    optionsView.setUint16(2, 24, true);
+    const terminalSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+    call("ghostty_terminal_set", terminal, 0, 1);
+    call("ghostty_terminal_set", terminal, 1, writePtyIndex);
+    call("ghostty_terminal_set", terminal, 8, deviceAttributesIndex);
+
+    const writeQuery = (sequence: string) => {
+      const query = new TextEncoder().encode(sequence);
+      const queryPointer = call("ghostty_wasm_alloc_u8_array", query.length);
+      new Uint8Array(memory.buffer, queryPointer, query.length).set(query);
+      call("ghostty_terminal_vt_write", terminal, queryPointer, query.length);
+      call("ghostty_wasm_free_u8_array", queryPointer, query.length);
+    };
+
+    // Fish 4.1+ sends CSI 0 c and requires a CSI reply starting with "?"
+    // and ending with "c". Option 8 fills Ghostty's DA structs so WRITE_PTY
+    // emits that reply instead of Ghostty's built-in VT220+color default.
+    writeQuery("\u001b[0c");
+    expect(reply.startsWith("\u001b[?")).toBe(true);
+    expect(reply.endsWith("c")).toBe(true);
+    expect(reply).toBe("\u001b[?62;1;6;22c");
+
+    reply = "";
+    writeQuery("\u001b[c");
+    expect(reply).toBe("\u001b[?62;1;6;22c");
+
+    reply = "";
+    writeQuery("\u001b[>c");
+    expect(reply).toBe("\u001b[>1;0;0c");
+
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
     call("ghostty_wasm_free_u8_array", options, 8);

@@ -19,6 +19,18 @@ type TypeLayouts = Readonly<Record<string, TypeLayout>>;
 
 const textDecoder = new TextDecoder();
 
+const OPT_USERDATA = 0;
+const OPT_WRITE_PTY = 1;
+const OPT_DEVICE_ATTRIBUTES = 8;
+
+// VT220-ish DA1: CSI ? 62;1;6;22c. Fish 4.1+ requires a CSI reply
+// that starts with "?" and ends with "c".
+const DA_CONFORMANCE_VT220 = 62;
+const DA_FEATURE_COLUMNS_132 = 1;
+const DA_FEATURE_SELECTIVE_ERASE = 6;
+const DA_FEATURE_ANSI_COLOR = 22;
+const DA_DEVICE_TYPE_VT220 = 1;
+
 export class GhosttyRuntime {
   readonly memory: WebAssembly.Memory;
   readonly layouts: TypeLayouts;
@@ -26,6 +38,7 @@ export class GhosttyRuntime {
   private readonly ptyWriters = new Map<number, (data: string) => void>();
   private nextPtyWriterId = 1;
   private writePtyFunctionIndex = 0;
+  private deviceAttributesFunctionIndex = 0;
 
   private constructor(instance: WebAssembly.Instance) {
     this.exports = instance.exports;
@@ -61,7 +74,7 @@ export class GhosttyRuntime {
     const result = await WebAssembly.instantiate(await response.arrayBuffer(), imports);
     instance = result.instance;
     const runtime = new GhosttyRuntime(result.instance);
-    await runtime.installWritePtyTrampoline();
+    await runtime.installCallbackTrampolines();
     return runtime;
   }
 
@@ -108,19 +121,26 @@ export class GhosttyRuntime {
   }
 
   attachPtyWriter(terminal: number, writer: (data: string) => void): number {
-    if (this.writePtyFunctionIndex === 0) {
+    if (this.writePtyFunctionIndex === 0 || this.deviceAttributesFunctionIndex === 0) {
       throw new Error("libghostty-vt PTY callback trampoline is unavailable");
     }
     const id = this.nextPtyWriterId++;
     this.ptyWriters.set(id, writer);
-    this.call("ghostty_terminal_set", terminal, 0, id);
-    this.call("ghostty_terminal_set", terminal, 1, this.writePtyFunctionIndex);
+    this.call("ghostty_terminal_set", terminal, OPT_USERDATA, id);
+    this.call("ghostty_terminal_set", terminal, OPT_WRITE_PTY, this.writePtyFunctionIndex);
+    this.call(
+      "ghostty_terminal_set",
+      terminal,
+      OPT_DEVICE_ATTRIBUTES,
+      this.deviceAttributesFunctionIndex,
+    );
     return id;
   }
 
   detachPtyWriter(terminal: number, id: number): void {
-    this.call("ghostty_terminal_set", terminal, 1, 0);
-    this.call("ghostty_terminal_set", terminal, 0, 0);
+    this.call("ghostty_terminal_set", terminal, OPT_DEVICE_ATTRIBUTES, 0);
+    this.call("ghostty_terminal_set", terminal, OPT_WRITE_PTY, 0);
+    this.call("ghostty_terminal_set", terminal, OPT_USERDATA, 0);
     this.ptyWriters.delete(id);
   }
 
@@ -181,7 +201,55 @@ export class GhosttyRuntime {
     }
   }
 
-  private async installWritePtyTrampoline(): Promise<void> {
+  private writeDeviceAttributes(outAttrs: number): number {
+    if (outAttrs === 0) return 0;
+    const attrs = this.layout("GhosttyDeviceAttributes");
+    const primary = attrs.fields.primary;
+    const secondary = attrs.fields.secondary;
+    const tertiary = attrs.fields.tertiary;
+    const features = this.layout("GhosttyDeviceAttributesPrimary").fields.features;
+    if (!primary || !secondary || !tertiary || !features) {
+      throw new Error("libghostty-vt GhosttyDeviceAttributes layout is incomplete");
+    }
+    const primaryPointer = outAttrs + primary.offset;
+    this.setField(
+      primaryPointer,
+      "GhosttyDeviceAttributesPrimary",
+      "conformance_level",
+      DA_CONFORMANCE_VT220,
+    );
+    const featureView = this.view(primaryPointer + features.offset, features.size);
+    featureView.setUint16(0, DA_FEATURE_COLUMNS_132, true);
+    featureView.setUint16(2, DA_FEATURE_SELECTIVE_ERASE, true);
+    featureView.setUint16(4, DA_FEATURE_ANSI_COLOR, true);
+    this.setField(primaryPointer, "GhosttyDeviceAttributesPrimary", "num_features", 3);
+    const secondaryPointer = outAttrs + secondary.offset;
+    this.setField(
+      secondaryPointer,
+      "GhosttyDeviceAttributesSecondary",
+      "device_type",
+      DA_DEVICE_TYPE_VT220,
+    );
+    this.setField(secondaryPointer, "GhosttyDeviceAttributesSecondary", "firmware_version", 0);
+    this.setField(secondaryPointer, "GhosttyDeviceAttributesSecondary", "rom_cartridge", 0);
+    this.setField(outAttrs + tertiary.offset, "GhosttyDeviceAttributesTertiary", "unit_id", 0);
+    return 1;
+  }
+
+  private installTableFunction(table: WebAssembly.Table, fn: WebAssembly.ExportValue): number {
+    if (typeof fn !== "function") {
+      throw new Error("libghostty-vt did not expose its callback table");
+    }
+    const index = table.length;
+    // grow-then-set instead of grow(1, fn): WebKit stores a grow init value
+    // with broken type information and every later call_indirect through the
+    // entry traps with a signature mismatch. table.set canonicalizes correctly.
+    table.grow(1);
+    table.set(index, fn);
+    return index;
+  }
+
+  private async installCallbackTrampolines(): Promise<void> {
     const response = await fetch(ghosttyWritePtyWasmUrl);
     if (!response.ok) {
       throw new Error(`Unable to load the libghostty-vt PTY trampoline (${response.status})`);
@@ -193,20 +261,18 @@ export class GhosttyRuntime {
           if (!writer || length === 0) return;
           writer(textDecoder.decode(new Uint8Array(this.memory.buffer, pointer, length)));
         },
+        t3_device_attributes: (_terminal: number, _userdata: number, outAttrs: number) =>
+          this.writeDeviceAttributes(outAttrs),
       },
     });
-    const trampoline = result.instance.exports.ghostty_write_pty;
+    const writePty = result.instance.exports.ghostty_write_pty;
+    const deviceAttributes = result.instance.exports.ghostty_device_attributes;
     const table = this.exports.__indirect_function_table;
-    if (typeof trampoline !== "function" || !(table instanceof WebAssembly.Table)) {
+    if (!(table instanceof WebAssembly.Table)) {
       throw new Error("libghostty-vt did not expose its callback table");
     }
-    const index = table.length;
-    // grow-then-set instead of grow(1, fn): WebKit stores a grow init value
-    // with broken type information and every later call_indirect through the
-    // entry traps with a signature mismatch. table.set canonicalizes correctly.
-    table.grow(1);
-    table.set(index, trampoline);
-    this.writePtyFunctionIndex = index;
+    this.writePtyFunctionIndex = this.installTableFunction(table, writePty);
+    this.deviceAttributesFunctionIndex = this.installTableFunction(table, deviceAttributes);
   }
 }
 
