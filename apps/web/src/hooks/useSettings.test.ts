@@ -6,7 +6,19 @@ import {
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeEnvironmentSettings, resolveEnvironmentIdentificationMode } from "./useSettings";
+import { IRIS_THEME_ID } from "../themePalette";
+import {
+  mergeEnvironmentSettings,
+  resolveEnvironmentIdentificationMode,
+  syncedThemeIdFromPreference,
+} from "./useSettings";
+
+describe("syncedThemeIdFromPreference", () => {
+  it("maps only built-in themes into synced preferences", () => {
+    expect(syncedThemeIdFromPreference(IRIS_THEME_ID)).toBe(IRIS_THEME_ID);
+    expect(syncedThemeIdFromPreference("personal-sunset")).toBeUndefined();
+  });
+});
 
 describe("resolveEnvironmentIdentificationMode", () => {
   it("keeps identification hidden until client settings hydrate", () => {

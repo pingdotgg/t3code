@@ -526,16 +526,14 @@ export function reconcileSyncedClientPreferences(input: {
     environmentCandidates.sort(compareEnvironmentPreferenceCandidates);
     const latestEnvironment = environmentCandidates.at(-1);
     const latestObservedEnvironmentUpdatedAt = latestEnvironment?.updatedAt;
+    const localUpdatedAtRebase = latestObservedEnvironmentUpdatedAt ?? input.now;
     const boundedLocalUpdatedAt =
       hasPatchableEnvironment &&
       localUpdatedAt !== undefined &&
-      latestObservedEnvironmentUpdatedAt !== undefined &&
-      localUpdatedAt > latestObservedEnvironmentUpdatedAt &&
+      localUpdatedAt > localUpdatedAtRebase &&
       Date.parse(localUpdatedAt) >
         Date.parse(input.now) + SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS
-        ? nextMobileSyncedPreferencesUpdatedAt([], latestObservedEnvironmentUpdatedAt, [
-            latestObservedEnvironmentUpdatedAt,
-          ])
+        ? nextMobileSyncedPreferencesUpdatedAt([], localUpdatedAtRebase, [localUpdatedAtRebase])
         : localUpdatedAt;
     // Exact remote ties use environment id for deterministic convergence.
     const localWins =

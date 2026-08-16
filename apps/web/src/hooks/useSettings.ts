@@ -35,6 +35,7 @@ import {
   getThemePreferenceMode,
   getThemeDefinition,
   getThemePreviewSidebarArtwork,
+  isBuiltInThemePreference,
   isKnownThemePreference,
   resolveThemeHalf,
   subscribeToThemePreview,
@@ -288,10 +289,11 @@ function useMergedSettings<T>(
 
 export const DEFAULT_SYNCED_THEME_ID = "t3-code";
 
-export function syncedThemeIdFromPreference(theme: ThemePreference): string {
-  return theme === "system" || theme === "light" || theme === "dark"
-    ? DEFAULT_SYNCED_THEME_ID
-    : canonicalThemePreference(theme);
+export function syncedThemeIdFromPreference(theme: ThemePreference): string | undefined {
+  if (theme === "system" || theme === "light" || theme === "dark") {
+    return DEFAULT_SYNCED_THEME_ID;
+  }
+  return isBuiltInThemePreference(theme) ? canonicalThemePreference(theme) : undefined;
 }
 
 export function themePreferenceFromSyncedThemeId(themeId: string): ThemePreference {
@@ -481,7 +483,8 @@ export function useSyncedTheme() {
   const setTheme = useCallback(
     (theme: ThemePreference): boolean => {
       if (!state.themeState.setTheme(theme)) return false;
-      write({ themeId: syncedThemeIdFromPreference(theme) });
+      const themeId = syncedThemeIdFromPreference(theme);
+      if (themeId !== undefined) write({ themeId });
       return true;
     },
     [state.themeState, write],

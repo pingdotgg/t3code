@@ -91,7 +91,7 @@ export interface SyncedClientPreferenceHydrationInput<
   readonly environmentId: EnvironmentId | null;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly clientHydrated: boolean;
-  readonly clientValue: SyncedClientPreferenceValue<Field>;
+  readonly clientValue: SyncedClientPreferenceValue<Field> | undefined;
   readonly live: boolean;
   readonly serverPreferences: SyncedClientPreferences | undefined;
   readonly canPatch: boolean;
@@ -118,7 +118,7 @@ export function resolveSyncedClientPreferenceHydrationAction<
 >(input: {
   readonly field: Field;
   readonly clientHydrated: boolean;
-  readonly clientValue: SyncedClientPreferenceValue<Field>;
+  readonly clientValue: SyncedClientPreferenceValue<Field> | undefined;
   readonly serverPreferences: SyncedClientPreferences | undefined;
   readonly seedPending: boolean;
   readonly writePending?: {
@@ -128,7 +128,7 @@ export function resolveSyncedClientPreferenceHydrationAction<
   readonly adoptedUpdatedAt?: string;
   readonly now: string;
 }): SyncedClientPreferenceHydrationAction<Field> {
-  if (!input.clientHydrated) return { type: "none" };
+  if (!input.clientHydrated || input.clientValue === undefined) return { type: "none" };
   const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(input.serverPreferences, input.field);
   if (
     input.writePending !== undefined &&
@@ -306,6 +306,10 @@ export function createSyncedClientPreferenceHydrationController<
   ) => {
     const environmentId = input.environmentId;
     if (environmentId === null) return;
+    if (input.clientValue === undefined) {
+      deactivate(environmentId, owner);
+      return;
+    }
     if (!input.live) {
       deactivate(environmentId, owner);
       return;

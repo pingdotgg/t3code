@@ -1553,6 +1553,11 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   );
 }
 
+export function isBuiltInThemePreference(theme: ThemePreference): boolean {
+  const themeId = themeIdFromPreference(theme);
+  return BUILT_IN_THEME_DEFINITIONS.some((definition) => definition.id === themeId);
+}
+
 /** Artwork palettes are reviewed alongside built-ins; user themes always use the pill fallback. */
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);

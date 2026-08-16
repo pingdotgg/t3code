@@ -1033,6 +1033,39 @@ describe("synced client preferences", () => {
     ]);
   });
 
+  it("bounds a future-skewed local stamp before seeding an empty environment", () => {
+    const reconciliation = reconcilePlanModePreferences({
+      localPlanModeEnabled: true,
+      localUpdatedAt: "2099-01-01T00:00:00.000Z",
+      environments: [
+        {
+          environmentId: environmentId("environment-1"),
+          canPatch: true,
+          preferences: undefined,
+        },
+      ],
+      now: "2026-08-14T12:01:00.000Z",
+    });
+
+    expect(reconciliation).toEqual({
+      localPatch: {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:01:00.001Z",
+        },
+      },
+      environmentPatches: [
+        {
+          environmentId: environmentId("environment-1"),
+          input: {
+            patch: { planModeEnabled: true },
+            updatedAt: "2026-08-14T12:01:00.001Z",
+          },
+        },
+      ],
+    });
+  });
+
   it("clears pending reconciliation from an older canonical patch ack", async () => {
     const target = {
       environmentId: environmentId("environment-1"),

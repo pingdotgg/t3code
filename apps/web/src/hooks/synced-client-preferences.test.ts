@@ -212,6 +212,22 @@ describe("synced client preferences", () => {
     });
   });
 
+  it("does not synchronize a device-local theme without a built-in client value", () => {
+    expect(
+      resolveSyncedClientPreferenceHydrationAction({
+        field: "themeId",
+        clientHydrated: true,
+        clientValue: undefined,
+        serverPreferences: {
+          themeId: "iris",
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+        seedPending: false,
+        now: "2026-08-14T12:01:00.000Z",
+      }),
+    ).toEqual({ type: "none" });
+  });
+
   it("does not re-adopt stale server state while a local write is pending", () => {
     expect(
       resolveSyncedClientPreferenceHydrationAction({
