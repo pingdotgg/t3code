@@ -824,24 +824,61 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
-  it("retires a project draft mapping that still points at an archived thread", () => {
+  it("retires a project draft mapping without wiping aliased composer content", () => {
     const store = useComposerDraftStore.getState();
     const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
-    // Write the server-thread composer first so it lands on the scoped key
-    // instead of being aliased onto the later draft session.
-    store.setPrompt(threadRef, "keep the archived thread composer");
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      // Composer lives under the draft id and is only reachable from the
+      // server thread via alias. Archive must not delete that entry.
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      store.setPrompt(draftId, "keep the archived thread composer");
+      store.addImage(
+        draftId,
+        makeImage({ id: "img-archive-keep", previewUrl: "blob:archive-keep" }),
+      );
+      store.setProjectDraftThreadId(otherProjectRef, otherDraftId, { threadId: otherThreadId });
+
+      retireProjectDraftMappingForThread(threadRef);
+
+      const next = useComposerDraftStore.getState();
+      expect(next.getDraftSessionByLogicalProjectKey(scopedProjectKey(projectRef))).toBeNull();
+      expect(next.getComposerDraft(threadRef)?.prompt).toBe("keep the archived thread composer");
+      expect(next.getComposerDraft(draftId)?.prompt).toBe("keep the archived thread composer");
+      expect(next.getComposerDraft(threadRef)?.images).toHaveLength(1);
+      expect(next.getDraftThread(draftId)?.threadId).toBe(threadId);
+      expect(next.getDraftThreadByProjectRef(otherProjectRef)?.threadId).toBe(otherThreadId);
+      expect(revokeSpy).not.toHaveBeenCalled();
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
+  });
+
+  it("does not reuse a deleted or promoted thread id as the project's next draft", () => {
+    const store = useComposerDraftStore.getState();
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-    store.setPrompt(draftId, "draft session prompt");
-    store.setProjectDraftThreadId(otherProjectRef, otherDraftId, { threadId: otherThreadId });
+    store.setPrompt(draftId, "already sent");
+
+    markPromotedDraftThreadByRef(threadRef);
+    expect(
+      useComposerDraftStore
+        .getState()
+        .getDraftSessionByLogicalProjectKey(scopedProjectKey(projectRef)),
+    ).toBeNull();
 
     retireProjectDraftMappingForThread(threadRef);
 
     const next = useComposerDraftStore.getState();
     expect(next.getDraftSessionByLogicalProjectKey(scopedProjectKey(projectRef))).toBeNull();
-    expect(next.getDraftThread(draftId)).toBeNull();
-    expect(draftByKey(draftId)).toBeUndefined();
-    expect(next.getComposerDraft(threadRef)?.prompt).toBe("keep the archived thread composer");
-    expect(next.getDraftThreadByProjectRef(otherProjectRef)?.threadId).toBe(otherThreadId);
+    expect(
+      next.logicalProjectDraftThreadKeyByLogicalProjectKey[scopedProjectKey(projectRef)],
+    ).toBeUndefined();
+    expect(next.getDraftThread(draftId)?.promotedTo).toEqual(threadRef);
+    expect(next.getComposerDraft(threadRef)?.prompt).toBe("already sent");
   });
 
   it("leaves a mapping alone when it points at a different thread", () => {

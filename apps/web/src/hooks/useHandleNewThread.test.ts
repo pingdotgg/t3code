@@ -56,6 +56,18 @@ describe("decideStoredDraftReuse", () => {
     ).toBe("mint");
   });
 
+  it("mints a new draft when a previously promoted id later disappears after delete", () => {
+    expect(
+      decideStoredDraftReuse({
+        storedDraftThreadRef,
+        liveShellExists: false,
+        archivedShellExists: false,
+        deletedShellExists: false,
+        promoted: true,
+      }),
+    ).toBe("mint");
+  });
+
   it("mints a new draft when the stored id is visible as deleted", () => {
     expect(
       decideStoredDraftReuse({
