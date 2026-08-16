@@ -802,8 +802,8 @@ function WorktreeRemoveButton({ worktree, onPrune, pendingPath }: WorktreeRowPro
   return (
     <Button
       size="xs"
-      variant="ghost-muted"
-      className="h-6 px-1.5 text-[11px] hover:text-destructive"
+      variant="ghost"
+      className="h-6 px-1.5 text-[11px] text-muted-foreground hover:text-destructive"
       onClick={() => onPrune(worktree)}
       disabled={pendingPath !== null}
       aria-label={`Remove worktree ${worktree.branch ?? worktree.path}`}
@@ -847,15 +847,11 @@ function WorktreePolicyRows(props: WorktreeManagementViewProps) {
           ) : undefined
         }
         control={
-          <div className="flex justify-end">
-            <Switch
-              checked={props.deleteOrphanedImmediately}
-              onCheckedChange={(checked) =>
-                props.onDeleteOrphanedImmediatelyChange(Boolean(checked))
-              }
-              aria-label="Delete orphaned worktrees immediately"
-            />
-          </div>
+          <Switch
+            checked={props.deleteOrphanedImmediately}
+            onCheckedChange={(checked) => props.onDeleteOrphanedImmediatelyChange(Boolean(checked))}
+            aria-label="Delete orphaned worktrees immediately"
+          />
         }
       />
     </>
