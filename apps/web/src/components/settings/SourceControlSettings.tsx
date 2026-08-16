@@ -8,7 +8,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   BackgroundActivitySettings,
@@ -993,7 +993,7 @@ function WorktreeProjectLedger({
           <ProjectFavicon
             environmentId={environmentId}
             cwd={group.workspaceRoot}
-            className="size-3.5 shrink-0 text-muted-foreground"
+            className="size-3.5 shrink-0"
           />
           <h3 className="truncate text-xs font-medium text-foreground">{group.projectTitle}</h3>
           {otherProjectCount > 0 ? (
@@ -1106,10 +1106,12 @@ function WorktreeEnvironmentGroup({
   target,
   showLabel,
   refreshToken,
+  onPendingChange,
 }: {
   readonly target: WorktreeEnvironmentTarget;
   readonly showLabel: boolean;
   readonly refreshToken: number;
+  readonly onPendingChange: (environmentId: EnvironmentId, pending: boolean) => void;
 }) {
   const environmentId = target.environmentId;
   const settings = useEnvironmentSettings(environmentId);
@@ -1139,6 +1141,17 @@ function WorktreeEnvironmentGroup({
     if (refreshToken === 0) return;
     inventory.refresh();
   }, [inventory.refresh, refreshToken]);
+
+  useEffect(() => {
+    onPendingChange(environmentId, inventory.isPending);
+  }, [environmentId, inventory.isPending, onPendingChange]);
+
+  useEffect(
+    () => () => {
+      onPendingChange(environmentId, false);
+    },
+    [environmentId, onPendingChange],
+  );
 
   const handlePrune = (worktree: WorktreeInfo) => {
     if (!worktree.safeToPrune || pendingPath !== null) return;
@@ -1213,6 +1226,20 @@ function WorktreeManagementSection() {
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [refreshToken, setRefreshToken] = useState(0);
+  const [pendingEnvironmentIds, setPendingEnvironmentIds] = useState<ReadonlySet<EnvironmentId>>(
+    () => new Set(),
+  );
+  const handlePendingChange = useCallback((environmentId: EnvironmentId, pending: boolean) => {
+    setPendingEnvironmentIds((current) => {
+      const alreadyPending = current.has(environmentId);
+      if (alreadyPending === pending) return current;
+      const next = new Set(current);
+      if (pending) next.add(environmentId);
+      else next.delete(environmentId);
+      return next;
+    });
+  }, []);
+  const isPending = pendingEnvironmentIds.size > 0;
   const targets: WorktreeEnvironmentTarget[] = environments
     .filter(
       (environment) =>
@@ -1239,13 +1266,18 @@ function WorktreeManagementSection() {
                 size="icon-micro"
                 variant="ghost-muted"
                 onClick={() => setRefreshToken((token) => token + 1)}
-                aria-label="Refresh worktree inventory"
+                disabled={isPending}
+                aria-label={
+                  isPending ? "Refreshing worktree inventory" : "Refresh worktree inventory"
+                }
               >
                 <RefreshCwIcon className="size-3" />
               </Button>
             }
           />
-          <TooltipPopup side="top">Refresh worktree inventory</TooltipPopup>
+          <TooltipPopup side="top">
+            {isPending ? "Refreshing worktree inventory" : "Refresh worktree inventory"}
+          </TooltipPopup>
         </Tooltip>
       }
     >
@@ -1262,6 +1294,7 @@ function WorktreeManagementSection() {
               target={target}
               showLabel={targets.length > 1}
               refreshToken={refreshToken}
+              onPendingChange={handlePendingChange}
             />
           ))}
         </div>
