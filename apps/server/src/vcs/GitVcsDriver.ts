@@ -275,7 +275,7 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
-    /** Fetches `refs/pull/<n>/head` without writing a branch, for heads that exist nowhere else. */
+    /** Fetches GitHub `refs/pull/<n>/head` or GitLab `refs/merge-requests/<n>/head` without writing a branch. */
     readonly fetchPullRequestHeadCommit: (
       input: GitFetchPullRequestHeadCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;

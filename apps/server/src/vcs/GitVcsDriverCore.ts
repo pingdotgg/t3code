@@ -2794,19 +2794,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      const fetchSpecs = [
+        `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
+        `+refs/merge-requests/${input.prNumber}/head:refs/heads/${input.branch}`,
+      ];
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          remoteName,
-          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
-        ],
+        ["fetch", "--quiet", "--no-tags", remoteName, fetchSpecs[0]!],
         {
           fallbackErrorDetail: "git fetch pull request branch failed",
         },
+      ).pipe(
+        Effect.orElse(() =>
+          executeGit(
+            "GitVcsDriver.fetchPullRequestBranch",
+            input.cwd,
+            ["fetch", "--quiet", "--no-tags", remoteName, fetchSpecs[1]!],
+            {
+              fallbackErrorDetail: "git fetch merge request branch failed",
+            },
+          ),
+        ),
       );
     });
 
@@ -2834,6 +2843,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         {
           fallbackErrorDetail: "git fetch pull request head failed",
         },
+      ).pipe(
+        Effect.orElse(() =>
+          executeGit(
+            "GitVcsDriver.fetchPullRequestHeadCommit",
+            input.cwd,
+            [
+              "fetch",
+              "--quiet",
+              "--no-tags",
+              remoteName,
+              `refs/merge-requests/${input.prNumber}/head`,
+            ],
+            {
+              fallbackErrorDetail: "git fetch merge request head failed",
+            },
+          ),
+        ),
       );
 
       return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
