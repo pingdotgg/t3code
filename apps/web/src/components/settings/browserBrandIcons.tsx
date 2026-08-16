@@ -39,9 +39,7 @@ export function FirefoxIcon({ alt = "", ...props }: BrandIconProps) {
   return <BrandImg src={firefoxUrl} alt={alt} {...props} />;
 }
 
-/** Custom T3 agent pointer from the desktop overlay / Chrome extension. */
+/** Same soft-glow pointer used by the desktop agent-cursor overlay. */
 export function AgentCursorIcon({ alt = "", className, ...props }: BrandIconProps) {
-  return (
-    <BrandImg src={agentCursorUrl} alt={alt} className={cn("rounded-full", className)} {...props} />
-  );
+  return <BrandImg src={agentCursorUrl} alt={alt} className={className} {...props} />;
 }
