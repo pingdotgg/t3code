@@ -1,7 +1,11 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRenameCommit, shouldShowOpenInPicker } from "./ChatHeader";
+import {
+  buildHeaderControlsContextMenuItems,
+  resolveRenameCommit,
+  shouldShowOpenInPicker,
+} from "./ChatHeader";
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
@@ -80,5 +84,33 @@ describe("resolveRenameCommit", () => {
     expect(resolveRenameCommit({ title: " Old ", originalTitle: "Old" })).toEqual({
       action: "noop",
     });
+  });
+});
+
+describe("buildHeaderControlsContextMenuItems", () => {
+  it("formats checked state when all controls are visible", () => {
+    const items = buildHeaderControlsContextMenuItems({
+      scripts: true,
+      openIn: true,
+      git: true,
+    });
+    expect(items).toEqual([
+      { id: "scripts", label: "✓ Action scripts" },
+      { id: "openIn", label: "✓ Open in editor" },
+      { id: "git", label: "✓ Git source control" },
+    ]);
+  });
+
+  it("formats unchecked state when controls are hidden", () => {
+    const items = buildHeaderControlsContextMenuItems({
+      scripts: false,
+      openIn: true,
+      git: false,
+    });
+    expect(items).toEqual([
+      { id: "scripts", label: "   Action scripts" },
+      { id: "openIn", label: "✓ Open in editor" },
+      { id: "git", label: "   Git source control" },
+    ]);
   });
 });
