@@ -104,6 +104,7 @@ function renderTabs(
       onCloseAllSurfaces={() => undefined}
       onCopyFilePath={() => undefined}
       onAddBrowser={() => undefined}
+      onAddBrowserInProfile={() => undefined}
       onAddTerminal={() => undefined}
       onAddPullRequest={() => undefined}
       onAddDiff={() => undefined}
