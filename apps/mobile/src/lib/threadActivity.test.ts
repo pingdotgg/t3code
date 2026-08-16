@@ -151,6 +151,74 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps proposed plans visible when their settled turn is folded", () => {
+    const turnId = TurnId.make("turn-plan");
+    const thread = makeThread({
+      id: ThreadId.make("thread-plan"),
+      projectId: ProjectId.make("project-1"),
+      title: "Plan thread",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:18.000Z",
+        assistantMessageId: MessageId.make("assistant-commentary"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-commentary"),
+          role: "assistant",
+          text: "I will inspect the current implementation.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:02.000Z",
+          updatedAt: "2026-04-01T00:00:03.000Z",
+        },
+      ],
+      proposedPlans: [
+        {
+          id: "plan-1",
+          turnId,
+          planMarkdown: "# Update Index Greeting\n\n- Update the page.\n- Verify the build.",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-04-01T00:00:17.000Z",
+          updatedAt: "2026-04-01T00:00:17.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: { title: "Read files", itemType: "file_read", status: "completed" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed.map((entry) => entry.id)).toEqual([
+      "assistant-commentary",
+      "tool-completed",
+      "plan-1",
+    ]);
+    expect(feed.at(-1)).toMatchObject({
+      type: "proposed-plan",
+      proposedPlan: { planMarkdown: expect.stringContaining("Update Index Greeting") },
+    });
+
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    expect(collapsed.map((entry) => entry.id)).toEqual([
+      "turn-fold:turn-plan",
+      "assistant-commentary",
+      "plan-1",
+    ]);
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

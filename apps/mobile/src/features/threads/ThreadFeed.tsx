@@ -104,6 +104,11 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import {
+  buildCollapsedProposedPlanPreviewMarkdown,
+  proposedPlanTitle,
+  stripDisplayedPlanMarkdown,
+} from "./proposedPlan";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -881,6 +886,18 @@ function renderFeedEntry(
     );
   }
 
+  if (entry.type === "proposed-plan") {
+    return (
+      <ProposedPlanCard
+        planMarkdown={entry.proposedPlan.planMarkdown}
+        iconSubtleColor={iconSubtleColor}
+        markdownStyles={markdownStyles.assistant}
+        onMarkdownLinkPress={props.onMarkdownLinkPress}
+        skills={props.skills}
+      />
+    );
+  }
+
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
@@ -1033,6 +1050,83 @@ function renderFeedEntry(
     />
   );
 }
+
+const ProposedPlanCard = memo(function ProposedPlanCard(props: {
+  readonly planMarkdown: string;
+  readonly iconSubtleColor: ColorValue;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly onMarkdownLinkPress: (href: string) => void;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const title = proposedPlanTitle(props.planMarkdown) ?? "Proposed plan";
+  const lineCount = props.planMarkdown.split("\n").length;
+  const canCollapse = props.planMarkdown.length > 900 || lineCount > 20;
+  const displayedPlanMarkdown = stripDisplayedPlanMarkdown(props.planMarkdown);
+  const collapsedPreview = canCollapse
+    ? buildCollapsedProposedPlanPreviewMarkdown(props.planMarkdown, { maxLines: 10 })
+    : null;
+  const displayedMarkdown =
+    canCollapse && !expanded ? (collapsedPreview ?? "") : displayedPlanMarkdown;
+
+  return (
+    <View className="mb-4 overflow-hidden rounded-[20px] border border-neutral-200 bg-neutral-100 p-4 dark:border-white/6 dark:bg-neutral-900">
+      <View className="mb-3 flex-row items-center gap-2">
+        <View className="rounded-md bg-neutral-200 px-2 py-1 dark:bg-neutral-800">
+          <Text className="font-t3-medium text-xs text-neutral-700 dark:text-neutral-300">
+            Plan
+          </Text>
+        </View>
+        <Text
+          className="min-w-0 flex-1 font-t3-medium text-sm text-neutral-950 dark:text-neutral-50"
+          numberOfLines={1}
+        >
+          {title}
+        </Text>
+        <CopyTextButton
+          accessibilityLabel="Copy plan"
+          text={props.planMarkdown}
+          tintColor={props.iconSubtleColor}
+          buttonSize={32}
+          iconSize={15}
+        />
+      </View>
+      {hasNativeSelectableMarkdownText() ? (
+        <SelectableMarkdownText
+          markdown={displayedMarkdown}
+          skills={props.skills}
+          textStyle={props.markdownStyles.nativeTextStyle}
+          onLinkPress={props.onMarkdownLinkPress}
+        />
+      ) : (
+        <Markdown
+          options={{ gfm: true }}
+          renderers={props.markdownStyles.renderers}
+          styles={props.markdownStyles.styles}
+          theme={props.markdownStyles.theme}
+        >
+          {displayedMarkdown}
+        </Markdown>
+      )}
+      {canCollapse ? (
+        <View className="mt-2 items-center">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            accessibilityLabel={expanded ? "Collapse plan" : "Expand plan"}
+            hitSlop={6}
+            onPress={() => setExpanded((value) => !value)}
+            className="min-h-10 justify-center rounded-lg border border-neutral-300 px-3 dark:border-white/10"
+          >
+            <Text className="font-t3-medium text-sm text-neutral-800 dark:text-neutral-200">
+              {expanded ? "Collapse plan" : "Expand plan"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
+  );
+});
 
 const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
