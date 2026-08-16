@@ -10,6 +10,8 @@ grok login
 ```
 
 You can also set `XAI_API_KEY` in the server environment instead of running `grok login`.
+Background provider checks do not start a Grok browser login. If the CLI is installed but has no
+saved credentials, Settings shows an unauthenticated status and asks you to run `grok login`.
 
 In T3 Code Settings, the default Grok provider can stay like this:
 
@@ -23,8 +25,10 @@ Use an explicit binary path when `grok` is not on the `PATH` of the shell that s
 ## Models and effort
 
 T3 Code reads the live Grok model list from the CLI. Current Grok Build installs advertise
-`grok-4.6` and `grok-4.5`. Each model that supports reasoning effort shows a Reasoning control in
-the composer. The menu comes from the CLI, so the levels can differ by model.
+`grok-4.6` and `grok-4.5`. The product slug `grok-build` is treated as an alias for the session's
+current ACP model — T3 does not send it to `session/set_model`. Each model that supports reasoning
+effort shows a Reasoning control in the composer. The menu comes from the CLI, so the levels can
+differ by model.
 
 T3 Code sends the selected effort on the live session. You do not need a new thread to change
 model or effort.

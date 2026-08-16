@@ -66,7 +66,14 @@ import {
   makeGrokAcpRuntime,
   requestedGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
+  availableGrokSessionModelIds,
 } from "../acp/GrokAcpSupport.ts";
+import {
+  boundGrokToolCallForEvent,
+  grokToolCallFingerprint,
+  shouldEmitGrokToolUpdate,
+  type GrokToolUpdateGate,
+} from "../acp/GrokAcpToolUpdates.ts";
 import {
   extractGrokTokenUsage,
   extractXAiAskUserQuestions,
@@ -144,7 +151,9 @@ interface GrokSessionContext {
   maxTokensByModel: Map<string, number>;
   maxTokens: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
+  availableModelIds: ReadonlyArray<string>;
   workflowTrack: GrokWorkflowTrackState;
+  readonly toolUpdateGates: Map<string, GrokToolUpdateGate>;
   stopped: boolean;
 }
 
@@ -207,7 +216,7 @@ function parseGrokResume(raw: unknown): { sessionId: string } | undefined {
   return { sessionId: raw.sessionId.trim() };
 }
 
-function selectPermissionOptionId(
+export function selectGrokPermissionOptionId(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
@@ -218,7 +227,23 @@ function selectPermissionOptionId(
         ? "allow_once"
         : "reject_once";
   const option = request.options.find((entry) => entry.kind === kind);
-  return option?.optionId.trim() || undefined;
+  if (option?.optionId.trim()) {
+    return option.optionId.trim();
+  }
+  // Grok often omits allow_always (#6502). Falling back to allow_once keeps
+  // the turn alive instead of answering the permission request as cancelled.
+  if (decision === "acceptForSession") {
+    const once = request.options.find((entry) => entry.kind === "allow_once");
+    return once?.optionId.trim() || undefined;
+  }
+  return undefined;
+}
+
+function selectPermissionOptionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decision: Exclude<ProviderApprovalDecision, "cancel">,
+): string | undefined {
+  return selectGrokPermissionOptionId(request, decision);
 }
 
 function selectAutoApprovedPermissionOption(
@@ -874,6 +899,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           );
 
           const startedModelId = currentGrokModelIdFromSessionSetup(started.sessionSetupResult);
+          const availableModelIds = availableGrokSessionModelIds(started.sessionSetupResult);
           const advertisedStartEfforts = advertisedGrokReasoningEffortsFromSessionSetup(
             started.sessionSetupResult,
             requestedStartModelId ?? startedModelId,
@@ -882,6 +908,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             runtime: acp,
             currentModelId: startedModelId,
             requestedModelId: requestedStartModelId,
+            availableModelIds,
             currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
               started.sessionSetupResult,
             ),
@@ -936,7 +963,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               (boundModelId ? maxTokensByModel.get(boundModelId) : undefined) ??
               currentGrokMaxTokensFromSessionSetup(started.sessionSetupResult),
             lastKnownTokenUsage: undefined,
+            availableModelIds,
             workflowTrack: emptyGrokWorkflowTrackState(),
+            toolUpdateGates: new Map(),
             stopped: false,
           };
 
@@ -1003,18 +1032,37 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       "session/update",
                     );
                     return;
-                  case "ToolCallUpdated":
+                  case "ToolCallUpdated": {
+                    const nowMs = Date.now();
+                    if (
+                      !shouldEmitGrokToolUpdate({
+                        toolCall: event.toolCall,
+                        previous: ctx.toolUpdateGates.get(event.toolCall.toolCallId),
+                        nowMs,
+                      })
+                    ) {
+                      return;
+                    }
+                    ctx.toolUpdateGates.set(event.toolCall.toolCallId, {
+                      fingerprint: grokToolCallFingerprint(event.toolCall),
+                      lastEmittedAt: nowMs,
+                    });
+                    const bounded = boundGrokToolCallForEvent({
+                      toolCall: event.toolCall,
+                      rawPayload: event.rawPayload,
+                    });
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
                         stamp,
                         provider: PROVIDER,
                         threadId: ctx.threadId,
                         turnId: notificationTurnId,
-                        toolCall: event.toolCall,
-                        rawPayload: event.rawPayload,
+                        toolCall: bounded.toolCall,
+                        rawPayload: bounded.rawPayload,
                       }),
                     );
                     return;
+                  }
                   case "ContentDelta":
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({
@@ -1115,6 +1163,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               const turnSelection = yield* applyGrokAcpModelSelection({
                 runtime: ctx.acp,
                 currentModelId: ctx.currentModelId,
+                availableModelIds: ctx.availableModelIds,
                 requestedModelId: requestedTurnModelId,
                 currentReasoningEffort: ctx.currentReasoningEffort,
                 requestedReasoningEffort: requestedGrokReasoningEffort(

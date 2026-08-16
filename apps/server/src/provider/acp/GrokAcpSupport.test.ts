@@ -12,6 +12,7 @@ import {
   grokDiscoveredModelCapabilities,
   requestedGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
+  resolveGrokSessionModelId,
 } from "./GrokAcpSupport.ts";
 import { ProviderInstanceId } from "@t3tools/contracts";
 
@@ -20,6 +21,38 @@ describe("resolveGrokAcpBaseModelId", () => {
     expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("  grok-test-custom-model  ")).toBe("grok-test-custom-model");
+  });
+});
+
+describe("resolveGrokSessionModelId", () => {
+  it("keeps a live ACP model id", () => {
+    expect(
+      resolveGrokSessionModelId({
+        requested: "grok-4.5",
+        current: "grok-4.6",
+        availableIds: ["grok-4.6", "grok-4.5"],
+      }),
+    ).toBe("grok-4.5");
+  });
+
+  it("aliases grok-build onto the current live model", () => {
+    expect(
+      resolveGrokSessionModelId({
+        requested: "grok-build",
+        current: "grok-4.6",
+        availableIds: ["grok-4.6", "grok-4.5"],
+      }),
+    ).toBe("grok-4.6");
+  });
+
+  it("falls back to the first advertised model when current is missing", () => {
+    expect(
+      resolveGrokSessionModelId({
+        requested: "grok-build",
+        current: undefined,
+        availableIds: ["grok-4.5", "grok-4.6"],
+      }),
+    ).toBe("grok-4.5");
   });
 });
 
@@ -178,6 +211,21 @@ describe("applyGrokAcpModelSelection", () => {
       });
       expect(modelCalls).toEqual([]);
       expect(result).toEqual({ modelId: "grok-build", reasoningEffort: undefined });
+    }),
+  );
+
+  it.effect("does not send grok-build to session/set_model when the live menu has real ids", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        requestedModelId: "grok-build",
+        availableModelIds: ["grok-4.6", "grok-4.5"],
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toEqual({ modelId: "grok-4.6", reasoningEffort: undefined });
     }),
   );
 

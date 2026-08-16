@@ -36,6 +36,8 @@ import {
   parseGrokAcpModelMeta,
   resolveGrokAcpBaseModelId,
 } from "../acp/GrokAcpSupport.ts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -129,15 +131,50 @@ function buildGrokDiscoveredModelsFromSessionModelState(
     .filter((model): model is ServerProviderModel => model !== undefined);
 }
 
+const grokAuthFileCandidates = (
+  environment: NodeJS.ProcessEnv,
+  path: Path.Path["Service"],
+): ReadonlyArray<string> => {
+  const home =
+    environment.GROK_HOME?.trim() || environment.HOME?.trim() || environment.USERPROFILE?.trim();
+  if (!home) {
+    return [];
+  }
+  return [path.join(home, ".grok", "auth.json"), path.join(home, ".grok", "credentials.json")];
+};
+
+const grokHasLocalAuthMaterial = (
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    if (environment[GROK_API_KEY_ENV]?.trim()) {
+      return true;
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const candidate of grokAuthFileCandidates(environment, path)) {
+      if (yield* fileSystem.exists(candidate)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
 const discoverGrokModelsViaAcp = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const probeEnvironment = {
+      ...environment,
+      CI: environment.CI ?? "1",
+      NO_BROWSER: environment.NO_BROWSER ?? "1",
+      BROWSER: environment.BROWSER ?? "",
+    };
     const acp = yield* makeGrokAcpRuntime({
       grokSettings,
-      environment,
+      environment: probeEnvironment,
       childProcessSpawner,
       cwd: process.cwd(),
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
@@ -170,7 +207,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
@@ -253,6 +290,23 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         status: "error",
         auth: { status: "unknown" },
         message: "Grok CLI is installed but failed to run.",
+      },
+    });
+  }
+
+  const hasAuthMaterial = yield* grokHasLocalAuthMaterial(environment);
+  if (!hasAuthMaterial) {
+    return buildServerProvider({
+      presentation: GROK_PRESENTATION,
+      enabled: grokSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Grok CLI is not authenticated. Run `grok login` and try again.",
       },
     });
   }

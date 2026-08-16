@@ -26,7 +26,11 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
+import {
+  grokPromptSettlementBelongsToContext,
+  makeGrokAdapter,
+  selectGrokPermissionOptionId,
+} from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -88,6 +92,24 @@ const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
+
+it("falls back to allow_once when Grok omits allow_always", () => {
+  const request = {
+    sessionId: "sess-1",
+    options: [
+      { optionId: "allow-once", name: "Allow once", kind: "allow_once" as const },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" as const },
+    ],
+    toolCall: {
+      toolCallId: "tool-1",
+      title: "run",
+      kind: "execute" as const,
+      status: "pending" as const,
+    },
+  };
+  assert.equal(selectGrokPermissionOptionId(request, "acceptForSession"), "allow-once");
+  assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
+});
 
 it("requires a settlement to match the live Grok turn", () => {
   const staleTurnId = TurnId.make("stale-turn");

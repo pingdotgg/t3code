@@ -130,6 +130,50 @@ export function resolveGrokAcpBaseModelId(model: string | null | undefined): str
   return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? "grok-build";
 }
 
+/** T3 product slugs that Grok ACP `session/set_model` does not accept. */
+const GROK_PRODUCT_MODEL_ALIASES = new Set(["grok-build", "grok-code", "grok-code-fast-1"]);
+
+export function availableGrokSessionModelIds(
+  sessionSetupResult:
+    | EffectAcpSchema.LoadSessionResponse
+    | EffectAcpSchema.NewSessionResponse
+    | EffectAcpSchema.ResumeSessionResponse,
+): ReadonlyArray<string> {
+  return (sessionSetupResult.models?.availableModels ?? [])
+    .map((model) => model.modelId.trim())
+    .filter((modelId) => modelId.length > 0);
+}
+
+/**
+ * Map a composer selection onto an id `session/set_model` will accept.
+ * `grok-build` is T3's product name; live Grok ACP ids are `grok-4.6` / `grok-4.5`.
+ */
+export function resolveGrokSessionModelId(input: {
+  readonly requested: string | undefined;
+  readonly current: string | undefined;
+  readonly availableIds: ReadonlyArray<string>;
+}): string | undefined {
+  const available = input.availableIds.filter((id) => id.length > 0);
+  if (available.length === 0) {
+    return input.requested ?? input.current;
+  }
+  if (input.requested && available.includes(input.requested)) {
+    return input.requested;
+  }
+  if (
+    input.requested &&
+    !GROK_PRODUCT_MODEL_ALIASES.has(input.requested) &&
+    !available.includes(input.requested)
+  ) {
+    // Custom / unknown slug: still try the requested id so set_model can fail loudly.
+    return input.requested;
+  }
+  if (input.current && available.includes(input.current)) {
+    return input.current;
+  }
+  return available[0];
+}
+
 export function currentGrokModelIdFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
@@ -377,13 +421,22 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly availableModelIds?: ReadonlyArray<string>;
   readonly currentReasoningEffort?: string | undefined;
   readonly requestedReasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<GrokAcpSelection, E> {
-  const nextModelId = input.requestedModelId ?? input.currentModelId;
+  const requestedModelId =
+    input.availableModelIds && input.availableModelIds.length > 0
+      ? resolveGrokSessionModelId({
+          requested: input.requestedModelId,
+          current: input.currentModelId,
+          availableIds: input.availableModelIds,
+        })
+      : input.requestedModelId;
+  const nextModelId = requestedModelId ?? input.currentModelId;
   const shouldSwitchModel =
-    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
+    requestedModelId !== undefined && requestedModelId !== input.currentModelId;
   const nextEffort = shouldSwitchModel
     ? input.requestedReasoningEffort
     : (input.requestedReasoningEffort ?? input.currentReasoningEffort);
