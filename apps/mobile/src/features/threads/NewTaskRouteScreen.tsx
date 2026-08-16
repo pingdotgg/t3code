@@ -1,8 +1,13 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  StackActions,
+  useIsFocused,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -14,10 +19,10 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects } from "../../state/entities";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
-import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { getProjectScopeSelectionTarget } from "./new-task-project-selection";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -80,7 +85,7 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const projects = useProjects();
-  const { projectScopes } = useNewTaskFlow();
+  const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
@@ -88,7 +93,6 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
-  const [expandedGroupKeys, setExpandedGroupKeys] = useState<ReadonlySet<string>>(() => new Set());
   const { getShare, releaseShareReservation } = useIncomingShare();
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
@@ -126,27 +130,22 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         return;
       }
     }
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
+    const state = navigation.getState();
+    const previousRoute = state?.routes[state.index - 1];
+    if (previousRoute?.name === "NewTaskDraft") {
+      setProject(project);
+      navigation.goBack();
+      return;
+    }
+
+    navigation.dispatch(
+      StackActions.push("NewTaskDraft", {
         environmentId: project.environmentId,
         projectId: project.id,
         title: project.title,
         incomingShareId: incomingShare?.id,
-      },
-    });
-  }
-
-  function toggleGroup(groupKey: string): void {
-    setExpandedGroupKeys((current) => {
-      const next = new Set(current);
-      if (next.has(groupKey)) {
-        next.delete(groupKey);
-      } else {
-        next.add(groupKey);
-      }
-      return next;
-    });
+      }),
+    );
   }
 
   useEffect(() => {
@@ -169,15 +168,14 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       return;
     }
     resumedDestinationKeyRef.current = destinationKey;
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
+    navigation.dispatch(
+      StackActions.push("NewTaskDraft", {
         environmentId: reservedDestinationProject.environmentId,
         projectId: reservedDestinationProject.id,
         title: reservedDestinationProject.title,
         incomingShareId: incomingShare.id,
-      },
-    });
+      }),
+    );
   }, [incomingShare, isFocused, navigation, reservedDestinationProject]);
 
   return (
@@ -196,7 +194,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     {
                       accessibilityLabel: "Add project",
                       icon: "plus",
-                      onPress: () => navigation.navigate("NewTaskSheet", { screen: "AddProject" }),
+                      onPress: () => navigation.dispatch(StackActions.push("AddProject")),
                     },
                   ]
                 : []
@@ -223,7 +221,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             {catalogState.hasReadyEnvironment ? (
               <NativeHeaderToolbar.Button
                 icon="plus"
-                onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
+                onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                 separateBackground
               />
             ) : null}
@@ -263,7 +261,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             ) : (
               <Pressable
                 className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
-                onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
+                onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
               >
                 <Text className="text-sm font-t3-bold text-primary-foreground">
                   Add new project
@@ -275,22 +273,15 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
             {projectScopes.map((scope, scopeIndex) => {
               const hasMultipleProjects = scope.projects.length > 1;
-              const expanded = expandedGroupKeys.has(scope.key);
-              const singleProject = hasMultipleProjects ? null : scope.projects[0];
+              const selectionTarget = getProjectScopeSelectionTarget(scope, selectedEnvironmentId);
               return (
                 <View
                   key={scope.key}
                   className={cn(scopeIndex > 0 && "border-t border-border-subtle")}
                 >
                   <Pressable
-                    disabled={singleProject !== null && reservedDestinationProject !== null}
-                    onPress={() => {
-                      if (singleProject) {
-                        void selectProject(singleProject);
-                      } else {
-                        toggleGroup(scope.key);
-                      }
-                    }}
+                    disabled={reservedDestinationProject !== null}
+                    onPress={() => void selectProject(selectionTarget)}
                     className="flex-row items-center gap-3 bg-card px-4 py-3.5"
                   >
                     <View className="h-7 w-7 items-center justify-center">
@@ -311,52 +302,16 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       >
                         {hasMultipleProjects
                           ? `${scope.projects.length} workspaces`
-                          : singleProject?.workspaceRoot}
+                          : selectionTarget.workspaceRoot}
                       </Text>
                     </View>
                     <SymbolView
-                      name={hasMultipleProjects && expanded ? "chevron.down" : "chevron.right"}
+                      name="chevron.right"
                       size={14}
                       tintColor={chevronColor}
                       type="monochrome"
                     />
                   </Pressable>
-                  {hasMultipleProjects && expanded
-                    ? scope.projects.map((project) => (
-                        <Pressable
-                          key={scopedProjectKey(project.environmentId, project.id)}
-                          disabled={reservedDestinationProject !== null}
-                          onPress={() => void selectProject(project)}
-                          className="flex-row items-center gap-3 border-t border-border-subtle bg-card py-3 pr-4 pl-10"
-                        >
-                          <ProjectFavicon
-                            environmentId={project.environmentId}
-                            faviconPath={project.faviconPath}
-                            size={18}
-                            projectTitle={project.title}
-                            workspaceRoot={project.workspaceRoot}
-                          />
-                          <View className="min-w-0 flex-1">
-                            <Text className="text-sm font-t3-bold text-foreground">
-                              {project.title}
-                            </Text>
-                            <Text
-                              className="text-xs text-foreground-muted"
-                              ellipsizeMode="middle"
-                              numberOfLines={1}
-                            >
-                              {project.workspaceRoot}
-                            </Text>
-                          </View>
-                          <SymbolView
-                            name="chevron.right"
-                            size={14}
-                            tintColor={chevronColor}
-                            type="monochrome"
-                          />
-                        </Pressable>
-                      ))
-                    : null}
                 </View>
               );
             })}

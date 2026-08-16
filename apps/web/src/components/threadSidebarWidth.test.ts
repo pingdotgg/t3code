@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Regression coverage compares the sidebar component with its width contract.
+import * as NodeFS from "node:fs";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -30,5 +33,16 @@ describe("thread sidebar width", () => {
 
   it("keeps the sidebar minimum when the whole layout is narrower than its minimums", () => {
     expect(resolveInitialThreadSidebarWidth(900, 700)).toBe(THREAD_SIDEBAR_MIN_WIDTH);
+  });
+
+  it("shows the desktop wordmark across the sidebar's full legal width range", () => {
+    const sidebarSource = NodeFS.readFileSync(
+      new URL("./sidebar/SidebarChrome.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(sidebarSource).toContain("hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1");
+    expect(sidebarSource).toContain("md:flex");
+    expect(THREAD_SIDEBAR_MIN_WIDTH).toBe(13 * 16);
   });
 });
