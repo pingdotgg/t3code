@@ -38,6 +38,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import {
+  isClaudeHomeExplicitOverride,
+  resolveClaudeTranscriptDirPath,
+} from "./usageClaudeTranscriptDir.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -185,16 +189,22 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
+   * Default installs nest transcripts under `~/.claude/projects`. A custom
+   * CLAUDE_CONFIG_DIR uses `<home>/projects` only when that nested path is
+   * absent. Never fall back to `~/projects` for the OS home.
    */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
+  const resolveClaudeTranscriptDir = (homePath: string, homeIsExplicitOverride: boolean) =>
     Effect.gen(function* () {
       const nested = path.join(homePath, ".claude", "projects");
       const nestedExists = yield* fileSystem
         .exists(nested)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
+      return resolveClaudeTranscriptDirPath({
+        homePath,
+        join: path.join,
+        nestedProjectsExists: nestedExists,
+        homeIsExplicitOverride,
+      });
     });
 
   /** Resolves the transcript directory for each provider. */
@@ -216,7 +226,10 @@ export const make = Effect.gen(function* () {
     );
 
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
+    const claudeDir = yield* resolveClaudeTranscriptDir(
+      claudeHome,
+      isClaudeHomeExplicitOverride(settings.providers.claudeAgent.homePath),
+    );
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
 
     return [
