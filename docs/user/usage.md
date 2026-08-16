@@ -1,6 +1,6 @@
 # Review usage
 
-The Usage page combines Codex, Claude Code, and Grok Build activity from your connected
+The Usage page combines Codex, Claude Code, Grok Build, and OpenCode activity from your connected
 environments. It reads the providers' local session history and shows API-equivalent token cost,
 processed tokens, cache savings, provider shares, and model breakdowns. Subscription billing is
 separate from the raw token cost shown here.
