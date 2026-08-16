@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "./models.ts";
 import {
+  buildProjectPickerDescription,
   buildProjectGroups,
+  deriveEnvironmentAccentColor,
   derivePhysicalProjectKey,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
@@ -52,6 +54,20 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  it("builds a readable path and stable computer color", () => {
+    expect(
+      buildProjectPickerDescription({
+        workspaceRoot: "C:\\Projects\\t3code",
+        environmentLabel: "Workstation",
+        showEnvironmentLabel: true,
+      }),
+    ).toBe("C:\\Projects\\t3code · Workstation");
+    expect(deriveEnvironmentAccentColor("environment-a")).toBe(
+      deriveEnvironmentAccentColor("environment-a"),
+    );
+    expect(deriveEnvironmentAccentColor("environment-a")).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
   it("preserves every physical clone as a selectable member in repository modes", () => {
     const projects = [
       makeProject("t3code", "/work/t3code"),

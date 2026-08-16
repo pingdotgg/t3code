@@ -39,6 +39,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   LinkIcon,
+  MonitorIcon,
   MessageSquareIcon,
   PaletteIcon,
   SettingsIcon,
@@ -91,7 +92,7 @@ import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
-import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
+import { getLatestThreadForProject } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -150,21 +151,32 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import {
-  buildSidebarProjectPickerEntries,
+  buildExpandedSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
+import {
+  buildProjectPickerDescription,
+  deriveEnvironmentAccentColor,
+} from "@t3tools/client-runtime/state/project-grouping";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
 function projectFavicon(project: Project) {
   return (
-    <ProjectFavicon
-      environmentId={project.environmentId}
-      cwd={project.workspaceRoot}
-      faviconPath={project.faviconPath}
-      className={ITEM_ICON_CLASS}
-    />
+    <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+      <ProjectFavicon
+        environmentId={project.environmentId}
+        cwd={project.workspaceRoot}
+        faviconPath={project.faviconPath}
+        className={ITEM_ICON_CLASS}
+      />
+      <MonitorIcon
+        aria-hidden="true"
+        className="absolute -right-1 -bottom-1 size-2.5 rounded-sm bg-background"
+        style={{ color: deriveEnvironmentAccentColor(project.environmentId) }}
+      />
+    </span>
   );
 }
 
@@ -708,7 +720,7 @@ function OpenCommandPaletteDialog(props: {
   );
   const projectPickerEntries = useMemo(
     () =>
-      buildSidebarProjectPickerEntries({
+      buildExpandedSidebarProjectPickerEntries({
         groups: projectGroups,
         preferredProjectRef: contextualProjectRef,
       }),
@@ -720,6 +732,20 @@ function OpenCommandPaletteDialog(props: {
         ...targetProject,
         title: group.displayName,
       })),
+    [projectPickerEntries],
+  );
+  const projectPickerDescriptionByKey = useMemo(
+    () =>
+      new Map(
+        projectPickerEntries.map(({ targetProject }) => [
+          `${targetProject.environmentId}:${targetProject.id}`,
+          buildProjectPickerDescription({
+            workspaceRoot: targetProject.workspaceRoot,
+            environmentLabel: targetProject.environmentLabel,
+            showEnvironmentLabel: true,
+          }),
+        ]),
+      ),
     [projectPickerEntries],
   );
   const projectGroupByTargetKey = useMemo(
@@ -943,28 +969,11 @@ function OpenCommandPaletteDialog(props: {
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
-      const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-      const groupedProjectKeys = group
-        ? new Set(
-            group.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          )
-        : null;
-      const latestThread = groupedProjectKeys
-        ? (sortThreads(
-            threads.filter(
-              (thread) =>
-                thread.archivedAt === null &&
-                groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
-            ),
-            clientSettings.sidebarThreadSortOrder,
-          )[0] ?? null)
-        : getLatestThreadForProject(
-            threads.filter((thread) => thread.environmentId === project.environmentId),
-            project.id,
-            clientSettings.sidebarThreadSortOrder,
-          );
+      const latestThread = getLatestThreadForProject(
+        threads.filter((thread) => thread.environmentId === project.environmentId),
+        project.id,
+        clientSettings.sidebarThreadSortOrder,
+      );
       if (latestThread) {
         await navigate({
           to: "/$environmentId/$threadId",
@@ -977,13 +986,7 @@ function OpenCommandPaletteDialog(props: {
 
       await handleNewThread(scopeProjectRef(project.environmentId, project.id));
     },
-    [
-      clientSettings.sidebarThreadSortOrder,
-      handleNewThread,
-      navigate,
-      projectGroupByTargetKey,
-      threads,
-    ],
+    [clientSettings.sidebarThreadSortOrder, handleNewThread, navigate, threads],
   );
 
   const projectSearchItems = useMemo(
@@ -994,13 +997,20 @@ function OpenCommandPaletteDialog(props: {
         searchTerms: (project) => {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           return (
-            group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+            group?.memberProjects.flatMap((member) => [
+              member.title,
+              member.workspaceRoot,
+              member.environmentLabel ?? "",
+            ]) ?? []
           );
         },
+        description: (project) =>
+          projectPickerDescriptionByKey.get(`${project.environmentId}:${project.id}`) ??
+          project.workspaceRoot,
         icon: projectFavicon,
         runProject: openProjectFromSearch,
       }),
-    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
+    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey, projectPickerDescriptionByKey],
   );
 
   const projectThreadItems = useMemo(
@@ -1012,28 +1022,29 @@ function OpenCommandPaletteDialog(props: {
           searchTerms: (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
             return (
-              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+              group?.memberProjects.flatMap((member) => [
+                member.title,
+                member.workspaceRoot,
+                member.environmentLabel ?? "",
+              ]) ?? []
             );
           },
+          description: (project) =>
+            projectPickerDescriptionByKey.get(`${project.environmentId}:${project.id}`) ??
+            project.workspaceRoot,
           icon: projectFavicon,
           runProject: async (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const contextualRefBelongsToGroup =
-              contextualProjectRef !== null &&
-              group?.memberProjectRefs.some(
-                (projectRef) =>
-                  projectRef.environmentId === contextualProjectRef.environmentId &&
-                  projectRef.projectId === contextualProjectRef.projectId,
-              );
-            await handleNewThread(
-              contextualRefBelongsToGroup
-                ? contextualProjectRef
-                : scopeProjectRef(project.environmentId, project.id),
-            );
+            await handleNewThread(scopeProjectRef(project.environmentId, project.id));
           },
         }),
       ),
-    [contextualProjectRef, handleNewThread, pickerProjects, projectGroupByTargetKey],
+    [
+      contextualProjectRef,
+      handleNewThread,
+      pickerProjects,
+      projectGroupByTargetKey,
+      projectPickerDescriptionByKey,
+    ],
   );
 
   const allThreadItems = useMemo(

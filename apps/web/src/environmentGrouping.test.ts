@@ -9,6 +9,7 @@ import {
   resolveProjectGroupingMode,
 } from "./logicalProject";
 import {
+  buildExpandedSidebarProjectPickerEntries,
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
@@ -321,6 +322,71 @@ describe("environment grouping", () => {
     });
     expect(entries[0]?.isPreferred).toBe(true);
     expect(entries[1]?.group.displayName).toBe("separate");
+  });
+
+  it("expands picker entries so every computer remains selectable", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) =>
+        environmentId === primaryEnvironmentId ? "Office PC" : "Home PC",
+    });
+
+    const entries = buildExpandedSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: null,
+    });
+
+    expect(entries.map((entry) => entry.targetProject.environmentId)).toEqual([
+      primaryEnvironmentId,
+      remoteEnvironmentId,
+    ]);
+    expect(entries.map((entry) => entry.targetProject.environmentLabel)).toEqual([
+      "Office PC",
+      "Home PC",
+    ]);
+  });
+
+  it("falls back to the same environment when the preferred project id is stale", () => {
+    const stale = makeProject({
+      id: ProjectId.make("project-stale"),
+      repositoryIdentity: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const primary = makeProject({
+      id: ProjectId.make("project-primary"),
+      repositoryIdentity,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [stale, primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    const entries = buildExpandedSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: {
+        environmentId: primaryEnvironmentId,
+        projectId: stale.id,
+      },
+    });
+
+    expect(entries[0]?.isPreferred).toBe(true);
+    expect(entries[0]?.targetProject.id).toBe(primary.id);
   });
 
   it("keeps manual project order when building grouped sidebar entries", () => {

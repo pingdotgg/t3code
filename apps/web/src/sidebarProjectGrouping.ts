@@ -155,3 +155,54 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(preferredIndex + 1),
   ];
 }
+
+/** Keeps each physical environment selectable while retaining its logical group label. */
+export function buildExpandedSidebarProjectPickerEntries(input: {
+  groups: ReadonlyArray<SidebarProjectSnapshot>;
+  preferredProjectRef: ScopedProjectRef | null;
+}): SidebarProjectPickerEntry[] {
+  const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
+    const preferredProject = input.preferredProjectRef
+      ? (group.memberProjects.find(
+          (project) =>
+            project.environmentId === input.preferredProjectRef?.environmentId &&
+            project.id === input.preferredProjectRef?.projectId,
+        ) ??
+        group.memberProjects.find(
+          (project) => project.environmentId === input.preferredProjectRef?.environmentId,
+        ))
+      : undefined;
+    const targetProject =
+      group.memberProjects.find(
+        (project) => project.environmentId === group.environmentId && project.id === group.id,
+      ) ?? group.memberProjects[0];
+    const orderedProjects: SidebarProjectGroupMember[] = [];
+    for (const project of [preferredProject, targetProject, ...group.memberProjects]) {
+      if (
+        project !== undefined &&
+        !orderedProjects.some(
+          (candidate) =>
+            candidate.environmentId === project.environmentId && candidate.id === project.id,
+        )
+      ) {
+        orderedProjects.push(project);
+      }
+    }
+
+    return orderedProjects.map((project) => ({
+      group,
+      targetProject: project,
+      isPreferred:
+        preferredProject !== undefined &&
+        project.environmentId === preferredProject.environmentId &&
+        project.id === preferredProject.id,
+    }));
+  });
+  const preferredIndex = entries.findIndex((entry) => entry.isPreferred);
+  if (preferredIndex <= 0) return entries;
+  return [
+    entries[preferredIndex]!,
+    ...entries.slice(0, preferredIndex),
+    ...entries.slice(preferredIndex + 1),
+  ];
+}

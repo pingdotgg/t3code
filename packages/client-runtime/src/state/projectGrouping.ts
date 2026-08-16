@@ -16,6 +16,40 @@ export interface ProjectGroupingSettings {
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
 
+const ENVIRONMENT_ACCENT_COLORS = [
+  "#38bdf8",
+  "#a78bfa",
+  "#f472b6",
+  "#fb7185",
+  "#fb923c",
+  "#facc15",
+  "#4ade80",
+  "#2dd4bf",
+  "#60a5fa",
+  "#c084fc",
+] as const;
+
+export function buildProjectPickerDescription(input: {
+  readonly workspaceRoot: string;
+  readonly environmentLabel: string | null;
+  readonly showEnvironmentLabel: boolean;
+}): string {
+  const environmentLabel = input.environmentLabel?.trim();
+  return input.showEnvironmentLabel && environmentLabel
+    ? `${input.workspaceRoot} · ${environmentLabel}`
+    : input.workspaceRoot;
+}
+
+/** Stable per-environment color. The label remains the accessible identity. */
+export function deriveEnvironmentAccentColor(environmentId: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < environmentId.length; index += 1) {
+    hash ^= environmentId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ENVIRONMENT_ACCENT_COLORS[(hash >>> 0) % ENVIRONMENT_ACCENT_COLORS.length]!;
+}
+
 export function selectProjectGroupingSettings(settings: ClientSettings): ProjectGroupingSettings {
   return {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
