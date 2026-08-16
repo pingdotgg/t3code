@@ -902,7 +902,11 @@ function mapThemeOklchToSrgbGamut(color: ThemeOklch): ThemeOklch {
 
   let low = 0;
   let high = color.C;
-  const steps = Math.max(1, Math.ceil(Math.log2(Math.max(color.C, 0.000001) / 0.000001)));
+  const chromaResolution = 0.000001;
+  const steps = Math.max(
+    1,
+    Math.ceil(Math.log2(Math.max(color.C, chromaResolution)) - Math.log2(chromaResolution)),
+  );
   for (let step = 0; step < steps; step += 1) {
     const mid = (low + high) / 2;
     if (isInGamut(mid)) low = mid;
@@ -1462,6 +1466,198 @@ function themeActionColors(
     messageActionForeground: themeRgbToThemeColor(foreground),
     messageActionHover: themeRgbToThemeColor(mixThemeRgbColors(rgb, towardOpposite, 0.12)),
   };
+}
+
+/**
+ * Update one Advanced-editor color family without normalizing the rest of an
+ * imported or hand-tuned palette. The editor exposes a representative role
+ * for each family; paired foregrounds and nearby states are derived only when
+ * that representative is changed.
+ */
+export function updateThemeColorFamily(
+  appearance: ThemeAppearance,
+  colors: ThemeColors,
+  role: ThemeColorRole,
+  value: string,
+): ThemeColors {
+  const parsedSelected = parseThemeColor(value);
+  if (!parsedSelected) return { ...colors, [role]: value };
+  const normalized = formatOklchThemeColor(parsedSelected.color, parsedSelected.alpha);
+
+  const canvas = parseThemeRgbColor(
+    colors.canvas,
+    appearance === "dark" ? { r: 24, g: 15, b: 27 } : { r: 250, g: 245, b: 250 },
+  );
+  const selected = themeOklchToRgb(parsedSelected.color);
+  const selectedOn = (background: ThemeRgbColor) =>
+    mixThemeRgbColors(background, selected, parsedSelected.alpha);
+  const selectedOnCanvas = selectedOn(canvas);
+  const accent = parseThemeRgbColor(colors.accent, { r: 168, g: 67, b: 112 });
+  const canvasIsDark = themeRelativeLuminance(canvas) < 0.179;
+  const terminalIsDark = themeRelativeLuminance(selectedOnCanvas) < 0.179;
+  const colorOf = (color: ThemeRgbColor) => themeRgbToThemeColor(color);
+  const foregroundOn = (background: ThemeRgbColor) => colorOf(readableThemeForeground(background));
+  const selectedToneOn = (background: ThemeRgbColor) =>
+    themeOklchToThemeColor(
+      solveOklchLightness(
+        parsedSelected.color,
+        background,
+        4.6,
+        themeRelativeLuminance(background) < 0.179 ? "lighter" : "darker",
+      ),
+    );
+  const statusColors = () => {
+    const surface = mixThemeRgbColors(canvas, selectedOnCanvas, canvasIsDark ? 0.16 : 0.08);
+    return {
+      foreground: selectedToneOn(surface),
+      surface: colorOf(surface),
+    };
+  };
+
+  switch (role) {
+    case "canvas":
+      return { ...colors, canvas: normalized, chrome: normalized, toolbar: normalized };
+    case "surface":
+    case "surfaceRaised":
+    case "surfaceOverlay":
+    case "input":
+    case "sidebarControlSurface":
+      return { ...colors, [role]: normalized };
+    case "text":
+      return {
+        ...colors,
+        text: normalized,
+        toolbarForeground: normalized,
+        toolbarControlForeground: normalized,
+      };
+    case "mutedForeground":
+      return {
+        ...colors,
+        textMuted: normalized,
+        mutedForeground: normalized,
+        placeholder: normalized,
+        secondaryLabel: normalized,
+        iconMuted: normalized,
+        sidebarMutedForeground: normalized,
+      };
+    case "border":
+      return {
+        ...colors,
+        border: normalized,
+        toolbarBorder: normalized,
+        sidebarBorder: normalized,
+      };
+    case "secondary":
+      return {
+        ...colors,
+        secondary: normalized,
+        secondaryForeground: foregroundOn(selectedOnCanvas),
+        muted: normalized,
+        toolbarControl: normalized,
+      };
+    case "accentSurface":
+      return {
+        ...colors,
+        accentSurface: normalized,
+        accentSurfaceForeground: foregroundOn(selectedOnCanvas),
+        toolbarControlHover: normalized,
+      };
+    case "accent": {
+      const updateSurface = mixThemeRgbColors(canvas, selectedOnCanvas, canvasIsDark ? 0.32 : 0.16);
+      return {
+        ...colors,
+        accent: normalized,
+        accentForeground: foregroundOn(selectedOnCanvas),
+        focus: normalized,
+        update: normalized,
+        updateForeground: selectedToneOn(updateSurface),
+        updateSurface: colorOf(updateSurface),
+        terminalCursor: normalized,
+      };
+    }
+    case "messageAction": {
+      const actionForeground = readableThemeForeground(selectedOnCanvas);
+      const towardOpposite =
+        actionForeground === THEME_LIGHT_FOREGROUND || actionForeground === THEME_WHITE_FOREGROUND
+          ? THEME_BLACK_FOREGROUND
+          : THEME_WHITE_FOREGROUND;
+      const actionHover = mixThemeRgbColors(selected, towardOpposite, 0.12);
+      return {
+        ...colors,
+        messageAction: normalized,
+        messageActionForeground: colorOf(actionForeground),
+        messageActionHover: formatOklchThemeColor(
+          themeRgbToOklch(actionHover),
+          parsedSelected.alpha,
+        ),
+      };
+    }
+    case "messageSurface":
+      return {
+        ...colors,
+        messageSurface: normalized,
+        messageForeground: foregroundOn(selectedOnCanvas),
+      };
+    case "codeBackground":
+      return {
+        ...colors,
+        codeBackground: normalized,
+        codeForeground: foregroundOn(selectedOnCanvas),
+      };
+    case "sidebar":
+      return {
+        ...colors,
+        sidebar: normalized,
+        sidebarForeground: foregroundOn(selectedOnCanvas),
+      };
+    case "sidebarRowSelected": {
+      const sidebar = parseThemeRgbColor(colors.sidebar, canvas);
+      const selectedOnSidebar = selectedOn(sidebar);
+      return {
+        ...colors,
+        sidebarRowHover: colorOf(mixThemeRgbColors(sidebar, selectedOnSidebar, 0.5)),
+        sidebarRowActive: colorOf(mixThemeRgbColors(sidebar, selectedOnSidebar, 0.8)),
+        sidebarRowSelected: normalized,
+      };
+    }
+    case "terminalBackground": {
+      const terminalForeground = readableThemeForeground(selectedOnCanvas);
+      return {
+        ...colors,
+        terminalBackground: normalized,
+        terminalForeground: colorOf(terminalForeground),
+        terminalSelection: colorOf(
+          mixThemeRgbColors(selectedOnCanvas, accent, terminalIsDark ? 0.35 : 0.18),
+        ),
+        terminalScrollbar: colorOf(
+          mixThemeRgbColors(selectedOnCanvas, terminalForeground, terminalIsDark ? 0.42 : 0.22),
+        ),
+        terminalScrollbarHover: colorOf(
+          mixThemeRgbColors(selectedOnCanvas, terminalForeground, terminalIsDark ? 0.55 : 0.32),
+        ),
+      };
+    }
+    case "error": {
+      const status = statusColors();
+      return {
+        ...colors,
+        error: normalized,
+        errorForeground: status.foreground,
+        errorSurface: status.surface,
+      };
+    }
+    case "warning": {
+      const status = statusColors();
+      return {
+        ...colors,
+        warning: normalized,
+        warningForeground: status.foreground,
+        warningSurface: status.surface,
+      };
+    }
+    default:
+      return { ...colors, [role]: normalized };
+  }
 }
 
 export const GROVE_THEME: ThemeDefinition = {
