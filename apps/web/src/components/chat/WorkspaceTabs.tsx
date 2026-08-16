@@ -96,16 +96,6 @@ function ServerThreadTabItem({
 
   const isRenaming = isActive && renamingTitle !== null && renamingTitle !== undefined;
 
-  const handleActivationClick = useCallback(() => {
-    if (isActive) {
-      if (triggerRef.current && onOpenThreadMenu) {
-        onOpenThreadMenu(triggerRef.current.getBoundingClientRect());
-      }
-    } else {
-      onActivate();
-    }
-  }, [isActive, onActivate, onOpenThreadMenu]);
-
   return (
     <div
       ref={itemRef}
@@ -149,12 +139,10 @@ function ServerThreadTabItem({
             <TooltipTrigger
               render={
                 <Button
-                  ref={triggerRef}
                   size="xs"
                   variant="outline"
                   aria-label={fullLabel}
-                  aria-haspopup={isActive ? "menu" : undefined}
-                  onClick={handleActivationClick}
+                  onClick={onActivate}
                   className={cn(
                     "max-w-44 ps-[8.5px] text-xs font-normal",
                     isActive
@@ -169,9 +157,6 @@ function ServerThreadTabItem({
                     className="size-3.5 shrink-0"
                   />
                   <span className="truncate">{title}</span>
-                  {isActive ? (
-                    <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-                  ) : null}
                   {tab.pinned ? <Pin className="size-2.5 shrink-0 rotate-45 opacity-60" /> : null}
                 </Button>
               }
@@ -179,6 +164,27 @@ function ServerThreadTabItem({
             <TooltipPopup side="bottom">{fullLabel}</TooltipPopup>
           </Tooltip>
         )}
+        {isActive ? (
+          <>
+            <GroupSeparator />
+            <Button
+              ref={triggerRef}
+              size="icon-xs"
+              variant="outline"
+              aria-label={`Thread actions for ${title}`}
+              aria-haspopup="menu"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (triggerRef.current && onOpenThreadMenu) {
+                  onOpenThreadMenu(triggerRef.current.getBoundingClientRect());
+                }
+              }}
+              className="bg-accent text-foreground ring-1 ring-ring/40 shadow-xs"
+            >
+              <ChevronDown className="size-3 text-muted-foreground hover:text-foreground" />
+            </Button>
+          </>
+        ) : null}
         <GroupSeparator />
         <Button
           size="icon-xs"

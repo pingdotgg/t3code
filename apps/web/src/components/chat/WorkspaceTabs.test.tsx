@@ -58,4 +58,44 @@ describe("WorkspaceTabs", () => {
 
     expect(html).toContain("New thread");
   });
+
+  it("renders dedicated thread actions dropdown trigger only for active tab", () => {
+    const inactiveThreadId = ThreadId.make("thread-2");
+    useWorkspaceTabsStore.setState({
+      tabs: [
+        {
+          key: serverTabKey(envId, threadId),
+          kind: "server",
+          environmentId: envId,
+          threadId,
+          title: "Active Thread",
+          projectId: ProjectId.make("project-1"),
+          projectName: "Project Alpha",
+        },
+        {
+          key: serverTabKey(envId, inactiveThreadId),
+          kind: "server",
+          environmentId: envId,
+          threadId: inactiveThreadId,
+          title: "Inactive Thread",
+          projectId: ProjectId.make("project-1"),
+          projectName: "Project Alpha",
+        },
+      ],
+      activeTabKey: serverTabKey(envId, threadId),
+    });
+
+    const html = renderToStaticMarkup(
+      <WorkspaceTabs
+        activeThreadEnvironmentId={envId}
+        activeThreadId={threadId}
+        activeThreadTitle="Active Thread"
+        activeProjectName="Project Alpha"
+        onNewTab={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Thread actions for Active Thread"');
+    expect(html).not.toContain('aria-label="Thread actions for Inactive Thread"');
+  });
 });
