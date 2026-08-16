@@ -98,6 +98,19 @@ describe("ProviderRefreshButton", () => {
     expect(nativeMocks.lastPressableProps?.className).toContain("h-[42px] w-[42px]");
   });
 
+  it("does not alert when the refresh is interrupted", async () => {
+    const interruptedRefresh = vi.fn(
+      async (): Promise<AtomCommandResult<unknown, unknown>> =>
+        AsyncResult.failure(Cause.interrupt("environment removed")),
+    );
+    renderToStaticMarkup(<ProviderRefreshButton onRefresh={interruptedRefresh} />);
+
+    await pressButton();
+
+    expect(interruptedRefresh).toHaveBeenCalledOnce();
+    expect(nativeMocks.alert).not.toHaveBeenCalled();
+  });
+
   it("reports successful and failed refresh commands", async () => {
     const successfulRefresh = vi.fn(
       async (): Promise<AtomCommandResult<unknown, unknown>> => AsyncResult.success(undefined),

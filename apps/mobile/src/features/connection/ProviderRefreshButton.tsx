@@ -1,4 +1,7 @@
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  type AtomCommandResult,
+  isAtomCommandInterrupted,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
@@ -25,6 +28,7 @@ export function ProviderRefreshButton(props: {
     setIsRefreshing(false);
 
     if (AsyncResult.isFailure(result)) {
+      if (isAtomCommandInterrupted(result)) return;
       const error = Cause.squash(result.cause);
       Alert.alert(
         "Could not refresh providers",
