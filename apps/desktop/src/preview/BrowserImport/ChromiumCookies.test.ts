@@ -1,5 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - Encrypts a fixture with the same
-// OSCrypt primitive as Chromium.
+// @effect-diagnostics nodeBuiltinImport:off - Encrypts fixtures with the same
+// OSCrypt primitives the module under test decrypts.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
