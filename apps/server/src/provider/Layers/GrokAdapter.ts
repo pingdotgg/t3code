@@ -725,6 +725,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             readonly params: unknown;
           }> = [];
           let sessionNotificationsReady = false;
+          const sessionNotificationLock = yield* Semaphore.make(1);
           const applySessionNotification = (
             ctx: GrokSessionContext,
             method: "x.ai/session_notification" | "_x.ai/session_notification",
@@ -833,7 +834,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         pendingSessionNotifications.push({ method, params });
                         return;
                       }
-                      yield* applySessionNotification(ctx, method, params);
+                      yield* sessionNotificationLock.withPermits(1)(
+                        applySessionNotification(ctx, method, params),
+                      );
                     }),
                   ),
                 ),
@@ -1110,23 +1113,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
           sessionScopeTransferred = true;
-          // Keep live notifications queued until every buffered startup
-          // update has been applied. `sessions.set` would otherwise let a
-          // later tick mutate workflow state mid-replay.
-          for (;;) {
-            const batch = pendingSessionNotifications.splice(0);
-            if (batch.length === 0) {
+          // One startup snapshot, then live delivery. The lock keeps a
+          // later tick from mutating workflow state mid-replay without
+          // waiting for a flood of notifications to drain.
+          yield* sessionNotificationLock.withPermits(1)(
+            Effect.gen(function* () {
+              const batch = pendingSessionNotifications.splice(0);
               sessionNotificationsReady = true;
-              if (pendingSessionNotifications.length === 0) {
-                break;
-              }
-              sessionNotificationsReady = false;
-              continue;
-            }
-            yield* Effect.forEach(batch, (pending) =>
-              applySessionNotification(ctx, pending.method, pending.params),
-            );
-          }
+              yield* Effect.forEach(batch, (pending) =>
+                applySessionNotification(ctx, pending.method, pending.params),
+              );
+            }),
+          );
 
           yield* offerRuntimeEvent({
             type: "session.started",
@@ -1711,6 +1709,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               provider: PROVIDER,
               operation: "rollbackThread",
               issue: "numTurns must be an integer >= 1.",
+            });
+          }
+          if (numTurns > ctx.turns.length) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "rollbackThread",
+              issue: `numTurns (${numTurns}) exceeds recorded turns (${ctx.turns.length}).`,
             });
           }
           yield* cancelActivePromptsBeforeRewind(ctx);

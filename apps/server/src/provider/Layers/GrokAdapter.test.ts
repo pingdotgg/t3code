@@ -1416,6 +1416,31 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("rejects rewind when numTurns exceeds recorded turns", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-rewind-overshoot");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_ENABLE_REWIND: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+
+      const error = yield* Effect.flip(adapter.rollbackThread(threadId, 1));
+      assert.equal(error._tag, "ProviderAdapterValidationError");
+      if (error._tag === "ProviderAdapterValidationError") {
+        assert.match(error.issue, /exceeds recorded turns/);
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("cancels an in-flight prompt before rewind so the discarded turn cannot return", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-rewind-inflight");
