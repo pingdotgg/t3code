@@ -75,21 +75,22 @@ describe("resolveSourceControlDraftMetadataTarget", () => {
 });
 
 describe("resolveThreadErrorPresentation", () => {
-  it("keeps lower-priority Source Control failures available after local errors", () => {
+  it("keeps lower-priority failures available when every source has the same message", () => {
+    const repeatedMessage = "transport failed";
     const input = {
       isServerThread: true,
       localDraftError: null,
-      localServerError: "local dispatch failed",
-      sessionError: "persisted provider failure",
-      sourceControlMetadataError: "metadata update failed",
+      localServerError: repeatedMessage,
+      sessionError: repeatedMessage,
+      sourceControlMetadataError: repeatedMessage,
     } as const;
 
     expect(resolveThreadErrorPresentation(input)).toEqual({
-      error: "local dispatch failed",
+      error: repeatedMessage,
       source: "local-server",
     });
     expect(resolveThreadErrorPresentation({ ...input, localServerError: null })).toEqual({
-      error: "metadata update failed",
+      error: repeatedMessage,
       source: "source-control",
     });
     expect(
@@ -98,7 +99,7 @@ describe("resolveThreadErrorPresentation", () => {
         localServerError: null,
         sourceControlMetadataError: null,
       }),
-    ).toEqual({ error: "persisted provider failure", source: "session" });
+    ).toEqual({ error: repeatedMessage, source: "session" });
   });
 
   it("keeps draft errors independent from server-only error sources", () => {

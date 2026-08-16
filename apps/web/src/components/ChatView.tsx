@@ -1538,11 +1538,9 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
-  // Dismissing only mutates the session-scoped mask set, which does not
-  // trigger a render on its own; setThreadError(null) can also bail when the
-  // local shadow is already empty and the banner is driven purely by
-  // session.lastError. Bump a tick so the banner hides immediately. Mirrors
-  // the branch mismatch banner.
+  // Persisted session errors can only be masked. The session-scoped mask set
+  // does not trigger a render on its own, so bump a tick when applying it to
+  // hide the banner immediately. Mirrors the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   // Plan mode is legacy (Settings → Beta). With the flag off the effective
@@ -3362,9 +3360,10 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError(activeThreadId, null);
     } else if (action === "clear-source-control") {
       clearActiveSourceControlMetadataError();
+    } else {
+      dismissThreadErrorBannerForSession(threadErrorBannerKey);
+      setThreadErrorBannerDismissTick((tick) => tick + 1);
     }
-    dismissThreadErrorBannerForSession(threadErrorBannerKey);
-    setThreadErrorBannerDismissTick((tick) => tick + 1);
   }, [
     activeThreadId,
     clearActiveSourceControlMetadataError,
@@ -6365,10 +6364,7 @@ function ChatViewContent(props: ChatViewProps) {
           />
         </header>
 
-        <ThreadErrorBanner
-          error={visibleThreadError}
-          onDismiss={dismissThreadError}
-        />
+        <ThreadErrorBanner error={visibleThreadError} onDismiss={dismissThreadError} />
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
