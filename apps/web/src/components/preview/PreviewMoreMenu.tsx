@@ -10,6 +10,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuGroup,
   MenuGroupLabel,
   MenuSeparator,
   MenuSub,
@@ -187,21 +188,27 @@ export function PreviewMoreMenu({
           </span>
         </MenuItem>
         <MenuSeparator />
-        {profileName ? (
-          // Otherwise the tab's profile is invisible: it is fixed at open, and
-          // nothing else in the chrome says which one you are browsing in.
-          <MenuGroupLabel>Profile: {profileName}</MenuGroupLabel>
-        ) : null}
-        <MenuItem
-          onClick={() => void bridge.clearCookies(environmentId, profileId).catch(() => undefined)}
-        >
-          {profileName ? `Clear cookies (${profileName})` : "Clear cookies"}
-        </MenuItem>
-        <MenuItem
-          onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
-        >
-          {profileName ? `Clear cache (${profileName})` : "Clear cache"}
-        </MenuItem>
+        {/*
+          Grouped so the heading has a `MenuGroup` ancestor — `MenuGroupLabel`
+          reads its context and throws without one. The heading also answers
+          which profile the tab is in, which is otherwise invisible: it is fixed
+          at open and nothing else in the chrome shows it.
+        */}
+        <MenuGroup>
+          {profileName ? <MenuGroupLabel>Profile: {profileName}</MenuGroupLabel> : null}
+          <MenuItem
+            onClick={() =>
+              void bridge.clearCookies(environmentId, profileId).catch(() => undefined)
+            }
+          >
+            {profileName ? `Clear cookies (${profileName})` : "Clear cookies"}
+          </MenuItem>
+          <MenuItem
+            onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
+          >
+            {profileName ? `Clear cache (${profileName})` : "Clear cache"}
+          </MenuItem>
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
