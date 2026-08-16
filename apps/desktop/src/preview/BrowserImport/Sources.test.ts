@@ -54,14 +54,24 @@ describe("isSourceRunning", () => {
 });
 
 describe("isSourceInstalled", () => {
-  it.effect("follows the presence of the user-data directory", () =>
+  it.effect("ignores a user-data directory that holds no cookie database", () =>
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const paths = yield* withSourceHome();
+        const root = helium.userDataDirectory(paths);
+
+        // Installers for native messaging hosts create an empty user-data
+        // directory for every Chromium fork they know about, so treating the
+        // directory as evidence lists browsers the user does not have.
+        yield* fileSystem.makeDirectory(`${root}/NativeMessagingHosts`, { recursive: true });
+        assert.isFalse(yield* isSourceInstalled(helium, paths));
+
+        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
         assert.isTrue(yield* isSourceInstalled(helium, paths));
 
-        yield* fileSystem.remove(helium.userDataDirectory(paths), { recursive: true });
+        yield* fileSystem.remove(root, { recursive: true });
         assert.isFalse(yield* isSourceInstalled(helium, paths));
       }),
     ),

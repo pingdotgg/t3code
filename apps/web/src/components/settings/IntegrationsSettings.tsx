@@ -595,6 +595,14 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     });
   };
 
+  // A browser that is not on this machine is left out rather than listed as a
+  // dead row: there is nothing to act on, and the menu is a list of things you
+  // can import from. Every other unavailable reason stays, since each names a
+  // step the user can take.
+  const importableSources = (sources ?? []).filter(
+    (source) => source.unavailable !== "notInstalled",
+  );
+
   const loadSources = () => {
     if (!previewBridge) return;
     // Cleared first: availability changes while the app runs (quitting a
@@ -678,15 +686,15 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               <MenuGroupLabel>Import from</MenuGroupLabel>
               {sources === null ? (
                 <MenuItem disabled>Looking for browsers…</MenuItem>
-              ) : sources.length === 0 ? (
+              ) : importableSources.length === 0 ? (
                 <MenuItem disabled>No supported browsers found</MenuItem>
               ) : (
-                sources.flatMap((source) =>
+                importableSources.flatMap((source) =>
                   source.unavailable
                     ? [
-                        // Kept visible with its reason rather than hidden:
-                        // "Helium is running, quit it" beats "Helium isn't
-                        // listed".
+                        // Kept visible with its reason, because each remaining
+                        // reason is something the user can act on: "Helium is
+                        // running, quit it" beats "Helium isn't listed".
                         <MenuItem key={source.id} disabled>
                           <span className="flex flex-col items-start">
                             <span>{source.name}</span>

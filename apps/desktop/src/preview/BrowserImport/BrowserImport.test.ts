@@ -40,6 +40,9 @@ const withImporter = Effect.fnUntraced(function* () {
   yield* fileSystem.makeDirectory(`${helium.userDataDirectory(paths)}/Default`, {
     recursive: true,
   });
+  // The cookie database is what marks a source as installed, so a fixture
+  // without one is reported as absent before any other check runs.
+  yield* fileSystem.writeFileString(`${helium.userDataDirectory(paths)}/Default/Cookies`, "db");
 
   const importer = yield* BrowserImport.BrowserImport.pipe(
     Effect.provide(
