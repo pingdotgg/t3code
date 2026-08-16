@@ -43,12 +43,19 @@ export class SafariCookieReadError extends Schema.TaggedErrorClass<SafariCookieR
   "SafariCookieReadError",
   {
     reason: SafariCookieReadFailure,
+    /**
+     * Which jar the read was for. The parser raises this before a path is in
+     * hand, so it is optional rather than required.
+     */
+    cookieDatabasePath: Schema.optional(Schema.String),
     /** Kept for the log; never surfaced to the user. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Could not read Safari cookies: ${this.reason}.`;
+    return this.cookieDatabasePath === undefined
+      ? `Could not read Safari cookies: ${this.reason}.`
+      : `Could not read Safari cookies at ${this.cookieDatabasePath}: ${this.reason}.`;
   }
 }
 
@@ -163,6 +170,7 @@ export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(fu
       const denied = cause.reason._tag === "PermissionDenied";
       return new SafariCookieReadError({
         reason: denied ? "needsFullDiskAccess" : "readFailed",
+        cookieDatabasePath: cookiePath,
         cause,
       });
     }),
@@ -174,6 +182,10 @@ export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(fu
     catch: (cause) =>
       isSafariCookieReadError(cause)
         ? cause
-        : new SafariCookieReadError({ reason: "readFailed", cause }),
+        : new SafariCookieReadError({
+            reason: "readFailed",
+            cookieDatabasePath: cookiePath,
+            cause,
+          }),
   });
 });

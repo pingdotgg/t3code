@@ -206,6 +206,12 @@ export const make = Effect.gen(function* BrowserImportMake() {
           Effect.fail(
             new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed", cause }),
           ),
+        // Safari's reasons are already user-facing: a TCC refusal is the Full
+        // Disk Access prompt, anything else is a read failure.
+        SafariCookieReadError: (cause) =>
+          Effect.fail(
+            new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
+          ),
       }),
     );
 
