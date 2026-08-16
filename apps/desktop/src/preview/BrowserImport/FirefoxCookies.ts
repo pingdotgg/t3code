@@ -22,6 +22,27 @@ import { cookieScope, snapshotCookieDatabase, type ImportedCookie } from "./Cook
  * that is the modern default, and guessing "none" would widen a cookie's scope
  * on import.
  */
+export const FirefoxCookieReadReason = Schema.Literals(["readFailed"]);
+export type FirefoxCookieReadReason = typeof FirefoxCookieReadReason.Type;
+
+/**
+ * Mirrors `ChromiumCookieReadError` so both engines fail with a tagged error
+ * the service can tell apart, rather than one of them widening the channel to
+ * an anonymous shape.
+ */
+export class FirefoxCookieReadError extends Schema.TaggedErrorClass<FirefoxCookieReadError>()(
+  "FirefoxCookieReadError",
+  {
+    reason: FirefoxCookieReadReason,
+    /** Kept for the log; never surfaced to the user. */
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Could not read Firefox cookies: ${this.reason}.`;
+  }
+}
+
 const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
   if (value === 2) return "strict";
@@ -45,7 +66,9 @@ const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
 export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")(function* (
   cookieDatabasePath: string,
 ) {
-  const snapshotPath = yield* snapshotCookieDatabase(cookieDatabasePath);
+  const snapshotPath = yield* snapshotCookieDatabase(cookieDatabasePath).pipe(
+    Effect.mapError((cause) => new FirefoxCookieReadError({ reason: "readFailed", cause })),
+  );
 
   const rows = yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -60,7 +83,10 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
        where originAttributes = ''
     `;
     return yield* decodeCookieRows(raw);
-  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
+  }).pipe(
+    Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
+    Effect.mapError((cause) => new FirefoxCookieReadError({ reason: "readFailed", cause })),
+  );
 
   return rows.map((row) => {
     const secure = row.isSecure === 1;
