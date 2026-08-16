@@ -30,6 +30,10 @@ interface FileBrowserPanelProps {
   selectedPath: string | null;
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
+  /** Breadcrumb target to reveal in the tree. An empty path reveals the project root. */
+  breadcrumbRevealPath: string | null;
+  breadcrumbRevealId: number;
+  onBreadcrumbRevealHandled: (revealId: number) => void;
   onOpenFile: (relativePath: string) => void;
 }
 
@@ -47,6 +51,22 @@ const TREE_UNSAFE_CSS = `
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
+}
+
+function visibleDirectoryTreePath(entries: readonly ProjectEntry[], directoryPath: string): string {
+  // Pierre flattens a directory row only while its sole direct child is another directory.
+  let currentPath = directoryPath;
+  while (true) {
+    const prefix = `${currentPath}/`;
+    const directChildren = entries.filter((entry) => {
+      if (!entry.path.startsWith(prefix)) return false;
+      return !entry.path.slice(prefix.length).includes("/");
+    });
+    if (directChildren.length !== 1 || directChildren[0]?.kind !== "directory") {
+      return `${currentPath}/`;
+    }
+    currentPath = directChildren[0].path;
+  }
 }
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
@@ -104,6 +124,9 @@ export default function FileBrowserPanel({
   projectName,
   selectedPath,
   selectedPathRevealId,
+  breadcrumbRevealPath,
+  breadcrumbRevealId,
+  onBreadcrumbRevealHandled,
   onOpenFile,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
@@ -120,6 +143,28 @@ export default function FileBrowserPanel({
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
+  const handledBreadcrumbRevealRef = useRef<{ path: string; revealId: number } | null>(null);
+  const suppressedSelectedPathRef = useRef<{ path: string; revealId: number } | null>(null);
+  const capturedRootRevealIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (breadcrumbRevealPath !== "") {
+      if (breadcrumbRevealPath !== null) suppressedSelectedPathRef.current = null;
+      return;
+    }
+    if (capturedRootRevealIdRef.current === breadcrumbRevealId) return;
+    capturedRootRevealIdRef.current = breadcrumbRevealId;
+    const handledReveal = handledRevealRef.current;
+    if (
+      selectedPath &&
+      (handledReveal?.path !== selectedPath || handledReveal.revealId !== selectedPathRevealId)
+    ) {
+      suppressedSelectedPathRef.current = {
+        path: selectedPath,
+        revealId: selectedPathRevealId,
+      };
+    }
+  }, [breadcrumbRevealId, breadcrumbRevealPath, selectedPath, selectedPathRevealId]);
 
   // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
   // capture the right-click position ourselves; contextmenu is a composed
@@ -265,6 +310,7 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
+      suppressedSelectedPathRef.current = null;
       return;
     }
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
@@ -293,6 +339,32 @@ export default function FileBrowserPanel({
       handledRevealRef.current = revealRequest;
       return;
     }
+
+    if (
+      suppressedSelectedPathRef.current?.path === selectedPath &&
+      suppressedSelectedPathRef.current.revealId === selectedPathRevealId
+    ) {
+      treeSelectionPathRef.current = null;
+      handledRevealRef.current = revealRequest;
+      suppressedSelectedPathRef.current = null;
+      syncingSelectionRef.current = true;
+      const segments = selectedPath.split("/");
+      let ancestorPath = "";
+      for (const segment of segments.slice(0, -1)) {
+        ancestorPath = ancestorPath ? `${ancestorPath}/${segment}` : segment;
+        const item = model.getItem(`${ancestorPath}/`) ?? model.getItem(ancestorPath);
+        if (item && "expand" in item) item.expand();
+      }
+      for (const path of model.getSelectedPaths()) {
+        model.getItem(path)?.deselect();
+      }
+      selectedItem.select();
+      queueMicrotask(() => {
+        syncingSelectionRef.current = false;
+      });
+      return;
+    }
+    suppressedSelectedPathRef.current = null;
     treeSelectionPathRef.current = null;
     handledRevealRef.current = revealRequest;
 
@@ -318,6 +390,101 @@ export default function FileBrowserPanel({
       syncingSelectionRef.current = false;
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId, treePaths]);
+
+  useEffect(() => {
+    if (breadcrumbRevealPath === null) return;
+    const revealRequest = { path: breadcrumbRevealPath, revealId: breadcrumbRevealId };
+    const handledReveal = handledBreadcrumbRevealRef.current;
+    if (
+      handledReveal?.path === revealRequest.path &&
+      handledReveal.revealId === revealRequest.revealId
+    ) {
+      return;
+    }
+
+    if (breadcrumbRevealPath === "") {
+      let frameId: number | null = null;
+      let attemptsRemaining = 120;
+      const revealProjectRoot = () => {
+        const scrollContainer = model
+          .getFileTreeContainer()
+          ?.shadowRoot?.querySelector<HTMLElement>("[data-file-tree-virtualized-scroll]");
+        if (!scrollContainer) {
+          attemptsRemaining -= 1;
+          if (attemptsRemaining > 0) frameId = requestAnimationFrame(revealProjectRoot);
+          else onBreadcrumbRevealHandled(breadcrumbRevealId);
+          return;
+        }
+        handledBreadcrumbRevealRef.current = revealRequest;
+        model.closeSearch();
+        scrollContainer.scrollTop = 0;
+        onBreadcrumbRevealHandled(breadcrumbRevealId);
+      };
+      revealProjectRoot();
+      return () => {
+        if (frameId !== null) cancelAnimationFrame(frameId);
+      };
+    }
+
+    const entryKind = entryKinds.get(breadcrumbRevealPath);
+    if (!entryKind) {
+      if (!entriesQuery.isPending) onBreadcrumbRevealHandled(breadcrumbRevealId);
+      return;
+    }
+    const itemPath =
+      entryKind === "directory" && breadcrumbRevealPath
+        ? `${breadcrumbRevealPath}/`
+        : breadcrumbRevealPath;
+    const item = itemPath ? (model.getItem(itemPath) ?? model.getItem(breadcrumbRevealPath)) : null;
+    if (!item) {
+      if (!entriesQuery.isPending) onBreadcrumbRevealHandled(breadcrumbRevealId);
+      return;
+    }
+
+    const visibleItemPath = itemPath
+      ? entryKind === "directory"
+        ? visibleDirectoryTreePath(entries, breadcrumbRevealPath)
+        : itemPath
+      : null;
+    if (visibleItemPath && !model.getItem(visibleItemPath)) {
+      if (!entriesQuery.isPending) onBreadcrumbRevealHandled(breadcrumbRevealId);
+      return;
+    }
+
+    handledBreadcrumbRevealRef.current = revealRequest;
+    syncingSelectionRef.current = true;
+    model.closeSearch();
+    if (visibleItemPath) {
+      for (const path of model.getSelectedPaths()) {
+        model.getItem(path)?.deselect();
+      }
+    }
+
+    const segments = breadcrumbRevealPath.split("/").filter(Boolean);
+    let ancestorPath = "";
+    for (const segment of entryKind === "directory" ? segments : segments.slice(0, -1)) {
+      ancestorPath = ancestorPath ? `${ancestorPath}/${segment}` : segment;
+      const ancestor = model.getItem(`${ancestorPath}/`) ?? model.getItem(ancestorPath);
+      if (ancestor && "expand" in ancestor) ancestor.expand();
+    }
+
+    if (visibleItemPath) {
+      model.getItem(visibleItemPath)?.select();
+      model.scrollToPath(visibleItemPath, { focus: true, offset: "center" });
+    }
+    onBreadcrumbRevealHandled(breadcrumbRevealId);
+    queueMicrotask(() => {
+      syncingSelectionRef.current = false;
+    });
+  }, [
+    breadcrumbRevealId,
+    breadcrumbRevealPath,
+    entries,
+    entriesQuery.isPending,
+    entryKinds,
+    model,
+    onBreadcrumbRevealHandled,
+  ]);
 
   // Tag tree drags with the composer mention payload. The row is read from
   // the composed event path (the tree's shadow root is open), so this does

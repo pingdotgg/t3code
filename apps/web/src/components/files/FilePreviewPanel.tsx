@@ -783,6 +783,10 @@ export default function FilePreviewPanel({
   const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
   const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
+  const [breadcrumbReveal, setBreadcrumbReveal] = useState<{ path: string; id: number } | null>(
+    null,
+  );
+  const breadcrumbRevealIdRef = useRef(0);
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
@@ -832,6 +836,20 @@ export default function FilePreviewPanel({
     });
   };
 
+  const revealBreadcrumb = (path: string) => {
+    setExplorerOpen(true);
+    try {
+      setLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, true, Schema.Boolean);
+    } catch (error) {
+      console.error(error);
+    }
+    breadcrumbRevealIdRef.current += 1;
+    setBreadcrumbReveal({ path, id: breadcrumbRevealIdRef.current });
+  };
+  const handleBreadcrumbRevealHandled = useCallback((revealId: number) => {
+    setBreadcrumbReveal((current) => (current?.id === revealId ? null : current));
+  }, []);
+
   const handleOpenInBrowser = useCallback(() => {
     if (!absolutePath || !environmentHttpBaseUrl) return;
     void (async () => {
@@ -880,17 +898,20 @@ export default function FilePreviewPanel({
                   {index > 0 ? (
                     <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
                   ) : null}
-                  <span
+                  <button
+                    type="button"
                     className={cn(
-                      "max-w-40 truncate",
+                      "max-w-40 cursor-pointer truncate rounded-sm px-0.5 text-left hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       crumb.kind === "file"
                         ? "font-medium text-foreground"
                         : "text-muted-foreground",
                     )}
                     title={crumb.path || projectName}
+                    aria-label={`Reveal ${crumb.label} in file explorer`}
+                    onClick={() => revealBreadcrumb(crumb.path)}
                   >
                     {crumb.label}
-                  </span>
+                  </button>
                 </div>
               ))}
             </div>
@@ -1071,6 +1092,9 @@ export default function FilePreviewPanel({
               projectName={projectName}
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
+              breadcrumbRevealPath={breadcrumbReveal?.path ?? null}
+              breadcrumbRevealId={breadcrumbReveal?.id ?? 0}
+              onBreadcrumbRevealHandled={handleBreadcrumbRevealHandled}
               onOpenFile={onOpenFile}
             />
           </aside>
