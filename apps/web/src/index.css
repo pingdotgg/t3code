@@ -1598,12 +1598,19 @@ code {
 .chat-markdown blockquote,
 .chat-markdown pre,
 .chat-markdown .chat-markdown-table-container {
-  /* The whole container, not just the table: the scroller is the ScrollArea viewport inside it,
-     and an inherited right-to-left direction would open it on its last column and flip its
-     overflow fades. Column order is meaning here, so it doesn't mirror. Cells keep their own
-     dir="auto", so the text in each still reads its own way round. */
-  direction: ltr;
   margin: 0.65rem 0;
+}
+
+/* The whole container, not just the table: the scroller is the ScrollArea viewport inside it,
+   and an inherited right-to-left direction would open it on its last column and flip its
+   overflow fades. Column order is meaning here, so it doesn't mirror. Cells keep their own
+   dir="auto", so the text in each still reads its own way round.
+
+   On its own rule, not the shared margin one above: that selector list also holds `p` and
+   `blockquote`, and an author `direction` outranks the UA rule `dir="auto"` resolves through,
+   so pinning it there would send every Arabic paragraph and quote back to a left-to-right base. */
+.chat-markdown .chat-markdown-table-container {
+  direction: ltr;
 }
 
 .chat-markdown h1,
