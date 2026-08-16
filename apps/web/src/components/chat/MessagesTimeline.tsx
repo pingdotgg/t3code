@@ -68,6 +68,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
+import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -1159,6 +1160,10 @@ function InlineUserMessageEditor() {
           if (event.key === "Escape") {
             event.preventDefault();
             edit.onCancelMessageEdit();
+          }
+          if (isCommentSubmitShortcut(event, draft, edit.isSavingMessageEdit)) {
+            event.preventDefault();
+            edit.onSaveMessageEdit(draft);
           }
         }}
       />
