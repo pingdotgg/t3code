@@ -61,9 +61,15 @@ const errorFrame = (message: string) => {
   return frame;
 };
 
-const connectTarget = (host: string, port: number) =>
+type CreateTargetConnection = (options: { host: string; port: number }) => NodeNet.Socket;
+
+const connectTargetAddress = (
+  createConnection: CreateTargetConnection,
+  host: string,
+  port: number,
+) =>
   Effect.callback<NodeNet.Socket, TcpForwardTargetConnectError>((resume) => {
-    const target = NodeNet.createConnection({ host, port });
+    const target = createConnection({ host, port });
     const onConnect = () => {
       target.off("error", onError);
       resume(Effect.succeed(target));
@@ -81,6 +87,28 @@ const connectTarget = (host: string, port: number) =>
       target.destroy();
     });
   });
+
+export const makeConnectTarget = (createConnection: CreateTargetConnection) =>
+  Effect.fn("TcpForwardBridge.connectTarget")(function* (host: string, port: number) {
+    return yield* connectTargetAddress(createConnection, host, port).pipe(
+      Effect.catchTag("TcpForwardTargetConnectError", (ipv4Error) => {
+        if (host !== "127.0.0.1") return Effect.fail(ipv4Error);
+        return connectTargetAddress(createConnection, "::1", port).pipe(
+          Effect.mapError(
+            (ipv6Error) =>
+              new TcpForwardTargetConnectError({
+                cause: new AggregateError(
+                  [ipv4Error.cause, ipv6Error.cause],
+                  `Could not connect to loopback target on port ${port}`,
+                ),
+              }),
+          ),
+        );
+      }),
+    );
+  });
+
+const connectTarget = makeConnectTarget((options) => NodeNet.createConnection(options));
 
 const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
   webSocket: Socket.Socket,
