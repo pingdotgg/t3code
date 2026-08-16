@@ -632,9 +632,9 @@ async function navigate(tabId, url) {
 
 // ── "the agent is using this tab" indicator ─────────────────────────────────
 //
-// Toolbar icon = T3 logo (manifest icons/). Tab favicon = agent pointer
-// (icons/pointer-*.png), matching the desktop overlay — so a tab in the
-// "T3 Code" group is visually distinct from the extension itself.
+// Toolbar icon = T3 logo (manifest icons/). Tab favicon = Computer Use badge
+// (icons/pointer-*.png), matching Settings → Agent cursor overlay — so a tab
+// in the "T3 Code" group is visually distinct from the extension itself.
 //
 // An extension cannot set a tab's favicon directly, but it can replace the
 // page's icon link, which is what Chrome renders in the tab strip. Pages

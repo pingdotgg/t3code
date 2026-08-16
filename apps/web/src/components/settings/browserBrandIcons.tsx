@@ -1,7 +1,7 @@
 import type { ImgHTMLAttributes } from "react";
 
 import { cn } from "../../lib/utils";
-import agentCursorUrl from "../../assets/computer-use/agent-cursor-icon.png";
+import agentCursorUrl from "../../assets/computer-use/agent-cursor-badge.png";
 import braveUrl from "../../assets/computer-use/brave.svg";
 import chromeUrl from "../../assets/computer-use/google-chrome.svg";
 import edgeUrl from "../../assets/computer-use/edge.svg";
@@ -39,7 +39,9 @@ export function FirefoxIcon({ alt = "", ...props }: BrandIconProps) {
   return <BrandImg src={firefoxUrl} alt={alt} {...props} />;
 }
 
-/** Same soft-glow pointer used by the desktop agent-cursor overlay. */
+/** Purple rounded badge with soft radial glow fade (no nested square crop). */
 export function AgentCursorIcon({ alt = "", className, ...props }: BrandIconProps) {
-  return <BrandImg src={agentCursorUrl} alt={alt} className={className} {...props} />;
+  return (
+    <BrandImg src={agentCursorUrl} alt={alt} className={cn("rounded-md", className)} {...props} />
+  );
 }
