@@ -104,20 +104,24 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 
 describe("resolveThreadListV2Enabled", () => {
   it("defaults on when the device has never chosen", () => {
-    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: true })).toBe(
-      true,
-    );
+    expect(
+      resolveThreadListV2Enabled({ legacyPreference: undefined, preferencesLoaded: true }),
+    ).toBe(true);
   });
 
-  it("honors an explicit device opt-out", () => {
-    expect(resolveThreadListV2Enabled({ preference: false, preferencesLoaded: true })).toBe(false);
-    expect(resolveThreadListV2Enabled({ preference: true, preferencesLoaded: true })).toBe(true);
+  it("honors an explicit legacy opt-in", () => {
+    expect(resolveThreadListV2Enabled({ legacyPreference: true, preferencesLoaded: true })).toBe(
+      false,
+    );
+    expect(resolveThreadListV2Enabled({ legacyPreference: false, preferencesLoaded: true })).toBe(
+      true,
+    );
   });
 
   it("holds the default while preferences are still loading so the list does not remount", () => {
-    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: false })).toBe(
-      true,
-    );
+    expect(
+      resolveThreadListV2Enabled({ legacyPreference: undefined, preferencesLoaded: false }),
+    ).toBe(true);
   });
 });
 
@@ -259,6 +263,21 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("keeps a merged thread active when auto-settle on merge is off", () => {
+    const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
+    const layout = buildThreadListV2Items({
+      threads: [merged],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey: new Map([[`${environmentId}:${merged.id}`, "merged"]]),
+      autoSettleOnMerge: false,
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["merged"]);
+    expect(layout.settledCount).toBe(0);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

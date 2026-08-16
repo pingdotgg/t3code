@@ -42,6 +42,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedRightPanelToggle.command, "rightPanel.toggle");
 
+    const parsedRightPanelToggleMaximized = yield* decode(KeybindingRule, {
+      key: "mod+shift+m",
+      command: "rightPanel.toggleMaximized",
+    });
+    assert.strictEqual(parsedRightPanelToggleMaximized.command, "rightPanel.toggleMaximized");
+
     const parsedClose = yield* decode(KeybindingRule, {
       key: "mod+w",
       command: "terminal.close",
@@ -71,6 +77,12 @@ it.effect("parses keybinding rules", () =>
       command: "projectSearch.toggle",
     });
     assert.strictEqual(parsedProjectSearch.command, "projectSearch.toggle");
+
+    const parsedThemeEditor = yield* decode(KeybindingRule, {
+      key: "mod+alt+shift+t",
+      command: "themeEditor.toggle",
+    });
+    assert.strictEqual(parsedThemeEditor.command, "themeEditor.toggle");
 
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",

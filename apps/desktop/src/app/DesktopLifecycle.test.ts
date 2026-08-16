@@ -21,6 +21,7 @@ describe("DesktopLifecycle", () => {
       const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
         metadata: Effect.die("unexpected metadata read"),
         name: Effect.succeed("T3 Code"),
+        systemLocale: Effect.succeed("en-US"),
         whenReady: Effect.void,
         quit: Effect.void,
         exit: () => Effect.void,
@@ -78,6 +79,7 @@ describe("DesktopLifecycle", () => {
         handleBackendNotReady: Effect.void,
         flushMainWindowBounds: Effect.void,
         dispatchMenuAction: () => Effect.void,
+        zoomMain: () => Effect.void,
         syncAppearance: Effect.void,
       });
 

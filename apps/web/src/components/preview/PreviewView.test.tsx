@@ -24,6 +24,17 @@ const mocks = vi.hoisted(() => ({
   toggleAnnotation: null as (() => void) | null,
   pictureInPicture: false,
   showEmptyState: false,
+  recordVisitForThread: vi.fn(),
+}));
+
+const EMPTY_HISTORY: never[] = [];
+
+vi.mock("~/browserHistoryStore", () => ({
+  recordVisitForThread: mocks.recordVisitForThread,
+  setTitleForThreadUrl: vi.fn(),
+  removeUrlForThread: vi.fn(),
+  BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT: 50,
+  useThreadRecentHistory: () => EMPTY_HISTORY,
 }));
 
 vi.mock("~/state/session", () => ({
@@ -232,6 +243,7 @@ describe("PreviewView navigation", () => {
     mocks.toggleAnnotation = null;
     mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
+    mocks.recordVisitForThread.mockClear();
   });
 
   it.each([
@@ -267,6 +279,27 @@ describe("PreviewView navigation", () => {
     );
   });
 
+  it("records a history visit with the normalized requested url on submit", async () => {
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={{
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        }}
+        tabId="tab-1"
+        visible
+      />,
+    );
+
+    mocks.submittedUrl?.("localhost:3000/admin");
+    await vi.waitFor(() => {
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: expect.anything() }),
+        "http://localhost:3000/admin",
+      );
+    });
+  });
+
   it("maps an empty-state localhost server onto the WSL host", async () => {
     mocks.showEmptyState = true;
     renderToStaticMarkup(
@@ -295,6 +328,12 @@ describe("PreviewView navigation", () => {
         threadId: "thread-1",
       },
       "http://172.25.85.75:5173/app?mode=test#top",
+    );
+    await vi.waitFor(() =>
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: expect.anything() }),
+        "http://localhost:5173/app?mode=test#top",
+      ),
     );
   });
 

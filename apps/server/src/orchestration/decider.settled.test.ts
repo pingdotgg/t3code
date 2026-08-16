@@ -24,6 +24,11 @@ function makeReadModel(
   session: OrchestrationSession | null = null,
   activities: OrchestrationThread["activities"] = [],
   messages: OrchestrationThread["messages"] = [],
+  lifecycle: {
+    readonly pinnedAt?: string | null;
+    readonly snoozedUntil?: string | null;
+    readonly snoozedAt?: string | null;
+  } = {},
 ): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -44,6 +49,9 @@ function makeReadModel(
         archivedAt,
         settledOverride,
         settledAt: settledOverride === "settled" ? SETTLED_AT : null,
+        snoozedUntil: lifecycle.snoozedUntil ?? null,
+        snoozedAt: lifecycle.snoozedAt ?? (lifecycle.snoozedUntil != null ? SETTLED_AT : null),
+        pinnedAt: lifecycle.pinnedAt ?? null,
         deletedAt: null,
         messages,
         proposedPlans: [],
@@ -69,7 +77,7 @@ function makeSession(status: OrchestrationSession["status"]): OrchestrationSessi
 }
 
 it.layer(NodeServices.layer)("settled thread decider", (it) => {
-  it.effect("settles active threads and re-emits idempotently for settled ones", () =>
+  it.effect("settles awake threads without a redundant wake and re-emits idempotently", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({
         command: {
@@ -105,6 +113,75 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         // relative-time labels key on it.
         expect(reEmitEvents[0].payload.updatedAt).not.toBe(SETTLED_AT);
       }
+    }),
+  );
+
+  it.effect("settling a snoozed thread also wakes it", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-snoozed"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, [], [], {
+          snoozedUntil: "1970-01-02T09:00:00.000Z",
+        }),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unsnoozed"]);
+      const settled = events.find((entry) => entry.type === "thread.settled");
+      const unsnoozed = events.find((entry) => entry.type === "thread.unsnoozed");
+      if (settled?.type === "thread.settled" && unsnoozed?.type === "thread.unsnoozed") {
+        expect(unsnoozed.payload.reason).toBe("user");
+        expect(unsnoozed.payload.updatedAt).toBe(settled.payload.updatedAt);
+      }
+    }),
+  );
+
+  it.effect("repeated settle repairs legacy settled and snoozed state", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-snoozed-again"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel("settled", null, null, [], [], {
+          snoozedUntil: "1970-01-02T09:00:00.000Z",
+        }),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unsnoozed"]);
+      const settled = events.find((entry) => entry.type === "thread.settled");
+      const unsnoozed = events.find((entry) => entry.type === "thread.unsnoozed");
+      if (settled?.type === "thread.settled" && unsnoozed?.type === "thread.unsnoozed") {
+        expect(settled.payload.settledAt).toBe(SETTLED_AT);
+        expect(settled.payload.updatedAt).toBe(NOW);
+        expect(unsnoozed.payload.updatedAt).not.toBe(NOW);
+      }
+    }),
+  );
+
+  it.effect("settling a pinned and snoozed thread clears the pin and snooze", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-pinned-snoozed"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, [], [], {
+          pinnedAt: SETTLED_AT,
+          snoozedUntil: "1970-01-02T09:00:00.000Z",
+        }),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((entry) => entry.type)).toEqual([
+        "thread.settled",
+        "thread.unpinned",
+        "thread.unsnoozed",
+      ]);
     }),
   );
 
@@ -516,6 +593,57 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       });
       const routineEvents = Array.isArray(routineResult) ? routineResult : [routineResult];
       expect(routineEvents.map((event) => event.type)).toEqual(["thread.activity-appended"]);
+    }),
+  );
+
+  it.effect("drops an onlyIfSettled session stop when the thread was re-engaged", () =>
+    Effect.gen(function* () {
+      const stopCommand = (commandId: string) =>
+        ({
+          type: "thread.session.stop",
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+          onlyIfSettled: true,
+        }) as const;
+
+      // Still settled with an idle session: the cleanup stop goes through.
+      const stopped = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-settled-idle"),
+        readModel: makeReadModel("settled", null, makeSession("ready")),
+      });
+      const stoppedEvents = Array.isArray(stopped) ? stopped : [stopped];
+      expect(stoppedEvents.map((event) => event.type)).toEqual(["thread.session-stop-requested"]);
+
+      // Re-engaged before the stop was decided (a turn start unsettles the
+      // thread): the stale cleanup stop must not kill the new session.
+      const unsettledError = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-unsettled"),
+        readModel: makeReadModel(null, null, makeSession("starting")),
+      }).pipe(Effect.flip);
+      expect(unsettledError._tag).toBe("OrchestrationCommandInvariantError");
+
+      // Still settled but the session is already coming alive: same drop.
+      const aliveError = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-session-alive"),
+        readModel: makeReadModel("settled", null, makeSession("starting")),
+      }).pipe(Effect.flip);
+      expect(aliveError._tag).toBe("OrchestrationCommandInvariantError");
+
+      // Without the flag the stop stays unconditional (archive, stop button).
+      const unconditional = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-stop-unconditional"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null, null, makeSession("starting")),
+      });
+      const unconditionalEvents = Array.isArray(unconditional) ? unconditional : [unconditional];
+      expect(unconditionalEvents.map((event) => event.type)).toEqual([
+        "thread.session-stop-requested",
+      ]);
     }),
   );
 });
