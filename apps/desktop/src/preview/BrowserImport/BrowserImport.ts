@@ -23,9 +23,13 @@ import * as Scope from "effect/Scope";
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as BrowserSession from "../BrowserSession.ts";
-import { readChromiumCookies, type CookieReadResult } from "./ChromiumCookies.ts";
+import {
+  ChromiumCookieReadError,
+  readChromiumCookies,
+  type CookieReadResult,
+} from "./ChromiumCookies.ts";
 import type { ImportedCookie } from "./CookieDatabase.ts";
-import { readFirefoxCookies } from "./FirefoxCookies.ts";
+import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   resolveCookieDatabase,
@@ -243,17 +247,21 @@ export const make = Effect.gen(function* BrowserImportMake() {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
     }
 
-    // Normalized to one shape so the skipped tally survives either engine:
-    // Firefox stores plaintext, so nothing there is ever unreadable.
+    // Both branches fail with a tagged error carrying a `reason`, so the union
+    // stays structurally identifiable rather than collapsing to an anonymous
+    // shape that `Effect.catchTags` could not tell apart.
+    // Both branches fail with a tagged error, so the union stays structurally
+    // identifiable. The success side is normalized to one shape too, so the
+    // skipped tally survives either engine — Firefox stores plaintext, so
+    // nothing there is ever unreadable.
     const read: Effect.Effect<
       CookieReadResult,
-      { readonly reason: BrowserImportFailureReason },
+      ChromiumCookieReadError | FirefoxCookieReadError,
       FileSystem.FileSystem | Path.Path | Scope.Scope
     > =
       definition.engine === "firefox"
         ? readFirefoxCookies(databasePath).pipe(
             Effect.map((cookies) => ({ cookies, undecryptable: 0, undecryptableHosts: [] })),
-            Effect.mapError((cause) => ({ reason: "readFailed" as const, cause })),
           )
         : readChromiumCookies({
             cookieDatabasePath: databasePath,
