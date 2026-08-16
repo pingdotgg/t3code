@@ -421,6 +421,8 @@ interface ComposerDraftStoreState {
     projectRef: ScopedProjectRef,
     threadRef: ComposerThreadTarget,
   ) => void;
+  /** Drops any project new-thread mapping whose draft still uses this server thread id. */
+  retireProjectDraftMappingForThread: (threadRef: ScopedThreadRef) => void;
   /** Marks a draft session as being promoted to a real server thread. */
   markDraftThreadPromoting: (threadRef: ComposerThreadTarget, promotedTo?: ScopedThreadRef) => void;
   /** Removes draft-session metadata after promotion is complete. */
@@ -2541,6 +2543,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return removeDraftThreadReferences(state, threadKey);
           });
         },
+        retireProjectDraftMappingForThread: (threadRef) => {
+          set((state) => {
+            const matchingDraftIds = Object.entries(state.draftThreadsByThreadKey)
+              .filter(
+                ([, draftThread]) =>
+                  draftThread.environmentId === threadRef.environmentId &&
+                  draftThread.threadId === threadRef.threadId,
+              )
+              .map(([draftId]) => draftId);
+            if (matchingDraftIds.length === 0) {
+              return state;
+            }
+            let nextState = state;
+            for (const draftId of matchingDraftIds) {
+              nextState = removeDraftThreadReferences(nextState, draftId);
+            }
+            return nextState;
+          });
+        },
         markDraftThreadPromoting: (threadRef, promotedTo) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) {
@@ -3701,6 +3722,14 @@ export function useEffectiveComposerModelState(input: {
  * iterable helper for bootstrap/recovery paths that discover multiple server
  * threads at once.
  */
+/**
+ * Retire a project's stored new-thread draft when it still points at this
+ * server thread. Used after archive so the next `+` cannot reuse that id.
+ */
+export function retireProjectDraftMappingForThread(threadRef: ScopedThreadRef): void {
+  useComposerDraftStore.getState().retireProjectDraftMappingForThread(threadRef);
+}
+
 export function markPromotedDraftThread(threadId: ThreadId): void {
   const store = useComposerDraftStore.getState();
   const draftThreadTargets: ComposerThreadTarget[] = [];

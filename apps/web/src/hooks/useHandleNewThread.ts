@@ -4,7 +4,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -15,6 +20,7 @@ import {
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import { readArchivedThreadExists } from "../lib/archivedThreadsState";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
@@ -29,6 +35,7 @@ import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefau
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { decideStoredDraftReuse, type StoredDraftReuseDecision } from "./useHandleNewThread.logic";
 import { useClientSettings } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
@@ -48,6 +55,19 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
   };
+}
+
+function resolveStoredDraftReuse(threadRef: ScopedThreadRef | null): StoredDraftReuseDecision {
+  if (threadRef === null) {
+    return "mint";
+  }
+  const draftSession = useComposerDraftStore.getState().getDraftSessionByRef(threadRef);
+  return decideStoredDraftReuse({
+    storedDraftThreadRef: threadRef,
+    liveShellExists: readThreadShell(threadRef) !== null,
+    archivedShellExists: readArchivedThreadExists(threadRef),
+    promoted: draftSession?.promotedTo != null,
+  });
 }
 
 export function useNewThreadHandler() {
@@ -189,9 +209,7 @@ export function useNewThreadHandler() {
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
         : null;
       const reusableStoredDraftThread =
-        storedDraftThreadRef && readThreadShell(storedDraftThreadRef) !== null
-          ? null
-          : storedDraftThread;
+        resolveStoredDraftReuse(storedDraftThreadRef) === "reuse" ? storedDraftThread : null;
       if (storedDraftThreadRef && reusableStoredDraftThread === null) {
         markPromotedDraftThreadByRef(storedDraftThreadRef);
       }
@@ -247,7 +265,8 @@ export function useNewThreadHandler() {
               routeTargetNow?.kind === "draft" &&
               routeTargetNow.draftId === emptyStoredDraftThread.draftId;
             const promotedMeanwhile =
-              storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
+              storedDraftThreadRef !== null &&
+              resolveStoredDraftReuse(storedDraftThreadRef) === "mint";
             const remappedMeanwhile =
               getDraftSessionByLogicalProjectKey(logicalProjectKey)?.draftId !==
               emptyStoredDraftThread.draftId;
@@ -361,6 +380,9 @@ export function useNewThreadHandler() {
         // too would evict that draft while its navigation is in flight —
         // reuse the winner instead, like the synchronous path above does.
         const racedDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+        const racedDraftThreadRef = racedDraft
+          ? scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)
+          : null;
         if (
           racedDraft &&
           // Only a draft REGISTERED during the await counts as a raced
@@ -368,7 +390,7 @@ export function useNewThreadHandler() {
           // to reuse is still mapped at this point — reusing it here would
           // silently undo mint-fresh semantics.
           racedDraft.draftId !== storedDraftThread?.draftId &&
-          readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
+          resolveStoredDraftReuse(racedDraftThreadRef) === "reuse"
         ) {
           // Same remap the reuse paths above perform: point the draft at the
           // caller's project member and apply explicit workspace options if

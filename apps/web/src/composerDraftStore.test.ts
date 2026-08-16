@@ -65,6 +65,7 @@ import {
   markPromotedDraftThreadByRef,
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
+  retireProjectDraftMappingForThread,
   type ComposerImageAttachment,
   useComposerDraftStore,
   DraftId,
@@ -821,6 +822,37 @@ describe("composerDraftStore project draft thread mapping", () => {
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
+  });
+
+  it("retires a project draft mapping that still points at an archived thread", () => {
+    const store = useComposerDraftStore.getState();
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    // Write the server-thread composer first so it lands on the scoped key
+    // instead of being aliased onto the later draft session.
+    store.setPrompt(threadRef, "keep the archived thread composer");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "draft session prompt");
+    store.setProjectDraftThreadId(otherProjectRef, otherDraftId, { threadId: otherThreadId });
+
+    retireProjectDraftMappingForThread(threadRef);
+
+    const next = useComposerDraftStore.getState();
+    expect(next.getDraftSessionByLogicalProjectKey(scopedProjectKey(projectRef))).toBeNull();
+    expect(next.getDraftThread(draftId)).toBeNull();
+    expect(draftByKey(draftId)).toBeUndefined();
+    expect(next.getComposerDraft(threadRef)?.prompt).toBe("keep the archived thread composer");
+    expect(next.getDraftThreadByProjectRef(otherProjectRef)?.threadId).toBe(otherThreadId);
+  });
+
+  it("leaves a mapping alone when it points at a different thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+
+    retireProjectDraftMappingForThread(scopeThreadRef(TEST_ENVIRONMENT_ID, otherThreadId));
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
+      threadId,
+    );
   });
 
   it("clears only matching project draft mapping entries", () => {
