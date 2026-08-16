@@ -139,7 +139,7 @@ interface GitRefsSnapshot {
 
 interface ExecuteGitOptions {
   stdin?: string | undefined;
-  timeoutMs?: number | undefined;
+  timeoutMs?: number | null | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;
@@ -420,9 +420,10 @@ function isNonRepositoryGitStderr(stderr: string): boolean {
   return stderr.toLowerCase().includes("not a git repository");
 }
 function isUnbornHeadStderr(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
   return (
-    stderr.toLowerCase().includes("unknown revision") &&
-    stderr.toLowerCase().includes("path not in the working tree")
+    normalized.includes("bad revision 'head'") ||
+    (normalized.includes("unknown revision") && normalized.includes("path not in the working tree"))
   );
 }
 
@@ -711,7 +712,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...input,
         args: [...input.args],
       } as const;
-      const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timeoutMs = input.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : input.timeoutMs;
       const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
       const appendTruncationMarker = input.appendTruncationMarker ?? false;
 
@@ -812,8 +813,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         } satisfies GitVcsDriver.ExecuteGitResult;
       });
 
-      return yield* runGitCommand().pipe(
-        Effect.scoped,
+      const execution = runGitCommand().pipe(Effect.scoped);
+      if (timeoutMs === null) {
+        return yield* execution;
+      }
+
+      return yield* execution.pipe(
         Effect.timeoutOption(timeoutMs),
         Effect.flatMap((result) =>
           Option.match(result, {
@@ -904,9 +909,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     operation: string,
     cwd: string,
     args: readonly string[],
-    allowNonZeroExit = false,
+    options: ExecuteGitOptions = {},
   ): Effect.Effect<void, GitCommandError> =>
-    executeGit(operation, cwd, args, { allowNonZeroExit }).pipe(Effect.asVoid);
+    executeGit(operation, cwd, args, options).pipe(Effect.asVoid);
 
   const runGitStdout = (
     operation: string,
@@ -1477,25 +1482,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (branchResult === null) {
       return NON_REPOSITORY_REMOTE_STATUS_DETAILS;
     }
+    let branch: string | null;
     if (branchResult.exitCode !== 0) {
       if (isNonRepositoryGitStderr(branchResult.stderr)) {
         return NON_REPOSITORY_REMOTE_STATUS_DETAILS;
       }
-      return yield* new GitCommandError({
-        ...gitCommandContext({
-          operation: "GitVcsDriver.statusDetailsRemote.branch",
-          cwd,
-          args: ["rev-parse", "--abbrev-ref", "HEAD"],
-        }),
-        detail: "Git branch lookup failed.",
-        exitCode: branchResult.exitCode,
-        stdoutLength: branchResult.stdout.length,
-        stderrLength: branchResult.stderr.length,
-      });
-    }
+      if (!isUnbornHeadStderr(branchResult.stderr)) {
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.statusDetailsRemote.branch",
+            cwd,
+            args: ["rev-parse", "--abbrev-ref", "HEAD"],
+          }),
+          detail: "Git branch lookup failed.",
+          exitCode: branchResult.exitCode,
+          stdoutLength: branchResult.stdout.length,
+          stderrLength: branchResult.stderr.length,
+        });
+      }
 
-    const branchValue = branchResult.stdout.trim();
-    const branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
+      const branchValue = yield* runGitStdout(
+        "GitVcsDriver.statusDetailsRemote.unbornBranch",
+        cwd,
+        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      );
+      branch = branchValue.trim() || null;
+    } else {
+      const branchValue = branchResult.stdout.trim();
+      branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
+    }
     const upstream = yield* resolveCurrentUpstream(cwd);
     const upstreamRef = upstream?.upstreamRef ?? null;
     let aheadCount = 0;
@@ -1590,7 +1605,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
           cwd,
-          ["diff", "HEAD", "--numstat"],
+          ["diff", "HEAD", "--numstat", "--"],
           { allowNonZeroExit: true },
         ).pipe(
           Effect.flatMap((result) => {
@@ -1632,7 +1647,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 ...gitCommandContext({
                   operation: "GitVcsDriver.statusDetails.numstat",
                   cwd,
-                  args: ["diff", "HEAD", "--numstat"],
+                  args: ["diff", "HEAD", "--numstat", "--"],
                 }),
                 detail: "git diff HEAD --numstat failed.",
                 exitCode: result.exitCode,
@@ -1894,12 +1909,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote", cwd, [
-        "push",
-        "-u",
-        requestedRemoteName,
-        `HEAD:refs/heads/${publishBranch}`,
-      ]);
+      yield* runGit(
+        "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
+        cwd,
+        ["push", "-u", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        { timeoutMs: null },
+      );
       return {
         status: "pushed" as const,
         branch,
@@ -1957,12 +1972,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithUpstream", cwd, [
-        "push",
-        "-u",
-        publishRemoteName,
-        `HEAD:refs/heads/${publishBranch}`,
-      ]);
+      yield* runGit(
+        "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
+        cwd,
+        ["push", "-u", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        { timeoutMs: null },
+      );
       return {
         status: "pushed" as const,
         branch,
@@ -1975,11 +1990,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => null),
     );
     if (currentUpstream) {
-      yield* runGit("GitVcsDriver.pushCurrentBranch.pushUpstream", cwd, [
-        "push",
-        currentUpstream.remoteName,
-        `HEAD:refs/heads/${currentUpstream.branchName}`,
-      ]);
+      yield* runGit(
+        "GitVcsDriver.pushCurrentBranch.pushUpstream",
+        cwd,
+        ["push", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
+        { timeoutMs: null },
+      );
       return {
         status: "pushed" as const,
         branch,
@@ -1988,7 +2004,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"]);
+    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], { timeoutMs: null });
     return {
       status: "pushed" as const,
       branch,
@@ -2794,6 +2810,95 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     });
 
+  const resolveCommit: GitVcsDriver.GitVcsDriver["Service"]["resolveCommit"] = Effect.fn(
+    "resolveCommit",
+  )(function* (input) {
+    const commitSha = yield* runGitStdout("GitVcsDriver.resolveCommit", input.cwd, [
+      "rev-parse",
+      "--verify",
+      `${input.revision}^{commit}`,
+    ]).pipe(Effect.map((stdout) => stdout.trim()));
+
+    return { commitSha };
+  });
+
+  const fetchPullRequestHeadCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestHeadCommit"] =
+    Effect.fn("fetchPullRequestHeadCommit")(function* (input) {
+      const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      // No refspec destination: the pull head lands in FETCH_HEAD (per worktree) instead of a
+      // branch, which is the only way to read it while that branch is checked out somewhere.
+      yield* executeGit(
+        "GitVcsDriver.fetchPullRequestHeadCommit",
+        input.cwd,
+        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
+        {
+          fallbackErrorDetail: "git fetch pull request head failed",
+        },
+      );
+
+      return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
+    });
+
+  const refreshCheckedOutBranch: GitVcsDriver.GitVcsDriver["Service"]["refreshCheckedOutBranch"] =
+    Effect.fn("refreshCheckedOutBranch")(function* (input) {
+      const { commitSha: headCommit } = yield* resolveCommit({ cwd: input.cwd, revision: "HEAD" });
+      if (headCommit === input.targetCommit) {
+        return { headCommit, moved: false, onTarget: true };
+      }
+
+      const worktreeChanges = yield* runGitStdout(
+        "GitVcsDriver.refreshCheckedOutBranch.status",
+        input.cwd,
+        ["status", "--porcelain"],
+      );
+      if (worktreeChanges.trim().length > 0) {
+        return { headCommit, moved: false, onTarget: false };
+      }
+
+      const isAncestor = yield* executeGit(
+        "GitVcsDriver.refreshCheckedOutBranch.isAncestor",
+        input.cwd,
+        ["merge-base", "--is-ancestor", headCommit, input.targetCommit],
+        { allowNonZeroExit: true },
+      ).pipe(Effect.map((result) => result.exitCode === 0));
+      // A rewritten head (rebase, squash, amend) does not descend from the checkout, so it can
+      // only be taken by resetting. That is lossless exactly when the tree is clean and HEAD
+      // never left the commit the upstream held before the fetch.
+      if (!isAncestor && headCommit !== input.resetWhenHeadCommit) {
+        return { headCommit, moved: false, onTarget: false };
+      }
+
+      if (!isAncestor) {
+        // The commit being reset away is about to be reachable from nothing. It is only ever a
+        // commit the remote already held, but "the remote held it" stops being a way back once
+        // the head it belonged to has been rewritten, so a ref keeps it findable.
+        yield* executeGit(
+          "GitVcsDriver.refreshCheckedOutBranch.keepPrevious",
+          input.cwd,
+          ["update-ref", "refs/t3code/pre-refresh", headCommit],
+          { fallbackErrorDetail: "git failed to record the previous checkout commit" },
+        );
+      }
+
+      yield* executeGit(
+        "GitVcsDriver.refreshCheckedOutBranch.move",
+        input.cwd,
+        // `--merge` rather than `--hard`: the cleanliness check above is a snapshot, and another
+        // thread may edit a tracked file between it and this move. Git itself refuses a `--merge`
+        // reset that would overwrite such an edit — the same guarantee `--ff-only` gives the
+        // other branch — so a race loses nothing; the refresh fails and is reported instead.
+        isAncestor
+          ? ["merge", "--ff-only", input.targetCommit]
+          : ["reset", "--merge", input.targetCommit],
+        {
+          timeoutMs: 30_000,
+          fallbackErrorDetail: "git failed to move the checkout onto the pull request head",
+        },
+      );
+
+      return { headCommit: input.targetCommit, moved: true, onTarget: true };
+    });
+
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
       yield* executeGit(
@@ -3071,6 +3176,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     createWorktree: (input) => withListRefsInvalidation(input.cwd, createWorktree(input)),
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
+    fetchPullRequestHeadCommit,
+    resolveCommit,
+    refreshCheckedOutBranch: (input) =>
+      withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),
     ensureRemote: (input) => withListRefsInvalidation(input.cwd, ensureRemote(input)),
     resolvePrimaryRemoteName,
     fetchRemote: (input) => withListRefsInvalidation(input.cwd, fetchRemote(input)),

@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -12,17 +12,20 @@ const mocks = vi.hoisted(() => ({
     pid: number | null;
     terminal: null;
     source: "scanner";
-    listening: boolean;
   }>,
 }));
 
 vi.mock("./useDiscoveredLocalServers", () => ({
   useDiscoveredLocalServers: () => mocks.servers,
 }));
+vi.mock("./PreviewFaviconIcon", () => ({
+  PreviewFaviconIcon: () => <span data-favicon-icon />,
+}));
 
 import { PreviewEmptyState } from "./PreviewEmptyState";
 
 const environmentId = EnvironmentId.make("env-1");
+const threadRef = { environmentId, threadId: ThreadId.make("thread-1") };
 
 function server(port: number) {
   return {
@@ -34,13 +37,13 @@ function server(port: number) {
     pid: 1,
     terminal: null,
     source: "scanner" as const,
-    listening: true,
   };
 }
 
 function render(recentEntries: Array<{ url: string; lastVisitedAt: number; title?: string }>) {
   return renderToStaticMarkup(
     <PreviewEmptyState
+      threadRef={threadRef}
       environmentId={environmentId}
       recentEntries={recentEntries}
       onRemoveRecent={() => undefined}

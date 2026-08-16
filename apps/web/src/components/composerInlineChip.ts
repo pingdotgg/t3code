@@ -8,6 +8,9 @@ export const CHAT_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[12px
 
 export const COMPOSER_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[0.86em] select-none`;
 
+export const COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME =
+  "relative inline-flex align-[-0.125em] leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-[6px] data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+
 export const COMPOSER_INLINE_CHIP_ICON_CLASS_NAME = "size-[1.17em] shrink-0 opacity-85";
 
 export const CHAT_INLINE_CHIP_LABEL_CLASS_NAME = "truncate leading-tight";

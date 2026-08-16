@@ -1,4 +1,3 @@
-import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type {
   EnvironmentId,
   MessageId,
@@ -14,6 +13,7 @@ import {
   serializeComposerFileLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
+import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -22,7 +22,6 @@ import {
   Platform,
   Pressable,
   StyleSheet,
-  useColorScheme,
   View,
   type ViewStyle,
 } from "react-native";
@@ -35,27 +34,30 @@ import Animated, {
   LinearTransition,
 } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import { GlassSurface } from "../../components/GlassSurface";
 import {
   ComposerEditor,
   type ComposerEditorHandle,
   type ComposerEditorSelection,
 } from "../../components/ComposerEditor";
 import {
+  ComposerInlineControl,
   ComposerToolbarButton,
   ComposerToolbarRow,
   ComposerToolbarScroller,
-  ComposerToolbarTrigger,
-} from "../../components/ComposerToolbarTrigger";
+} from "../../components/ComposerToolbar";
 import { ControlPill } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
   insertRankedSearchResult,
@@ -65,8 +67,14 @@ import {
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
-import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
-import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
+import {
+  type ExistingThreadSettingsRouteSession,
+  useExistingThreadSettingsRoutePresentation,
+} from "./ThreadSettingsSheet";
+import {
+  useThreadSettingsSheetPresentation,
+  type NavigationWithFinishTransitioning,
+} from "./use-thread-settings-sheet-presentation";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -78,7 +86,7 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
  * Used by the parent to compute the larger feed bottom inset when the composer is focused.
  */
-export const COMPOSER_EXPANDED_CHROME = 174;
+export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
@@ -98,7 +106,6 @@ export interface ThreadComposerProps {
   readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
-  readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
@@ -113,11 +120,13 @@ export interface ThreadComposerProps {
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
+  /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
+  readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
 /**
- * The pill / card container — renders as LiquidGlassView on supported
- * iOS 26+ devices (progressive blur, native morph), opaque View otherwise.
+ * The pill / card container — renders with Expo's native GlassView on supported
+ * iOS 26+ devices and keeps the existing opaque fallback elsewhere.
  * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
 // One timing for every piece of the expanded↔compact morph so the surface,
@@ -133,47 +142,43 @@ export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly isDarkMode: boolean;
+  /** Existing thread composers morph between pill and card layouts. */
+  readonly animateLayout?: boolean;
 }) {
+  const cardColor = useThemeColor("--color-card-translucent");
+  const borderColor = useThemeColor("--color-border");
+  const shadowColor = useThemeColor("--color-primary-shadow");
   // Drop shadow lives on a wrapper: `overflow: "hidden"` on the surface itself
   // (needed to clip content to the pill shape) would clip the shadow on iOS.
   const shadowStyle: ViewStyle = {
     borderRadius: props.style.borderRadius,
-    shadowColor: "#000000",
+    shadowColor,
     shadowOpacity: props.isDarkMode ? 0.35 : 0.12,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
     elevation: 10,
   };
 
-  if (isLiquidGlassSupported) {
-    return (
-      <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} style={shadowStyle}>
-        <LiquidGlassView
-          effect="regular"
-          interactive
-          colorScheme={props.isDarkMode ? "dark" : "light"}
-          style={props.style}
-        >
-          {props.children}
-        </LiquidGlassView>
-      </Animated.View>
-    );
-  }
-
   return (
-    <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} style={shadowStyle}>
-      <View
-        style={[
-          props.style,
-          {
-            backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
-            borderWidth: 1,
-            borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
-          },
-        ]}
+    <Animated.View
+      layout={props.animateLayout === false ? undefined : COMPOSER_LAYOUT_TRANSITION}
+      style={shadowStyle}
+    >
+      <GlassSurface
+        chrome="none"
+        fallbackStyle={{
+          backgroundColor: cardColor,
+          borderWidth: 1,
+          borderColor,
+        }}
+        glassEffectStyle="regular"
+        // The composer is a passive material containing interactive controls.
+        // Expo GlassView defaults to non-interactive and both layouts share it.
+        tintColor="transparent"
+        style={props.style}
       >
         {props.children}
-      </View>
+      </GlassSurface>
     </Animated.View>
   );
 }
@@ -234,6 +239,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
   readonly status: ComposerStatusPillState;
 }) {
   const isReconnecting = props.status.kind !== "unavailable";
+  const indicatorColor = useThemeColor("--color-icon-muted");
 
   return (
     <Animated.View
@@ -245,10 +251,10 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
       <Pressable
         accessibilityRole="button"
         onPress={props.onPress}
-        className="max-w-full flex-row items-center gap-2 rounded-full bg-white/90 px-3 py-2 shadow-sm active:opacity-70 dark:bg-neutral-900/90"
+        className="max-w-full flex-row items-center gap-2 rounded-full bg-card px-3 py-2 shadow-sm active:opacity-70"
       >
         {isReconnecting ? (
-          <ActivityIndicator size="small" color="#8e8e93" />
+          <ActivityIndicator size="small" color={indicatorColor} />
         ) : (
           <View className="h-2 w-2 rounded-full bg-red-500" />
         )}
@@ -264,7 +270,9 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 });
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
-  const isDarkMode = useColorScheme() === "dark";
+  const navigation = useNavigation();
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
@@ -274,14 +282,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     editorRef: inputRef,
     isEditorFocused: isFocused,
   });
+  const settingsRoutePresentation = useExistingThreadSettingsRoutePresentation();
+  const settingsRoutePresentedRef = useRef(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  // Opening and closing count as active so the composer stays expanded while
-  // focus moves between its native editor and the settings modal.
+  // Opening and presentation count as active so the composer stays expanded
+  // while focus moves between its native editor and the settings picker.
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
   const canSend = hasContent;
 
@@ -307,32 +317,35 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
   }, [inputRef]);
 
+  const onEditorFocusChange = props.onEditorFocusChange;
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-  }, []);
+    onEditorFocusChange?.(true);
+  }, [onEditorFocusChange]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-  }, []);
+    onEditorFocusChange?.(false);
+  }, [onEditorFocusChange]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
     props.selectedThread.session?.status === "starting";
 
   const sendLabel =
-    props.connectionState !== "connected" || props.activeThreadBusy || props.queueCount > 0
-      ? "Queue"
-      : "Send";
+    props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
-  const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
     environmentLabel: props.environmentLabel,
     threadSyncPhase: props.threadSyncPhase,
   });
-  const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
-  const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
+  const toolbarSurface = String(useThemeColor("--color-card"));
+  const backdropSurface = String(useThemeColor("--color-screen"));
+  const toolbarFadeOpaque = themeColorWithAlpha(toolbarSurface, 0.95);
+  const toolbarFadeTransparent = themeColorWithAlpha(toolbarSurface, 0);
+  const backdropGradient = `linear-gradient(to bottom, ${themeColorWithAlpha(backdropSurface, 0)} 0%, ${themeColorWithAlpha(backdropSurface, 0.6)} 55%, ${themeColorWithAlpha(backdropSurface, 0.9)} 100%)`;
   const selectedProviderStatus = useMemo(() => {
     if (!props.serverConfig) return null;
     return (
@@ -534,6 +547,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       // after the send so its preference read and native Activity start don't
       // contend with the queued-message feedback on the tap frame.
       armAgentAwarenessLiveActivityForLocalWork({
+        environmentId: props.environmentId,
         threadTitle: props.selectedThread.title,
         projectTitle: props.environmentLabel ?? "T3 Code",
       });
@@ -616,12 +630,71 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }),
     [currentModelOption?.capabilities, currentModelSelection.options],
   );
-  const settingsSummaryLabel = threadSettingsSummaryLabel({
-    modelLabel: currentModelOption?.label ?? currentModelSelection.model,
-    optionDescriptors: providerOptionDescriptors,
-    runtimeMode: currentRuntimeMode,
-    interactionMode: currentInteractionMode,
-  });
+  const settingsOwnerId = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const settingsRouteSession = useMemo<ExistingThreadSettingsRouteSession>(
+    () => ({
+      ownerId: settingsOwnerId,
+      providerGroups: threadProviderGroups,
+      selectedModel: currentModelSelection,
+      onSelectModel: (option) => props.onUpdateModelSelection(option.selection),
+      optionDescriptors: providerOptionDescriptors,
+      onUpdateOptionSelections: (options) =>
+        props.onUpdateModelSelection({ ...currentModelSelection, options }),
+      runtimeMode: currentRuntimeMode,
+      onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+    }),
+    [
+      currentModelSelection,
+      currentRuntimeMode,
+      props.onUpdateModelSelection,
+      props.onUpdateRuntimeMode,
+      providerOptionDescriptors,
+      settingsOwnerId,
+      threadProviderGroups,
+    ],
+  );
+  const openSettings = useCallback(() => {
+    settingsRoutePresentation.present(settingsRouteSession);
+    settingsSheetPresentation.open();
+  }, [settingsRoutePresentation.present, settingsRouteSession, settingsSheetPresentation.open]);
+
+  useEffect(() => {
+    if (settingsSheetPresentation.isActive) {
+      settingsRoutePresentation.present(settingsRouteSession);
+    }
+  }, [settingsRoutePresentation.present, settingsRouteSession, settingsSheetPresentation.isActive]);
+
+  useEffect(() => {
+    if (!settingsSheetPresentation.isVisible || settingsRoutePresentedRef.current) {
+      return;
+    }
+
+    settingsRoutePresentedRef.current = true;
+    navigation.dispatch(StackActions.push("ThreadSettingsSheet"));
+  }, [navigation, settingsSheetPresentation.isVisible]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!settingsRoutePresentedRef.current) {
+        return;
+      }
+
+      settingsRoutePresentedRef.current = false;
+      settingsSheetPresentation.onDismissed();
+      settingsRoutePresentation.clear(settingsOwnerId);
+    }, [settingsOwnerId, settingsRoutePresentation.clear, settingsSheetPresentation.onDismissed]),
+  );
+
+  useEffect(
+    () =>
+      // UIKit's completion callback for the sheet dismissal, surfaced by the
+      // native-stack patch. This is when the queued keyboard restore runs.
+      (navigation as unknown as NavigationWithFinishTransitioning).addListener(
+        "finishTransitioning",
+        settingsSheetPresentation.onStackTransitionsFinished,
+      ),
+    [navigation, settingsSheetPresentation.onStackTransitionsFinished],
+  );
 
   return (
     <Animated.View
@@ -640,9 +713,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         style={[
           StyleSheet.absoluteFill,
           {
-            experimental_backgroundImage: isDarkMode
-              ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
-              : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
+            experimental_backgroundImage: backdropGradient,
           },
         ]}
       />
@@ -674,10 +745,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           style={
             isExpanded
               ? {
-                  borderRadius: 20,
+                  borderRadius: 26,
+                  minHeight: 140,
                   overflow: "hidden" as const,
+                  paddingBottom: 6,
                   paddingHorizontal: 14,
-                  paddingVertical: 12,
+                  paddingTop: 14,
                 }
               : {
                   borderRadius: 999,
@@ -727,7 +800,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               style={
                 isExpanded
                   ? {
-                      minHeight: 80,
+                      minHeight: 72,
                       maxHeight: 160,
                       paddingHorizontal: 4,
                       paddingVertical: 4,
@@ -776,15 +849,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               )}
             </Animated.View>
           ) : null}
-        </ComposerSurface>
-
-        {isExpanded ? (
-          // Toolbar row — matches draft page layout (expanded only)
-          <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
-            <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+          {isExpanded ? (
+            <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
               <ComposerToolbarScroller
                 fadeOpaque={toolbarFadeOpaque}
                 fadeTransparent={toolbarFadeTransparent}
+                contentPaddingRight={8}
               >
                 <ComposerToolbarButton
                   accessibilityLabel="Add attachment"
@@ -792,14 +862,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
                 />
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Thread settings"
+                <ComposerInlineControl
+                  accessibilityLabel="Model and reasoning settings"
+                  emphasized
                   iconNode={
                     <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
                   }
-                  label={settingsSummaryLabel}
-                  maxWidth={320}
-                  onPress={settingsSheetPresentation.open}
+                  label={currentModelOption?.label ?? currentModelSelection.model}
+                  maxWidth={152}
+                  onPress={openSettings}
                 />
                 {showStopAction ? (
                   <ComposerToolbarButton
@@ -820,8 +891,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 showChevron={false}
               />
             </ComposerToolbarRow>
-          </Animated.View>
-        ) : null}
+          ) : null}
+        </ComposerSurface>
 
         {/* Queue count */}
         {props.queueCount > 0 ? (
@@ -833,21 +904,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </Animated.View>
         ) : null}
       </Animated.View>
-
-      <ThreadSettingsSheet
-        visible={settingsSheetPresentation.isVisible}
-        onClose={settingsSheetPresentation.close}
-        onDismissed={settingsSheetPresentation.onDismissed}
-        providerGroups={threadProviderGroups}
-        selectedModel={currentModelSelection}
-        onSelectModel={(option) => props.onUpdateModelSelection(option.selection)}
-        optionDescriptors={providerOptionDescriptors}
-        onUpdateOptionSelections={(options) =>
-          props.onUpdateModelSelection({ ...currentModelSelection, options })
-        }
-        runtimeMode={currentRuntimeMode}
-        onUpdateRuntimeMode={props.onUpdateRuntimeMode}
-      />
 
       <ImageViewing
         images={previewImageUri ? [{ uri: previewImageUri }] : []}

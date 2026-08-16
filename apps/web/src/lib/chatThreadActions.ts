@@ -16,7 +16,8 @@ interface NewThreadHandler {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
     },
-  ): Promise<void>;
+    // The opened draft's identity, which most callers have no use for.
+  ): Promise<unknown>;
 }
 
 export interface ChatThreadActionContext {

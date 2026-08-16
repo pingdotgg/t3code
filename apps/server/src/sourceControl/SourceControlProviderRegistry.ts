@@ -50,6 +50,7 @@ export class SourceControlProviderRegistry extends Context.Service<
     >;
     readonly resolveHandle: (input: {
       readonly cwd: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
     }) => Effect.Effect<SourceControlProviderHandle, SourceControlProviderError>;
     readonly resolve: (input: {
       readonly cwd: string;
@@ -254,7 +255,15 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     });
 
     const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
-      Cache.get(providerContextCache, input.cwd).pipe(
+      (input.context === undefined
+        ? Cache.get(providerContextCache, input.cwd)
+        : refineUnknownRemoteProvider({
+            specs: discoverySpecs,
+            process,
+            cwd: input.cwd,
+            context: input.context,
+          })
+      ).pipe(
         Effect.map((context) => {
           const kind = context?.provider.kind ?? "unknown";
           const provider = providers.get(kind) ?? unsupportedProvider(kind);
