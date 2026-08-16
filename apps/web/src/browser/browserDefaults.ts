@@ -15,7 +15,6 @@
  */
 import {
   DEFAULT_BROWSER_PROFILE_ID,
-  findBrowserProfile,
   resolveBrowserProfiles,
   type BrowserProfile,
   type DesktopPreviewTabDefaults,
@@ -57,9 +56,15 @@ const toBrowserDefaults = (settings: {
     profiles,
     // A default pointing at a deleted profile falls back rather than opening
     // tabs into a partition with no profile behind it.
+    // Incognito is a per-tab choice, not a default: a profile that discards
+    // everything on close would leave every new tab signed out. Excluding it
+    // here keeps the resolved default equal to what the settings list offers,
+    // so the row badged "Default" is the one tabs actually open under.
     profileId:
-      findBrowserProfile(profiles, settings.browserDefaultProfileId)?.id ??
-      DEFAULT_BROWSER_PROFILE_ID,
+      profiles.find(
+        (profile) =>
+          profile.id === settings.browserDefaultProfileId && profile.kind !== "incognito",
+      )?.id ?? DEFAULT_BROWSER_PROFILE_ID,
   };
 };
 

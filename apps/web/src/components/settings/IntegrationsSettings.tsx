@@ -8,6 +8,7 @@
  */
 import {
   BROWSER_PROFILE_MAX_COUNT,
+  type BrowserProfile,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
@@ -30,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon, Plus as PlusIcon, Trash2 as Trash2Icon } from "lucide-react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
@@ -39,6 +41,15 @@ import { usePrimaryEnvironment } from "~/state/environments";
 import { isElectron } from "../../env";
 
 import { Badge } from "../ui/badge";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
@@ -525,6 +536,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const updateSettings = useUpdatePrimarySettings();
   const environmentId = usePrimaryEnvironment()?.environmentId;
+  const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
 
   const addProfile = () => {
     if (userProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return;
@@ -550,6 +562,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   };
 
   const removeProfile = (id: string) => {
+    setProfilePendingRemoval(null);
     // Drop the partition's data too, otherwise a removed profile's cookies
     // stay on disk with nothing in the UI pointing at them.
     if (environmentId) {
@@ -612,7 +625,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                         variant="ghost-muted"
                         disabled={disabled}
                         aria-label={`Remove ${profile.name}`}
-                        onClick={() => removeProfile(profile.id)}
+                        onClick={() => setProfilePendingRemoval(profile)}
                       >
                         <Trash2Icon />
                       </Button>
@@ -625,6 +638,33 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           );
         })}
       </div>
+      <AlertDialog
+        open={profilePendingRemoval !== null}
+        onOpenChange={(open) => {
+          if (!open) setProfilePendingRemoval(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove “{profilePendingRemoval?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its cookies, logins, and cache are deleted with it. Tabs open in this profile move to
+              the default one.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (profilePendingRemoval) removeProfile(profilePendingRemoval.id);
+              }}
+            >
+              Remove profile
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </SettingsRow>
   );
 }
@@ -633,7 +673,11 @@ function BrowserDefaultProfileSetting({ disabled }: { readonly disabled: boolean
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const updateSettings = useUpdatePrimarySettings();
-  const profiles = resolveBrowserProfiles(userProfiles);
+  // Incognito is deliberately absent: as a default it would open every tab
+  // into storage that is discarded on close.
+  const profiles = resolveBrowserProfiles(userProfiles).filter(
+    (profile) => profile.kind !== "incognito",
+  );
   const selected = findBrowserProfile(profiles, defaultProfileId) ?? profiles[0];
 
   return (
