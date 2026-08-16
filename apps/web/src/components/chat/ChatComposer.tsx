@@ -976,6 +976,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuOpenRef = useRef(false);
   const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
   const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
+  const focusStashMenuCloseOnOpenRef = useRef(false);
   const composerBlurFrameRef = useRef<number | null>(null);
   const mobileComposerExpandFrameRef = useRef<number | null>(null);
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
@@ -2117,6 +2118,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
     const images = [...composerImagesRef.current];
     if (prompt.length === 0 && images.length === 0) {
+      focusStashMenuCloseOnOpenRef.current = true;
       setIsStashMenuOpen((open) => !open);
       return;
     }
@@ -2268,7 +2270,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashEntryToQueue,
   ]);
 
-  const toggleStashMenu = useCallback(() => {
+  const toggleStashMenu = useCallback((focusCloseButton: boolean) => {
+    focusStashMenuCloseOnOpenRef.current = focusCloseButton;
     setIsStashMenuOpen((open) => !open);
   }, []);
 
@@ -2883,12 +2886,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               isComposerCollapsedMobile && "hidden",
             )}
           >
-            {stashControlsAvailable && (
+            {stashControlsAvailable && !isStashMenuVisible && (
               <ComposerStashBadge
                 count={stashQueue.length}
                 pulseKey={stashPulse.key}
                 pulsing={stashPulse.active}
-                menuOpen={isStashMenuVisible}
                 onToggleMenu={toggleStashMenu}
               />
             )}
@@ -2900,6 +2902,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onRestore={restoreStashEntry}
                   onDelete={deleteStashEntry}
                   onClose={() => setIsStashMenuOpen(false)}
+                  focusCloseOnMount={focusStashMenuCloseOnOpenRef.current}
                 />
               </ComposerCommandMenuLayer>
             )}

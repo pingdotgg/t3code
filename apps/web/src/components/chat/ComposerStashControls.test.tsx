@@ -12,6 +12,7 @@ describe("ComposerStashMenu", () => {
         onRestore={() => {}}
         onDelete={() => {}}
         onClose={() => {}}
+        focusCloseOnMount={false}
       />,
     );
 
@@ -23,29 +24,17 @@ describe("ComposerStashMenu", () => {
 });
 
 describe("ComposerStashBadge", () => {
-  it("does not render while the stash menu is open", () => {
+  it("does not render without stashed prompts", () => {
     const markup = renderToStaticMarkup(
-      <ComposerStashBadge
-        count={1}
-        pulseKey={0}
-        pulsing={false}
-        menuOpen
-        onToggleMenu={() => {}}
-      />,
+      <ComposerStashBadge count={0} pulseKey={0} pulsing={false} onToggleMenu={() => {}} />,
     );
 
     expect(markup).toBe("");
   });
 
-  it("renders when there are stashed prompts and the menu is closed", () => {
+  it("renders when there are stashed prompts", () => {
     const markup = renderToStaticMarkup(
-      <ComposerStashBadge
-        count={1}
-        pulseKey={0}
-        pulsing={false}
-        menuOpen={false}
-        onToggleMenu={() => {}}
-      />,
+      <ComposerStashBadge count={1} pulseKey={0} pulsing={false} onToggleMenu={() => {}} />,
     );
 
     expect(markup).toContain('data-prompt-stash-badge="true"');

@@ -15,21 +15,19 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
   pulseKey: number;
   pulsing: boolean;
-  menuOpen: boolean;
-  onToggleMenu: () => void;
+  onToggleMenu: (focusCloseButton: boolean) => void;
 }) {
-  if (props.count === 0 || props.menuOpen) return null;
+  if (props.count === 0) return null;
 
   return (
     <button
       type="button"
       data-prompt-stash-badge="true"
       aria-label={`Stashed prompts: ${props.count}. Open stash.`}
-      aria-expanded={props.menuOpen}
       className={cn(
         "absolute -top-3 right-4 z-10 inline-flex cursor-pointer items-center gap-1.5 rounded-full border bg-popover px-2.5 py-0.5 text-xs shadow-sm",
         "transition-[color,border-color,opacity] duration-200",
-        props.menuOpen || props.pulsing
+        props.pulsing
           ? "border-border text-foreground opacity-100"
           : "border-border/70 text-muted-foreground opacity-70 hover:opacity-100 hover:text-foreground",
       )}
@@ -37,7 +35,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         // Keep composer focus so Escape/typing flows stay intact.
         event.preventDefault();
       }}
-      onClick={props.onToggleMenu}
+      onClick={(event) => props.onToggleMenu(event.detail === 0)}
     >
       <BookmarkIcon className="size-3" aria-hidden="true" />
       Stash

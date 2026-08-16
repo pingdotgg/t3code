@@ -1,5 +1,5 @@
 import { BookmarkIcon, XIcon } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "~/lib/utils";
@@ -34,9 +34,11 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   onRestore: (entry: PromptStashEntry) => void;
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
+  focusCloseOnMount: boolean;
 }) {
-  const { entries, onRestore, onDelete, onClose } = props;
+  const { entries, onRestore, onDelete, onClose, focusCloseOnMount } = props;
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
 
@@ -46,6 +48,10 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
       setHighlightedId(entries[0]?.id ?? null);
     }
   }, [entries, highlightedId]);
+
+  useEffect(() => {
+    if (focusCloseOnMount) closeButtonRef.current?.focus();
+  }, [focusCloseOnMount]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -98,6 +104,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
             Stashed prompts
           </span>
           <Button
+            ref={closeButtonRef}
             variant="ghost"
             size="icon-xs"
             className="ml-auto"
