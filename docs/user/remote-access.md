@@ -212,6 +212,12 @@ Long-running relay connections refresh their authorization automatically; if a
 credential is rejected during forwarding, the desktop reconnects that
 environment and retries once.
 
+A forward always uses the connection method currently selected for its
+environment. When you switch between T3 Connect and SSH, T3 Code keeps the
+desktop loopback listener but closes its active TCP sessions; applications that
+reconnect use the newly selected method. Existing TCP streams cannot be moved
+between transports without interruption.
+
 The forward is TCP-only and can reach only `127.0.0.1` on the remote
 environment. It is not exposed to your LAN or the public Internet. Manual
 forwards are currently runtime-only: they stop when you quit the desktop app,

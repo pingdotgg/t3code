@@ -95,6 +95,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(PortForwardIpc.listPortForwards);
   yield* ipc.handle(PortForwardIpc.stopPortForward);
   yield* ipc.handle(PortForwardIpc.stopEnvironmentPortForwards);
+  yield* ipc.handle(PortForwardIpc.resetEnvironmentPortForwardConnections);
   yield* ipc.handle(PortForwardIpc.resolvePortForwardAuthorization);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

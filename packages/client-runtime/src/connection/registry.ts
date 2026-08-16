@@ -165,6 +165,7 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const routeTransition = yield* ClientCapabilities.EnvironmentRouteTransition;
   const persistedTargets = yield* storage.list;
   const persistedRoutes = yield* storage.listRoutes;
   const loadCatalogEntry = Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (
@@ -476,7 +477,7 @@ export const make = Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return yield* new PlatformEnvironmentRemovalError({ environmentId });
         }
-        yield* getEntry(environmentId);
+        const selected = yield* getEntry(environmentId);
         const entry = (yield* SubscriptionRef.get(routes))
           .get(environmentId)
           ?.find((candidate) => connectionRouteId(candidate.target) === routeId);
@@ -486,8 +487,7 @@ export const make = Effect.gen(function* () {
         if (entry.target._tag === "PrimaryConnectionTarget") {
           return yield* new PlatformEnvironmentRemovalError({ environmentId });
         }
-        const selected = (yield* SubscriptionRef.get(entries)).get(environmentId);
-        if (selected !== undefined && Equal.equals(selected, entry)) {
+        if (Equal.equals(selected, entry)) {
           return;
         }
 
@@ -501,6 +501,11 @@ export const make = Effect.gen(function* () {
           return next;
         });
         yield* installEntryLocked(entry);
+        yield* routeTransition.afterSelected({
+          environmentId,
+          previous: selected.target,
+          selected: entry.target,
+        });
       }),
     );
   });

@@ -84,6 +84,18 @@ export const stopEnvironmentPortForwards = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const resetEnvironmentPortForwardConnections = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_RESET_ENVIRONMENT_CONNECTIONS_CHANNEL,
+  payload: DesktopPortForwardStopEnvironmentInput,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.portForward.resetEnvironmentConnections")(function* ({
+    environmentId,
+  }) {
+    const manager = yield* DesktopPortForwardManager.DesktopPortForwardManager;
+    yield* manager.resetEnvironmentConnections(environmentId);
+  }),
+});
+
 export const resolvePortForwardAuthorization = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PORT_FORWARD_RESOLVE_AUTHORIZATION_CHANNEL,
   payload: DesktopPortForwardAuthorizationResolution,

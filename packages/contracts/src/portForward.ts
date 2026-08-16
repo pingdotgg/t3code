@@ -89,6 +89,7 @@ export interface DesktopPortForwardBridge {
   list: () => Promise<ReadonlyArray<DesktopPortForwardSnapshot>>;
   stop: (id: DesktopPortForwardId) => Promise<void>;
   stopEnvironment: (environmentId: EnvironmentId) => Promise<void>;
+  resetEnvironmentConnections: (environmentId: EnvironmentId) => Promise<void>;
   resolveAuthorization: (
     requestId: string,
     socketUrl: string | null,

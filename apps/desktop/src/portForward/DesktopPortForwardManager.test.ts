@@ -4,6 +4,7 @@ import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as NodeNet from "node:net";
+import * as Queue from "effect/Queue";
 
 import * as DesktopPortForwardManager from "./DesktopPortForwardManager.ts";
 
@@ -26,6 +27,13 @@ const connectLocal = (port: number) =>
       socket.destroy();
     });
   });
+
+const awaitSocketClose = (socket: NodeNet.Socket) =>
+  socket.destroyed
+    ? Effect.void
+    : Effect.callback<void>((resume) => {
+        socket.once("close", () => resume(Effect.void));
+      });
 
 it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
   it("preserves renderer authorization failures for the forward status", () => {
@@ -160,6 +168,51 @@ it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
         expect(settled?.connectingConnections).toBe(0);
         expect(settled?.activeConnections).toBe(0);
         expect(settled?.lastError).toContain("validate-ticket-url");
+      }).pipe(Effect.provide(DesktopPortForwardManager.layer)),
+    ),
+  );
+
+  it.effect("keeps the listener but retires connecting sockets when the route changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* DesktopPortForwardManager.DesktopPortForwardManager;
+        const environmentId = EnvironmentId.make("environment-a");
+        const authorizations = yield* Queue.unbounded<DesktopPortForwardAuthorizationRequest>();
+        yield* manager.subscribeAuthorizationRequests((request) =>
+          Queue.offer(authorizations, request).pipe(Effect.asVoid),
+        );
+        const created = yield* manager.create({
+          environmentId,
+          remoteHost: "127.0.0.1",
+          remotePort: 3000,
+        });
+
+        const firstSocket = yield* connectLocal(created.localPort);
+        const firstAuthorization = yield* Queue.take(authorizations);
+        expect((yield* manager.list)[0]?.connectingConnections).toBe(1);
+
+        yield* manager.resetEnvironmentConnections(environmentId);
+        yield* awaitSocketClose(firstSocket);
+        yield* manager.resolveAuthorization(
+          firstAuthorization.requestId,
+          "ws://127.0.0.1:1/ws/tcp-forward?ticket=stale",
+        );
+
+        const [reset] = yield* manager.list;
+        expect(reset).toMatchObject({
+          id: created.id,
+          localPort: created.localPort,
+          status: "running",
+          connectingConnections: 0,
+          activeConnections: 0,
+          lastError: null,
+        });
+
+        const secondSocket = yield* connectLocal(created.localPort);
+        const secondAuthorization = yield* Queue.take(authorizations);
+        expect(secondAuthorization.requestId).not.toBe(firstAuthorization.requestId);
+        yield* manager.resetEnvironmentConnections(environmentId);
+        yield* awaitSocketClose(secondSocket);
       }).pipe(Effect.provide(DesktopPortForwardManager.layer)),
     ),
   );
