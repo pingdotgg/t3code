@@ -2127,6 +2127,21 @@ code {
   max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+}
+
+.chat-markdown .katex-display > .katex {
+  text-align: left;
+}
+
+.chat-markdown .katex-display::-webkit-scrollbar {
+  height: 7px;
+}
+
+.chat-markdown .katex-display::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .chat-markdown h1,

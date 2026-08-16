@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  prepareKatexHtmlForClipboard,
+  serializeRenderedMarkdownFragment,
+} from "./markdown-clipboard";
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -134,5 +137,27 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "\\[\nA_t = \\lambda_t A_t^{\\text{local}}\n\\]",
     );
+  });
+});
+
+describe("prepareKatexHtmlForClipboard", () => {
+  it("keeps the visual KaTeX branch and removes duplicate MathML", () => {
+    const removeMathml = vi.fn();
+    const revealHtml = vi.fn();
+    const katex = {
+      querySelector: vi.fn((selector: string) => {
+        if (selector === ":scope > .katex-mathml") return { remove: removeMathml };
+        if (selector === ":scope > .katex-html") return { removeAttribute: revealHtml };
+        return null;
+      }),
+    };
+    const container = {
+      querySelectorAll: vi.fn(() => [katex]),
+    };
+
+    prepareKatexHtmlForClipboard(container as unknown as Element);
+
+    expect(removeMathml).toHaveBeenCalledOnce();
+    expect(revealHtml).toHaveBeenCalledWith("aria-hidden");
   });
 });
