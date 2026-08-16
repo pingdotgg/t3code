@@ -29,6 +29,7 @@ import {
   type CookieReadResult,
 } from "./ChromiumCookies.ts";
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
+import { readSafariCookies, SafariCookieReadError } from "./SafariCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   cookieDatabasePath,
@@ -169,22 +170,26 @@ export const make = Effect.gen(function* BrowserImportMake() {
     // nothing there is ever unreadable.
     const read: Effect.Effect<
       CookieReadResult,
-      ChromiumCookieReadError | FirefoxCookieReadError,
+      ChromiumCookieReadError | FirefoxCookieReadError | SafariCookieReadError,
       FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
     > =
-      definition.engine === "firefox"
-        ? readFirefoxCookies(databasePath).pipe(
+      definition.engine === "safari"
+        ? readSafariCookies(databasePath).pipe(
             Effect.map((cookies) => ({ cookies, undecryptable: 0 })),
           )
-        : readChromiumCookies({
-            cookieDatabasePath: databasePath,
-            // Only Windows reads it; the other platforms take their key from a
-            // credential store and ignore the path entirely.
-            localStatePath: localStatePath(definition, pathContext) ?? "",
-            keychainService: definition.keychainService,
-            keychainAccount: definition.keychainAccount,
-            platform,
-          });
+        : definition.engine === "firefox"
+          ? readFirefoxCookies(databasePath).pipe(
+              Effect.map((cookies) => ({ cookies, undecryptable: 0 })),
+            )
+          : readChromiumCookies({
+              cookieDatabasePath: databasePath,
+              // Only Windows reads it; the other platforms take their key from a
+              // credential store and ignore the path entirely.
+              localStatePath: localStatePath(definition, pathContext) ?? "",
+              keychainService: definition.keychainService,
+              keychainAccount: definition.keychainAccount,
+              platform,
+            });
 
     const result = yield* read.pipe(
       Effect.scoped,

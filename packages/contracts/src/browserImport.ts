@@ -25,6 +25,7 @@ export const BROWSER_IMPORT_SOURCE_IDS = [
   "arc",
   "helium",
   "firefox",
+  "safari",
 ] as const;
 
 export const BrowserImportSourceId = Schema.Literals(BROWSER_IMPORT_SOURCE_IDS);
@@ -43,6 +44,7 @@ export const BrowserImportUnavailableReason = Schema.Literals([
   "needsKeychainApproval",
   "keychainItemMissing",
   "appBoundEncryption",
+  "needsFullDiskAccess",
   "browserRunning",
   "unsupportedPlatform",
 ]);
@@ -122,6 +124,8 @@ export const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<
   keychainItemMissing:
     "No encryption key in your Keychain — sign in to that browser once, then retry.",
   appBoundEncryption: "This browser binds its cookie key to itself, so no other app can read it.",
+  needsFullDiskAccess:
+    "Give T3 Code Full Disk Access in System Settings → Privacy & Security, then retry.",
   browserRunning: "Quit the browser first so its cookie database can be read.",
   unsupportedPlatform: "Importing from this browser isn't possible on this platform.",
 };
