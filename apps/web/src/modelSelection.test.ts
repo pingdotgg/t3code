@@ -173,6 +173,35 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("projects Pi's discovered and custom models without a hardcoded catalog", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("pi"),
+        instanceId: "pi",
+        models: ["anthropic/claude-sonnet-4-6", "openai/gpt-5.4"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [ProviderInstanceId.make("pi")]: {
+          driver: ProviderDriverKind.make("pi"),
+          config: { customModels: ["local/custom-model"] },
+        },
+      },
+    };
+    const pi = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(getAppModelOptionsForInstance(settings, pi).map((option) => option.slug)).toEqual([
+      "anthropic/claude-sonnet-4-6",
+      "openai/gpt-5.4",
+      "local/custom-model",
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(ProviderInstanceId.make("pi"), settings, providers, null),
+    ).toBe("anthropic/claude-sonnet-4-6");
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({

@@ -2157,6 +2157,11 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
   // run is still mid-flight (the "completed" lie from live testing). A
   // workflow is live until the coordinator itself reaches a terminal state.
   const coordinatorStatus = workflowGroup?.workflow.status;
+  const coordinatorStopped =
+    coordinatorStatus === "cancelled" || coordinatorStatus === "interrupted";
+  const stopped =
+    agents.filter((agent) => agent.status === "cancelled" || agent.status === "interrupted")
+      .length + (coordinatorStopped ? 1 : 0);
   const coordinatorSettled =
     coordinatorStatus === "completed" ||
     coordinatorStatus === "failed" ||
@@ -2177,7 +2182,13 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
   // One steady in-flight presentation (monitoring-pill rule): waiting and
   // stalled agents read as working; only settled states differentiate.
   const working = running + waiting;
-  const dotClass = live ? "bg-info" : failed > 0 ? "bg-destructive" : "bg-success";
+  const dotClass = live
+    ? "bg-info"
+    : failed > 0
+      ? "bg-destructive"
+      : stopped > 0
+        ? "bg-muted-foreground"
+        : "bg-success";
   const lead = live
     ? `Kicked off ${agentCount} subagent${agentCount === 1 ? "" : "s"}`
     : `Ran ${agentCount} subagent${agentCount === 1 ? "" : "s"}`;
@@ -2189,7 +2200,9 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
         : "working"
     : failed > 0
       ? `${failed} failed`
-      : "✓ completed";
+      : stopped > 0
+        ? `${stopped} stopped`
+        : "✓ completed";
 
   return (
     <button

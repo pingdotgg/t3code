@@ -132,6 +132,24 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
+    expect(decoded.providers.pi).toEqual({
+      enabled: true,
+      binaryPath: "pi",
+      customModels: [],
+    });
+  });
+
+  it("hydrates legacy Pi settings and exposes their encoded shape", () => {
+    const decoded = decodeServerSettings({
+      providers: { pi: { enabled: false, binaryPath: " /opt/bin/pi " } },
+    });
+
+    expect(decoded.providers.pi).toEqual({
+      enabled: false,
+      binaryPath: "/opt/bin/pi",
+      customModels: [],
+    });
+    expect(encodeServerSettings(decoded).providers?.pi).toEqual(decoded.providers.pi);
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
@@ -243,6 +261,20 @@ describe("ServerSettingsPatch.providerInstances", () => {
     });
     const ollamaId = ProviderInstanceId.make("ollama_local");
     expect(patch.providerInstances?.[ollamaId]?.driver).toBe("ollama");
+  });
+});
+
+describe("ServerSettingsPatch.providers.pi", () => {
+  it("accepts a partial Pi patch and normalizes its binary path", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: { pi: { binaryPath: " /custom/pi ", customModels: ["custom/model"] } },
+    });
+
+    expect(patch.providers?.pi).toEqual({
+      binaryPath: "/custom/pi",
+      customModels: ["custom/model"],
+    });
+    expect(patch.providers?.pi?.enabled).toBeUndefined();
   });
 });
 

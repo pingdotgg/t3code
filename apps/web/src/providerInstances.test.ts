@@ -130,6 +130,15 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
   });
+
+  it("uses the Pi display label for its default instance", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+    ]);
+
+    expect(entry?.displayName).toBe("Pi");
+    expect(entry?.driverKind).toBe("pi");
+  });
 });
 
 describe("resolveSelectableProviderInstance", () => {

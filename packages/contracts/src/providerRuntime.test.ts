@@ -6,6 +6,19 @@ import { classifyTaskAgentKind, ProviderRuntimeEvent } from "./providerRuntime.t
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("decodes Pi raw runtime sources", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "session.started",
+      eventId: "event-pi-session",
+      provider: "pi",
+      threadId: "thread-pi-session",
+      createdAt: "2026-07-19T00:00:00.000Z",
+      payload: { message: "started" },
+      raw: { source: "pi.rpc.notification", method: "agent_event", payload: {} },
+    });
+    expect(parsed.raw?.source).toBe("pi.rpc.notification");
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

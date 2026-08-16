@@ -129,6 +129,26 @@ describe("foldSubagentActivities", () => {
     expect(agent.error).toBe("boom");
   });
 
+  it("late running progress does not reactivate a completed task", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "task-late-progress", taskType: "subagent" }),
+      activity("task.completed", {
+        taskId: "task-late-progress",
+        status: "failed",
+        summary: "Unknown agent",
+      }),
+      activity("task.progress", {
+        taskId: "task-late-progress",
+        status: "running",
+        typedUsage: { totalTokens: 0 },
+      }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]!.status).toBe("failed");
+    expect(agents[0]!.activationCount).toBe(1);
+    expect(agents[0]!.error).toBe("Unknown agent");
+  });
+
   it("duplicate terminal events are idempotent (timestamps do not slide)", () => {
     const agents = fold([
       activity("task.started", { taskId: "task-3", taskType: "local_agent" }),
@@ -323,6 +343,44 @@ describe("foldSubagentActivities", () => {
     expect(member.activationCount).toBeGreaterThanOrEqual(2);
     expect(member.error).toBeNull();
     expect(member.status).toBe("running");
+  });
+
+  it("does not let stale lower attempts reopen a settled workflow member", () => {
+    const agents = fold([
+      activity("task.progress", {
+        taskId: "wf-stale:wf:1",
+        status: "failed",
+        parentAgentId: "wf-stale",
+        attempt: 1,
+      }),
+      activity("task.progress", {
+        taskId: "wf-stale:wf:1",
+        status: "running",
+        parentAgentId: "wf-stale",
+        attempt: 2,
+      }),
+      activity("task.progress", {
+        taskId: "wf-stale:wf:1",
+        status: "completed",
+        parentAgentId: "wf-stale",
+        attempt: 2,
+      }),
+      activity("task.progress", {
+        taskId: "wf-stale:wf:1",
+        status: "running",
+        parentAgentId: "wf-stale",
+        attempt: 1,
+      }),
+      activity("task.progress", {
+        taskId: "wf-stale:wf:1",
+        status: "running",
+        parentAgentId: "wf-stale",
+        attempt: 2,
+      }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]?.attempt).toBe(2);
+    expect(agents[0]?.status).toBe("completed");
   });
 
   it("drops non-http(s) session urls at the fold boundary", () => {
