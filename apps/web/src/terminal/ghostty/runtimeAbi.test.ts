@@ -631,4 +631,63 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_wasm_free_opaque", terminalSlot);
     free(terminalOptions, 8);
   });
+
+  it("encodes Escape as a C0 ESC byte", async () => {
+    const result = await WebAssembly.instantiate(
+      decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
+      { env: { log: () => {} } },
+    );
+    const instance = result instanceof WebAssembly.Instance ? result : result.instance;
+    const memory = instance.exports.memory as WebAssembly.Memory;
+    const call = (name: string, ...args: number[]) =>
+      (instance.exports[name] as WasmFunction)(...args);
+    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
+    const free = (pointer: number, size: number) =>
+      call("ghostty_wasm_free_u8_array", pointer, size);
+
+    const terminalOptions = alloc(8);
+    const terminalOptionsView = new DataView(memory.buffer, terminalOptions, 8);
+    terminalOptionsView.setUint16(0, 80, true);
+    terminalOptionsView.setUint16(2, 24, true);
+    const terminalSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_terminal_new", 0, terminalSlot, terminalOptions)).toBe(0);
+    const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+
+    const encoderSlot = call("ghostty_wasm_alloc_opaque");
+    const eventSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_key_encoder_new", 0, encoderSlot)).toBe(0);
+    expect(call("ghostty_key_event_new", 0, eventSlot)).toBe(0);
+    const view = new DataView(memory.buffer);
+    const keyEncoder = view.getUint32(encoderSlot, true);
+    const keyEvent = view.getUint32(eventSlot, true);
+    call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
+    call("ghostty_key_event_set_action", keyEvent, 1);
+    call("ghostty_key_event_set_key", keyEvent, ghosttyKeyForCode("Escape"));
+    call("ghostty_key_event_set_mods", keyEvent, 0);
+    call("ghostty_key_event_set_consumed_mods", keyEvent, 0);
+    call("ghostty_key_event_set_composing", keyEvent, 0);
+    call("ghostty_key_event_set_unshifted_codepoint", keyEvent, 0);
+
+    const written = call("ghostty_wasm_alloc_usize");
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
+    const outputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    const output = alloc(outputSize);
+    expect(
+      call("ghostty_key_encoder_encode", keyEncoder, keyEvent, output, outputSize, written),
+    ).toBe(0);
+    const outputLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    expect(new TextDecoder().decode(new Uint8Array(memory.buffer, output, outputLength))).toBe(
+      "\u001b",
+    );
+
+    free(output, outputSize);
+    call("ghostty_wasm_free_usize", written);
+    call("ghostty_key_event_free", keyEvent);
+    call("ghostty_key_encoder_free", keyEncoder);
+    call("ghostty_wasm_free_opaque", eventSlot);
+    call("ghostty_wasm_free_opaque", encoderSlot);
+    call("ghostty_terminal_free", terminal);
+    call("ghostty_wasm_free_opaque", terminalSlot);
+    free(terminalOptions, 8);
+  });
 });

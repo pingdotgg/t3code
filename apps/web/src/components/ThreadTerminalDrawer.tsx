@@ -44,16 +44,6 @@ import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { isTerminalLinkActivation, resolvePathLinkTarget } from "../terminal-links";
 import {
-  isDiffToggleShortcut,
-  isTerminalClearShortcut,
-  isTerminalNewShortcut,
-  isTerminalSplitShortcut,
-  isTerminalSplitVerticalShortcut,
-  isTerminalToggleShortcut,
-  terminalDeleteShortcutData,
-  terminalNavigationShortcutData,
-} from "../keybindings";
-import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
@@ -67,7 +57,7 @@ import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
-import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
+import { decideTerminalBeforeKey } from "../lib/terminalBeforeKey";
 import {
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
@@ -706,41 +696,14 @@ export function TerminalViewport({
       };
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
-        const currentKeybindings = keybindingsRef.current;
-        const options = { context: { terminalFocus: true, terminalOpen: true } };
-        if (preventTerminalCloseShortcut(event, currentKeybindings)) {
-          return false;
+        const decision = decideTerminalBeforeKey(event, keybindingsRef.current);
+        if (decision.action === "encode") {
+          return true;
         }
-        if (
-          isTerminalToggleShortcut(event, currentKeybindings, options) ||
-          isTerminalSplitShortcut(event, currentKeybindings, options) ||
-          isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
-          isTerminalNewShortcut(event, currentKeybindings, options) ||
-          isDiffToggleShortcut(event, currentKeybindings, options)
-        ) {
-          return false;
-        }
-
-        const navigationData = terminalNavigationShortcutData(event);
-        if (navigationData !== null) {
-          event.preventDefault();
+        if (decision.action === "send") {
           event.stopPropagation();
-          void sendTerminalInput(navigationData, "Failed to move cursor");
-          return false;
+          void sendTerminalInput(decision.data, decision.error);
         }
-
-        const deleteData = terminalDeleteShortcutData(event);
-        if (deleteData !== null) {
-          event.preventDefault();
-          event.stopPropagation();
-          void sendTerminalInput(deleteData, "Failed to delete terminal input");
-          return false;
-        }
-
-        if (!isTerminalClearShortcut(event)) return true;
-        event.preventDefault();
-        event.stopPropagation();
-        void sendTerminalInput("\u000c", "Failed to clear terminal");
         return false;
       }
 

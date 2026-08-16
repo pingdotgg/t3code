@@ -193,6 +193,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { isBareEscapeKey } from "../lib/terminalBeforeKey";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -4691,6 +4692,11 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      // Bare Escape is for the PTY (vim/nvim). Close stays mod+w.
+      // Command palette / dialogs still claim Escape when they are actually open.
+      if (isBareEscapeKey(event) && getTerminalFocusOwner() !== null && !isCommandPaletteOpen()) {
+        return;
+      }
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
