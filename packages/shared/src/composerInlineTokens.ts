@@ -18,7 +18,14 @@ export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
 }
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
+const SKILL_NAME_PATTERN = "[a-zA-Z][a-zA-Z0-9:_-]*";
+// Trailing whitespace is required while typing so `$partial` does not become a chip.
+const SKILL_TOKEN_REGEX = new RegExp(`(^|\\s)\\$(${SKILL_NAME_PATTERN})(?=\\s)`, "g");
+// Submitted messages treat a token at end-of-input as complete.
+const COMPLETE_SKILL_INVOCATION_REGEX = new RegExp(
+  `(^|\\s)\\$(${SKILL_NAME_PATTERN})(?=\\s|$)`,
+  "g",
+);
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
  * The label body is bounded rather than `*`. Unbounded, every whitespace in
@@ -132,4 +139,26 @@ export function collectComposerInlineTokens(
   }
 
   return [...matches].sort((left, right) => left.start - right.start);
+}
+
+/**
+ * Distinct complete `$skill` names in submitted composer text, including a
+ * trailing token at end of input. Used for send-time Codex skill binding.
+ */
+export function collectComposerSkillInvocations(text: string): readonly string[] {
+  if (!text) {
+    return [];
+  }
+
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(COMPLETE_SKILL_INVOCATION_REGEX)) {
+    const name = match[2] ?? "";
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
 }
