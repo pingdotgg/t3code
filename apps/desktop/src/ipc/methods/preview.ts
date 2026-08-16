@@ -14,6 +14,7 @@ import {
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
@@ -48,11 +49,15 @@ export const installPreviewEventForwarding = Effect.fn(
 
 export const createTab = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CREATE_TAB_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
+  payload: DesktopPreviewCreateTabInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.createTab")(function* ({ tabId }) {
+  handler: Effect.fn("desktop.ipc.preview.createTab")(function* ({
+    tabId,
+    zoomFactor,
+    colorScheme,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.createTab(tabId);
+    yield* manager.createTab(tabId, { zoomFactor, colorScheme });
   }),
 });
 

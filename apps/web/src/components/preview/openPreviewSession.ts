@@ -2,10 +2,12 @@ import type {
   EnvironmentId,
   PreviewOpenInput,
   PreviewSessionSnapshot,
+  PreviewViewportSetting,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
+import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
@@ -15,6 +17,8 @@ interface OpenPreviewSessionInput<E> {
   }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
   threadRef: ScopedThreadRef;
   url?: string;
+  /** Overrides the configured default; automation passes an explicit size. */
+  viewport?: PreviewViewportSetting;
 }
 
 export async function openPreviewSession<E>(
@@ -25,6 +29,7 @@ export async function openPreviewSession<E>(
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
+      viewport: input.viewport ?? browserDefaultOpenViewport(await resolveBrowserDefaults()),
     },
   });
   if (result._tag === "Failure") {

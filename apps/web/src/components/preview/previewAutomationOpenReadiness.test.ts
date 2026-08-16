@@ -77,3 +77,18 @@ describe("preview automation open readiness", () => {
     ).toBeNull();
   });
 });
+
+describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () => {
+  it("honours the preference when the agent said nothing either way", () => {
+    // `preview_open` no longer arrives with `open` pre-filled, so an agent
+    // that omitted it leaves the decision to the user's setting.
+    expect(shouldOpenPreviewMiniPlayer({}, false)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({}, true)).toBe(true);
+  });
+
+  it("lets an explicit request outrank the preference in both directions", () => {
+    expect(shouldOpenPreviewMiniPlayer({ open: true }, false)).toBe(true);
+    expect(shouldOpenPreviewMiniPlayer({ open: false }, true)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({ show: true }, false)).toBe(true);
+  });
+});
