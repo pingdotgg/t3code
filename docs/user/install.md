@@ -60,10 +60,14 @@ to use, then authenticate it.
 | Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
 | Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
+| Kiro       | [Kiro CLI](https://kiro.dev/docs/cli/)                | `kiro-cli`     | `kiro-cli login`      |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
+
+Kiro starts switched off. Turn it on in Settings → Providers once `kiro-cli` is installed. See
+[Kiro](./providers-kiro.md).
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.
@@ -83,6 +87,7 @@ authenticated shows its status in **Settings** and fails at session start with t
 to run.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
+For Kiro's early-access setup, see [Kiro](./providers-kiro.md).
 
 ## Next Steps
 

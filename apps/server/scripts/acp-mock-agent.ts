@@ -26,6 +26,9 @@ const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === 
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
+const emitKiroTodos = process.env.T3_ACP_EMIT_KIRO_TODOS === "1";
+const emitThoughtChunks = process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1";
+const failAuthenticate = process.env.T3_ACP_FAIL_AUTHENTICATE === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
@@ -278,18 +281,31 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
-const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
-  { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
-];
+/**
+ * Advertised ACP model ids. Defaults to the Grok-shaped pair; set
+ * `T3_ACP_MODEL_IDS` to a comma-separated list to model another agent's
+ * catalog (Kiro, for instance, uses dotted ids like `claude-haiku-4.5`).
+ */
+const acpModels: ReadonlyArray<AcpSchema.ModelInfo> = (() => {
+  const configured = process.env.T3_ACP_MODEL_IDS?.split(",")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  if (configured && configured.length > 0) {
+    return configured.map((modelId) => ({ modelId, name: modelId }));
+  }
+  return [
+    { modelId: "grok-build", name: "Grok Build" },
+    { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
+  ];
+})();
 
 function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+  const modelId = acpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : (acpModels[0]?.modelId ?? "grok-build");
   return {
     currentModelId: modelId,
-    availableModels: grokAcpModels,
+    availableModels: acpModels,
   };
 }
 
@@ -307,7 +323,13 @@ const program = Effect.gen(function* () {
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  // kiro-cli advertises no auth methods and answers `authenticate` with
+  // "method not found"; drivers for such agents must not send the call at all.
+  yield* agent.handleAuthenticate(() =>
+    failAuthenticate
+      ? Effect.fail(AcpError.AcpRequestError.methodNotFound("authenticate"))
+      : Effect.succeed({}),
+  );
 
   yield* agent.handleCreateSession(() =>
     Effect.succeed({
@@ -382,7 +404,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!acpModels.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -864,6 +886,74 @@ const program = Effect.gen(function* () {
           ],
         },
       });
+
+      if (emitKiroTodos) {
+        // Kiro-shaped task list: the tool call is announced with `rawInput`,
+        // then reported with authoritative task state in `rawOutput`.
+        const todoToolCallId = "kiro-todo-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: todoToolCallId,
+            title: "Creating task list: mock plan",
+            _meta: { kiro: { toolName: "todo_list" } },
+            rawInput: {
+              command: "create",
+              task_list_description: "mock plan",
+              tasks: [{ task_description: "step one" }, { task_description: "step two" }],
+            },
+          },
+        });
+        // Repeat of the same list: the adapter must not publish it twice.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: todoToolCallId,
+            title: "Creating task list: mock plan",
+            _meta: { kiro: { toolName: "todo_list" } },
+            rawInput: {
+              command: "create",
+              task_list_description: "mock plan",
+              tasks: [{ task_description: "step one" }, { task_description: "step two" }],
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: todoToolCallId,
+            title: "Completing #1",
+            _meta: { kiro: { toolName: "todo_list" } },
+            rawInput: { command: "complete", completed_task_ids: ["1"] },
+            rawOutput: {
+              items: [
+                {
+                  Json: {
+                    description: "mock plan",
+                    tasks: [
+                      { id: "1", task_description: "step one", completed: true },
+                      { id: "2", task_description: "step two", completed: false },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        });
+      }
+
+      if (emitThoughtChunks) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "weighing the options" },
+          },
+        });
+      }
 
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,

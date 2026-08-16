@@ -131,6 +131,7 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const KIRO_DRIVER_KIND = ProviderDriverKind.make("kiro");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
@@ -152,6 +153,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
+  [KIRO_DRIVER_KIND]: "auto",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
@@ -162,6 +164,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CODEX_DRIVER_KIND]: DEFAULT_TEXT_GENERATION_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
+  [KIRO_DRIVER_KIND]: "claude-haiku-4.5",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
@@ -211,6 +214,36 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5-thinking": "claude-opus-4-5",
     "opus-4.5": "claude-opus-4-5",
   },
+  // Kiro exposes dotted model ids (`claude-haiku-4.5`), so aliases map the
+  // short forms and the dashed spellings users bring from other providers
+  // onto Kiro's own ids — the resolved slug is sent straight to
+  // `session/set_model`.
+  [KIRO_DRIVER_KIND]: {
+    opus: "claude-opus-5",
+    "opus-5": "claude-opus-5",
+    "claude-opus-5.0": "claude-opus-5",
+    sonnet: "claude-sonnet-5",
+    "sonnet-5": "claude-sonnet-5",
+    "claude-sonnet-5.0": "claude-sonnet-5",
+    haiku: "claude-haiku-4.5",
+    "haiku-4.5": "claude-haiku-4.5",
+    "claude-haiku-4-5": "claude-haiku-4.5",
+    "opus-4.8": "claude-opus-4.8",
+    "claude-opus-4-8": "claude-opus-4.8",
+    "opus-4.7": "claude-opus-4.7",
+    "claude-opus-4-7": "claude-opus-4.7",
+    "opus-4.6": "claude-opus-4.6",
+    "claude-opus-4-6": "claude-opus-4.6",
+    "opus-4.5": "claude-opus-4.5",
+    "claude-opus-4-5": "claude-opus-4.5",
+    "sonnet-4.6": "claude-sonnet-4.6",
+    "claude-sonnet-4-6": "claude-sonnet-4.6",
+    "sonnet-4.5": "claude-sonnet-4.5",
+    "claude-sonnet-4-5": "claude-sonnet-4.5",
+    sol: "gpt-5.6-sol",
+    terra: "gpt-5.6-terra",
+    luna: "gpt-5.6-luna",
+  },
   [OPENCODE_DRIVER_KIND]: {},
 };
 
@@ -221,5 +254,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
+  [KIRO_DRIVER_KIND]: "Kiro",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
 };

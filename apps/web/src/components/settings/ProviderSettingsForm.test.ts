@@ -22,6 +22,24 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("derives Kiro's fields, keeping enabled and customModels hidden", () => {
+    const kiro = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("kiro")];
+
+    expect(kiro).toBeDefined();
+    expect(kiro?.badgeLabel).toBe("Early Access");
+    expect(deriveProviderSettingsFields(kiro!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "homePath",
+      "agent",
+    ]);
+    expect(
+      deriveProviderSettingsFields(kiro!).find((field) => field.key === "binaryPath"),
+    ).toMatchObject({
+      label: "Binary path",
+      placeholder: "kiro-cli",
+    });
+  });
+
   it("sources labels and descriptions from schema annotations", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

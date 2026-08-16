@@ -425,6 +425,51 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+export const KiroSettings = makeProviderSettingsSchema(
+  {
+    // Kiro ships behind an early-access badge, so instances stay opt-in.
+    // Users without the CLI installed get a quiet "disabled" card instead of
+    // a failing probe.
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("kiro-cli").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Kiro CLI binary.",
+        providerSettingsForm: { placeholder: "kiro-cli", clearWhenEmpty: "omit" },
+      }),
+    ),
+    homePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "KIRO_HOME path",
+        description:
+          "Custom Kiro home directory. Keeps agents, settings, and sessions separate per instance.",
+        providerSettingsForm: { placeholder: "~/.kiro", clearWhenEmpty: "omit" },
+      }),
+    ),
+    agent: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Agent",
+        description:
+          "Kiro agent configuration new sessions start with. Leave empty to use Kiro's default agent.",
+        providerSettingsForm: { placeholder: "kiro_default", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "homePath", "agent"],
+  },
+);
+export type KiroSettings = typeof KiroSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -604,6 +649,7 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    kiro: KiroSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values

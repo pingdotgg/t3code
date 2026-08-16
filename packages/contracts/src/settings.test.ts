@@ -307,3 +307,64 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
 });
+
+describe("ServerSettings.providers.kiro", () => {
+  it("defaults Kiro to opt-in with the CLI's own binary name", () => {
+    const kiro = decodeServerSettings({}).providers.kiro;
+
+    // Kiro ships behind an early-access badge: users without the CLI should
+    // see a disabled card, not a failing probe.
+    expect(kiro.enabled).toBe(false);
+    expect(kiro.binaryPath).toBe("kiro-cli");
+    expect(kiro.homePath).toBe("");
+    expect(kiro.agent).toBe("");
+    expect(kiro.customModels).toEqual([]);
+  });
+
+  it("keeps an explicit binary path, KIRO_HOME, and agent selection", () => {
+    const kiro = decodeServerSettings({
+      providers: {
+        kiro: {
+          enabled: true,
+          binaryPath: "~/.local/bin/kiro-cli",
+          homePath: "~/.kiro-work",
+          agent: "kiro_planner",
+        },
+      },
+    }).providers.kiro;
+
+    expect(kiro).toMatchObject({
+      enabled: true,
+      binaryPath: "~/.local/bin/kiro-cli",
+      homePath: "~/.kiro-work",
+      agent: "kiro_planner",
+    });
+  });
+
+  it("falls back to the default binary when the stored path is blank", () => {
+    expect(
+      decodeServerSettings({ providers: { kiro: { binaryPath: "   " } } }).providers.kiro
+        .binaryPath,
+    ).toBe("kiro-cli");
+  });
+
+  it("decodes a kiro provider instance envelope, preserving unknown config keys", () => {
+    const decoded = decodeServerSettings({
+      providerInstances: {
+        kiro_work: {
+          driver: "kiro",
+          displayName: "Kiro (work)",
+          config: { homePath: "~/.kiro-work", agent: "kiro_planner", futureKnob: 7 },
+        },
+      },
+    });
+    const workId = ProviderInstanceId.make("kiro_work");
+
+    expect(decoded.providerInstances[workId]?.driver).toBe("kiro");
+    expect(decoded.providerInstances[workId]?.config).toEqual({
+      homePath: "~/.kiro-work",
+      agent: "kiro_planner",
+      futureKnob: 7,
+    });
+  });
+});

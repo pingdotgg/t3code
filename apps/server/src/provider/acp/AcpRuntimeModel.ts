@@ -108,6 +108,17 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      /**
+       * Agent reasoning (`agent_thought_chunk`). Emitted separately from
+       * `ContentDelta` so adapters opt in: an agent's thinking is not
+       * assistant output and must not be rendered as the answer.
+       */
+      readonly _tag: "ReasoningDelta";
+      readonly itemId?: string;
+      readonly text: string;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -568,6 +579,16 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       if (upd.content.type === "text" && upd.content.text.length > 0) {
         events.push({
           _tag: "ContentDelta",
+          text: upd.content.text,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "agent_thought_chunk": {
+      if (upd.content.type === "text" && upd.content.text.length > 0) {
+        events.push({
+          _tag: "ReasoningDelta",
           text: upd.content.text,
           rawPayload: params,
         });

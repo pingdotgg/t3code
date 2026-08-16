@@ -240,3 +240,36 @@ export function makeAcpContentDeltaEvent(input: {
     },
   };
 }
+
+/**
+ * Reasoning delta from an `agent_thought_chunk`. Same shape as a content
+ * delta but on the `reasoning_text` stream, so clients render it as thinking
+ * rather than as the assistant's answer.
+ */
+export function makeAcpReasoningDeltaEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly itemId?: string;
+  readonly text: string;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "content.delta",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
+    payload: {
+      streamKind: "reasoning_text",
+      delta: input.text,
+    },
+    raw: {
+      source: "acp.jsonrpc",
+      method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
