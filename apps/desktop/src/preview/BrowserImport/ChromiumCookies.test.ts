@@ -10,11 +10,8 @@ import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import {
-  cookieScope,
-  readChromiumCookieDatabase,
-  snapshotCookieDatabase,
-} from "./ChromiumCookies.ts";
+import { readChromiumCookieDatabase } from "./ChromiumCookies.ts";
+import { cookieScope, snapshotCookieDatabase } from "./CookieDatabase.ts";
 
 const encryptV10 = (value: string | Buffer, key: Buffer): Uint8Array => {
   const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));

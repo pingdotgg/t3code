@@ -2,13 +2,18 @@
 // table with the same native bindings the source reads.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessHostname } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessHostname,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as NodeSqlite from "node:sqlite";
 
+import type { BrowserImportPathContext } from "./Sources.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   chromiumProcessIsAlive,
@@ -18,7 +23,7 @@ import {
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
-  sourcePaths,
+  sourcePathContext,
 } from "./Sources.ts";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
@@ -27,12 +32,20 @@ const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
 const withSourceHome = Effect.fnUntraced(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-sources-" });
-  const paths = yield* sourcePaths.pipe(
+  const context = yield* sourcePathContext.pipe(
     Effect.provideService(HostProcessEnvironment, { HOME: home }),
+    Effect.provideService(HostProcessPlatform, "darwin"),
   );
-  yield* fileSystem.makeDirectory(helium.userDataDirectory(paths), { recursive: true });
-  return paths;
+  yield* fileSystem.makeDirectory(userDataDirectory(context), { recursive: true });
+  return context;
 });
+
+/** Every case here runs on darwin, where Helium always resolves a directory. */
+const userDataDirectory = (context: BrowserImportPathContext) => {
+  const root = helium.userDataDirectory(context);
+  if (root === undefined) throw new Error("Helium has no macOS user-data directory");
+  return root;
+};
 
 const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
   effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
@@ -52,18 +65,18 @@ describe("isSourceRunning", () => {
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        assert.isFalse(yield* isSourceRunning(helium, paths));
+        const context = yield* withSourceHome();
+        assert.isFalse(yield* isSourceRunning(helium, context));
 
         // Chromium points the lock at `<host>-<pid>`, a target that never
         // exists on disk. A check that follows the link reports a running
         // browser as closed, letting an import read a live, mid-write database.
         yield* fileSystem.symlink(
           "host-that-does-not-exist-1234",
-          `${helium.userDataDirectory(paths)}/SingletonLock`,
+          `${userDataDirectory(context)}/SingletonLock`,
         );
 
-        assert.isTrue(yield* isSourceRunning(helium, paths));
+        assert.isTrue(yield* isSourceRunning(helium, context));
       }),
     ),
   );
@@ -172,28 +185,28 @@ describe("isSourceInstalled", () => {
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        const root = helium.userDataDirectory(paths);
+        const context = yield* withSourceHome();
+        const root = userDataDirectory(context);
 
         // Installers for native messaging hosts create an empty user-data
         // directory for every Chromium fork they know about, so treating the
         // directory as evidence lists browsers the user does not have.
         yield* fileSystem.makeDirectory(`${root}/NativeMessagingHosts`, { recursive: true });
-        assert.isFalse(yield* isSourceInstalled(helium, paths));
+        assert.isFalse(yield* isSourceInstalled(helium, context));
 
         yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
         yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
-        assert.isTrue(yield* isSourceInstalled(helium, paths));
+        assert.isTrue(yield* isSourceInstalled(helium, context));
 
         // A real install whose cookies live outside `Default` still counts:
         // reporting it as absent hides the source from the menu entirely.
         yield* fileSystem.remove(`${root}/Default`, { recursive: true });
         yield* fileSystem.makeDirectory(`${root}/Profile 1`, { recursive: true });
         yield* fileSystem.writeFileString(`${root}/Profile 1/Cookies`, "db");
-        assert.isTrue(yield* isSourceInstalled(helium, paths));
+        assert.isTrue(yield* isSourceInstalled(helium, context));
 
         yield* fileSystem.remove(root, { recursive: true });
-        assert.isFalse(yield* isSourceInstalled(helium, paths));
+        assert.isFalse(yield* isSourceInstalled(helium, context));
       }),
     ),
   );
@@ -224,15 +237,15 @@ describe("listSourceProfiles", () => {
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        const root = helium.userDataDirectory(paths);
+        const context = yield* withSourceHome();
+        const root = userDataDirectory(context);
         // Assuming `Default` would report a browser whose cookies live in
         // `Profile 1` as having nothing to import, and it is then hidden.
         yield* fileSystem.makeDirectory(`${root}/Profile 1`, { recursive: true });
         yield* fileSystem.writeFileString(`${root}/Profile 1/Cookies`, "db");
         yield* fileSystem.makeDirectory(`${root}/NativeMessagingHosts`, { recursive: true });
 
-        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
+        assert.deepEqual(yield* listSourceProfiles(helium, context), [
           { directory: "Profile 1", name: "Profile 1" },
         ]);
       }),
@@ -243,13 +256,13 @@ describe("listSourceProfiles", () => {
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
+        const context = yield* withSourceHome();
         yield* fileSystem.writeFileString(
-          `${helium.userDataDirectory(paths)}/Local State`,
+          `${userDataDirectory(context)}/Local State`,
           `{"profile":{"info_cache":{"Default":{"name":"You"},"Profile 2":{"name":"  "}}}}`,
         );
 
-        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
+        assert.deepEqual(yield* listSourceProfiles(helium, context), [
           { directory: "Default", name: "You" },
           // Blank display name falls back to the directory rather than
           // rendering an empty row.
@@ -263,13 +276,13 @@ describe("listSourceProfiles", () => {
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        const root = helium.userDataDirectory(paths);
+        const context = yield* withSourceHome();
+        const root = userDataDirectory(context);
         yield* fileSystem.writeFileString(`${root}/Local State`, "{not-json");
         yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
         yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
 
-        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
+        assert.deepEqual(yield* listSourceProfiles(helium, context), [
           { directory: "Default", name: "Default" },
         ]);
       }),
@@ -279,8 +292,8 @@ describe("listSourceProfiles", () => {
   it.effect("reports nothing when no directory holds a cookie database", () =>
     run(
       Effect.gen(function* () {
-        const paths = yield* withSourceHome();
-        assert.deepEqual(yield* listSourceProfiles(helium, paths), []);
+        const context = yield* withSourceHome();
+        assert.deepEqual(yield* listSourceProfiles(helium, context), []);
       }),
     ),
   );
@@ -305,9 +318,9 @@ describe("cookieDatabaseCandidatePaths", () => {
   it.effect("prefers Network/Cookies and falls back to the legacy Cookies", () =>
     run(
       Effect.gen(function* () {
-        const paths = yield* withSourceHome();
-        const profile = `${paths.home}/Library/Application Support/net.imput.helium/Profile 1`;
-        assert.deepEqual(cookieDatabaseCandidatePaths(helium, paths, "Profile 1"), [
+        const context = yield* withSourceHome();
+        const profile = `${context.home}/Library/Application Support/net.imput.helium/Profile 1`;
+        assert.deepEqual(cookieDatabaseCandidatePaths(helium, context, "Profile 1"), [
           `${profile}/Network/Cookies`,
           `${profile}/Cookies`,
         ]);
@@ -319,8 +332,8 @@ describe("cookieDatabaseCandidatePaths", () => {
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
-        const root = helium.userDataDirectory(paths);
+        const context = yield* withSourceHome();
+        const root = helium.userDataDirectory(context);
         // Chromium 96+ keeps sessions in Network/; a root Cookies left behind
         // by the move is stale and must not be the one imported.
         yield* fileSystem.makeDirectory(`${root}/Default/Network`, { recursive: true });
@@ -328,12 +341,12 @@ describe("cookieDatabaseCandidatePaths", () => {
         yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "stale");
 
         assert.equal(
-          yield* resolveCookieDatabase(helium, paths, "Default"),
+          yield* resolveCookieDatabase(helium, context, "Default"),
           `${root}/Default/Network/Cookies`,
         );
         // A fresh install with only the Network/ jar is installed, not hidden.
         yield* fileSystem.remove(`${root}/Default/Cookies`);
-        assert.isTrue(yield* isSourceInstalled(helium, paths));
+        assert.isTrue(yield* isSourceInstalled(helium, context));
       }),
     ),
   );
@@ -344,16 +357,16 @@ describe("listSourceProfiles hardening", () => {
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const paths = yield* withSourceHome();
+        const context = yield* withSourceHome();
         // `Local State` is writable by anything running as the user, so a
         // crafted key must not reach `cookieDatabasePath` and read a database
         // outside the browser's user-data directory.
         yield* fileSystem.writeFileString(
-          `${helium.userDataDirectory(paths)}/Local State`,
+          `${userDataDirectory(context)}/Local State`,
           `{"profile":{"info_cache":{"Default":{"name":"You"},"../../../../secrets":{"name":"Escape"},"a/b":{"name":"Nested"},"..":{"name":"Parent"}}}}`,
         );
 
-        const profiles = yield* listSourceProfiles(helium, paths);
+        const profiles = yield* listSourceProfiles(helium, context);
 
         assert.deepEqual(
           profiles.map((profile) => profile.directory),
