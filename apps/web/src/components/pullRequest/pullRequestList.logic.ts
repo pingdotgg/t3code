@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   PullRequestListEntry,
+  PullRequestListProjectError,
   PullRequestListResult,
   resolvePullRequestAuthorFilter,
 } from "@t3tools/contracts";
@@ -24,6 +25,10 @@ export interface EnvironmentPullRequestEntry extends PullRequestListEntry {
 }
 
 export interface EnvironmentPullRequestStat extends PullRequestDiffStat {
+  readonly environmentId: EnvironmentId;
+}
+
+export interface EnvironmentPullRequestError extends PullRequestListProjectError {
   readonly environmentId: EnvironmentId;
 }
 
@@ -452,7 +457,7 @@ export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;
   readonly providers: PullRequestListResult["providers"];
   readonly entries: ReadonlyArray<EnvironmentPullRequestEntry>;
-  readonly errors: PullRequestListResult["errors"];
+  readonly errors: ReadonlyArray<EnvironmentPullRequestError>;
   readonly truncated: boolean;
   readonly nextCursors: Readonly<Record<string, PullRequestListCursors>>;
   /**
@@ -476,7 +481,7 @@ export function mergePullRequestLists(
   const truncatedEnvironments: string[] = [];
   const providers = new Map<string, PullRequestListResult["providers"][number]>();
   const entries: EnvironmentPullRequestEntry[] = [];
-  const errors: Array<PullRequestListResult["errors"][number]> = [];
+  const errors: EnvironmentPullRequestError[] = [];
   const nextCursors: Record<string, PullRequestListCursors> = {};
   let truncated = false;
   for (const [environmentId, answer] of answers) {
@@ -498,7 +503,7 @@ export function mergePullRequestLists(
       );
     }
     entries.push(...answer.entries.map((entry) => ({ ...entry, environmentId })));
-    errors.push(...answer.errors);
+    errors.push(...answer.errors.map((error) => ({ ...error, environmentId })));
     truncated ||= answer.truncated;
     if (answer.truncated) truncatedEnvironments.push(environmentId);
     if (Object.keys(answer.nextCursors).length > 0) {
@@ -559,12 +564,18 @@ const EnvironmentPullRequestEntrySchema = Schema.Struct({
   environmentId: EnvironmentId,
 });
 
+const EnvironmentPullRequestErrorSchema = Schema.Struct({
+  ...PullRequestListProjectError.fields,
+  environmentId: EnvironmentId,
+});
+
 const decodeSnapshot = Schema.decodeUnknownOption(
   Schema.Struct({
     scope: Schema.String,
     data: Schema.Struct({
       ...PullRequestListResult.fields,
       entries: Schema.Array(EnvironmentPullRequestEntrySchema),
+      errors: Schema.Array(EnvironmentPullRequestErrorSchema),
       // Per environment here, unlike the wire shape, which is per repository within one.
       nextCursors: Schema.Record(Schema.String, PullRequestListResult.fields.nextCursors),
       truncatedEnvironments: Schema.Array(Schema.String),

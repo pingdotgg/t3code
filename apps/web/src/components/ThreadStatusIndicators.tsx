@@ -4,8 +4,10 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { Atom } from "effect/unstable/reactivity";
 import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -124,6 +126,178 @@ export function resolveThreadPr(input: {
   }
 
   return gitStatus.pr ?? null;
+}
+
+/**
+ * Parent-held PR snapshot for Sidebar V2. Rows remount when settlement
+ * partitions move them, so terminal PR metadata must live above the row.
+ */
+export interface ThreadChangeRequestSnapshot {
+  readonly branch: string;
+  readonly pr: NonNullable<ThreadPr>;
+  readonly sourceControlProvider: VcsStatusResult["sourceControlProvider"] | undefined;
+}
+
+export const threadChangeRequestSnapshotsAtom = Atom.make<
+  ReadonlyMap<string, ThreadChangeRequestSnapshot>
+>(new Map()).pipe(Atom.keepAlive, Atom.withLabel("sidebar:thread-change-request-snapshots"));
+
+function isTerminalChangeRequestState(
+  state: NonNullable<ThreadPr>["state"],
+): state is "merged" | "closed" {
+  return state === "merged" || state === "closed";
+}
+
+function sourceControlProvidersEqual(
+  left: VcsStatusResult["sourceControlProvider"] | undefined,
+  right: VcsStatusResult["sourceControlProvider"] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return left == null && right == null;
+  return left.kind === right.kind && left.name === right.name && left.baseUrl === right.baseUrl;
+}
+
+export function threadChangeRequestSnapshotsEqual(
+  left: ThreadChangeRequestSnapshot,
+  right: ThreadChangeRequestSnapshot,
+): boolean {
+  return (
+    left.branch === right.branch &&
+    left.pr.number === right.pr.number &&
+    left.pr.title === right.pr.title &&
+    left.pr.url === right.pr.url &&
+    left.pr.baseRef === right.pr.baseRef &&
+    left.pr.headRef === right.pr.headRef &&
+    left.pr.state === right.pr.state &&
+    sourceControlProvidersEqual(left.sourceControlProvider, right.sourceControlProvider)
+  );
+}
+
+export function setThreadChangeRequestSnapshot(
+  threadKey: string,
+  snapshot: ThreadChangeRequestSnapshot | null,
+): void {
+  appAtomRegistry.modify(threadChangeRequestSnapshotsAtom, (current) => {
+    const existing = current.get(threadKey);
+    if (snapshot === null) {
+      if (existing === undefined) return [false, current];
+      const next = new Map(current);
+      next.delete(threadKey);
+      return [true, next];
+    }
+    if (existing !== undefined && threadChangeRequestSnapshotsEqual(existing, snapshot)) {
+      return [false, current];
+    }
+    const next = new Map(current);
+    next.set(threadKey, snapshot);
+    return [true, next];
+  });
+}
+
+/**
+ * Authoritative snapshot update from live VCS status.
+ * - `undefined`: missing status, or a local checkout retaining a terminal PR — leave the map alone
+ * - `null`: no PR (without a retained terminal snapshot), a cleared branch, or a mismatch without a terminal PR — clear
+ * - snapshot: matching branch reports a PR — store/replace
+ */
+export function nextThreadChangeRequestSnapshot(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
+}): ThreadChangeRequestSnapshot | null | undefined {
+  const { threadBranch, gitStatus, snapshot, retainTerminalOnBranchMismatch } = input;
+  if (gitStatus === null) {
+    return undefined;
+  }
+  if (threadBranch === null) {
+    return null;
+  }
+  if (gitStatus.refName !== threadBranch) {
+    return retainTerminalOnBranchMismatch &&
+      snapshot != null &&
+      isTerminalChangeRequestState(snapshot.pr.state)
+      ? undefined
+      : null;
+  }
+  if (gitStatus.pr == null) {
+    if (
+      retainTerminalOnBranchMismatch &&
+      snapshot != null &&
+      isTerminalChangeRequestState(snapshot.pr.state)
+    ) {
+      return undefined;
+    }
+    return null;
+  }
+  return {
+    branch: threadBranch,
+    pr: gitStatus.pr,
+    sourceControlProvider: gitStatus.sourceControlProvider,
+  };
+}
+
+/**
+ * Live PR when the checkout matches the thread branch; otherwise, for local
+ * checkouts only, a cached merged/closed PR for the thread. Local thread
+ * metadata follows the shared checkout, so the cached branch intentionally
+ * survives that metadata changing to the newly checked-out branch. Open PRs
+ * are never retained — their state can still change.
+ */
+export function resolveDisplayedThreadPr(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
+}): ThreadPr | null {
+  const { threadBranch, gitStatus, snapshot, retainTerminalOnBranchMismatch } = input;
+  if (
+    threadBranch !== null &&
+    gitStatus !== null &&
+    gitStatus.refName === threadBranch &&
+    gitStatus.pr != null
+  ) {
+    return gitStatus.pr;
+  }
+
+  if (
+    threadBranch !== null &&
+    retainTerminalOnBranchMismatch &&
+    snapshot != null &&
+    isTerminalChangeRequestState(snapshot.pr.state)
+  ) {
+    return snapshot.pr;
+  }
+
+  return null;
+}
+
+export function resolveDisplayedThreadPrProvider(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
+}): VcsStatusResult["sourceControlProvider"] | undefined {
+  const { threadBranch, gitStatus, snapshot, retainTerminalOnBranchMismatch } = input;
+  if (
+    threadBranch !== null &&
+    gitStatus !== null &&
+    gitStatus.refName === threadBranch &&
+    gitStatus.pr != null
+  ) {
+    return gitStatus.sourceControlProvider;
+  }
+
+  if (
+    threadBranch !== null &&
+    retainTerminalOnBranchMismatch &&
+    snapshot != null &&
+    isTerminalChangeRequestState(snapshot.pr.state)
+  ) {
+    return snapshot.sourceControlProvider;
+  }
+
+  return undefined;
 }
 
 export function terminalStatusFromRunningIds(

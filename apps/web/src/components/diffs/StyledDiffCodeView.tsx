@@ -292,8 +292,8 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
       // outside the panel clipping boundary; actual controls inside retain their own indicators.
       className={
         className
-          ? `diff-render-surface outline-none ${className}`
-          : "diff-render-surface outline-none"
+          ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
+          : "diff-render-surface [--code-background:var(--background)] outline-none"
       }
       options={{
         ...options,
@@ -304,11 +304,16 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
           diffHeaderHeight: 32,
           hunkSeparatorHeight: 24,
           // Pierre uses its general file spacing as a fallback in expanded-file layout paths.
-          // Keep it zero alongside the explicit paddings or expanding the first file can
+          // Keep it zero alongside the explicit paddingTop or expanding the first file can
           // reintroduce the library's default 8px gap above its header.
           spacing: 0,
           paddingTop: 0,
-          paddingBottom: 0,
+          // Unlike the gap above, the 8px under a file's last line is painted
+          // unconditionally by Pierre's stylesheet (`--diffs-gap-fallback`), so the metric has
+          // to count it: at zero every expanded file's virtual height ran 8px short of its
+          // rendered height, and the end of the list sat past the reachable scroll range —
+          // one clipped file row per expanded file above it.
+          paddingBottom: 8,
         },
         layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
       }}
