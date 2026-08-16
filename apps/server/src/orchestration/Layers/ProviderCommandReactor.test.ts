@@ -2868,6 +2868,63 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("ignores provider session timestamp changes when the orchestration guard still matches", async () => {
+    const sessionUpdatedAt = "2026-01-01T00:00:00.000Z";
+    const providerUpdatedAt = "2026-01-01T00:00:01.000Z";
+    const harness = await createHarness();
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-provider-tick"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: sessionUpdatedAt,
+        },
+        createdAt: sessionUpdatedAt,
+      }),
+    );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("turn-1"),
+      createdAt: sessionUpdatedAt,
+      updatedAt: providerUpdatedAt,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-after-provider-tick"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        expectedSessionUpdatedAt: sessionUpdatedAt,
+        createdAt: providerUpdatedAt,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.interruptTurn).toHaveBeenCalledOnce();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-after-provider-tick",
+      outcome: "interrupted",
+      expectedTurnId: "turn-1",
+      actualTurnId: "turn-1",
+      createdAt: providerUpdatedAt,
+    });
+  });
+
   it("rejects a guarded interrupt when provider work changes at dispatch time", async () => {
     const initialUpdatedAt = "2026-01-01T00:00:00.000Z";
     const currentUpdatedAt = "2026-01-01T00:00:01.000Z";

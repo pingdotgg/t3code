@@ -1326,10 +1326,7 @@ const make = Effect.gen(function* () {
     const providerTurnId = providerSession?.activeTurnId ?? null;
     const providerTurnChanged =
       event.payload.expectedTurnId !== undefined && event.payload.expectedTurnId !== providerTurnId;
-    const providerSessionChanged =
-      event.payload.expectedSessionUpdatedAt !== undefined &&
-      event.payload.expectedSessionUpdatedAt !== providerSession?.updatedAt;
-    if (providerSession === undefined || providerTurnChanged || providerSessionChanged) {
+    if (providerSession === undefined || providerTurnChanged) {
       return yield* publishWorkChanged(providerTurnId);
     }
 

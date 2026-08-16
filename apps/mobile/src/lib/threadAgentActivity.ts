@@ -182,6 +182,12 @@ export function deriveAgentSpawnRows(
   };
 }
 
+/**
+ * Sorts activities into lifecycle order. `derivePendingApprovals` and
+ * `derivePendingUserInputs` both expect this ordering; sorting once and
+ * passing the result to both avoids re-sorting the full activity history
+ * per derivation.
+ */
 export function sortThreadActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {

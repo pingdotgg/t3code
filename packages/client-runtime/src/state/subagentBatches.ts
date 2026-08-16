@@ -2,6 +2,8 @@ import type { RuntimeSubagent, RuntimeSubagentStatus } from "./subagentRuntime.t
 
 const ROSTER_LIMIT = 100;
 
+/** Active = the user may still need to care while it runs. Idle is settled-ish
+ * but resumable; waiting counts as active because it needs the user. */
 export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
@@ -110,6 +112,7 @@ export function capSubagentRoster(
   agents: ReadonlyArray<RuntimeSubagent>,
 ): ReadonlyArray<RuntimeSubagent> {
   if (agents.length <= ROSTER_LIMIT) return agents;
+  // Prefer live, then waiting/idle, then newest settled.
   const rank = (agent: RuntimeSubagent): number =>
     isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
   return agents

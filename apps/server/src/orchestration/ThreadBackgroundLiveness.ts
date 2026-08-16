@@ -177,6 +177,9 @@ export function make(
     const previousMonitorActivityId = stateByThreadId
       .get(input.threadId)
       ?.monitors.get(input.taskId);
+    // Idle counts as not-live: a resting (resumable) Codex child isn't doing
+    // anything, and an all-idle fleet must not pin Working. Unlike terminal
+    // statuses this records no tombstone, so later progress can resume it.
     if (input.status === "idle") {
       drop(input.threadId, input.taskId);
       return;
