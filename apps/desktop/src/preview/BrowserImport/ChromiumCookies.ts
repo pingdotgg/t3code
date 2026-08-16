@@ -46,9 +46,9 @@ export type ChromiumCookie = ImportedCookie;
  * raises itself.
  */
 export const ChromiumCookieReadReason = Schema.Literals([
+  // `readFailed` already comes from the key failures, so it is not repeated.
   ...ChromiumKeyFailure.literals,
   "browserRunning",
-  "readFailed",
 ]);
 export type ChromiumCookieReadReason = typeof ChromiumCookieReadReason.Type;
 

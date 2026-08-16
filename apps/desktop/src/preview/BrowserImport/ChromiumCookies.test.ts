@@ -124,3 +124,15 @@ describe("stripDpapiMarker", () => {
     expect([...stripDpapiMarker(Buffer.from([9, 8]).toString("base64"))]).toEqual([9, 8]);
   });
 });
+
+describe("decryptChromiumValue with unusable key material", () => {
+  it("returns null rather than a wrong plaintext for a zero-length GCM key", () => {
+    // A failed DPAPI unwrap used to produce an empty Buffer, which is truthy,
+    // so the key looked present and every record silently failed to decrypt.
+    // `resolveChromiumKeys` now refuses to hand one back; this pins the
+    // behaviour of the decrypt path if one ever reaches it.
+    const record = Buffer.concat([Buffer.from("v10", "latin1"), Buffer.alloc(40, 7)]);
+
+    expect(decryptChromiumValue(record, { gcmV10: Buffer.alloc(0) }, "example.test")).toBeNull();
+  });
+});

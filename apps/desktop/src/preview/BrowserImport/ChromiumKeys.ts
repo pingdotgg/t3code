@@ -41,6 +41,8 @@ export const ChromiumKeyFailure = Schema.Literals([
   "keychainItemMissing",
   "appBoundEncryption",
   "unsupportedPlatform",
+  /** The key store itself could not be read, as opposed to holding no key. */
+  "readFailed",
 ]);
 export type ChromiumKeyFailure = typeof ChromiumKeyFailure.Type;
 
@@ -137,7 +139,26 @@ const unprotectWithDpapi = Effect.fn("ChromiumKeys.unprotectWithDpapi")(function
     script,
   ]);
   const stdout = yield* process.stdout.pipe(Stream.decodeText(), Stream.mkString);
-  return Buffer.from(stdout.trim(), "base64");
+  const exitCode = yield* process.exitCode;
+
+  // A failed `Unprotect` still exits, printing nothing. Without these checks
+  // the empty stdout decodes to a zero-length Buffer, which is truthy, so
+  // `gcmV10` would be populated with an unusable key: every record then fails
+  // to decrypt and the import reports success having written nothing.
+  if (exitCode !== 0) {
+    return yield* new ChromiumKeyError({
+      reason: "keychainItemMissing",
+      cause: new Error(`powershell.exe exited with ${exitCode}`),
+    });
+  }
+  const unwrapped = Buffer.from(stdout.trim(), "base64");
+  if (unwrapped.length === 0) {
+    return yield* new ChromiumKeyError({
+      reason: "keychainItemMissing",
+      cause: new Error("powershell.exe returned no key material"),
+    });
+  }
+  return unwrapped;
 });
 
 /** The slice of `Local State` that carries the wrapped keys. */
@@ -151,11 +172,19 @@ const LocalState = Schema.Struct({
 });
 const decodeLocalState = Schema.decodeUnknownEffect(Schema.fromJsonString(LocalState));
 
+/**
+ * Reads the metadata file that carries the wrapped Windows keys.
+ *
+ * Failures are reported rather than flattened into an empty document: a
+ * missing, unreadable or corrupt `Local State` is a different problem from a
+ * browser that has no key yet, and telling the user the latter sends them
+ * looking in the wrong place.
+ */
 const readLocalState = Effect.fn("ChromiumKeys.readLocalState")(function* (localStatePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(localStatePath).pipe(
     Effect.flatMap(decodeLocalState),
-    Effect.orElseSucceed(() => ({}) as typeof LocalState.Type),
+    Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })),
   );
 });
 
