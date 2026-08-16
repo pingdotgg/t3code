@@ -36,7 +36,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
@@ -201,27 +201,33 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * OpenCode keeps its transcripts in a SQLite database at
-   * `<dataHome>/opencode.db`. The data home follows XDG, so a Linux default
-   * install lives in `~/.local/share/opencode` while macOS uses
-   * `~/Library/Application Support/opencode`. `OPENCODE_DATA_HOME` wins when
-   * set, matching the CLI.
+   * OpenCode keeps its transcripts in a SQLite database under its XDG data
+   * home — `XDG_DATA_HOME/opencode` or `~/.local/share/opencode` on every
+   * platform, macOS included (the CLI resolves through `xdg-basedir`, which
+   * never uses `~/Library/Application Support`).
+   *
+   * Overrides mirror the CLI: an absolute `OPENCODE_DB` is the database file
+   * itself, and a relative `OPENCODE_DB` names a database inside the data
+   * home. Channel builds other than latest/beta/prod write
+   * `opencode-<channel>.db`; we cannot observe the channel from here, so a dev
+   * install's database is only found through `OPENCODE_DB`.
    */
   const resolveOpenCodeDatabasePath = Effect.fn("UsageService.resolveOpenCodeDatabasePath")(
     function* () {
-      const platform = yield* HostProcessPlatform;
       const env = yield* HostProcessEnvironment;
-      const override = env["OPENCODE_DATA_HOME"]?.trim();
-      if (override !== undefined && override.length > 0) {
-        return path.join(path.resolve(expandHomePath(override)), "opencode.db");
+      const dataHome = path.join(
+        env["XDG_DATA_HOME"]?.trim() || path.join(NodeOS.homedir(), ".local", "share"),
+        "opencode",
+      );
+      const dbOverride = env["OPENCODE_DB"]?.trim();
+      if (dbOverride !== undefined && dbOverride.length > 0) {
+        // The CLI treats the value verbatim, but spawned processes get no
+        // shell expansion, so `OPENCODE_DB=~/...` would be read as relative;
+        // expand a leading `~` before the absolute check.
+        const expanded = expandHomePath(dbOverride);
+        if (expanded === ":memory:" || path.isAbsolute(expanded)) return expanded;
+        return path.join(dataHome, expanded);
       }
-      const dataHome =
-        platform === "darwin"
-          ? path.join(NodeOS.homedir(), "Library", "Application Support", "opencode")
-          : path.join(
-              env["XDG_DATA_HOME"] ?? path.join(NodeOS.homedir(), ".local", "share"),
-              "opencode",
-            );
       return path.join(dataHome, "opencode.db");
     },
   );
