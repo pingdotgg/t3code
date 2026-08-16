@@ -26,6 +26,7 @@ function thread(
   | "modelSelection"
   | "session"
   | "latestTurn"
+  | "latestUserMessageAt"
   | "updatedAt"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
@@ -36,6 +37,7 @@ function thread(
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     session: null,
     latestTurn: null,
+    latestUserMessageAt: null,
     updatedAt: NOW,
     hasPendingApprovals: false,
     hasPendingUserInput: false,

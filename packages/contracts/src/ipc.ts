@@ -87,7 +87,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
@@ -167,6 +167,47 @@ export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
+
+export const DesktopNotificationEventSchema = Schema.Literals([
+  "approval",
+  "input",
+  "completion",
+  "failure",
+]);
+export type DesktopNotificationEvent = typeof DesktopNotificationEventSchema.Type;
+
+export const DesktopNotificationTargetSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+});
+export type DesktopNotificationTarget = typeof DesktopNotificationTargetSchema.Type;
+
+export const DesktopNotificationShowInputSchema = Schema.Struct({
+  ...DesktopNotificationTargetSchema.fields,
+  event: DesktopNotificationEventSchema,
+  projectTitle: TrimmedNonEmptyString,
+  threadTitle: TrimmedNonEmptyString,
+  completionPreview: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  showContext: Schema.Boolean,
+  silent: Schema.Boolean,
+});
+export type DesktopNotificationShowInput = typeof DesktopNotificationShowInputSchema.Type;
+
+export const DesktopNotificationShowResultSchema = Schema.Literals([
+  "shown",
+  "suppressed",
+  "unsupported",
+  "failed",
+]);
+export type DesktopNotificationShowResult = typeof DesktopNotificationShowResultSchema.Type;
+
+export interface DesktopNotificationsBridge {
+  show: (input: DesktopNotificationShowInput) => Promise<DesktopNotificationShowResult>;
+  dismiss: (target: DesktopNotificationTarget) => Promise<void>;
+  dismissAll: () => Promise<void>;
+  showTest: (input: { readonly silent: boolean }) => Promise<DesktopNotificationShowResult>;
+  onActivated: (listener: (target: DesktopNotificationTarget) => void) => () => void;
+}
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -1101,6 +1142,8 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  /** Native OS notifications. Optional while renderer and desktop versions overlap. */
+  notifications?: DesktopNotificationsBridge;
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.

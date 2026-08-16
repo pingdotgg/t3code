@@ -36,6 +36,10 @@ export interface ThreadSnapshotWindow {
   readonly beforeCursor?: string;
 }
 
+export interface ThreadSnapshotLoadOptions {
+  readonly timeoutMs?: number;
+}
+
 export const fetchEnvironmentThreadSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentThreadSnapshot",
 )(function* (input: {
@@ -90,6 +94,7 @@ export class ThreadSnapshotLoader extends Context.Service<
       prepared: PreparedConnection,
       threadId: ThreadId,
       window?: ThreadSnapshotWindow,
+      options?: ThreadSnapshotLoadOptions,
     ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
   }
 >()("@t3tools/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}
@@ -107,12 +112,18 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     // connections work without one).
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
     return ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId, window?: ThreadSnapshotWindow) =>
+      load: (
+        prepared: PreparedConnection,
+        threadId: ThreadId,
+        window?: ThreadSnapshotWindow,
+        options?: ThreadSnapshotLoadOptions,
+      ) =>
         fetchEnvironmentThreadSnapshot({
           prepared,
           threadId,
           signer,
           ...(window !== undefined ? { window } : {}),
+          ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
         }).pipe(
           Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),

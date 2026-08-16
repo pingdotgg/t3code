@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopNotificationTarget,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -10,6 +11,32 @@ import { contextBridge, ipcRenderer } from "electron";
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+const desktopNotificationActivationListeners = new Set<
+  (target: DesktopNotificationTarget) => void
+>();
+let pendingDesktopNotificationActivation: DesktopNotificationTarget | null = null;
+
+ipcRenderer.on(IpcChannels.DESKTOP_NOTIFICATION_ACTIVATED_CHANNEL, (_event, target: unknown) => {
+  if (
+    typeof target !== "object" ||
+    target === null ||
+    !("environmentId" in target) ||
+    typeof target.environmentId !== "string" ||
+    !("threadId" in target) ||
+    typeof target.threadId !== "string"
+  ) {
+    return;
+  }
+  const activation = target as DesktopNotificationTarget;
+  if (desktopNotificationActivationListeners.size === 0) {
+    pendingDesktopNotificationActivation = activation;
+    return;
+  }
+  for (const listener of desktopNotificationActivationListeners) {
+    listener(activation);
+  }
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -161,6 +188,25 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
+  },
+  notifications: {
+    show: (input) => ipcRenderer.invoke(IpcChannels.DESKTOP_NOTIFICATION_SHOW_CHANNEL, input),
+    dismiss: (target) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_NOTIFICATION_DISMISS_CHANNEL, target),
+    dismissAll: () => ipcRenderer.invoke(IpcChannels.DESKTOP_NOTIFICATION_DISMISS_ALL_CHANNEL),
+    showTest: (input) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_NOTIFICATION_SHOW_TEST_CHANNEL, input),
+    onActivated: (listener) => {
+      desktopNotificationActivationListeners.add(listener);
+      const pendingActivation = pendingDesktopNotificationActivation;
+      pendingDesktopNotificationActivation = null;
+      if (pendingActivation !== null) {
+        listener(pendingActivation);
+      }
+      return () => {
+        desktopNotificationActivationListeners.delete(listener);
+      };
+    },
   },
   preview: {
     createTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, { tabId }),

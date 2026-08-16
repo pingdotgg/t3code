@@ -339,12 +339,19 @@ export function useUpdatePrimarySettings() {
 }
 
 export function useUpdateClientSettings() {
-  return useCallback((patch: ClientSettingsPatch) => {
-    persistClientSettings({
-      ...getClientSettingsSnapshot(),
-      ...patch,
-    });
-  }, []);
+  return useCallback(
+    // Functional patches compose against the synchronous external-store snapshot, including
+    // updates made while an event handler was awaiting browser permission.
+    (update: ClientSettingsPatch | ((current: ClientSettings) => ClientSettingsPatch)) => {
+      const current = getClientSettingsSnapshot();
+      const patch = typeof update === "function" ? update(current) : update;
+      persistClientSettings({
+        ...current,
+        ...patch,
+      });
+    },
+    [],
+  );
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
