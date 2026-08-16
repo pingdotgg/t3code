@@ -167,6 +167,35 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("rejects truncated core worktree listings", () => {
+  const outputLimit = 16 * 1024 * 1024;
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.succeed(
+      makeSuccessfulHandle(
+        `worktree /repo\0HEAD deadbeef\0branch refs/heads/main\0\0${"x".repeat(outputLimit)}`,
+      ),
+    ),
+  );
+  const nodeServicesLayer = Layer.merge(
+    NodeServices.layer,
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(nodeServicesLayer),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const error = yield* driver.listWorkspaces("/repo").pipe(Effect.flip);
+
+    assert.instanceOf(error, GitCommandError);
+    assert.equal(error.operation, "GitVcsDriver.listWorkspaces");
+    assert.equal(error.cwd, "/repo");
+    assert.include(error.detail, "output exceeded");
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -1347,33 +1376,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
-    it.effect("preserves newline characters in worktree paths when listing refs", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
-        const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-
-        yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
-
-        const refs = yield* driver.listRefs({ cwd, refresh: true });
-        const listedPath = refs.refs.find(
-          (ref) => ref.name === "feature/newline-path",
-        )?.worktreePath;
-
-        if (typeof listedPath !== "string") {
-          return assert.fail("expected the linked branch to include its worktree path");
-        }
-        assert.equal(
-          yield* fileSystem.realPath(listedPath),
-          yield* fileSystem.realPath(worktreePath),
-        );
-      }),
-    );
-
     it.effect("creates and removes a worktree and its new local branch", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

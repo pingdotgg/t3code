@@ -44,6 +44,14 @@ export const VcsListWorkspaceFilesResult = Schema.Struct({
 });
 export type VcsListWorkspaceFilesResult = typeof VcsListWorkspaceFilesResult.Type;
 
+/** A VCS-managed checkout reported by the provider's local metadata. */
+export const VcsWorkspace = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  refName: Schema.NullOr(TrimmedNonEmptyString),
+  prunable: Schema.Boolean,
+});
+export type VcsWorkspace = typeof VcsWorkspace.Type;
+
 export const VcsRemote = Schema.Struct({
   name: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,

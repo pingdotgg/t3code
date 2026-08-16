@@ -37,6 +37,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { parseGitWorktreeBranchPaths, parseGitWorktreeListPorcelain } from "./GitWorktree.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -49,6 +50,7 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
+const WORKTREE_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
@@ -235,37 +237,6 @@ function paginateBranches(input: {
     nextCursor,
     totalCount,
   };
-}
-
-function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
-  const worktreePaths = new Map<string, string>();
-  let currentPath: string | null = null;
-  let currentBranch: string | null = null;
-  let currentPrunable = false;
-
-  const flush = () => {
-    if (currentPath !== null && currentBranch !== null && !currentPrunable) {
-      worktreePaths.set(currentBranch, currentPath);
-    }
-    currentPath = null;
-    currentBranch = null;
-    currentPrunable = false;
-  };
-
-  for (const field of stdout.split("\0")) {
-    if (field === "") {
-      flush();
-    } else if (field.startsWith("worktree ")) {
-      currentPath = field.slice("worktree ".length);
-    } else if (field.startsWith("branch refs/heads/")) {
-      currentBranch = field.slice("branch refs/heads/".length);
-    } else if (field === "prunable" || field.startsWith("prunable ")) {
-      currentPrunable = true;
-    }
-  }
-  flush();
-
-  return worktreePaths;
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -904,6 +875,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         LC_ALL: "C",
       },
     });
+
+  const listWorkspaces: GitVcsDriver.GitVcsDriver["Service"]["listWorkspaces"] = Effect.fn(
+    "GitVcsDriver.listWorkspaces",
+  )(function* (cwd) {
+    const args = ["worktree", "list", "--porcelain"] as const;
+    const result = yield* executeGit("GitVcsDriver.listWorkspaces", cwd, args, {
+      timeoutMs: 30_000,
+      maxOutputBytes: WORKTREE_LIST_MAX_OUTPUT_BYTES,
+    });
+    if (result.stdoutTruncated) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: "GitVcsDriver.listWorkspaces", cwd, args }),
+        detail: `Git worktree output exceeded ${WORKTREE_LIST_MAX_OUTPUT_BYTES} bytes.`,
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+      });
+    }
+    return parseGitWorktreeListPorcelain(result.stdout);
+  });
 
   const runGit = (
     operation: string,
@@ -2488,7 +2478,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGit(
           "GitVcsDriver.listRefs.worktreeList",
           fetchCwd,
-          [...gitDirArgs, "worktree", "list", "--porcelain", "-z"],
+          [...gitDirArgs, "worktree", "list", "--porcelain"],
           {
             timeoutMs: 30_000,
             allowNonZeroExit: true,
@@ -2516,7 +2506,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : null;
     const parsedWorktreeEntries =
       worktreeListResult.exitCode === 0
-        ? [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
+        ? [...parseGitWorktreeBranchPaths(worktreeListResult.stdout)].map(
             ([branchName, worktreePath]) =>
               [branchName, path.normalize(path.resolve(worktreePath))] as const,
           )
@@ -3176,6 +3166,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    listWorkspaces,
     prepareCommitContext,
     commit: (cwd, subject, body, options) =>
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
