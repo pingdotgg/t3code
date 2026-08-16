@@ -264,6 +264,13 @@ describe("normalizeWindowsMarkdownFileLinks", () => {
       "```\ncode\n```\n[D:\\tmp\\file.md](file:///D:/tmp/file.md)",
     );
   });
+
+  it("does not rewrite Windows paths inside blockquote or list fences", () => {
+    const quoted = "> ```\n> D:\\tmp\\file.md\n> ```";
+    const listed = "1. ```\n   D:\\tmp\\file.md\n   ```";
+    expect(normalizeWindowsMarkdownFileLinks(quoted)).toBe(quoted);
+    expect(normalizeWindowsMarkdownFileLinks(listed)).toBe(listed);
+  });
 });
 
 describe("resolveInlineCodeFileLinkMeta", () => {

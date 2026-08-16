@@ -259,8 +259,10 @@ function rewriteWindowsMarkdownInText(text: string): string {
 }
 
 const INLINE_CODE_SEGMENT_PATTERN = /(`[^`\n]+`)/;
-const OPEN_FENCE_PATTERN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
-const CLOSE_FENCE_PATTERN = /^( {0,3})(`{3,}|~{3,})[ \t]*$/;
+// Optional CommonMark container prefixes so `> ```js` and `1. ```js` still
+// open a fence. Mid-line backticks are not fences.
+const OPEN_FENCE_PATTERN = /^(?: {0,3}(?:>[ \t]?|[*+-][ \t]|\d{1,9}[.)][ \t])*)(`{3,}|~{3,})(.*)$/;
+const CLOSE_FENCE_PATTERN = /^(?: {0,3}(?:>[ \t]?|[*+-][ \t]|\d{1,9}[.)][ \t])*)(`{3,}|~{3,})[ \t]*$/;
 
 function mapOutsideInlineCode(text: string, transform: (chunk: string) => string): string {
   return text
@@ -275,17 +277,17 @@ function lineWithoutCarriageReturn(line: string): string {
 
 function openingFenceMarker(line: string): string | null {
   const match = OPEN_FENCE_PATTERN.exec(line);
-  if (!match?.[2]) return null;
-  const marker = match[2];
-  const info = match[3] ?? "";
+  const marker = match?.[1];
+  if (!marker) return null;
+  const info = match[2] ?? "";
   if (marker.startsWith("`") && info.includes("`")) return null;
   return marker;
 }
 
 function isClosingFenceLine(line: string, openMarker: string): boolean {
   const match = CLOSE_FENCE_PATTERN.exec(line);
-  if (!match?.[2]) return false;
-  const marker = match[2];
+  const marker = match?.[1];
+  if (!marker) return false;
   return marker[0] === openMarker[0] && marker.length >= openMarker.length;
 }
 
