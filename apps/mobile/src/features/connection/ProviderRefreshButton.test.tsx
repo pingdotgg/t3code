@@ -122,6 +122,31 @@ describe("ProviderRefreshButton", () => {
     expect(nativeMocks.alert).not.toHaveBeenCalled();
   });
 
+  it("ignores a concurrent press while the refresh is pending", async () => {
+    let resolveRefresh!: (result: AtomCommandResult<unknown, unknown>) => void;
+    const refresh = vi.fn(
+      () =>
+        new Promise<AtomCommandResult<unknown, unknown>>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    renderToStaticMarkup(<ProviderRefreshButton onRefresh={refresh} />);
+
+    const press = nativeMocks.lastPressableProps?.onPress;
+    press?.();
+    press?.();
+    await Promise.resolve();
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(nativeMocks.alert).not.toHaveBeenCalled();
+
+    resolveRefresh(AsyncResult.success(undefined));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(nativeMocks.alert).toHaveBeenCalledOnce();
+  });
+
   it("reports successful and failed refresh commands", async () => {
     const successfulRefresh = vi.fn(
       async (): Promise<AtomCommandResult<unknown, unknown>> => AsyncResult.success(undefined),

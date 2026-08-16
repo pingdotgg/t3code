@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -22,28 +22,37 @@ export function ProviderRefreshButton(props: {
   readonly compact?: boolean;
 }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const isRefreshingRef = useRef(false);
   const iconColor = useThemeColor("--color-icon-muted");
   const primaryColor = useThemeColor("--color-primary");
 
   const handlePress = useCallback(async () => {
-    if (isRefreshing) return;
+    if (isRefreshingRef.current) return;
 
+    isRefreshingRef.current = true;
     setIsRefreshing(true);
-    const result = await props.onRefresh();
-    setIsRefreshing(false);
+    try {
+      const result = await props.onRefresh();
 
-    if (AsyncResult.isFailure(result)) {
-      if (isAtomCommandInterrupted(result)) return;
-      const error = Cause.squash(result.cause);
+      if (AsyncResult.isFailure(result)) {
+        if (isAtomCommandInterrupted(result)) return;
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not refresh providers",
+          error instanceof Error ? error.message : "The provider status could not be refreshed.",
+        );
+        return;
+      }
+
       Alert.alert(
-        "Could not refresh providers",
-        error instanceof Error ? error.message : "The provider status could not be refreshed.",
+        "Providers refreshed",
+        "Provider availability and model metadata are up to date.",
       );
-      return;
+    } finally {
+      isRefreshingRef.current = false;
+      setIsRefreshing(false);
     }
-
-    Alert.alert("Providers refreshed", "Provider availability and model metadata are up to date.");
-  }, [isRefreshing, props.onRefresh]);
+  }, [props.onRefresh]);
 
   return (
     <Pressable
