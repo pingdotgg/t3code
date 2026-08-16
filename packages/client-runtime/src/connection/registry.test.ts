@@ -187,6 +187,13 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ]),
   );
   const disconnectedSshTargets = yield* Ref.make<ReadonlyArray<DesktopSshEnvironmentTarget>>([]);
+  const routeTransitions = yield* Ref.make<
+    ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly previous: ConnectionTarget;
+      readonly selected: ConnectionTarget;
+    }>
+  >([]);
 
   const targetStore = Persistence.ConnectionTargetStore.of({
     list: Ref.get(storedTargets).pipe(Effect.map((targets) => [...targets.values()])),
@@ -411,6 +418,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     prepare: () => Effect.die(new Error("SSH preparation is not used.")),
     disconnect: (target) => Ref.update(disconnectedSshTargets, (current) => [...current, target]),
   });
+  const routeTransition = ClientCapabilities.EnvironmentRouteTransition.of({
+    afterSelected: (input) => Ref.update(routeTransitions, (current) => [...current, input]),
+  });
   const driver = ConnectionDriver.ConnectionDriver.of({
     prepare: (entry) =>
       options?.prepareRoute?.(entry.target) ??
@@ -460,6 +470,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
         Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
         Layer.succeed(ClientCapabilities.SshEnvironmentGateway, sshGateway),
+        Layer.succeed(ClientCapabilities.EnvironmentRouteTransition, routeTransition),
         Layer.succeed(Connectivity.Connectivity, connectivity),
         Layer.succeed(
           ConnectionWakeups.ConnectionWakeups,
@@ -486,6 +497,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     storedCredentials,
     storedRemoteTokens,
     disconnectedSshTargets,
+    routeTransitions,
     networkStatus,
   };
 });
@@ -731,6 +743,19 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)?.target,
         ).toEqual(SSH_CONNECTION);
         expect(yield* Ref.get(harness.releasedSessions)).toBe(1);
+        expect(yield* Ref.get(harness.routeTransitions)).toEqual([
+          {
+            environmentId: SSH_CONNECTION.environmentId,
+            previous: SSH_RELAY_TARGET,
+            selected: SSH_CONNECTION,
+          },
+        ]);
+
+        yield* registry.selectRoute(
+          SSH_CONNECTION.environmentId,
+          connectionRouteId(SSH_CONNECTION),
+        );
+        expect(yield* Ref.get(harness.routeTransitions)).toHaveLength(1);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -769,6 +794,7 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)?.target,
         ).toEqual(SSH_RELAY_TARGET);
         expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+        expect(yield* Ref.get(harness.routeTransitions)).toEqual([]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

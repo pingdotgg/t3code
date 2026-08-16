@@ -26,7 +26,7 @@ FRP authorization boundary intentionally permits one canonical HTTP proxy per
 environment. Expanding it would require public endpoint allocation, lifecycle
 reconciliation, and materially broader Internet-facing authorization.
 
-Instead, carry forwarding traffic through the environment's existing
+Instead, carry forwarding traffic through the environment's selected
 authenticated HTTPS/WSS endpoint:
 
 ```text
@@ -48,12 +48,24 @@ request is nevertheless rejected, concurrent forward attempts share one
 environment reconnect and retry ticket authorization once with the refreshed
 prepared connection.
 
+Each accepted desktop TCP connection requests its ticket from the current
+`PreparedConnection`, so new bridges follow the selected relay, direct, or SSH
+route. `EnvironmentRegistry.selectRoute` invokes the platform route-transition
+hook only after the candidate has been prepared and installed. Desktop uses
+that hook to advance every affected forward's generation, close its active and
+connecting socket/WebSocket pairs, and retain its loopback listener. Stale
+authorization completions cannot reopen a bridge from the previous generation.
+TCP streams are not transparently migratable; the local application must
+reconnect, at which point authorization uses the newly selected route.
+
 The server must advertise an additive `tcpPortForwarding` environment
 capability. The implementation should remain generic T3 behavior rather than
 sovereign-only code:
 
-- T3 Connect environments use the authenticated WebSocket bridge.
-- SSH environments may use native `ssh -L` behind the same desktop UI.
+- T3 Connect environments use the authenticated WebSocket bridge through the
+  relay route.
+- SSH environments use the same bridge through the desktop-managed SSH HTTP
+  tunnel.
 - Local environments do not need a tunnel.
 
 ## Multi-environment ownership

@@ -15,6 +15,7 @@ import {
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
+  resetDesktopPortForwardConnections,
   secondaryRegistrationsToRetainAfterTopologyRead,
   secondaryBearerExpiresAtEpochMs,
   secondaryBearerRefreshAtEpochMs,
@@ -136,6 +137,25 @@ describe("desktop SSH pairing", () => {
       expect(prepared.bearerToken).toBe("bearer-token");
       expect(calls).toEqual(["ensure", "token"]);
       expect(ensurePairingOptions).toEqual([true]);
+    }),
+  );
+});
+
+describe("desktop route transitions", () => {
+  it.effect("resets port-forward bridge connections for the selected environment", () =>
+    Effect.gen(function* () {
+      const resetEnvironmentIds: EnvironmentId[] = [];
+      const bridge = {
+        portForward: {
+          resetEnvironmentConnections: async (environmentId: EnvironmentId) => {
+            resetEnvironmentIds.push(environmentId);
+          },
+        },
+      } as unknown as DesktopBridge;
+
+      yield* resetDesktopPortForwardConnections(bridge, EnvironmentId.make("environment-ssh"));
+
+      expect(resetEnvironmentIds).toEqual([EnvironmentId.make("environment-ssh")]);
     }),
   );
 });

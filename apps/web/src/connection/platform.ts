@@ -2,6 +2,7 @@ import {
   ClientPresentation,
   CloudSession,
   EnvironmentOwnedDataCleanup,
+  EnvironmentRouteTransition,
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
@@ -30,6 +31,7 @@ import {
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
+  type EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -609,6 +611,29 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   }),
 );
 
+export const resetDesktopPortForwardConnections = Effect.fn(
+  "web.connectionPlatform.resetDesktopPortForwardConnections",
+)(function* (bridge: DesktopBridge | undefined, environmentId: EnvironmentId) {
+  const portForward = bridge?.portForward;
+  if (portForward === undefined) return;
+  yield* Effect.promise(() => portForward.resetEnvironmentConnections(environmentId)).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not reset desktop port forwards after changing routes.", {
+        environmentId,
+        cause,
+      }),
+    ),
+  );
+});
+
+const environmentRouteTransitionLayer = Layer.succeed(
+  EnvironmentRouteTransition,
+  EnvironmentRouteTransition.of({
+    afterSelected: ({ environmentId }) =>
+      resetDesktopPortForwardConnections(window.desktopBridge, environmentId),
+  }),
+);
+
 const rpcRequestObserverLayer = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
@@ -631,6 +656,7 @@ type ConnectionPlatformLayerSource =
   | typeof capabilitiesLayer
   | typeof platformConnectionSourceLayer
   | typeof environmentOwnedDataCleanupLayer
+  | typeof environmentRouteTransitionLayer
   | typeof rpcRequestObserverLayer;
 
 export const connectionPlatformLayer: Layer.Layer<
@@ -644,5 +670,6 @@ export const connectionPlatformLayer: Layer.Layer<
   capabilitiesLayer,
   platformConnectionSourceLayer,
   environmentOwnedDataCleanupLayer,
+  environmentRouteTransitionLayer,
   rpcRequestObserverLayer,
 );

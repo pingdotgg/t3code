@@ -37,9 +37,16 @@ type AuthorizationListener = (
 
 interface ManagedForward {
   snapshot: DesktopPortForwardSnapshot;
+  generation: number;
   readonly server: NodeNet.Server;
   readonly sockets: Set<NodeNet.Socket>;
   readonly webSockets: Set<WebSocket>;
+}
+
+interface PendingAuthorization {
+  readonly forwardId: DesktopPortForwardId;
+  readonly generation: number;
+  readonly deferred: Deferred.Deferred<string, DesktopPortForwardError>;
 }
 
 export class DesktopPortForwardError extends Schema.TaggedErrorClass<DesktopPortForwardError>()(
@@ -339,6 +346,9 @@ export class DesktopPortForwardManager extends Context.Service<
     readonly stopEnvironment: (
       environmentId: DesktopPortForwardSnapshot["environmentId"],
     ) => Effect.Effect<void>;
+    readonly resetEnvironmentConnections: (
+      environmentId: DesktopPortForwardSnapshot["environmentId"],
+    ) => Effect.Effect<void>;
     readonly resolveAuthorization: (
       requestId: string,
       socketUrl: string | null,
@@ -358,9 +368,7 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const forwards = yield* Ref.make(new Map<DesktopPortForwardId, ManagedForward>());
-  const pendingAuthorizations = yield* Ref.make(
-    new Map<string, Deferred.Deferred<string, DesktopPortForwardError>>(),
-  );
+  const pendingAuthorizations = yield* Ref.make(new Map<string, PendingAuthorization>());
   const stateListeners = yield* Ref.make(new Set<StateListener>());
   const authorizationListeners = yield* Ref.make(new Set<AuthorizationListener>());
 
@@ -380,23 +388,34 @@ export const make = Effect.gen(function* () {
   const updateSnapshot = (
     id: DesktopPortForwardId,
     update: (snapshot: DesktopPortForwardSnapshot) => DesktopPortForwardSnapshot,
+    generation?: number,
   ) =>
     Ref.update(forwards, (current) => {
       const forward = current.get(id);
-      if (forward === undefined) return current;
+      if (
+        forward === undefined ||
+        (generation !== undefined && forward.generation !== generation)
+      ) {
+        return current;
+      }
       forward.snapshot = update(forward.snapshot);
       return new Map(current);
     }).pipe(Effect.andThen(publishState));
 
   const authorize = Effect.fn("DesktopPortForwardManager.authorize")(function* (
     forward: ManagedForward,
+    generation: number,
   ) {
     const requestId = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError((cause) => new DesktopPortForwardError({ operation: "authorize", cause })),
     );
     const deferred = yield* Deferred.make<string, DesktopPortForwardError>();
     yield* Ref.update(pendingAuthorizations, (current) =>
-      new Map(current).set(requestId, deferred),
+      new Map(current).set(requestId, {
+        forwardId: forward.snapshot.id,
+        generation,
+        deferred,
+      }),
     );
     const listeners = yield* Ref.get(authorizationListeners);
     const request: DesktopPortForwardAuthorizationRequest = {
@@ -433,6 +452,7 @@ export const make = Effect.gen(function* () {
 
   const handleConnection = (forward: ManagedForward, socket: NodeNet.Socket) => {
     let connectionState: "connecting" | "connected" = "connecting";
+    const generation = forward.generation;
     return Effect.gen(function* () {
       const accepted = yield* Ref.modify(forwards, (current) => {
         const activeTotal = [...current.values()].reduce(
@@ -453,41 +473,62 @@ export const make = Effect.gen(function* () {
         socket.destroy();
         return;
       }
-      yield* updateSnapshot(forward.snapshot.id, (snapshot) => ({
-        ...snapshot,
-        connectingConnections: snapshot.connectingConnections + 1,
-        lastError: null,
-      }));
-      const socketUrl = yield* authorize(forward);
+      yield* updateSnapshot(
+        forward.snapshot.id,
+        (snapshot) => ({
+          ...snapshot,
+          connectingConnections: snapshot.connectingConnections + 1,
+          lastError: null,
+        }),
+        generation,
+      );
+      const socketUrl = yield* authorize(forward, generation);
+      if (forward.generation !== generation || !forward.sockets.has(socket)) return;
       const webSocket = yield* openWebSocket(socketUrl);
+      if (forward.generation !== generation || !forward.sockets.has(socket)) {
+        webSocket.close();
+        return;
+      }
       forward.webSockets.add(webSocket);
-      yield* updateSnapshot(forward.snapshot.id, (snapshot) => ({
-        ...snapshot,
-        connectingConnections: Math.max(0, snapshot.connectingConnections - 1),
-        activeConnections: snapshot.activeConnections + 1,
-      }));
+      yield* updateSnapshot(
+        forward.snapshot.id,
+        (snapshot) => ({
+          ...snapshot,
+          connectingConnections: Math.max(0, snapshot.connectingConnections - 1),
+          activeConnections: snapshot.activeConnections + 1,
+        }),
+        generation,
+      );
       connectionState = "connected";
       yield* runConnection(socket, webSocket);
       forward.webSockets.delete(webSocket);
     }).pipe(
       Effect.catch((error) =>
-        updateSnapshot(forward.snapshot.id, (snapshot) => ({
-          ...snapshot,
-          lastError: error.message,
-        })),
+        updateSnapshot(
+          forward.snapshot.id,
+          (snapshot) => ({
+            ...snapshot,
+            lastError: error.message,
+          }),
+          generation,
+        ),
       ),
       Effect.ensuring(
         Effect.gen(function* () {
           forward.sockets.delete(socket);
           socket.destroy();
-          yield* updateSnapshot(forward.snapshot.id, (snapshot) => ({
-            ...snapshot,
-            ...(connectionState === "connected"
-              ? { activeConnections: Math.max(0, snapshot.activeConnections - 1) }
-              : {
-                  connectingConnections: Math.max(0, snapshot.connectingConnections - 1),
-                }),
-          }));
+          yield* updateSnapshot(
+            forward.snapshot.id,
+            (snapshot) => ({
+              ...snapshot,
+              ...(connectionState === "connected"
+                ? { activeConnections: Math.max(0, snapshot.activeConnections - 1) }
+                : {
+                    connectingConnections: Math.max(0, snapshot.connectingConnections - 1),
+                  }),
+            }),
+            generation,
+          );
         }),
       ),
     );
@@ -522,7 +563,7 @@ export const make = Effect.gen(function* () {
       activeConnections: 0,
       lastError: null,
     };
-    managed = { snapshot, server, sockets: new Set(), webSockets: new Set() };
+    managed = { snapshot, generation: 0, server, sockets: new Set(), webSockets: new Set() };
     yield* Ref.update(forwards, (current) => new Map(current).set(id, managed!));
     yield* publishState;
     return snapshot;
@@ -530,9 +571,12 @@ export const make = Effect.gen(function* () {
 
   const stopManaged = (managed: ManagedForward) =>
     Effect.sync(() => {
+      managed.generation += 1;
       managed.server.close();
       for (const socket of managed.sockets) socket.destroy();
       for (const webSocket of managed.webSockets) webSocket.close();
+      managed.sockets.clear();
+      managed.webSockets.clear();
     });
 
   const stop: DesktopPortForwardManager["Service"]["stop"] = (id) =>
@@ -561,6 +605,76 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  const resetEnvironmentConnections: DesktopPortForwardManager["Service"]["resetEnvironmentConnections"] =
+    (environmentId) =>
+      Effect.gen(function* () {
+        const retired = yield* Ref.modify(forwards, (current) => {
+          const resources: Array<{
+            readonly id: DesktopPortForwardId;
+            readonly generation: number;
+            readonly sockets: ReadonlyArray<NodeNet.Socket>;
+            readonly webSockets: ReadonlyArray<WebSocket>;
+          }> = [];
+          let changed = false;
+          for (const managed of current.values()) {
+            if (managed.snapshot.environmentId !== environmentId) continue;
+            changed = true;
+            resources.push({
+              id: managed.snapshot.id,
+              generation: managed.generation,
+              sockets: [...managed.sockets],
+              webSockets: [...managed.webSockets],
+            });
+            managed.generation += 1;
+            managed.sockets.clear();
+            managed.webSockets.clear();
+            managed.snapshot = {
+              ...managed.snapshot,
+              connectingConnections: 0,
+              activeConnections: 0,
+              lastError: null,
+            };
+          }
+          return [resources, changed ? new Map(current) : current] as const;
+        });
+        if (retired.length === 0) return;
+
+        const retiredGenerations = new Map(
+          retired.map((entry) => [entry.id, entry.generation] as const),
+        );
+        const interrupted = yield* Ref.modify(pendingAuthorizations, (current) => {
+          const next = new Map(current);
+          const pending: Array<PendingAuthorization> = [];
+          for (const [requestId, authorization] of next) {
+            if (retiredGenerations.get(authorization.forwardId) !== authorization.generation) {
+              continue;
+            }
+            pending.push(authorization);
+            next.delete(requestId);
+          }
+          return [pending, next] as const;
+        });
+        yield* Effect.forEach(
+          interrupted,
+          (authorization) =>
+            Deferred.fail(
+              authorization.deferred,
+              new DesktopPortForwardError({
+                operation: "route-transition",
+                cause: "The selected environment connection method changed.",
+              }),
+            ),
+          { discard: true },
+        );
+        yield* Effect.sync(() => {
+          for (const entry of retired) {
+            for (const socket of entry.sockets) socket.destroy();
+            for (const webSocket of entry.webSockets) webSocket.close();
+          }
+        });
+        yield* publishState;
+      });
+
   const resolveAuthorization: DesktopPortForwardManager["Service"]["resolveAuthorization"] = (
     requestId,
     socketUrl,
@@ -568,11 +682,11 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const current = yield* Ref.get(pendingAuthorizations);
-      const deferred = current.get(requestId);
-      if (deferred === undefined) return;
+      const authorization = current.get(requestId);
+      if (authorization === undefined) return;
       if (socketUrl === null) {
         yield* Deferred.fail(
-          deferred,
+          authorization.deferred,
           new DesktopPortForwardError({
             operation: "authorize",
             cause: error ?? "The environment could not authorize this connection.",
@@ -580,7 +694,7 @@ export const make = Effect.gen(function* () {
           }),
         );
       } else {
-        yield* Deferred.succeed(deferred, socketUrl);
+        yield* Deferred.succeed(authorization.deferred, socketUrl);
       }
     });
 
@@ -609,6 +723,7 @@ export const make = Effect.gen(function* () {
     list: snapshots,
     stop,
     stopEnvironment,
+    resetEnvironmentConnections,
     resolveAuthorization,
     subscribeStateChanges: (listener) => subscribe(stateListeners, listener),
     subscribeAuthorizationRequests: (listener) => subscribe(authorizationListeners, listener),
