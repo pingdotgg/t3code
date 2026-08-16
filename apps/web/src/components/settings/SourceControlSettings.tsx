@@ -1273,7 +1273,12 @@ function WorktreeManagementSection() {
                   isPending ? "Refreshing worktree inventory" : "Refresh worktree inventory"
                 }
               >
-                <RefreshCwIcon className={cn("size-3", isPending && "rotate-45")} />
+                <RefreshCwIcon
+                  className={cn(
+                    "size-3",
+                    isPending && "animate-spin [animation-iteration-count:1]",
+                  )}
+                />
               </Button>
             }
           />
