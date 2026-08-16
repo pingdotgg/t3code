@@ -75,6 +75,20 @@ describe("clerkAppearance", () => {
         otpCodeFieldErrorText: { color: "var(--error-foreground)" },
         otpCodeFieldSuccessText: { color: "var(--success-foreground)" },
       },
+      userButton: {
+        elements: {
+          userPreviewMainIdentifier: {
+            "&:not(:has(~ .cl-userPreviewSecondaryIdentifier))": {
+              filter: "blur(2px)",
+              userSelect: "none",
+            },
+          },
+          userPreviewSecondaryIdentifier: {
+            filter: "blur(2px)",
+            userSelect: "none",
+          },
+        },
+      },
     });
   });
 

@@ -1,5 +1,6 @@
-import { UserButton, useAuth } from "@clerk/react";
+import { UserButton, useAuth, useUser } from "@clerk/react";
 import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
+import { useRef } from "react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
@@ -21,33 +22,53 @@ export function T3ConnectSidebarAvatar() {
 
 function ConfiguredT3ConnectSidebarAvatar() {
   const { isLoaded, isSignedIn } = useAuth();
+  const { user } = useUser();
+  const profileRefreshRef = useRef<Promise<unknown> | null>(null);
+
+  const refreshAccountProfile = () => {
+    if (!user || profileRefreshRef.current) return;
+
+    const refresh = user
+      .reload()
+      .catch(() => undefined)
+      .finally(() => {
+        if (profileRefreshRef.current === refresh) profileRefreshRef.current = null;
+      });
+    profileRefreshRef.current = refresh;
+  };
 
   if (!isLoaded || !isSignedIn) return null;
 
   return (
-    <UserButton
-      appearance={{
-        elements: {
-          avatarBox: "size-7",
-          userButtonTrigger: "rounded-lg p-1 hover:bg-sidebar-row-hover",
-        },
-      }}
+    <span
+      className="inline-flex"
+      onFocus={refreshAccountProfile}
+      onPointerDown={refreshAccountProfile}
     >
-      <UserButton.UserProfilePage
-        label="Mobile clients"
-        labelIcon={<SmartphoneIcon className="size-4" />}
-        url="mobile-clients"
+      <UserButton
+        appearance={{
+          elements: {
+            avatarBox: "size-7",
+            userButtonTrigger: "rounded-lg p-1 hover:bg-sidebar-row-hover",
+          },
+        }}
       >
-        <MobileClientsUserProfilePage />
-      </UserButton.UserProfilePage>
-      <UserButton.UserProfilePage
-        label="T3 Connect"
-        labelIcon={<ServerIcon className="size-4" />}
-        url="t3-connect"
-      >
-        <T3ConnectUserProfilePage />
-      </UserButton.UserProfilePage>
-    </UserButton>
+        <UserButton.UserProfilePage
+          label="Mobile clients"
+          labelIcon={<SmartphoneIcon className="size-4" />}
+          url="mobile-clients"
+        >
+          <MobileClientsUserProfilePage />
+        </UserButton.UserProfilePage>
+        <UserButton.UserProfilePage
+          label="T3 Connect"
+          labelIcon={<ServerIcon className="size-4" />}
+          url="t3-connect"
+        >
+          <T3ConnectUserProfilePage />
+        </UserButton.UserProfilePage>
+      </UserButton>
+    </span>
   );
 }
 
