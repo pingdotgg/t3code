@@ -104,6 +104,23 @@ describe("normalizeLatexMathDelimiters", () => {
     ).toBe("\\(open only and a stray \\] plus \\\\(literal\\\\)");
   });
 
+  it("recovers valid pairs after unmatched or mismatched delimiters", () => {
+    const cases = [
+      ["Mention \\( literally, then \\(a+b\\)", "Mention \\( literally, then $$a+b$$"],
+      ["Mention \\[ literally, then \\(a+b\\)", "Mention \\[ literally, then $$a+b$$"],
+      ["Mention \\( literally, then \\[a+b\\]", "Mention \\( literally, then $$a+b$$"],
+      ["Mismatched \\( text \\] then \\[a+b\\]", "Mismatched \\( text \\] then $$a+b$$"],
+    ] as const;
+
+    for (const [source, expected] of cases) {
+      expect(normalizeLatexMathDelimiters(source)).toBe(expected);
+    }
+  });
+
+  it("continues to rewrite adjacent valid pairs", () => {
+    expect(normalizeLatexMathDelimiters("\\(a\\) and \\[b\\]")).toBe("$$a$$ and $$b$$");
+  });
+
   it("leaves inline, fenced, quoted fenced, and indented code unchanged", () => {
     const source = [
       "`\\(inline\\)`",

@@ -154,21 +154,19 @@ function collectTextNodeReplacements(
 
   let opener: DelimiterMatch | null = null;
   for (const match of delimiters) {
-    if (opener === null) {
-      if (match.delimiter === "(" || match.delimiter === "[") opener = match;
+    if (match.delimiter === "(" || match.delimiter === "[") {
+      // Math delimiters do not nest. Prefer the newest opener so malformed
+      // prose cannot prevent a later valid expression from rendering.
+      opener = match;
       continue;
     }
+    if (opener === null) continue;
 
     const expectedCloser = opener.delimiter === "(" ? ")" : "]";
     if (match.delimiter !== expectedCloser) continue;
 
-    if (opener.delimiter === "(") {
-      replacements.set(opener.index, "$$");
-      replacements.set(match.index, "$$");
-    } else {
-      replacements.set(opener.index, "$$");
-      replacements.set(match.index, "$$");
-    }
+    replacements.set(opener.index, "$$");
+    replacements.set(match.index, "$$");
     opener = null;
   }
 }
