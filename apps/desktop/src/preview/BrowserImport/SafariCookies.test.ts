@@ -147,6 +147,44 @@ describe("parseBinaryCookies", () => {
     expect(parsed.map((cookie) => cookie.name)).toEqual(["one", "two"]);
   });
 
+  it("rejects a page that runs past the end of the file", () => {
+    // `Buffer.subarray` clamps rather than throwing, so an overlong first page
+    // swallows the second one's bytes and advances the cursor past the end.
+    // Every cookie after the boundary then vanishes from a "successful" import.
+    const first = encodeBinaryCookies([
+      { domain: "a.test", name: "one", path: "/", value: "1", flags: 0, expiry: 1 },
+    ]);
+    const second = encodeBinaryCookies([
+      { domain: "b.test", name: "two", path: "/", value: "2", flags: 0, expiry: 1 },
+    ]);
+    const firstPage = first.subarray(12);
+    const secondPage = second.subarray(12);
+    const header = Buffer.alloc(16);
+    header.write("cook", 0, "latin1");
+    header.writeUInt32BE(2, 4);
+    // Declares more bytes for page one than the file holds in total.
+    header.writeUInt32BE(firstPage.length + secondPage.length + 32, 8);
+    header.writeUInt32BE(secondPage.length, 12);
+
+    expect(() => parseBinaryCookies(Buffer.concat([header, firstPage, secondPage]))).toThrow(
+      SafariCookieReadError,
+    );
+  });
+
+  it("rejects a record whose declared size runs past its page", () => {
+    const valid = encodeBinaryCookies([
+      { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
+    ]);
+    // The record's own length is what bounds its string offsets; an inflated
+    // one lets them read the following record's bytes as this cookie's value.
+    const pageStart = 8 + 4;
+    const recordStart = pageStart + valid.readUInt32LE(pageStart + 8);
+    const corrupt = Buffer.from(valid);
+    corrupt.writeUInt32LE(0xffff, recordStart);
+
+    expect(() => parseBinaryCookies(corrupt)).toThrow(SafariCookieReadError);
+  });
+
   it("rejects a file that is not binarycookies", () => {
     expect(() => parseBinaryCookies(Buffer.from("not a cookie jar"))).toThrow(
       SafariCookieReadError,
