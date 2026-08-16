@@ -57,11 +57,25 @@ export function resolveManagedTunnelActive(
 }
 
 // Startup reconcile applies relay config after routes are already live. The
-// first link-state read can cache `managedTunnelActive: false`; one delayed
-// refresh replaces that once reconcile has had a chance to finish.
-export const STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS = 2_000;
+// first link-state read can cache `managedTunnelActive: false`; a short
+// bounded series of refreshes replaces that once reconcile has had a chance
+// to finish. Delays are from first settlement, then we stop.
+export const STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS = [2_000, 5_000, 10_000] as const;
+export const CONNECTIONS_CLOUD_LINK_RETRY_INTERVAL_MS = 2_000;
+export const CONNECTIONS_CLOUD_LINK_RETRY_BUDGET_MS = 15_000;
 
 const scheduledStartupReconcileRefreshKeys = new Set<string>();
+const pendingStartupReconcileRefreshTimers = new Map<
+  string,
+  Array<ReturnType<typeof setTimeout>>
+>();
+
+export function shouldContinueConnectionsCloudLinkRetry(
+  elapsedMs: number,
+  managedTunnelActive: boolean,
+): boolean {
+  return !managedTunnelActive && elapsedMs < CONNECTIONS_CLOUD_LINK_RETRY_BUDGET_MS;
+}
 
 export function scheduleStartupReconcileLinkStateRefresh(
   target: CloudLinkTarget | null,
@@ -75,13 +89,40 @@ export function scheduleStartupReconcileLinkStateRefresh(
     return false;
   }
   scheduledStartupReconcileRefreshKeys.add(key);
-  setTimeout(() => {
-    refresh(target);
-  }, STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS);
+  pendingStartupReconcileRefreshTimers.set(
+    key,
+    STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS.map((delayMs) =>
+      setTimeout(() => {
+        refresh(target);
+      }, delayMs),
+    ),
+  );
   return true;
 }
 
+export function stopStartupReconcileLinkStateRefresh(target: CloudLinkTarget | null): void {
+  if (!target) {
+    return;
+  }
+  const key = targetKey(target);
+  scheduledStartupReconcileRefreshKeys.add(key);
+  const timers = pendingStartupReconcileRefreshTimers.get(key);
+  if (!timers) {
+    return;
+  }
+  for (const timer of timers) {
+    clearTimeout(timer);
+  }
+  pendingStartupReconcileRefreshTimers.delete(key);
+}
+
 export function __resetStartupCloudLinkRefreshForTests(): void {
+  for (const timers of pendingStartupReconcileRefreshTimers.values()) {
+    for (const timer of timers) {
+      clearTimeout(timer);
+    }
+  }
+  pendingStartupReconcileRefreshTimers.clear();
   scheduledStartupReconcileRefreshKeys.clear();
 }
 
@@ -107,12 +148,21 @@ export function usePrimaryCloudLinkState() {
     refreshPrimaryCloudLinkState(target);
   }, [target]);
   const settled = result._tag === "Success" || result._tag === "Failure";
+  const data = Option.getOrNull(AsyncResult.value(result));
+  const managedTunnelActive = resolveManagedTunnelActive(data);
   useEffect(() => {
+    if (!target) {
+      return;
+    }
+    if (managedTunnelActive) {
+      stopStartupReconcileLinkStateRefresh(target);
+      return;
+    }
     if (!settled) {
       return;
     }
     scheduleStartupReconcileLinkStateRefresh(target);
-  }, [settled, target]);
+  }, [managedTunnelActive, settled, target]);
   let error: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
@@ -120,7 +170,7 @@ export function usePrimaryCloudLinkState() {
   }
 
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
+    data,
     error,
     isPending: result.waiting,
     refresh,

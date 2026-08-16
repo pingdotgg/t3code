@@ -104,6 +104,10 @@ import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
 } from "~/versionSkew";
+import {
+  CONNECTIONS_CLOUD_LINK_RETRY_INTERVAL_MS,
+  shouldContinueConnectionsCloudLinkRetry,
+} from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
@@ -1601,10 +1605,28 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     reconcileCloudState,
   } = useCloudLinkController();
   // Opening Connections can race startup reconcile: the shared SWR atom may
-  // still hold managedTunnelActive: false from a pre-reconcile read.
+  // still hold managedTunnelActive: false from a pre-reconcile read. Refresh
+  // on open, then retry on a short budget while this page stays mounted.
   useEffect(() => {
     primaryCloudLinkState.refresh();
   }, [primaryCloudLinkState.refresh]);
+  useEffect(() => {
+    if (managedTunnelActive) {
+      return;
+    }
+    const startedAt = Date.now();
+    const intervalId = window.setInterval(() => {
+      const elapsedMs = Date.now() - startedAt;
+      if (!shouldContinueConnectionsCloudLinkRetry(elapsedMs, managedTunnelActive)) {
+        window.clearInterval(intervalId);
+        return;
+      }
+      primaryCloudLinkState.refresh();
+    }, CONNECTIONS_CLOUD_LINK_RETRY_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [managedTunnelActive, primaryCloudLinkState.refresh]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 

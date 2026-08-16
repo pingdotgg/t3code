@@ -16,3 +16,32 @@ export type ConnectOnboardingOptOutState = typeof ConnectOnboardingOptOutSchema.
 export const EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE: ConnectOnboardingOptOutState = {
   optOutAccounts: [],
 };
+
+export function shouldSyncOnboardingToggleFromLinkState(input: {
+  readonly touched: boolean;
+  readonly openForAccount: string | null;
+  readonly linked: boolean;
+  readonly cloudUserId: string | null;
+}): boolean {
+  return (
+    !input.touched &&
+    input.openForAccount !== null &&
+    input.linked &&
+    input.cloudUserId === input.openForAccount
+  );
+}
+
+// The wizard only ever enables. A stale prefill of expose=false after
+// startup reconcile must not submit publish_only and tear the tunnel down.
+export function resolveOnboardingReconcileDesired(input: {
+  readonly exposeEnvironment: boolean;
+  readonly publishAgentActivity: boolean;
+  readonly managedTunnelActive: boolean;
+}): { readonly managedTunnel: boolean; readonly publish: boolean } | null {
+  const managedTunnel = input.exposeEnvironment || input.managedTunnelActive;
+  const publish = input.publishAgentActivity;
+  if (!managedTunnel && !publish) {
+    return null;
+  }
+  return { managedTunnel, publish };
+}

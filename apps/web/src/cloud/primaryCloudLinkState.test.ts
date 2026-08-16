@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { CloudLinkTarget } from "./linkEnvironment";
 import {
   __resetStartupCloudLinkRefreshForTests,
+  CONNECTIONS_CLOUD_LINK_RETRY_BUDGET_MS,
   resolveManagedTunnelActive,
   scheduleStartupReconcileLinkStateRefresh,
-  STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS,
+  shouldContinueConnectionsCloudLinkRetry,
+  STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS,
+  stopStartupReconcileLinkStateRefresh,
 } from "./primaryCloudLinkState";
 
 const TARGET: CloudLinkTarget = {
@@ -31,6 +34,22 @@ describe("resolveManagedTunnelActive", () => {
   });
 });
 
+describe("shouldContinueConnectionsCloudLinkRetry", () => {
+  it("stops once the managed tunnel is active", () => {
+    expect(shouldContinueConnectionsCloudLinkRetry(0, true)).toBe(false);
+  });
+
+  it("retries while inactive inside the budget and stops after it", () => {
+    expect(shouldContinueConnectionsCloudLinkRetry(0, false)).toBe(true);
+    expect(
+      shouldContinueConnectionsCloudLinkRetry(CONNECTIONS_CLOUD_LINK_RETRY_BUDGET_MS - 1, false),
+    ).toBe(true);
+    expect(
+      shouldContinueConnectionsCloudLinkRetry(CONNECTIONS_CLOUD_LINK_RETRY_BUDGET_MS, false),
+    ).toBe(false);
+  });
+});
+
 describe("scheduleStartupReconcileLinkStateRefresh", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -42,33 +61,62 @@ describe("scheduleStartupReconcileLinkStateRefresh", () => {
     __resetStartupCloudLinkRefreshForTests();
   });
 
-  it("replaces a startup-stale inactive switch after the follow-up refresh", () => {
+  it("replaces a startup-stale inactive switch across the bounded refresh series", () => {
     let state: { linked: boolean; managedTunnelActive?: boolean } = {
       linked: true,
       managedTunnelActive: false,
     };
     const refresh = vi.fn(() => {
-      state = { linked: true, managedTunnelActive: true };
+      if (refresh.mock.calls.length >= 2) {
+        state = { linked: true, managedTunnelActive: true };
+      }
     });
 
     expect(resolveManagedTunnelActive(state)).toBe(false);
     expect(scheduleStartupReconcileLinkStateRefresh(TARGET, refresh)).toBe(true);
     expect(scheduleStartupReconcileLinkStateRefresh(TARGET, refresh)).toBe(false);
 
-    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS - 1);
+    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[0] - 1);
     expect(refresh).not.toHaveBeenCalled();
     expect(resolveManagedTunnelActive(state)).toBe(false);
 
     vi.advanceTimersByTime(1);
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(refresh).toHaveBeenCalledWith(TARGET);
+    expect(resolveManagedTunnelActive(state)).toBe(false);
+
+    vi.advanceTimersByTime(
+      STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[1] -
+        STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[0],
+    );
+    expect(refresh).toHaveBeenCalledTimes(2);
     expect(resolveManagedTunnelActive(state)).toBe(true);
+
+    vi.advanceTimersByTime(
+      STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[2] -
+        STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[1],
+    );
+    expect(refresh).toHaveBeenCalledTimes(3);
+    expect(refresh).toHaveBeenNthCalledWith(1, TARGET);
+    expect(refresh).toHaveBeenNthCalledWith(2, TARGET);
+    expect(refresh).toHaveBeenNthCalledWith(3, TARGET);
+  });
+
+  it("cancels remaining startup refreshes once the tunnel is active", () => {
+    const refresh = vi.fn();
+    expect(scheduleStartupReconcileLinkStateRefresh(TARGET, refresh)).toBe(true);
+
+    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[0]);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    stopStartupReconcileLinkStateRefresh(TARGET);
+    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[2]);
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("does not schedule without a target", () => {
     const refresh = vi.fn();
     expect(scheduleStartupReconcileLinkStateRefresh(null, refresh)).toBe(false);
-    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS);
+    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[2]);
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -79,7 +127,7 @@ describe("scheduleStartupReconcileLinkStateRefresh", () => {
     expect(scheduleStartupReconcileLinkStateRefresh(TARGET, refresh)).toBe(true);
     expect(scheduleStartupReconcileLinkStateRefresh(otherTarget, refresh)).toBe(true);
 
-    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_MS);
+    vi.advanceTimersByTime(STARTUP_CLOUD_LINK_RECONCILE_REFRESH_DELAYS_MS[0]);
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(refresh).toHaveBeenNthCalledWith(1, TARGET);
     expect(refresh).toHaveBeenNthCalledWith(2, otherTarget);
