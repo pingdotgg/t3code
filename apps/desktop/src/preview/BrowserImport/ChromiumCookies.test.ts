@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - Encrypts fixtures with the same
+// OSCrypt primitives the module under test decrypts.
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
 
