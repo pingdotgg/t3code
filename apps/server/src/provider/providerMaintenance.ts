@@ -137,7 +137,17 @@ function makeNpmGlobalProviderMaintenanceCapabilities(
     provider: definition.provider,
     packageName: definition.npmPackageName,
     updateExecutable: "npm",
-    updateArgs: ["install", "-g", `${definition.npmPackageName}@latest`],
+    // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
+    // and still exits 0, so a package whose postinstall finishes the install
+    // (claude copies its native binary over a placeholder stub) is left broken
+    // while the update reports success. Allow this one package's scripts.
+    // Older npm warns about the unknown config and continues.
+    updateArgs: [
+      "install",
+      "-g",
+      `--allow-scripts=${definition.npmPackageName}`,
+      `${definition.npmPackageName}@latest`,
+    ],
     updateLockKey: "npm-global",
   });
 }
