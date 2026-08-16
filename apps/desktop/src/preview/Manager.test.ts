@@ -410,7 +410,7 @@ describe("PreviewManager", () => {
           available: false,
           visible: true,
           tabId: "tab_failed",
-          url: "chrome-error://chromewebdata/",
+          url: "http://localhost:5173/",
           title: "ERR_CONNECTION_REFUSED",
           loading: false,
         });

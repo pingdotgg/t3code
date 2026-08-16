@@ -2862,12 +2862,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       };
     }
     if (tab.navStatus.kind === "LoadFailed") {
-      const guestUrl = wc.getURL() || null;
       return {
         available: false,
         visible: true,
         tabId,
-        url: guestUrl?.startsWith("chrome-error:") ? guestUrl : tab.navStatus.url,
+        url: tab.navStatus.url,
         title: tab.navStatus.description || wc.getTitle() || tab.navStatus.title,
         loading: false,
       };

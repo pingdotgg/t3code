@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  applyPreviewLoadFailureToAutomationStatus,
-  isChromeErrorPreviewUrl,
-} from "./previewAutomationStatus";
+import { applyPreviewLoadFailureToAutomationStatus } from "./previewAutomationStatus";
 
 const healthy = {
   available: true,
@@ -15,12 +12,6 @@ const healthy = {
 } as const;
 
 describe("previewAutomationStatus", () => {
-  it("detects chromium error interstitial URLs", () => {
-    expect(isChromeErrorPreviewUrl("chrome-error://chromewebdata/")).toBe(true);
-    expect(isChromeErrorPreviewUrl("http://localhost:5173/")).toBe(false);
-    expect(isChromeErrorPreviewUrl(null)).toBe(false);
-  });
-
   it("leaves a successful navigation unchanged", () => {
     expect(
       applyPreviewLoadFailureToAutomationStatus(healthy, {
@@ -47,7 +38,7 @@ describe("previewAutomationStatus", () => {
     });
   });
 
-  it("prefers the chrome-error interstitial when the guest already landed there", () => {
+  it("keeps the requested URL when the guest landed on a chrome-error interstitial", () => {
     expect(
       applyPreviewLoadFailureToAutomationStatus(
         { ...healthy, url: "chrome-error://chromewebdata/" },
@@ -62,7 +53,7 @@ describe("previewAutomationStatus", () => {
     ).toEqual({
       ...healthy,
       available: false,
-      url: "chrome-error://chromewebdata/",
+      url: "http://localhost:5173/",
       title: "ERR_NAME_NOT_RESOLVED",
     });
   });
