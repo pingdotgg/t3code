@@ -95,9 +95,9 @@ describe("buildHeaderControlsContextMenuItems", () => {
       git: true,
     });
     expect(items).toEqual([
-      { id: "scripts", label: "✓ Action scripts" },
-      { id: "openIn", label: "✓ Open in editor" },
-      { id: "git", label: "✓ Git source control" },
+      { id: "scripts", label: "✓\u00A0Action scripts" },
+      { id: "openIn", label: "✓\u00A0Open in editor" },
+      { id: "git", label: "✓\u00A0Git source control" },
     ]);
   });
 
@@ -108,9 +108,9 @@ describe("buildHeaderControlsContextMenuItems", () => {
       git: false,
     });
     expect(items).toEqual([
-      { id: "scripts", label: "   Action scripts" },
-      { id: "openIn", label: "✓ Open in editor" },
-      { id: "git", label: "   Git source control" },
+      { id: "scripts", label: "\u00A0\u00A0Action scripts" },
+      { id: "openIn", label: "✓\u00A0Open in editor" },
+      { id: "git", label: "\u00A0\u00A0Git source control" },
     ]);
   });
 });

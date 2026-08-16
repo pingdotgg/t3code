@@ -97,15 +97,15 @@ export function buildHeaderControlsContextMenuItems(
   return [
     {
       id: "scripts",
-      label: `${visibility.scripts ? "✓ " : "   "}Action scripts`,
+      label: `${visibility.scripts ? "✓\u00A0" : "\u00A0\u00A0"}Action scripts`,
     },
     {
       id: "openIn",
-      label: `${visibility.openIn ? "✓ " : "   "}Open in editor`,
+      label: `${visibility.openIn ? "✓\u00A0" : "\u00A0\u00A0"}Open in editor`,
     },
     {
       id: "git",
-      label: `${visibility.git ? "✓ " : "   "}Git source control`,
+      label: `${visibility.git ? "✓\u00A0" : "\u00A0\u00A0"}Git source control`,
     },
   ];
 }
@@ -246,22 +246,13 @@ export const ChatHeader = memo(function ChatHeader({
 
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
-      const isActionsArea = Boolean(
-        (event.target as HTMLElement).closest("[data-chat-header-actions]"),
-      );
-      if (isActionsArea) {
+      if ((event.target as HTMLElement).closest("[data-chat-header-actions]")) {
         void handleHeaderActionsContextMenu(event);
         return;
       }
-      const isTitleArea = Boolean(
-        (event.target as HTMLElement).closest("[data-thread-title-anchor]"),
-      );
-      if (isServerThread && renamingTitle === null && isTitleArea) {
-        event.preventDefault();
-        openMenu({ x: event.clientX, y: event.clientY });
-        return;
-      }
-      void handleHeaderActionsContextMenu(event);
+      if (!isServerThread || renamingTitle !== null) return;
+      event.preventDefault();
+      openMenu({ x: event.clientX, y: event.clientY });
     },
     [handleHeaderActionsContextMenu, isServerThread, openMenu, renamingTitle],
   );
@@ -386,13 +377,15 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {visibility.openIn && showOpenInPicker && (
-          <OpenInPicker
-            environmentId={activeThreadEnvironmentId}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
+        {showOpenInPicker && (
+          <div className={cn(!visibility.openIn && "hidden")}>
+            <OpenInPicker
+              environmentId={activeThreadEnvironmentId}
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              openInCwd={openInCwd}
+            />
+          </div>
         )}
         {visibility.git && activeProjectName && (
           <GitActionsControl
