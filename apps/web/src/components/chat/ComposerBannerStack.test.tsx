@@ -49,12 +49,13 @@ describe("ComposerBannerStack", () => {
     const markup = renderToStaticMarkup(<ComposerBannerStack items={[banner("front")]} />);
 
     expect(markup).not.toContain("data-composer-banner-stack-expanded-items");
-    expect(markup).toContain("alert-glass");
+    expect(markup).toContain("chat-composer-drawer-surface");
+    expect(markup).toContain("chat-composer-drawer-attached");
+    expect(markup).toContain('data-composer-banner-drawer="true"');
     expect(markup).toContain('data-variant="warning"');
     expect(markup).toContain("transform:none");
     expect(markup).not.toContain("will-change:transform");
   });
-
   it("applies item-specific surface and action layout classes", () => {
     const markup = renderToStaticMarkup(
       <ComposerBannerStack

@@ -4,7 +4,7 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 
 /**
- * Bookmark pill perched on the composer's top-right shoulder. Shows the
+ * Bookmark tab tucked behind the composer's top-right shoulder. Shows the
  * stash count and doubles as the click target for opening the stash menu.
  *
  * On save the badge gives one quiet acknowledgement: it lifts to full
@@ -13,9 +13,9 @@ import { cn } from "~/lib/utils";
  */
 export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
+  menuOpen: boolean;
   pulseKey: number;
   pulsing: boolean;
-  menuOpen: boolean;
   onToggleMenu: () => void;
 }) {
   if (props.count === 0) return null;
@@ -27,11 +27,10 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       aria-label={`Stashed prompts: ${props.count}. Open stash.`}
       aria-expanded={props.menuOpen}
       className={cn(
-        "absolute -top-3 right-4 z-10 inline-flex cursor-pointer items-center gap-1.5 rounded-full border bg-popover px-2.5 py-0.5 text-xs shadow-sm",
-        "transition-[color,border-color,opacity] duration-200",
-        props.menuOpen || props.pulsing
-          ? "border-border text-foreground opacity-100"
-          : "border-border/70 text-muted-foreground opacity-70 hover:opacity-100 hover:text-foreground",
+        "chat-composer-stash-tab absolute -top-7 right-4 z-0 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-t-xl border border-b-0 px-3 pb-1 text-xs leading-none",
+        "transition-[color,border-color] duration-200",
+        props.menuOpen && "pointer-events-none",
+        props.pulsing ? "text-foreground" : "text-muted-foreground hover:text-foreground",
       )}
       onPointerDown={(event) => {
         // Keep composer focus so Escape/typing flows stay intact.
@@ -39,15 +38,15 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       }}
       onClick={props.onToggleMenu}
     >
-      <BookmarkIcon className="size-3" aria-hidden="true" />
+      <BookmarkIcon className="size-3 shrink-0" aria-hidden="true" />
       Stash
       <span
         key={props.pulseKey}
         className={cn(
-          "rounded-full px-1.5 text-[10px] font-medium tabular-nums",
+          "text-[10px] font-medium leading-none tabular-nums",
           props.pulsing
-            ? "animate-[prompt-stash-count-enter_180ms_ease-out_both] bg-primary text-primary-foreground motion-reduce:animate-none"
-            : "bg-muted text-muted-foreground",
+            ? "animate-[prompt-stash-count-enter_180ms_ease-out_both] text-primary motion-reduce:animate-none"
+            : "text-muted-foreground",
         )}
       >
         {props.count}
