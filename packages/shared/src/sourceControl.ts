@@ -133,11 +133,41 @@ export function getChangeRequestTerminologyForKind(
   };
 }
 
-const SCP_SSH_REMOTE_PATTERN = /^[a-zA-Z0-9._-]+@([^:/]+):/;
+const SCP_SSH_REMOTE_PATTERN = /^([a-zA-Z0-9._-]+)@([^:/]+):(.*)$/;
 
 export function isSshRemoteUrl(remoteUrl: string): boolean {
   const trimmed = remoteUrl.trim();
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
+}
+
+/**
+ * Rewrites the host of an SCP-like or `ssh://` remote. HTTPS remotes are left
+ * unchanged so API/browser host mapping can reuse the git URL without touching
+ * clone auth.
+ */
+export function rewriteGitRemoteUrlHost(remoteUrl: string, canonicalHostname: string): string {
+  const trimmed = remoteUrl.trim();
+  const hostname = canonicalHostname.trim().toLowerCase();
+  if (trimmed.length === 0 || hostname.length === 0) {
+    return remoteUrl;
+  }
+
+  const scpMatch = SCP_SSH_REMOTE_PATTERN.exec(trimmed);
+  if (scpMatch?.[1] !== undefined && scpMatch[2] !== undefined && scpMatch[3] !== undefined) {
+    return `${scpMatch[1]}@${hostname}:${scpMatch[3]}`;
+  }
+
+  if (trimmed.toLowerCase().startsWith("ssh://")) {
+    try {
+      const url = new URL(trimmed);
+      url.hostname = hostname;
+      return url.toString();
+    } catch {
+      return remoteUrl;
+    }
+  }
+
+  return remoteUrl;
 }
 
 function parseRemoteHost(remoteUrl: string): string | null {
@@ -147,8 +177,8 @@ function parseRemoteHost(remoteUrl: string): string | null {
   }
 
   const scpMatch = SCP_SSH_REMOTE_PATTERN.exec(trimmed);
-  if (scpMatch?.[1]) {
-    return scpMatch[1].toLowerCase();
+  if (scpMatch?.[2]) {
+    return scpMatch[2].toLowerCase();
   }
 
   try {
@@ -174,12 +204,19 @@ function hasDnsLabel(host: string, label: string): boolean {
   return host.split(".").includes(label);
 }
 
+function isPublicOrDottedLabelHost(host: string, publicHost: string, label: string): boolean {
+  // Undotted SSH aliases (`github-personal`, `gitlab-work`) share a substring
+  // with the public host but are not enterprise installs. Require a real
+  // hostname (a dot) before treating a label match as self-hosted.
+  return host === publicHost || (host.includes(".") && hasDnsLabel(host, label));
+}
+
 function isGitHubHost(host: string): boolean {
-  return host === "github.com" || hasDnsLabel(host, "github");
+  return isPublicOrDottedLabelHost(host, "github.com", "github");
 }
 
 function isGitLabHost(host: string): boolean {
-  return host === "gitlab.com" || hasDnsLabel(host, "gitlab");
+  return isPublicOrDottedLabelHost(host, "gitlab.com", "gitlab");
 }
 
 function isAzureDevOpsHost(host: string): boolean {
@@ -195,7 +232,7 @@ function isAzureDevOpsHost(host: string): boolean {
 }
 
 function isBitbucketHost(host: string): boolean {
-  return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
+  return isPublicOrDottedLabelHost(host, "bitbucket.org", "bitbucket");
 }
 
 export function detectSourceControlProviderFromRemoteUrl(

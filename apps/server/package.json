@@ -39,6 +39,7 @@
     "@effect/vitest": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "@t3tools/web": "workspace:*",
     "@types/bun": "1.3.14",

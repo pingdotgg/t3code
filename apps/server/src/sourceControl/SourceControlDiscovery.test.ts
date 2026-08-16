@@ -23,6 +23,7 @@ const sourceControlProviderRegistryTestLayer = (input: {
   SourceControlProviderRegistry.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeServices.layer,
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),

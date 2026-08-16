@@ -21,6 +21,10 @@ import {
   refineUnknownRemoteProvider,
   type SourceControlProviderDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
+import {
+  resolveGitRemoteForSourceControl,
+  type ResolveGitRemoteServices,
+} from "./resolveGitRemoteForSourceControl.ts";
 import { ServerConfig } from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -128,11 +132,12 @@ function selectProviderContext(
   remotes: ReadonlyArray<{
     readonly name: string;
     readonly url: string;
+    readonly detectionUrl: string;
   }>,
 ): SourceControlProvider.SourceControlProviderContext | null {
   const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
   for (const remote of remotes) {
-    const provider = detectSourceControlProviderFromRemoteUrl(remote.url);
+    const provider = detectSourceControlProviderFromRemoteUrl(remote.detectionUrl);
     if (provider) {
       candidates.push({
         provider,
@@ -199,6 +204,9 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const config = yield* ServerConfig;
     const process = yield* VcsProcess.VcsProcess;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
+    const sshContext = yield* Effect.context<ResolveGitRemoteServices>();
+    const resolveDetectionUrl = (remoteUrl: string) =>
+      resolveGitRemoteForSourceControl(remoteUrl).pipe(Effect.provideContext(sshContext));
     const providers = new Map<
       SourceControlProviderKind,
       SourceControlProvider.SourceControlProvider["Service"]
@@ -234,7 +242,19 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        const context = selectProviderContext(remotes.remotes);
+        const remotesForDetection = yield* Effect.forEach(
+          remotes.remotes,
+          (remote) =>
+            resolveDetectionUrl(remote.url).pipe(
+              Effect.map((detectionUrl) => ({
+                name: remote.name,
+                url: remote.url,
+                detectionUrl,
+              })),
+            ),
+          { concurrency: "unbounded" },
+        );
+        const context = selectProviderContext(remotesForDetection);
 
         return yield* refineUnknownRemoteProvider({
           specs: discoverySpecs,

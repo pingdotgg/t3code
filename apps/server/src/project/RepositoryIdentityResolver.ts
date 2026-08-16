@@ -3,6 +3,7 @@ import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
 } from "@t3tools/shared/git";
+import { parseSshResolveOutput } from "@t3tools/ssh/command";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -11,6 +12,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { resolveGitRemoteForSourceControl } from "../sourceControl/resolveGitRemoteForSourceControl.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
@@ -60,13 +62,39 @@ function pickPrimaryRemote(
   return remoteName && remoteUrl ? { remoteName, remoteUrl } : null;
 }
 
+// This layer is provided in many tests without NodeServices. Resolve HostName
+// through ProcessRunner so SSH Effect services do not leak onto the service.
+function resolveSshHostnameWithProcessRunner(
+  processRunner: ProcessRunner.ProcessRunner["Service"],
+): (alias: string) => Effect.Effect<string | null> {
+  return (alias) =>
+    processRunner
+      .run({
+        command: "ssh",
+        args: ["-G", alias],
+        timeout: Duration.seconds(5),
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.map((result) => {
+          if (result.timedOut || result.code !== 0) {
+            return null;
+          }
+          const hostname = parseSshResolveOutput(alias, result.stdout).hostname.trim();
+          return hostname.length > 0 ? hostname : null;
+        }),
+        Effect.orElseSucceed(() => null),
+      );
+}
+
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
+  readonly detectionUrl: string;
   readonly rootPath: string;
 }): RepositoryIdentity {
-  const canonicalKey = normalizeGitRemoteUrl(input.remoteUrl);
-  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(input.remoteUrl);
+  const canonicalKey = normalizeGitRemoteUrl(input.detectionUrl);
+  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(input.detectionUrl);
   const repositoryPath = canonicalKey.split("/").slice(1).join("/");
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
@@ -118,6 +146,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: string,
+  resolveDetectionUrl: (remoteUrl: string) => Effect.Effect<string>,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const remoteResult = yield* processRunner
@@ -132,17 +161,24 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   }
 
   const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
-  return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
+  if (!remote) {
+    return null;
+  }
+
+  const detectionUrl = yield* resolveDetectionUrl(remote.remoteUrl);
+  return buildRepositoryIdentity({ ...remote, detectionUrl, rootPath: cacheKey });
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const resolveDetectionUrl = (remoteUrl: string) =>
+    resolveGitRemoteForSourceControl(remoteUrl, resolveSshHostnameWithProcessRunner(processRunner));
 
   const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
     (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
+      resolveRepositoryIdentityFromCacheKey(cacheKey, resolveDetectionUrl).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     {
