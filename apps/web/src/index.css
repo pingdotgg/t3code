@@ -1598,6 +1598,11 @@ code {
 .chat-markdown blockquote,
 .chat-markdown pre,
 .chat-markdown .chat-markdown-table-container {
+  /* The whole container, not just the table: the scroller is the ScrollArea viewport inside it,
+     and an inherited right-to-left direction would open it on its last column and flip its
+     overflow fades. Column order is meaning here, so it doesn't mirror. Cells keep their own
+     dir="auto", so the text in each still reads its own way round. */
+  direction: ltr;
   margin: 0.65rem 0;
 }
 
@@ -1633,6 +1638,14 @@ code {
 
 .chat-markdown h6 {
   color: var(--muted-foreground);
+}
+
+/* The gutter rules below read the list box as left-to-right, and nothing else would keep it
+   that way: a list nested in an Arabic item or quote inherits its direction, which would swap
+   the gutter to the side the markers aren't on. Items carry their own dir and are unaffected. */
+.chat-markdown ul,
+.chat-markdown ol {
+  direction: ltr;
 }
 
 .chat-markdown ul {
@@ -1750,6 +1763,11 @@ code {
 }
 
 .chat-markdown :not(pre) > code {
+  /* Isolated, not just pinned: inside a right-to-left paragraph the bidi algorithm reorders the
+     neutrals bounding a Latin run with the text around it, so `--flag` reads `flag--` and
+     `foo()` reads `()foo`. Isolation keeps the span a run of its own; ltr is its source order. */
+  direction: ltr;
+  unicode-bidi: isolate;
   border: 1px solid var(--border);
   border-radius: 0.375rem;
   background: var(--muted);
@@ -1770,7 +1788,7 @@ code {
 }
 
 .chat-markdown pre {
-  /* Same as the table: code reads in source order, whatever direction the block around it took. */
+  /* Code reads in source order, whatever direction the block around it resolved to. */
   direction: ltr;
   max-width: 100%;
   overflow-x: auto;
@@ -1833,10 +1851,6 @@ code {
    characters and defeat the overflow — restore word-boundary wrapping so the
    min column width is the longest word. */
 .chat-markdown table {
-  /* Left untagged on purpose, but an Arabic list item or quote around it would still hand it a
-     right-to-left direction to inherit, and column order is meaning here rather than presentation.
-     Cells keep dir="auto", so the text inside each still reads its own way round. */
-  direction: ltr;
   width: 100%;
   min-width: max-content;
   border-collapse: collapse;

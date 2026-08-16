@@ -90,8 +90,8 @@ function holdsRightToLeftItem(list: HastNode): boolean {
 
 export function rehypeAutoTextDirection() {
   return (tree: HastNode) => {
-    const visit = (node: HastNode, insideTaggedBlock: boolean) => {
-      const tag = !insideTaggedBlock && isAutoDirectionBlock(node);
+    const visit = (node: HastNode, taggedAncestor: string | undefined) => {
+      const tag = taggedAncestor === undefined && isAutoDirectionBlock(node);
       if (tag) {
         node.properties = { ...node.properties, dir: "auto" };
       }
@@ -99,12 +99,14 @@ export function rehypeAutoTextDirection() {
       if (isList && holdsRightToLeftItem(node)) {
         node.properties = { ...node.properties, dataRtlItem: "" };
       }
-      // A list is a container, not a text block, so its items start the outermost-only rule over:
-      // an English item nested under an Arabic one still reads its own way round. The item above
-      // it keeps a direction of its own — the auto algorithm reads the text it holds directly,
-      // which a nested list never was.
-      node.children?.forEach((child) => visit(child, !isList && (insideTaggedBlock || tag)));
+      // A list under an item starts the outermost-only rule over, so an English item nested under
+      // an Arabic one still reads its own way round: the item above it keeps its own line for
+      // `auto` to read. A list under a quote does not get that — a quote's whole content can be
+      // the list, and tagging the items would leave the rail nothing to read and pin it left.
+      const childAncestor =
+        isList && taggedAncestor === "li" ? undefined : tag ? node.tagName : taggedAncestor;
+      node.children?.forEach((child) => visit(child, childAncestor));
     };
-    visit(tree, false);
+    visit(tree, undefined);
   };
 }

@@ -55,6 +55,14 @@ Hello world
     expect(html).toContain('<li dir="auto">English child</li>');
   });
 
+  it("keeps a list-only quote's items untagged, so the rail still has text to read", () => {
+    const html = renderMarkdown(`> - عنصر
+> - عنصر آخر`);
+
+    expect(html).toContain('<blockquote dir="auto">');
+    expect(html).not.toContain("<li dir=");
+  });
+
   it("marks only the lists that hold a right-to-left item, so the marker has a gutter", () => {
     expect(renderMarkdown("- عنصر\n- item")).toContain('<ul data-rtl-item="">');
     expect(renderMarkdown("1. عنصر")).toContain('<ol data-rtl-item="">');
