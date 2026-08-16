@@ -29,6 +29,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { retainClaudeSlashCommands } from "./ClaudeSlashCommands.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
   checkClaudeProviderStatus,
@@ -173,15 +174,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       ).pipe(
         Effect.flatMap((snapshot) =>
           Effect.gen(function* () {
-            if (snapshot.slashCommands.length > 0) {
-              yield* Ref.set(lastGoodSlashCommands, snapshot.slashCommands);
-              return snapshot;
-            }
             const previous = yield* Ref.get(lastGoodSlashCommands);
-            if (previous.length === 0) {
-              return snapshot;
+            const slashCommands = retainClaudeSlashCommands(snapshot.slashCommands, previous);
+            if (slashCommands.length > 0) {
+              yield* Ref.set(lastGoodSlashCommands, slashCommands);
             }
-            return { ...snapshot, slashCommands: previous };
+            return slashCommands === snapshot.slashCommands
+              ? snapshot
+              : { ...snapshot, slashCommands };
           }),
         ),
         Effect.map(stampIdentity),
