@@ -68,7 +68,13 @@ interface RightPanelTabsProps {
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
-  onAddBrowser: (profileId?: string) => void;
+  onAddBrowser: () => void;
+  /**
+   * Separate from `onAddBrowser` on purpose: that one is passed directly as a
+   * DOM click handler, and a `(profileId?: string)` signature would silently
+   * accept the MouseEvent as a profile id.
+   */
+  onAddBrowserInProfile: (profileId: string) => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -526,6 +532,9 @@ function SurfaceIcon({
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
+  // Controlled so the submenu trigger's own action can dismiss the menu; a
+  // submenu trigger does not close it the way a plain item does.
+  const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
 
@@ -691,7 +700,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               );
             })}
             {props.surfaces.length > 0 ? (
-              <Menu>
+              <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
                 <MenuTrigger
                   render={
                     <Button
@@ -705,34 +714,45 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   <Plus className="size-3.5" />
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
-                  <SurfaceMenuItem
-                    available={props.browserAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.browser}
-                    onClick={() => props.onAddBrowser()}
-                  >
-                    <Globe2 />
-                    Browser
-                  </SurfaceMenuItem>
                   {props.browserAvailable ? (
                     <MenuSub>
                       {/*
-                        A tab's profile is fixed at open — Electron only honours
-                        a partition before the guest attaches — so the choice
-                        belongs here rather than on an already-open tab.
+                        Clicking the trigger opens the default profile, so the
+                        common case stays one click and there is no second row;
+                        hover or arrow reveals the rest. The choice lives at
+                        open time because a tab's profile is fixed then —
+                        Electron only honours a partition before attach.
                       */}
-                      <MenuSubTrigger>
+                      <MenuSubTrigger
+                        onClick={() => {
+                          setAddSurfaceMenuOpen(false);
+                          props.onAddBrowser();
+                        }}
+                      >
                         <Globe2 />
-                        Browser in profile
+                        Browser
                       </MenuSubTrigger>
                       <MenuSubPopup className="min-w-40">
                         {browserProfiles.map((profile) => (
-                          <MenuItem key={profile.id} onClick={() => props.onAddBrowser(profile.id)}>
+                          <MenuItem
+                            key={profile.id}
+                            onClick={() => props.onAddBrowserInProfile(profile.id)}
+                          >
                             {profile.name}
                           </MenuItem>
                         ))}
                       </MenuSubPopup>
                     </MenuSub>
-                  ) : null}
+                  ) : (
+                    <SurfaceMenuItem
+                      available={false}
+                      disabledReason={SURFACE_DISABLED_REASONS.browser}
+                      onClick={props.onAddBrowser}
+                    >
+                      <Globe2 />
+                      Browser
+                    </SurfaceMenuItem>
+                  )}
                   <SurfaceMenuItem
                     available={props.terminalAvailable}
                     disabledReason={SURFACE_DISABLED_REASONS.terminal}

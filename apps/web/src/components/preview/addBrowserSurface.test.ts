@@ -37,6 +37,24 @@ beforeEach(() => {
 });
 
 describe("addBrowserSurface", () => {
+  it("opens under the requested profile", async () => {
+    const openPreview = vi.fn(async (_input: PreviewOpenInput) =>
+      AsyncResult.success(snapshot("tab-1")),
+    );
+
+    await addBrowserSurface({
+      threadRef,
+      openPreview: ({ input }) => openPreview(input),
+      profileId: "profile-work",
+    });
+
+    expect(openPreview).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      viewport: FILL_PREVIEW_VIEWPORT,
+      profileId: "profile-work",
+    });
+  });
+
   it("creates another preview session when a browser tab is already active", async () => {
     const first = snapshot("tab-1");
     const second = snapshot("tab-2");
