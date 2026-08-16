@@ -1446,18 +1446,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listAppearanceData = useMemo(
     () => ({
       copiedRowId,
+      editableMessageId: props.editableMessageId,
       expandedWorkRows,
       iconSubtleColor,
       markdownStyles,
+      onEditMessage: props.onEditMessage,
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
     }),
     [
       copiedRowId,
+      props.editableMessageId,
       expandedWorkRows,
       iconSubtleColor,
       markdownStyles,
+      props.onEditMessage,
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,

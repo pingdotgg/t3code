@@ -236,8 +236,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     readonly error: string | null;
     readonly saving: boolean;
   } | null>(null);
+  const selectedEnvironmentIdRef = useRef(props.environmentId);
+  selectedEnvironmentIdRef.current = props.environmentId;
+  const selectedThreadIdRef = useRef(props.selectedThread.id);
+  selectedThreadIdRef.current = props.selectedThread.id;
   const selectedThreadFeedRef = useRef(props.selectedThreadFeed);
   selectedThreadFeedRef.current = props.selectedThreadFeed;
+  useEffect(() => {
+    setMessageEdit(null);
+  }, [props.environmentId, props.selectedThread.id]);
   const beginMessageEdit = useCallback(
     (messageId: MessageId) => {
       if (messageId !== props.editableMessageId) return;
@@ -260,6 +267,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, []);
   const saveMessageEdit = useCallback(async () => {
     if (!messageEdit || messageEdit.saving) return;
+    const requestEnvironmentId = props.environmentId;
+    const requestThreadId = props.selectedThread.id;
+    const requestMessageId = messageEdit.messageId;
     const replacementText = replaceEditableUserText(messageEdit.sourceText, messageEdit.draft);
     setMessageEdit((current) => (current ? { ...current, error: null, saving: true } : null));
     const error = await props.onCorrectMessage({
@@ -267,12 +277,20 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       sourceText: messageEdit.sourceText,
       replacementText,
     });
-    if (error !== null) {
-      setMessageEdit((current) => (current ? { ...current, error, saving: false } : null));
+    if (
+      selectedEnvironmentIdRef.current !== requestEnvironmentId ||
+      selectedThreadIdRef.current !== requestThreadId
+    ) {
       return;
     }
-    setMessageEdit(null);
-  }, [messageEdit, props.onCorrectMessage]);
+    if (error !== null) {
+      setMessageEdit((current) =>
+        current?.messageId === requestMessageId ? { ...current, error, saving: false } : current,
+      );
+      return;
+    }
+    setMessageEdit((current) => (current?.messageId === requestMessageId ? null : current));
+  }, [messageEdit, props.environmentId, props.onCorrectMessage, props.selectedThread.id]);
   const editingMessageId = messageEdit?.messageId ?? null;
   const editingMessageSourceText = messageEdit?.sourceText ?? null;
   const editingMessageSaving = messageEdit?.saving ?? false;
@@ -287,6 +305,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         ? {
             ...current,
             sourceText: entry.message.text,
+            draft: splitEditableUserMessage(entry.message.text).editableText,
             error:
               "This message changed on another client. Review the latest wording and try again.",
           }

@@ -2897,15 +2897,17 @@ function ChatViewContent(props: ChatViewProps) {
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
   useEffect(() => {
+    setMessageEdit(null);
+    setOptimisticMessageCorrection(null);
+  }, [activeThreadKey]);
+  useEffect(() => {
     if (editingMessageId === null || editingMessageSaving || !activeThread) return;
     const currentTarget = activeThread.messages.find((message) => message.id === editingMessageId);
     if (!currentTarget || currentTarget.text === editingMessageSourceText) return;
-    setMessageEdit((current) =>
-      current?.messageId === currentTarget.id
-        ? { ...current, sourceText: currentTarget.text }
-        : current,
+    setMessageEdit((current) => (current?.messageId === currentTarget.id ? null : current));
+    setOptimisticMessageCorrection((current) =>
+      current?.messageId === currentTarget.id ? null : current,
     );
-    setOptimisticMessageCorrection(null);
     setThreadError(
       activeThread.id,
       "This message changed on another client. Review the latest wording and try again.",
@@ -3817,11 +3819,12 @@ function ChatViewContent(props: ChatViewProps) {
         (message) => message.id === messageEdit.messageId,
       );
       if (!currentTarget || currentTarget.text !== messageEdit.sourceText) {
-        if (currentTarget) {
-          setMessageEdit((current) =>
-            current ? { ...current, sourceText: currentTarget.text } : current,
-          );
-        }
+        setMessageEdit((current) =>
+          current?.messageId === messageEdit.messageId ? null : current,
+        );
+        setOptimisticMessageCorrection((current) =>
+          current?.messageId === messageEdit.messageId ? null : current,
+        );
         setThreadError(
           activeThread.id,
           "This message changed on another client. Review the latest wording and try again.",
@@ -3829,6 +3832,8 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      const requestThreadId = activeThread.id;
+      const requestMessageId = messageEdit.messageId;
       const createdAt = new Date().toISOString();
       const replacementText = replaceEditableUserText(currentTarget.text, draft);
       const eligibility = getThreadMessageCorrectionEligibility({
@@ -3881,13 +3886,24 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (failure._tag === "Failure") {
-        setOptimisticMessageCorrection(null);
-        setMessageEdit((current) => (current ? { ...current, saving: false } : null));
-        setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(failure)));
+        setOptimisticMessageCorrection((current) =>
+          current?.messageId === requestMessageId ? null : current,
+        );
+        setMessageEdit((current) =>
+          current?.messageId === requestMessageId ? { ...current, saving: false } : current,
+        );
+        if (latestActiveThreadRef.current?.id === requestThreadId) {
+          setThreadError(
+            requestThreadId,
+            chatActionErrorMessage(squashAtomCommandFailure(failure)),
+          );
+        }
         return;
       }
-      setThreadError(activeThread.id, null);
-      setMessageEdit(null);
+      if (latestActiveThreadRef.current?.id === requestThreadId) {
+        setThreadError(requestThreadId, null);
+      }
+      setMessageEdit((current) => (current?.messageId === requestMessageId ? null : current));
     },
     [
       activeEnvironmentUnavailable,

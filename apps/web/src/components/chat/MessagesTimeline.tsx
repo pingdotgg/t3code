@@ -1042,7 +1042,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <div
+        className={cn(
+          "relative rounded-2xl bg-message p-3 text-message-foreground",
+          isEditing ? "w-full max-w-full" : "max-w-[80%]",
+        )}
+      >
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
@@ -1139,7 +1144,7 @@ function InlineUserMessageEditor() {
   const edit = use(TimelineMessageEditCtx);
   const [draft, setDraft] = useState(edit.readEditingDraft);
   return (
-    <div className="min-w-[min(32rem,70vw)] space-y-2">
+    <div className="w-full space-y-2">
       <Textarea
         autoFocus
         aria-label="Edit message"
@@ -1156,7 +1161,6 @@ function InlineUserMessageEditor() {
             edit.onCancelMessageEdit();
           }
         }}
-        className="bg-background/80 text-message-foreground"
       />
       <div className="flex justify-end gap-1.5">
         <Button

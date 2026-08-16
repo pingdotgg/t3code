@@ -10,6 +10,8 @@ const CORRECTION_PROMPT_PREFIX =
 const T3_PROMPT_PREFIXES = ["Ultrathink:\n"] as const;
 const STRUCTURED_CONTEXT_BOUNDARY =
   /(?:^|\n\n)(?=<(?:terminal_context|element_context|preview_annotation|review_comment)(?:\s|>))/u;
+const LEADING_REVIEW_COMMENT_EDITABLE =
+  /^(<review_comment\b[^>]*>\s*)([\s\S]*?)(\n(`{3,})[^\n]*\n[\s\S]*?\n\4\n<\/review_comment>)([\s\S]*)$/u;
 
 export interface EditableUserMessageParts {
   readonly prefix: string;
@@ -20,6 +22,14 @@ export interface EditableUserMessageParts {
 export function splitEditableUserMessage(messageText: string): EditableUserMessageParts {
   const prefix = T3_PROMPT_PREFIXES.find((candidate) => messageText.startsWith(candidate)) ?? "";
   const withoutPrefix = messageText.slice(prefix.length);
+  const leadingReviewComment = LEADING_REVIEW_COMMENT_EDITABLE.exec(withoutPrefix);
+  if (leadingReviewComment !== null) {
+    return {
+      prefix: `${prefix}${leadingReviewComment[1] ?? ""}`,
+      editableText: leadingReviewComment[2] ?? "",
+      suffix: `${leadingReviewComment[3] ?? ""}${leadingReviewComment[5] ?? ""}`,
+    };
+  }
   const boundary = STRUCTURED_CONTEXT_BOUNDARY.exec(withoutPrefix);
   const suffixStart = boundary?.index ?? withoutPrefix.length;
   return {
@@ -172,6 +182,14 @@ export function deriveRevertTurnCountByUserMessageId(
   return result;
 }
 
+/**
+ * Blocked-on-you work is derived from retained activities because the decider
+ * read model does not carry the shell's pending-request flags. These clearing
+ * rules must match ProjectionPipeline's pending accounting: resolved requests
+ * always clear, while respond.failed clears only when the failure says the
+ * request is stale or unknown. Otherwise clients and the decider can disagree
+ * about whether a thread may be settled or snoozed.
+ */
 function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): boolean {
   const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
   if (detail === null) return false;
@@ -189,8 +207,10 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 export function threadHasOpenBlockingRequest(
   thread: Pick<OrchestrationThread, "activities">,
 ): boolean {
-  // The read model caps this stream at 500. An unresolved request blocks its
-  // turn, so it cannot scroll out while hundreds of later activities accrue.
+  // The projector caps activities at the most recent 500. That remains safe:
+  // an open request blocks its turn, so hundreds of later activities cannot
+  // accrue while it is outstanding. ProjectionPipeline reads the same capped
+  // stream, keeping its pending counts consistent with this predicate.
   const openRequestIds = new Set<string>();
   for (const activity of thread.activities) {
     const payload =
@@ -214,6 +234,17 @@ export function threadHasOpenBlockingRequest(
   return openRequestIds.size > 0;
 }
 
+/**
+ * A user message not yet adopted by a turn is work in flight even before a
+ * session exists. This mirrors the client's queued-turn predicate: adoption
+ * stamps latestTurn.requestedAt with the message time, while the grace window
+ * prevents historical or mid-turn messages from blocking forever. A failed
+ * session start clears the block immediately.
+ *
+ * The age check is bounded in both directions because message timestamps are
+ * client-supplied. A clock ahead of the server must not extend the grace window
+ * indefinitely.
+ */
 export function threadHasQueuedTurnStart(
   thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
   occurredAt: string,
@@ -236,8 +267,6 @@ export function threadHasQueuedTurnStart(
           ),
         );
   const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-  // Client timestamps can be ahead of the server. Bounding both directions
-  // prevents clock skew from extending this grace window indefinitely.
   return (
     thread.session?.status !== "error" &&
     Number.isFinite(latestUserMessageAtMs) &&

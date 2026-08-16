@@ -90,6 +90,21 @@ describe("editable user message text", () => {
       `Add an explanation.\n\n${contextOnly}`,
     );
   });
+
+  it("edits a leading review request while preserving its diff context", () => {
+    const opening = '<review_comment sectionId="file:a.ts" filePath="a.ts">\n';
+    const suffix = "\n```diff\n-old\n+new\n```\n</review_comment>";
+    const message = `${opening}Keep the old request.${suffix}`;
+
+    expect(splitEditableUserMessage(message)).toEqual({
+      prefix: opening,
+      editableText: "Keep the old request.",
+      suffix,
+    });
+    expect(replaceEditableUserText(message, "Use the corrected request.")).toBe(
+      `${opening}Use the corrected request.${suffix}`,
+    );
+  });
 });
 
 const environmentId = EnvironmentId.make("environment-local");

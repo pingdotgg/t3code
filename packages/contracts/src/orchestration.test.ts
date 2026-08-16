@@ -63,6 +63,7 @@ function getOptionValue(
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+const decodeOrchestrationMessages = Schema.decodeUnknownEffect(Schema.Array(OrchestrationMessage));
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
@@ -990,7 +991,7 @@ it.effect("decodes correction commands, events, and historical messages", () =>
     });
     assert.strictEqual(event.type, "thread.message-corrected");
 
-    const historical = yield* Schema.decodeUnknownEffect(Schema.Array(OrchestrationMessage))([
+    const historical = yield* decodeOrchestrationMessages([
       {
         id: "message-1",
         role: "user",
