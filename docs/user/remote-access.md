@@ -60,6 +60,8 @@ If the copied link points directly at `http://192.168.x.y:3773`, open it from a 
 
 In the mobile app's **Add Environment** form, a numeric IP address without a scheme uses HTTP. Include `https://` explicitly when the backend is served over HTTPS.
 
+You can save more than one address for the same environment. This is useful when a laptop has different LAN addresses at home and at work. Each address connects and retries independently in **Settings → Environments**, while the app transparently uses any connected address for the laptop's projects and threads.
+
 ### Tailscale Endpoints
 
 When the desktop app can detect Tailscale, it adds Tailnet endpoints to the reachable endpoint list.

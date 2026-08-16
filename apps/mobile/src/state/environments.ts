@@ -1,34 +1,19 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  connectionCatalogDisplayUrl,
-  type EnvironmentPresentation as BaseEnvironmentPresentation,
-} from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import {
+  projectEnvironmentConnections,
+  projectEnvironmentPresentation,
+  type EnvironmentConnectionPresentation,
+  type EnvironmentPresentation,
+} from "./environmentConnections";
 import { environmentPresentations } from "./presentation";
 import { useEnvironmentQuery } from "./query";
 
-export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly displayUrl: string | null;
-  readonly relayManaged: boolean;
-}
-
-export function projectEnvironmentPresentation(
-  environmentId: EnvironmentId,
-  presentation: BaseEnvironmentPresentation,
-): EnvironmentPresentation {
-  return {
-    ...presentation,
-    environmentId,
-    label: presentation.entry.target.label,
-    displayUrl: connectionCatalogDisplayUrl(presentation.entry),
-    relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
-  };
-}
+export type { EnvironmentConnectionPresentation, EnvironmentPresentation };
+export { projectEnvironmentPresentation };
 
 export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -49,6 +34,20 @@ export function useEnvironments() {
     environments,
     presentationById,
   };
+}
+
+export function useEnvironmentConnections() {
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const connections = useAtomValue(environmentCatalog.connectionsValueAtom);
+  const connectionStates = useAtomValue(environmentCatalog.connectionStatesValueAtom);
+  const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+
+  const environments = useMemo(
+    () => projectEnvironmentConnections(connections, connectionStates, presentationById),
+    [connectionStates, connections, presentationById],
+  );
+
+  return { isReady: catalog.isReady, environments };
 }
 
 export function useEnvironmentConnectionState(environmentId: EnvironmentId) {

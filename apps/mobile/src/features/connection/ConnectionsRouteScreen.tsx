@@ -1,7 +1,6 @@
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
-import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,19 +15,19 @@ import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
 export function ConnectionsRouteScreen() {
   const {
     connectedEnvironments,
-    onReconnectEnvironment,
+    onReconnectConnection,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const hasEnvironments = connectedEnvironments.length > 0;
-  const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const accentColor = useThemeColor("--color-icon-muted");
 
-  const handleToggle = useCallback((environmentId: EnvironmentId) => {
-    setExpandedId((prev) => (prev === environmentId ? null : environmentId));
+  const handleToggle = useCallback((connectionId: string) => {
+    setExpandedId((prev) => (prev === connectionId ? null : connectionId));
   }, []);
 
   return (
@@ -68,15 +67,15 @@ export function ConnectionsRouteScreen() {
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
             {connectedEnvironments.map((environment, index) => (
               <View
-                key={environment.environmentId}
+                key={environment.connectionId}
                 collapsable={false}
                 className={cn(index !== 0 && "border-t border-border")}
               >
                 <ConnectionEnvironmentRow
                   environment={environment}
-                  expanded={expandedId === environment.environmentId}
-                  onToggle={() => handleToggle(environment.environmentId)}
-                  onReconnect={onReconnectEnvironment}
+                  expanded={expandedId === environment.connectionId}
+                  onToggle={() => handleToggle(environment.connectionId)}
+                  onReconnect={onReconnectConnection}
                   onRemove={onRemoveEnvironmentPress}
                   onUpdate={onUpdateEnvironment}
                 />

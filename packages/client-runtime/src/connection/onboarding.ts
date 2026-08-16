@@ -1,6 +1,7 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,6 +21,7 @@ import {
   type ConnectionCredential,
   SshConnectionProfile,
   SshConnectionRegistration,
+  reuseSavedBearerRoute,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { mapRemoteEnvironmentError } from "./errors.ts";
@@ -44,7 +46,7 @@ export interface SshConnectionInput {
 }
 
 export interface BearerConnectionUpdateInput {
-  readonly environmentId: EnvironmentId;
+  readonly connectionId: string;
   readonly label: string;
   readonly httpBaseUrl: string;
 }
@@ -66,7 +68,12 @@ export class ConnectionOnboarding extends Context.Service<
     >;
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
-    ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
+    ) => Effect.Effect<
+      void,
+      | ConnectionAttemptError
+      | Persistence.ConnectionPersistenceError
+      | EnvironmentRegistry.ConnectionNotRegisteredError
+    >;
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
 
@@ -97,7 +104,9 @@ export const preparePairingRegistration = Effect.fn(
     scopes: presentation.scopes,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-  const connectionId = `bearer:${descriptor.environmentId}`;
+  const crypto = yield* Crypto.Crypto;
+  const routeId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const connectionId = `bearer:${descriptor.environmentId}:${routeId}`;
 
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
@@ -118,6 +127,8 @@ export const preparePairingRegistration = Effect.fn(
   });
 });
 
+export const reuseSavedPairingRoute = reuseSavedBearerRoute;
+
 export const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
@@ -135,7 +146,7 @@ export const updateBearerConnection = Effect.fn(
 )(function* (input: BearerConnectionUpdateInput) {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
-  const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+  const entry = (yield* SubscriptionRef.get(registry.connections)).get(input.connectionId);
   const credential =
     entry?.target._tag === "BearerConnectionTarget"
       ? yield* credentials.get(entry.target.connectionId)
@@ -145,7 +156,7 @@ export const updateBearerConnection = Effect.fn(
     entry: Option.fromUndefinedOr(entry),
     credential,
   });
-  yield* registry.register(registration);
+  yield* registry.update(registration);
 });
 
 export const prepareBearerConnectionUpdate = Effect.fn(
@@ -195,13 +206,13 @@ export const prepareBearerConnectionUpdate = Effect.fn(
   const connectionId = entry.target.connectionId;
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
-      environmentId: options.input.environmentId,
+      environmentId: entry.target.environmentId,
       label,
       connectionId,
     }),
     profile: new BearerConnectionProfile({
       connectionId,
-      environmentId: options.input.environmentId,
+      environmentId: entry.target.environmentId,
       label,
       httpBaseUrl,
       wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
@@ -248,6 +259,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const crypto = yield* Crypto.Crypto;
 
   return ConnectionOnboarding.of({
     registerPairing: (input) =>
@@ -255,6 +267,7 @@ export const make = Effect.gen(function* () {
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(Crypto.Crypto, crypto),
       ),
     registerSsh: (input) =>
       registerSshConnection(input).pipe(

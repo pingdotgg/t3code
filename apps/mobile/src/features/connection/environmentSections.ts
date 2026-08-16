@@ -12,10 +12,18 @@ export interface EnvironmentSections {
   readonly availableCloudEnvironments: ReadonlyArray<RelayClientEnvironmentRecord>;
 }
 
-export function splitEnvironmentSections(input: EnvironmentSectionsInput): EnvironmentSections {
-  const savedEnvironmentIds = new Set(
-    input.connectedEnvironments.map((environment) => environment.environmentId),
+export function connectedRelayEnvironmentIds(
+  environments: ReadonlyArray<ConnectedEnvironmentSummary>,
+) {
+  return new Set(
+    environments
+      .filter((environment) => environment.isRelayManaged)
+      .map((environment) => environment.environmentId),
   );
+}
+
+export function splitEnvironmentSections(input: EnvironmentSectionsInput): EnvironmentSections {
+  const savedRelayEnvironmentIds = connectedRelayEnvironmentIds(input.connectedEnvironments);
 
   return {
     localEnvironments: input.connectedEnvironments.filter(
@@ -25,7 +33,7 @@ export function splitEnvironmentSections(input: EnvironmentSectionsInput): Envir
       (environment) => environment.isRelayManaged,
     ),
     availableCloudEnvironments: (input.cloudEnvironments ?? []).filter(
-      (environment) => !savedEnvironmentIds.has(environment.environmentId),
+      (environment) => !savedRelayEnvironmentIds.has(environment.environmentId),
     ),
   };
 }

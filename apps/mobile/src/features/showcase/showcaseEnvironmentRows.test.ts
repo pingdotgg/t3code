@@ -13,6 +13,7 @@ function environment(
   displayUrl = "http://127.0.0.1:3773/",
 ): ConnectedEnvironmentSummary {
   return {
+    connectionId: `bearer:${environmentId}`,
     environmentId: EnvironmentId.make(environmentId),
     environmentLabel,
     displayUrl,

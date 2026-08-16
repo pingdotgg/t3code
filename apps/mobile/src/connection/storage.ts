@@ -40,7 +40,12 @@ export const connectionStorageLayer = Layer.effectContext(
       ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
+      retainsSiblingRoutes: true,
       register: (registration) =>
+        catalog
+          .update((document) => registerConnectionInCatalog(document, registration))
+          .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
+      update: (registration) =>
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
           .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),

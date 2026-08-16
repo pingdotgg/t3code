@@ -7,7 +7,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
   createAtomCommandScheduler,
@@ -49,6 +49,52 @@ export function createEnvironmentCatalogAtoms<R, E>(
   const catalogValueAtom = Atom.make((get) =>
     Option.getOrElse(AsyncResult.value(get(catalogAtom)), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
   ).pipe(Atom.withLabel("environment-catalog-value"));
+
+  const connectionsAtom = runtime.atom(
+    Stream.unwrap(
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.map((registry) => SubscriptionRef.changes(registry.connections)),
+      ),
+    ),
+    {
+      initialValue: new Map<string, ConnectionCatalogEntry>() as ReadonlyMap<
+        string,
+        ConnectionCatalogEntry
+      >,
+    },
+  );
+
+  const connectionsValueAtom = Atom.make((get) =>
+    Option.getOrElse(
+      AsyncResult.value(get(connectionsAtom)),
+      () => new Map<string, ConnectionCatalogEntry>(),
+    ),
+  ).pipe(Atom.withLabel("environment-connections-value"));
+
+  const connectionStateAtom = Atom.family((connectionId: string) =>
+    runtime.atom(
+      Stream.unwrap(
+        EnvironmentRegistry.EnvironmentRegistry.pipe(
+          Effect.map((registry) => registry.connectionStateChanges(connectionId)),
+        ),
+      ),
+      { initialValue: AVAILABLE_CONNECTION_STATE },
+    ),
+  );
+
+  const connectionStatesValueAtom = Atom.make((get) => {
+    const states = new Map<string, SupervisorConnectionState>();
+    for (const connectionId of get(connectionsValueAtom).keys()) {
+      states.set(
+        connectionId,
+        Option.getOrElse(
+          AsyncResult.value(get(connectionStateAtom(connectionId))),
+          () => AVAILABLE_CONNECTION_STATE,
+        ),
+      );
+    }
+    return states;
+  }).pipe(Atom.withLabel("environment-connection-states-value"));
 
   const networkStatusAtom = runtime.atom(
     Stream.unwrap(
@@ -97,6 +143,15 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.remove(environmentId)),
       ),
   });
+  const removeConnection = createRuntimeCommand(runtime, {
+    label: "environment-catalog:remove-connection",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (connectionId: string) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.removeConnection(connectionId)),
+      ),
+  });
   const removeRelayEnvironments = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,
@@ -115,16 +170,31 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.retryNow(environmentId)),
       ),
   });
+  const retryConnection = createRuntimeCommand(runtime, {
+    label: "environment-catalog:retry-connection",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (connectionId: string) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.retryConnection(connectionId)),
+      ),
+  });
 
   return {
     catalogAtom,
     catalogValueAtom,
+    connectionsAtom,
+    connectionsValueAtom,
+    connectionStateAtom,
+    connectionStatesValueAtom,
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
     register,
     remove,
+    removeConnection,
     removeRelayEnvironments,
     retryNow,
+    retryConnection,
   };
 }

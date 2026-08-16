@@ -11,6 +11,7 @@ function connectedEnvironment(
   },
 ): ConnectedEnvironmentSummary {
   return {
+    connectionId: input.connectionId ?? `connection:${input.environmentId}`,
     environmentId: EnvironmentId.make(input.environmentId),
     environmentLabel: input.environmentLabel ?? input.environmentId,
     displayUrl: input.displayUrl ?? `https://${input.environmentId}.example.test/`,
@@ -109,6 +110,22 @@ describe("mobile environment settings sections", () => {
 
     expect(sections.connectedCloudEnvironments).toEqual([cloud]);
     expect(sections.availableCloudEnvironments).toEqual([]);
+  });
+
+  it("keeps a relay route available when only a direct sibling is saved", () => {
+    const local = connectedEnvironment({
+      environmentId: "environment-shared",
+      isRelayManaged: false,
+    });
+    const listedCloud = cloudEnvironment("environment-shared");
+
+    const sections = splitEnvironmentSections({
+      connectedEnvironments: [local],
+      cloudEnvironments: [listedCloud],
+    });
+
+    expect(sections.localEnvironments).toEqual([local]);
+    expect(sections.availableCloudEnvironments).toEqual([listedCloud]);
   });
 
   it("keeps failed relay environments in the local connection row", () => {

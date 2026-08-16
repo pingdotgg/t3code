@@ -4,7 +4,6 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -27,7 +26,7 @@ import { type RelayEnvironmentView, useConnectionController } from "./useConnect
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
-  readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onReconnectConnection: (connectionId: string) => void;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -93,12 +92,12 @@ function CloudEnvironmentRowsContent(
   );
 
   const handleDisconnectCloudEnvironment = useCallback(
-    (environmentId: EnvironmentId) => controller.removeEnvironment(environmentId),
+    (connectionId: string) => controller.removeConnection(connectionId),
     [controller],
   );
 
-  const handleToggleCloudError = useCallback((environmentId: string) => {
-    setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
+  const handleToggleCloudError = useCallback((rowId: string) => {
+    setExpandedErrorId((current) => (current === rowId ? null : rowId));
   }, []);
 
   const showHeader = props.showHeader ?? true;
@@ -136,13 +135,13 @@ function CloudEnvironmentRowsContent(
         <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
           {props.connectedCloudEnvironments.map((environment, index) => (
             <ConnectedCloudEnvironmentRow
-              key={environment.environmentId}
+              key={environment.connectionId}
               environment={environment}
               borderTop={index !== 0}
-              onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
-              onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
-              errorExpanded={expandedErrorId === environment.environmentId}
-              onToggleError={() => handleToggleCloudError(environment.environmentId)}
+              onConnect={() => props.onReconnectConnection(environment.connectionId)}
+              onDisconnect={() => handleDisconnectCloudEnvironment(environment.connectionId)}
+              errorExpanded={expandedErrorId === environment.connectionId}
+              onToggleError={() => handleToggleCloudError(environment.connectionId)}
             />
           ))}
           {availableCloudEnvironments.map((environment, index) => (

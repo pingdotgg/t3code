@@ -1,7 +1,6 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
-import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,7 +26,7 @@ const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 export function SettingsEnvironmentsRouteScreen() {
   const {
     connectedEnvironments,
-    onReconnectEnvironment,
+    onReconnectConnection,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
@@ -44,7 +43,7 @@ export function SettingsEnvironmentsRouteScreen() {
     ? SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS
     : environmentSections.connectedCloudEnvironments;
   const hasLocalEnvironments = localEnvironments.length > 0;
-  const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const accentColor = useThemeColor("--color-icon-muted");
   const headerIconColor = useThemeColor("--color-icon");
 
@@ -54,22 +53,19 @@ export function SettingsEnvironmentsRouteScreen() {
     return () => clearTimeout(timer);
   }, []);
 
-  const handleToggle = useCallback((environmentId: EnvironmentId) => {
-    setExpandedId((prev) => (prev === environmentId ? null : environmentId));
+  const handleToggle = useCallback((connectionId: string) => {
+    setExpandedId((prev) => (prev === connectionId ? null : connectionId));
   }, []);
   const handleUpdateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) => {
-      if (!SHOWCASE_ENABLED) return onUpdateEnvironment(environmentId, updates);
+    (connectionId: string, updates: { readonly label: string; readonly displayUrl: string }) => {
+      if (!SHOWCASE_ENABLED) return onUpdateEnvironment(connectionId, updates);
       const actualEnvironment = environmentSections.localEnvironments.find(
-        (environment) => environment.environmentId === environmentId,
+        (environment) => environment.connectionId === connectionId,
       );
       const presentedEnvironment = localEnvironments.find(
-        (environment) => environment.environmentId === environmentId,
+        (environment) => environment.connectionId === connectionId,
       );
-      return onUpdateEnvironment(environmentId, {
+      return onUpdateEnvironment(connectionId, {
         ...updates,
         displayUrl:
           actualEnvironment && presentedEnvironment
@@ -134,15 +130,15 @@ export function SettingsEnvironmentsRouteScreen() {
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
             {localEnvironments.map((environment, index) => (
               <View
-                key={environment.environmentId}
+                key={environment.connectionId}
                 collapsable={false}
                 className={cn(index !== 0 && "border-t border-border")}
               >
                 <ConnectionEnvironmentRow
                   environment={environment}
-                  expanded={expandedId === environment.environmentId}
-                  onToggle={() => handleToggle(environment.environmentId)}
-                  onReconnect={onReconnectEnvironment}
+                  expanded={expandedId === environment.connectionId}
+                  onToggle={() => handleToggle(environment.connectionId)}
+                  onReconnect={onReconnectConnection}
                   onRemove={onRemoveEnvironmentPress}
                   onUpdate={handleUpdateEnvironment}
                 />
@@ -171,7 +167,7 @@ export function SettingsEnvironmentsRouteScreen() {
             user is signed out — the component gates discovery itself. */}
         <CloudEnvironmentRows
           connectedCloudEnvironments={connectedCloudEnvironments}
-          onReconnectEnvironment={onReconnectEnvironment}
+          onReconnectConnection={onReconnectConnection}
           {...(SHOWCASE_ENABLED
             ? {
                 showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,

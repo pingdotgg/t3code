@@ -18,6 +18,7 @@ import {
 import {
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   registerConnectionInCatalog,
+  replaceEnvironmentConnectionInCatalog,
   removeConnectionFromCatalog,
 } from "./storageDocument.ts";
 
@@ -72,7 +73,141 @@ describe("ConnectionCatalogDocument", () => {
     ]);
   });
 
-  it("replaces obsolete connection metadata without discarding a reusable DPoP token", () => {
+  it("retains multiple bearer routes to the same environment", () => {
+    const secondTarget = new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote on office Wi-Fi",
+      connectionId: "bearer-2",
+    });
+    const secondProfile = new BearerConnectionProfile({
+      connectionId: secondTarget.connectionId,
+      environmentId: ENVIRONMENT_ID,
+      label: secondTarget.label,
+      httpBaseUrl: "http://192.168.50.10:3773",
+      wsBaseUrl: "ws://192.168.50.10:3773",
+    });
+    const secondCredential = new BearerConnectionCredential({ token: "bearer-token-2" });
+    const first = registerConnectionInCatalog(
+      { ...EMPTY_CONNECTION_CATALOG_DOCUMENT, remoteDpopTokens: [REMOTE_TOKEN] },
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    const both = registerConnectionInCatalog(
+      first,
+      new BearerConnectionRegistration({
+        target: secondTarget,
+        profile: secondProfile,
+        credential: secondCredential,
+      }),
+    );
+
+    expect(both.targets).toEqual([BEARER_TARGET, secondTarget]);
+    expect(both.profiles).toEqual([BEARER_PROFILE, secondProfile]);
+    expect(both.credentials).toEqual([
+      { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
+      { connectionId: secondTarget.connectionId, credential: secondCredential },
+    ]);
+
+    const remaining = removeConnectionFromCatalog(both, BEARER_TARGET);
+    expect(remaining.targets).toEqual([secondTarget]);
+    expect(remaining.profiles).toEqual([secondProfile]);
+    expect(remaining.credentials).toEqual([
+      { connectionId: secondTarget.connectionId, credential: secondCredential },
+    ]);
+    expect(remaining.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
+
+    expect(removeConnectionFromCatalog(remaining, secondTarget)).toEqual(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+    );
+  });
+
+  it("retains relay and bearer routes to the same environment", () => {
+    const relayTarget = new RelayConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote through T3 Connect",
+    });
+    const withRelay = registerConnectionInCatalog(
+      { ...EMPTY_CONNECTION_CATALOG_DOCUMENT, remoteDpopTokens: [REMOTE_TOKEN] },
+      new RelayConnectionRegistration({ target: relayTarget }),
+    );
+    const withBoth = registerConnectionInCatalog(
+      withRelay,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+
+    expect(withBoth.targets).toEqual([relayTarget, BEARER_TARGET]);
+    expect(withBoth.profiles).toEqual([BEARER_PROFILE]);
+    expect(withBoth.credentials).toEqual([
+      { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
+    ]);
+    expect(removeConnectionFromCatalog(withBoth, BEARER_TARGET)).toEqual({
+      ...withRelay,
+      remoteDpopTokens: [REMOTE_TOKEN],
+    });
+    const withBearerFirst = registerConnectionInCatalog(
+      { ...EMPTY_CONNECTION_CATALOG_DOCUMENT, remoteDpopTokens: [REMOTE_TOKEN] },
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    expect(removeConnectionFromCatalog(withBoth, relayTarget)).toEqual({
+      ...withBearerFirst,
+      remoteDpopTokens: [],
+    });
+    expect(
+      registerConnectionInCatalog(
+        withBearerFirst,
+        new RelayConnectionRegistration({ target: relayTarget }),
+      ).targets,
+    ).toEqual([BEARER_TARGET, relayTarget]);
+  });
+
+  it("supports clients that retain one route per environment", () => {
+    const replacementTarget = new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote on another network",
+      connectionId: "bearer-replacement",
+    });
+    const replacementProfile = new BearerConnectionProfile({
+      connectionId: replacementTarget.connectionId,
+      environmentId: ENVIRONMENT_ID,
+      label: replacementTarget.label,
+      httpBaseUrl: "http://192.168.50.10:3773",
+      wsBaseUrl: "ws://192.168.50.10:3773",
+    });
+    const first = registerConnectionInCatalog(
+      { ...EMPTY_CONNECTION_CATALOG_DOCUMENT, remoteDpopTokens: [REMOTE_TOKEN] },
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    const replaced = replaceEnvironmentConnectionInCatalog(
+      first,
+      new BearerConnectionRegistration({
+        target: replacementTarget,
+        profile: replacementProfile,
+        credential: new BearerConnectionCredential({ token: "replacement-token" }),
+      }),
+    );
+
+    expect(replaced.targets).toEqual([replacementTarget]);
+    expect(replaced.profiles).toEqual([replacementProfile]);
+    expect(replaced.credentials).toHaveLength(1);
+    expect(replaced.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
+  });
+
+  it("retains sibling connection metadata and its reusable DPoP token", () => {
     const bearer = registerConnectionInCatalog(
       {
         ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
@@ -93,9 +228,11 @@ describe("ConnectionCatalogDocument", () => {
       new RelayConnectionRegistration({ target: relayTarget }),
     );
 
-    expect(relay.targets).toEqual([relayTarget]);
-    expect(relay.profiles).toEqual([]);
-    expect(relay.credentials).toEqual([]);
+    expect(relay.targets).toEqual([BEARER_TARGET, relayTarget]);
+    expect(relay.profiles).toEqual([BEARER_PROFILE]);
+    expect(relay.credentials).toEqual([
+      { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
+    ]);
     expect(relay.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
   });
 
