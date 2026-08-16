@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -163,12 +164,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
+      const lastGoodSlashCommands = yield* Ref.make<ServerProvider["slashCommands"]>([]);
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
         processEnv,
         cwd,
       ).pipe(
+        Effect.flatMap((snapshot) =>
+          Effect.gen(function* () {
+            if (snapshot.slashCommands.length > 0) {
+              yield* Ref.set(lastGoodSlashCommands, snapshot.slashCommands);
+              return snapshot;
+            }
+            const previous = yield* Ref.get(lastGoodSlashCommands);
+            if (previous.length === 0) {
+              return snapshot;
+            }
+            return { ...snapshot, slashCommands: previous };
+          }),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
