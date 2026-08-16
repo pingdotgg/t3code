@@ -603,6 +603,48 @@ describe("model and effort attribution", () => {
     expect(agents[0]!.effort).toBe("high");
   });
 
+  it("nested spawn without a model stays unlabeled until a later payload names one", () => {
+    const unlabeled = fold([
+      activity("task.started", {
+        taskId: "parent-1",
+        title: "codex-sol",
+        role: "codex-sol",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      }),
+      activity("task.started", {
+        taskId: "child-1",
+        title: "Explore the repo",
+        role: "Explore",
+        agentId: "parent-1",
+        taskType: "local_agent",
+        effort: "high",
+      }),
+    ]);
+    const child = unlabeled.find((agent) => agent.id === "child-1");
+    expect(child?.model).toBeNull();
+    expect(formatSubagentModelLabel(child?.model ?? null, child?.effort ?? null)).toBeNull();
+
+    const refined = fold([
+      activity("task.started", {
+        taskId: "child-2",
+        title: "Explore the repo",
+        role: "Explore",
+        agentId: "parent-1",
+        taskType: "local_agent",
+        effort: "high",
+      }),
+      activity("task.progress", { taskId: "child-2", model: "gpt-5.6-sol" }),
+      // A later row without model must not revert to inherited/null.
+      activity("task.progress", { taskId: "child-2", lastToolName: "Read" }),
+    ]);
+    expect(refined).toHaveLength(1);
+    expect(refined[0]!.model).toBe("gpt-5.6-sol");
+    expect(formatSubagentModelLabel(refined[0]!.model, refined[0]!.effort)).toBe(
+      "gpt-5.6-sol · high",
+    );
+  });
+
   it("formatSubagentModelLabel compacts ids and appends effort", () => {
     expect(formatSubagentModelLabel("claude-sonnet-5[1m]", "high")).toBe("sonnet-5[1m] · high");
     expect(formatSubagentModelLabel("claude-opus-4-20250514", null)).toBe("opus-4");

@@ -1039,6 +1039,45 @@ function taskLinkageFor(
   };
 }
 
+/**
+ * A model the spawn or SDK actually named. `"inherit"` is an instruction,
+ * not an id — treating it as a label would invent the parent session model.
+ */
+function explicitTaskModel(value: unknown): string | undefined {
+  const model = trimmedString(value);
+  return model === undefined || model === "inherit" ? undefined : model;
+}
+
+/** Authoritative API model on an assistant snapshot or its stream open. */
+function servingModelFromSdkMessage(message: SDKMessage): string | undefined {
+  if (message.type === "assistant") {
+    return explicitTaskModel(message.message.model);
+  }
+  if (message.type === "stream_event" && message.event.type === "message_start") {
+    return explicitTaskModel(message.event.message.model);
+  }
+  return undefined;
+}
+
+/**
+ * Bind a serving model onto the task whose Task/Agent tool_use_id is
+ * `parentToolUseId`. Used when the start row had no model of its own.
+ */
+function rememberTaskAgentServingModel(
+  agents: Map<string, ClaudeTaskAgentState>,
+  parentToolUseId: string | null | undefined,
+  model: string | undefined,
+): void {
+  if (!model) {
+    return;
+  }
+  const taskId = agentIdForParentToolUse(agents, parentToolUseId);
+  const agent = taskId ? agents.get(taskId) : undefined;
+  if (agent) {
+    agent.model = model;
+  }
+}
+
 const WORKFLOW_PHASE_CAP = 64;
 const WORKFLOW_AGENT_CAP = 100;
 
@@ -2407,6 +2446,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // re-homed by the quiet-timeline filter.
     const streamParentToolUseId = (message as { parent_tool_use_id?: string | null })
       .parent_tool_use_id;
+    // Nested Agent-tool children often omit model on task_started.
+    // message_start.model is the id that actually served the response.
+    rememberTaskAgentServingModel(
+      context.taskAgents,
+      streamParentToolUseId,
+      servingModelFromSdkMessage(message),
+    );
     if (streamParentToolUseId !== null && streamParentToolUseId !== undefined) {
       // Drop only the subagent's narration (text/thinking); tool_use blocks
       // and their input_json_delta frames must flow so attributed tool items
@@ -2874,13 +2920,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       .parent_tool_use_id;
     if (assistantParentToolUseId !== null && assistantParentToolUseId !== undefined) {
       // The snapshot's message.model is the authoritative API model the
-      // subagent actually ran on — refine the seeded launch-time value.
-      const owningTaskId = agentIdForParentToolUse(context.taskAgents, assistantParentToolUseId);
-      const snapshotModel = trimmedString(message.message.model);
-      const owningAgent = owningTaskId ? context.taskAgents.get(owningTaskId) : undefined;
-      if (owningAgent && snapshotModel) {
-        owningAgent.model = snapshotModel;
-      }
+      // subagent actually ran on — refine a missing or launch-time value.
+      rememberTaskAgentServingModel(
+        context.taskAgents,
+        assistantParentToolUseId,
+        servingModelFromSdkMessage(message),
+      );
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
       return;
@@ -3191,14 +3236,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             )
           : undefined;
         const owningAgentId = launchingTool?.agentId;
-        // Model/effort: the Agent tool's input carries explicit overrides;
-        // absent ones inherit the session's selection (SDK behavior).
-        // Subagent assistant snapshots later refine model with the
-        // authoritative API id. AgentInput.effort may be a named level or an
+        // Model: only what the spawn or SDK named. Nested Agent-tool children
+        // resolve their own frontmatter model; copying the session default
+        // labeled them as the parent model (#6026). Assistant / message_start
+        // snapshots refine later. Effort still inherits the session when the
+        // launch input omits it. AgentInput.effort may be a named level or an
         // integer.
         const launchInput = launchingTool?.input;
         const model =
-          trimmedString(launchInput?.model) ?? trimmedString(context.session.model ?? undefined);
+          explicitTaskModel(launchInput?.model) ??
+          explicitTaskModel((message as { model?: unknown }).model);
         const rawLaunchEffort = launchInput?.effort;
         const effort =
           trimmedString(rawLaunchEffort) ??
