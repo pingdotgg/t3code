@@ -82,16 +82,19 @@ export function getCompletedArchiveThreadKeys(input: {
   return [...input.archivedThreadKeys, ...input.skippedThreadKeys];
 }
 
+const sharedThreadArchiveReservations = new Map<string, Promise<ReadonlySet<string>>>();
+
 export async function withCoordinatedThreadArchiveEntries<
   TEntry extends { readonly threadKey: string },
 >(input: {
   entries: readonly TEntry[];
-  reservations: Map<string, Promise<ReadonlySet<string>>>;
+  reservations?: Map<string, Promise<ReadonlySet<string>>>;
   run: (
     entries: readonly TEntry[],
     onCompleted: (threadKey: string) => void,
   ) => Promise<readonly string[]>;
 }): Promise<readonly string[]> {
+  const reservations = input.reservations ?? sharedThreadArchiveReservations;
   const uniqueEntries: TEntry[] = [];
   const uniqueThreadKeys = new Set<string>();
   for (const entry of input.entries) {
@@ -111,12 +114,12 @@ export async function withCoordinatedThreadArchiveEntries<
     while (pendingEntries.length > 0) {
       const activeReservations = new Set<Promise<ReadonlySet<string>>>();
       for (const entry of pendingEntries) {
-        const activeReservation = input.reservations.get(entry.threadKey);
+        const activeReservation = reservations.get(entry.threadKey);
         if (activeReservation && activeReservation !== reservation) {
           activeReservations.add(activeReservation);
           continue;
         }
-        input.reservations.set(entry.threadKey, reservation);
+        reservations.set(entry.threadKey, reservation);
         ownedThreadKeys.add(entry.threadKey);
       }
       if (activeReservations.size === 0) break;
@@ -145,8 +148,8 @@ export async function withCoordinatedThreadArchiveEntries<
     throw error;
   } finally {
     for (const threadKey of ownedThreadKeys) {
-      if (input.reservations.get(threadKey) === reservation) {
-        input.reservations.delete(threadKey);
+      if (reservations.get(threadKey) === reservation) {
+        reservations.delete(threadKey);
       }
     }
   }

@@ -154,6 +154,37 @@ describe("archiveSelectedThreadEntries", () => {
 describe("withCoordinatedThreadArchiveEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }] as const;
 
+  it("coordinates separate callers through the shared reservation pool", async () => {
+    const sharedEntry = { threadKey: "shared-one" } as const;
+    let finishFirstFlow: (() => void) | undefined;
+    const firstRun = vi.fn(
+      async () =>
+        new Promise<readonly string[]>((resolve) => {
+          finishFirstFlow = () => resolve([sharedEntry.threadKey]);
+        }),
+    );
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries: [sharedEntry],
+      run: firstRun,
+    });
+    await vi.waitFor(() => expect(firstRun).toHaveBeenCalledOnce());
+
+    const secondRun = vi.fn(async () => [sharedEntry.threadKey]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries: [sharedEntry],
+      run: secondRun,
+    });
+    await Promise.resolve();
+    expect(secondRun).not.toHaveBeenCalled();
+
+    finishFirstFlow?.();
+    await expect(Promise.all([firstFlow, secondFlow])).resolves.toEqual([
+      [sharedEntry.threadKey],
+      [],
+    ]);
+    expect(secondRun).not.toHaveBeenCalled();
+  });
+
   it("waits for owners and omits entries they successfully archived", async () => {
     const reservations = new Map<string, Promise<ReadonlySet<string>>>();
     let finishFirstFlow: (() => void) | undefined;

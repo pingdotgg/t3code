@@ -31,8 +31,8 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
-  /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
-  readonly isRunning: boolean;
+  /** Resolved by the shared archive policy, including turns and background work. */
+  readonly archive: { readonly disabled: boolean };
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -40,7 +40,6 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
-  readonly archive?: { readonly disabled: boolean };
 }
 
 /**
@@ -114,7 +113,7 @@ export function buildThreadActionMenuItems(
     {
       id: "archive",
       label: "Archive thread",
-      disabled: state.archive?.disabled ?? state.isRunning,
+      disabled: state.archive.disabled,
     },
     { id: "delete", label: "Delete", destructive: true, icon: "trash" },
   ];

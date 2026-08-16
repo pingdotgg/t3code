@@ -2805,9 +2805,7 @@ export default function Sidebar() {
       archiveThread,
       archivableSettledThreads,
       confirmThreadArchive,
-      removeFromSelection,
       settledThreadKeysRef,
-      threadByKeyRef,
     });
 
   const handleMultiSelectContextMenu = useCallback(
@@ -3104,8 +3102,6 @@ export default function Sidebar() {
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
-              isRunning:
-                thread.session?.status === "running" && thread.session.activeTurnId != null,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
