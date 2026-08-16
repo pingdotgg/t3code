@@ -116,10 +116,25 @@ export const make = Effect.gen(function* BrowserImportMake() {
       executablePath,
     });
 
+    // The profile directory arrives over IPC, so it is only honoured when the
+    // source itself reported it. Forwarding it unchecked would let `..`
+    // segments walk out of the browser's user-data directory and read any
+    // cookie database reachable on disk.
+    const sourceProfiles = yield* Effect.promise(() => listSourceProfiles(definition));
+    const requestedProfile = sourceProfiles.find(
+      (profile) => profile.directory === input.input.sourceProfileDirectory,
+    );
+    if (requestedProfile === undefined) {
+      return yield* new BrowserImportFailedError({
+        sourceId: definition.id,
+        reason: "unknownSourceProfile",
+      });
+    }
+
     const cookies: ReadonlyArray<ChromiumCookie> = yield* Effect.tryPromise({
       try: () =>
         readChromiumCookies({
-          cookieDatabasePath: cookieDatabasePath(definition, input.input.sourceProfileDirectory),
+          cookieDatabasePath: cookieDatabasePath(definition, requestedProfile.directory),
           keychainService: definition.keychainService,
           keychainAccount: definition.keychainAccount,
           platform,
