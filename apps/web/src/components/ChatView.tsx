@@ -1666,23 +1666,40 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
-  const [retainClosedRightPanelContent, setRetainClosedRightPanelContent] =
-    useState(rightPanelOpen);
+  const [retainedRightPanelThreadKey, setRetainedRightPanelThreadKey] = useState<string | null>(
+    rightPanelOpen ? routeThreadKey : null,
+  );
   useEffect(() => {
     if (rightPanelOpen) {
-      setRetainClosedRightPanelContent(true);
+      setRetainedRightPanelThreadKey(routeThreadKey);
+      return;
+    }
+
+    if (retainedRightPanelThreadKey !== routeThreadKey) {
+      setRetainedRightPanelThreadKey(null);
       return;
     }
 
     const timeout = window.setTimeout(
-      () => setRetainClosedRightPanelContent(false),
+      () => setRetainedRightPanelThreadKey(null),
       RIGHT_PANEL_EXIT_DURATION_MS,
     );
     return () => window.clearTimeout(timeout);
-  }, [rightPanelOpen]);
+  }, [retainedRightPanelThreadKey, rightPanelOpen, routeThreadKey]);
+  const retainClosedRightPanelContent = retainedRightPanelThreadKey === routeThreadKey;
+  useEffect(() => {
+    if (rightPanelOpen || maximizedRightPanelThreadKey !== routeThreadKey) return;
+    const timeout = window.setTimeout(
+      () => setMaximizedRightPanelThreadKey(null),
+      RIGHT_PANEL_EXIT_DURATION_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [maximizedRightPanelThreadKey, rightPanelOpen, routeThreadKey]);
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+    !shouldUseRightPanelSheet &&
+    maximizedRightPanelThreadKey === routeThreadKey &&
+    (rightPanelOpen || retainClosedRightPanelContent);
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -3371,7 +3388,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activePreviewState.activeTabId, activeThreadRef, createBrowserSurface, previewPanelOpen]);
   const closePreviewPanel = useCallback(() => {
     if (activeThreadRef) {
-      setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
     }
   }, [activeThreadRef]);
