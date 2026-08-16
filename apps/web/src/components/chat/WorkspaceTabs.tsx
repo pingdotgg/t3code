@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronDown, Pin, Plus, X } from "lucide-react";
 import {
@@ -16,6 +16,8 @@ import {
 import type { DraftId } from "~/composerDraftStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { hasUnseenCompletion } from "../Sidebar.logic";
+import { useUiStateStore } from "~/uiStateStore";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { ScrollArea } from "../ui/scroll-area";
@@ -84,7 +86,13 @@ function ServerThreadTabItem({
     () => scopeThreadRef(tab.environmentId, tab.threadId),
     [tab.environmentId, tab.threadId],
   );
+  const threadKey = useMemo(() => scopedThreadKey(threadRef), [threadRef]);
   const shell = useThreadShell(threadRef);
+  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const isUnread = useMemo(() => {
+    if (isActive || !shell) return false;
+    return hasUnseenCompletion({ ...shell, lastVisitedAt });
+  }, [isActive, shell, lastVisitedAt]);
   const title = shell?.title || tab.title || "Thread";
   const fullLabel = tab.projectName ? `${tab.projectName} · ${title}` : title;
 
@@ -158,6 +166,12 @@ function ServerThreadTabItem({
                   />
                   <span className="truncate">{title}</span>
                   {tab.pinned ? <Pin className="size-2.5 shrink-0 rotate-45 opacity-60" /> : null}
+                  {isUnread ? (
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full bg-destructive shadow-xs ring-1 ring-background"
+                    />
+                  ) : null}
                 </Button>
               }
             />
