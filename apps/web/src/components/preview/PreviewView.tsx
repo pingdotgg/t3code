@@ -146,9 +146,11 @@ export function PreviewView({
   const loadProgress = useLoadingProgress(loading);
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  const activeProfile = browserDefaults.profiles.find(
-    (profile) => profile.id === (snapshot?.profileId ?? browserDefaults.profileId),
-  );
+  // A tab created before profiles existed carries no profile of its own, so it
+  // runs in — and must clear — the configured default. Passing the snapshot's
+  // raw `undefined` through would reach the IPC layer as "every profile".
+  const activeProfileId = snapshot?.profileId ?? browserDefaults.profileId;
+  const activeProfile = browserDefaults.profiles.find((profile) => profile.id === activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -704,7 +706,7 @@ export function PreviewView({
           previewBridge ? (
             <PreviewMoreMenu
               environmentId={threadRef.environmentId}
-              profileId={snapshot?.profileId}
+              profileId={activeProfileId}
               profileName={activeProfile?.name}
               tabId={runtimeTabId}
               hasWebContents={desktopOverlay?.hasWebContents ?? false}
