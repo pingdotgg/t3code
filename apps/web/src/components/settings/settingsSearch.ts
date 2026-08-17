@@ -157,6 +157,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "unpin-confirmation",
+    title: "Unpin confirmation",
+    to: "/settings/general",
+  },
+  {
     id: "quit-confirmation",
     title: "Hold to quit",
     to: "/settings/general",

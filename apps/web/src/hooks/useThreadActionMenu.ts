@@ -84,6 +84,7 @@ export function useThreadActionMenu(input: {
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
+  const confirmThreadUnpin = useClientSettings((s) => s.confirmThreadUnpin);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
@@ -216,15 +217,17 @@ export function useThreadActionMenu(input: {
             await reportFailure("Failed to pin thread", () => pinThread(threadRef));
             return;
           case "unpin": {
-            const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(
-                [
-                  `Unpin thread "${thread.title}"?`,
-                  "This will move the thread out of your pinned section.",
-                ].join("\n"),
-              ),
-            );
-            if (confirmed._tag === "Failure" || !confirmed.value) return;
+            if (confirmThreadUnpin) {
+              const confirmed = await settlePromise(() =>
+                api.dialogs.confirm(
+                  [
+                    `Unpin thread "${thread.title}"?`,
+                    "This will move the thread out of your pinned section.",
+                  ].join("\n"),
+                ),
+              );
+              if (confirmed._tag === "Failure" || !confirmed.value) return;
+            }
             await reportFailure("Failed to unpin thread", () => unpinThread(threadRef));
             return;
           }
@@ -325,6 +328,7 @@ export function useThreadActionMenu(input: {
       changeRequest,
       confirmThreadArchive,
       confirmThreadDelete,
+      confirmThreadUnpin,
       copyBranchToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
