@@ -51,8 +51,8 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import {
-  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+  codexDefaultModeDeveloperInstructions,
+  codexPlanModeDeveloperInstructions,
 } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   materializeCodexShadowHome,
@@ -578,6 +578,7 @@ export function buildCodexTurnStartParams(input: {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
   readonly hasT3Mcp?: boolean;
+  readonly browserToolsAvailable?: boolean;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -600,8 +601,8 @@ export function buildCodexTurnStartParams(input: {
       input.hasT3Mcp !== true
         ? undefined
         : input.runtimePolicy.interactionMode === "plan"
-          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+          ? codexPlanModeDeveloperInstructions(input.browserToolsAvailable ?? true)
+          : codexDefaultModeDeveloperInstructions(input.browserToolsAvailable ?? true);
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined
@@ -4393,13 +4394,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
 
               const codexInput = yield* toCodexInput(turnInput);
+              const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
               const turnStartParams = yield* buildCodexTurnStartParams({
                 nativeThreadId: threadId,
                 codexInput,
                 runtimePolicy: turnInput.runtimePolicy,
                 modelSelection: turnInput.modelSelection,
-                hasT3Mcp:
-                  McpProviderSession.readMcpProviderSession(turnInput.threadId) !== undefined,
+                hasT3Mcp: mcpSession !== undefined,
+                browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
