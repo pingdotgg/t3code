@@ -2986,6 +2986,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
+  const pruneWorktrees: GitVcsDriver.GitVcsDriver["Service"]["pruneWorktrees"] = Effect.fn(
+    "pruneWorktrees",
+  )(function* (input) {
+    // Only drops administrative entries whose working directory is already
+    // gone, so this is safe to run before re-adding a worktree at a path a
+    // stale entry still claims. Without it `git worktree add` refuses the
+    // path outright.
+    yield* executeGit("GitVcsDriver.pruneWorktrees", input.cwd, ["worktree", "prune"], {
+      timeoutMs: 15_000,
+      fallbackErrorDetail: "git worktree prune failed",
+    });
+  });
+
   const renameBranch: GitVcsDriver.GitVcsDriver["Service"]["renameBranch"] = Effect.fn(
     "renameBranch",
   )(function* (input) {
@@ -3190,6 +3203,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(input.cwd, fetchRemoteTrackingBranch(input)),
     setBranchUpstream: (input) => withListRefsInvalidation(input.cwd, setBranchUpstream(input)),
     removeWorktree: (input) => withListRefsInvalidation(input.cwd, removeWorktree(input)),
+    pruneWorktrees: (input) => withListRefsInvalidation(input.cwd, pruneWorktrees(input)),
     renameBranch: (input) => withListRefsInvalidation(input.cwd, renameBranch(input)),
     createRef: (input) => withListRefsInvalidation(input.cwd, createRef(input)),
     switchRef: (input) => withListRefsInvalidation(input.cwd, switchRef(input)),

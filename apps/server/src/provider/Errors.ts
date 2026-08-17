@@ -172,6 +172,34 @@ export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<Provid
 }
 
 /**
+ * ProviderSessionWorkspaceMissingError - The thread's persisted working
+ * directory no longer exists on disk.
+ *
+ * Distinct from `ProviderSessionNotFoundError`: the provider-side conversation
+ * is intact and resumable, but the directory it was bound to (typically a git
+ * worktree) has been removed. Resuming against a missing cwd makes provider
+ * CLIs fail with an unrelated-looking "session not found", which strands the
+ * thread permanently.
+ *
+ * Raised instead of launching that doomed resume, so the failure names the
+ * actual cause. Turn start tries to recreate the worktree before it gets this
+ * far; this is what surfaces when that repair was not possible — typically
+ * because the thread's branch is gone too.
+ */
+export class ProviderSessionWorkspaceMissingError extends Schema.TaggedErrorClass<ProviderSessionWorkspaceMissingError>()(
+  "ProviderSessionWorkspaceMissingError",
+  {
+    threadId: Schema.String,
+    cwd: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Thread '${this.threadId}' cannot resume because its working directory no longer exists: ${this.cwd}`;
+  }
+}
+
+/**
  * ProviderSessionDirectoryPersistenceError - Session directory persistence failure.
  */
 export class ProviderSessionDirectoryPersistenceError extends Schema.TaggedErrorClass<ProviderSessionDirectoryPersistenceError>()(
@@ -199,6 +227,7 @@ export type ProviderServiceError =
   | ProviderUnsupportedError
   | ProviderInstanceNotFoundError
   | ProviderSessionNotFoundError
+  | ProviderSessionWorkspaceMissingError
   | ProviderSessionDirectoryPersistenceError
   | ProviderAdapterError
   | CheckpointServiceError;

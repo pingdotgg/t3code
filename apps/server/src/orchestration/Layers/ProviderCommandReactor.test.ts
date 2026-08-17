@@ -64,6 +64,11 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 
+// Turn start recreates a thread's worktree when the directory is missing, so
+// this fixture path has to exist or every turn drags in the git restore path
+// these tests are not exercising.
+NodeFS.mkdirSync("/tmp/provider-project-worktree", { recursive: true });
+
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -264,6 +269,19 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
+    const pruneWorktrees = vi.fn((_: unknown) => Effect.void);
+    const createWorktree = vi.fn((input: unknown) => {
+      const path =
+        typeof input === "object" && input !== null && "path" in input
+          ? (input.path as string)
+          : "";
+      const refName =
+        typeof input === "object" && input !== null && "refName" in input
+          ? (input.refName as string)
+          : "";
+      NodeFS.mkdirSync(path, { recursive: true });
+      return Effect.succeed({ worktree: { path, refName } });
+    });
     const refreshStatus = vi.fn((_: string) =>
       Effect.succeed({
         isRepo: true,
@@ -395,6 +413,8 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           renameBranch,
+          createWorktree,
+          pruneWorktrees,
         } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
       ),
       Layer.provideMerge(
@@ -499,6 +519,8 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput,
       stopSession,
       renameBranch,
+      createWorktree,
+      pruneWorktrees,
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
@@ -1454,6 +1476,105 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Reconnect spinner resume bug");
+  });
+
+  it("recreates a missing worktree before starting a turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const worktreePath = NodePath.join(
+      NodeOS.tmpdir(),
+      "t3code-reactor-worktrees",
+      "removed-worktree",
+    );
+    NodeFS.rmSync(worktreePath, { recursive: true, force: true });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-missing-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/removed-worktree",
+        worktreePath,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-missing-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-worktree"),
+          role: "user",
+          text: "Keep going.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.createWorktree.mock.calls.length === 1);
+
+    // Stale admin entries are pruned first, otherwise `git worktree add`
+    // refuses a path a removed worktree still claims.
+    expect(harness.pruneWorktrees.mock.calls.length).toBe(1);
+    expect(harness.createWorktree.mock.calls[0]?.[0]).toMatchObject({
+      path: worktreePath,
+      refName: "t3code/removed-worktree",
+    });
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
+
+    // The turn still goes through once the workspace is back.
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+  });
+
+  // Must match the resume guard in ProviderService, which rejects a
+  // non-directory: if repair is skipped here the turn fails with nothing
+  // attempted and nothing explaining why.
+  it("attempts restore when a file occupies the worktree path", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const worktreePath = NodePath.join(
+      NodeOS.tmpdir(),
+      "t3code-reactor-worktrees",
+      "file-in-the-way",
+    );
+    NodeFS.rmSync(worktreePath, { recursive: true, force: true });
+    NodeFS.mkdirSync(NodePath.dirname(worktreePath), { recursive: true });
+    NodeFS.writeFileSync(worktreePath, "not a directory");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-file-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/file-in-the-way",
+        worktreePath,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-file-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-file-worktree"),
+          role: "user",
+          text: "Keep going.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.createWorktree.mock.calls.length === 1);
+    expect(harness.createWorktree.mock.calls[0]?.[0]).toMatchObject({ path: worktreePath });
+    NodeFS.rmSync(worktreePath, { recursive: true, force: true });
   });
 
   it("generates a worktree branch name for the first turn", async () => {

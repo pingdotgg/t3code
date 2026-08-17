@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -305,6 +306,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
@@ -365,6 +367,157 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const appendWorkspaceActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly tone: "info" | "error";
+    readonly summary: string;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("provider-workspace-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: input.tone,
+            kind: "provider.workspace.restored",
+            summary: input.summary,
+            payload: { detail: input.detail },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  /**
+   * Recreate a thread's git worktree when it has been removed underneath us.
+   *
+   * A thread's provider session is bound to its worktree path, and provider
+   * CLIs store their resumable transcript keyed by that path. When the
+   * directory disappears (worktree pruned, cleaned up, or removed by hand) the
+   * next turn cannot resume: the conversation is intact on both sides, but the
+   * directory it is addressed by is gone. Recreating the worktree from the
+   * thread's branch restores the binding and the working files.
+   *
+   * Best-effort by design: on failure we let the turn proceed so the caller's
+   * existing failure handling reports the real reason. Interrupts are the
+   * exception and are re-raised, so a shutdown or worker drain mid-restore
+   * cannot be absorbed into a warning and carried on into session start.
+   */
+  const ensureThreadWorkspace = Effect.fnUntraced(function* (input: {
+    readonly thread: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly branch: string | null;
+      readonly worktreePath: string | null;
+    };
+    readonly createdAt: string;
+  }) {
+    const worktreePath = input.thread.worktreePath;
+    if (!worktreePath) {
+      return;
+    }
+    // Must agree with the resume guard in ProviderService: if that treats the
+    // path as unusable, this has to attempt the repair, or the turn fails with
+    // no repair tried and nothing explaining why. `exists` is true for a plain
+    // file left at the path, which no process can chdir into. On any other stat
+    // failure assume the workspace is fine rather than recreating over it.
+    const usable = yield* fileSystem.stat(worktreePath).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.catch((error) =>
+        Effect.succeed(error.reason._tag !== "NotFound" && error.reason._tag !== "BadArgument"),
+      ),
+    );
+    if (usable) {
+      return;
+    }
+
+    const branch = input.thread.branch;
+    // Every other call here is guarded, and this one must be too: turn start
+    // caches its dedupe key before any work, so a failure escaping this
+    // best-effort repair would drop the turn silently for the 30 minute TTL
+    // rather than surfacing anything to the user.
+    const project = yield* resolveProject(input.thread.projectId).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    const workspaceRoot = project?.workspaceRoot;
+
+    if (!branch || !workspaceRoot) {
+      yield* Effect.logWarning("provider.workspace.restore.unavailable", {
+        threadId: input.thread.threadId,
+        worktreePath,
+        hasBranch: branch !== null,
+        hasWorkspaceRoot: workspaceRoot !== undefined,
+      });
+      return;
+    }
+
+    yield* Effect.logInfo("provider.workspace.restore.attempt", {
+      threadId: input.thread.threadId,
+      worktreePath,
+      branch,
+      workspaceRoot,
+    });
+
+    // A directory deleted without `git worktree remove` leaves an admin entry
+    // still claiming the path, which makes `git worktree add` refuse it.
+    // Pruning only drops entries whose directory is already gone.
+    yield* gitWorkflow.pruneWorktrees({ cwd: workspaceRoot }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("provider.workspace.restore.prune-failed", {
+              threadId: input.thread.threadId,
+              workspaceRoot,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
+    const restored = yield* gitWorkflow
+      .createWorktree({ cwd: workspaceRoot, refName: branch, path: worktreePath })
+      .pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("provider.workspace.restore.failed", {
+                threadId: input.thread.threadId,
+                worktreePath,
+                branch,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(false)),
+        ),
+      );
+
+    yield* appendWorkspaceActivity({
+      threadId: input.thread.threadId,
+      tone: restored ? "info" : "error",
+      summary: restored ? "Worktree restored" : "Worktree could not be restored",
+      detail: restored
+        ? `The worktree for this thread was missing and has been recreated at ${worktreePath} from branch '${branch}'. Any uncommitted changes it held were not recoverable.`
+        : `The worktree for this thread is missing at ${worktreePath} and could not be recreated from branch '${branch}'.`,
+      createdAt: input.createdAt,
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("provider.workspace.restore.activity-failed", {
+              threadId: input.thread.threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+  });
 
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
@@ -1082,6 +1235,19 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+
+    // Runs before the session is resolved: session recovery replays the
+    // thread's persisted cwd, so the directory has to be back on disk before
+    // the provider is asked to resume into it.
+    yield* ensureThreadWorkspace({
+      thread: {
+        threadId: event.payload.threadId,
+        projectId: thread.projectId,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+      },
+      createdAt: event.payload.createdAt,
+    });
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;

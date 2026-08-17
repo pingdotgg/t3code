@@ -27,6 +27,7 @@ import {
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -47,7 +48,11 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  type ProviderAdapterError,
+  ProviderSessionWorkspaceMissingError,
+  ProviderValidationError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -215,6 +220,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const fileSystem = yield* FileSystem.FileSystem;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
@@ -355,6 +361,52 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
+  /**
+   * Resuming into a directory that no longer exists does not fail cleanly:
+   * provider CLIs key their transcript store off the cwd, so a removed worktree
+   * surfaces as a generic "session not found" and the thread looks
+   * unrecoverable even though the conversation is intact on both sides.
+   *
+   * Guards every path that hands a resume cursor to an adapter — both
+   * `startSession` (which turn start reaches via the reactor's ensure-session
+   * step) and `recoverSessionForThread`.
+   */
+  const assertResumeWorkspaceExists = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly cwd: string | undefined;
+    readonly provider?: string;
+  }) {
+    if (input.cwd === undefined) {
+      return;
+    }
+    // `exists` is true for any entry, including a plain file left at the path.
+    // Launching a provider process with a file as its cwd fails at the process
+    // level with something even less legible than the error this replaces, so
+    // require an actual directory.
+    //
+    // Only block the resume when the path is positively known to be unusable:
+    // a missing path is the case we are here for, but any other stat failure
+    // (permissions, a transient FS error) must not strand a healthy thread.
+    const usable = yield* fileSystem.stat(input.cwd).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.catch((error) =>
+        Effect.succeed(error.reason._tag !== "NotFound" && error.reason._tag !== "BadArgument"),
+      ),
+    );
+    if (usable) {
+      return;
+    }
+    yield* Effect.logWarning("provider.session.workspace-missing", {
+      threadId: input.threadId,
+      ...(input.provider !== undefined ? { provider: input.provider } : {}),
+      cwd: input.cwd,
+    });
+    return yield* new ProviderSessionWorkspaceMissingError({
+      threadId: input.threadId,
+      cwd: input.cwd,
+    });
+  });
+
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
@@ -399,6 +451,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
+
+      yield* assertResumeWorkspaceExists({
+        threadId: input.binding.threadId,
+        cwd: persistedCwd,
+        provider: input.binding.provider,
+      });
 
       yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const resumed = yield* adapter
@@ -595,6 +653,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
         });
+        // Only when resuming: a fresh session with a missing cwd is a
+        // different problem, and failing here would break thread creation if
+        // the workspace is still being provisioned. A persisted cursor is null
+        // rather than undefined when there is no resume state, so both count
+        // as "not resuming".
+        if (effectiveResumeCursor !== undefined && effectiveResumeCursor !== null) {
+          yield* assertResumeWorkspaceExists({
+            threadId,
+            cwd: effectiveCwd,
+            provider: resolvedProvider,
+          });
+        }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter

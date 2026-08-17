@@ -65,6 +65,23 @@ const serverConfigTestLayer = ServerConfig.layerTest(process.cwd(), process.cwd(
   Layer.provide(NodeServices.layer),
 );
 
+// Session recovery refuses to resume into a working directory that no longer
+// exists, so the cwds these fixtures resume into have to be real directories.
+for (const fixtureCwd of [
+  "/tmp/project",
+  "/tmp/project-binding-mismatch",
+  "/tmp/project-claude",
+  "/tmp/project-claude-cwd",
+  "/tmp/project-claude-send-turn",
+  "/tmp/project-claude-start",
+  "/tmp/project-provider-replacement",
+  "/tmp/project-reap-preserve",
+  "/tmp/project-send-metrics",
+  "/tmp/project-send-turn",
+]) {
+  NodeFS.mkdirSync(fixtureCwd, { recursive: true });
+}
+
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
@@ -308,7 +325,11 @@ function makeProviderServiceLayer() {
       directoryLayer,
 
       runtimeRepositoryLayer,
-      NodeServices.layer,
+    ).pipe(
+      // Session recovery stats the persisted cwd, so ProviderService needs a
+      // FileSystem. `mergeAll` builds in parallel and would not satisfy that
+      // for a sibling layer, so it has to be provided underneath.
+      Layer.provideMerge(NodeServices.layer),
     ),
   );
 
@@ -359,8 +380,7 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
       ),
       directoryLayer,
       runtimeRepositoryLayer,
-      NodeServices.layer,
-    );
+    ).pipe(Layer.provideMerge(NodeServices.layer));
     const scope = yield* Scope.make();
     const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
 
@@ -1218,6 +1238,141 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("refuses to resume when a file has replaced the workspace directory", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const replacedCwd = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-provider-replaced-worktree-"),
+      );
+
+      const initial = yield* provider.startSession(asThreadId("thread-replaced-worktree"), {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-replaced-worktree"),
+        cwd: replacedCwd,
+        runtimeMode: "full-access",
+      });
+
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+
+      // A plain file at the path: exists() would call this fine, but no
+      // process can chdir into it.
+      NodeFS.rmSync(replacedCwd, { recursive: true, force: true });
+      NodeFS.writeFileSync(replacedCwd, "not a directory");
+
+      const failure = yield* Effect.result(
+        provider.sendTurn({ threadId: initial.threadId, input: "resume", attachments: [] }),
+      );
+
+      assert.equal(failure._tag, "Failure");
+      if (failure._tag !== "Failure") {
+        return;
+      }
+      assert.equal(failure.failure._tag, "ProviderSessionWorkspaceMissingError");
+      assert.equal(routing.claude.startSession.mock.calls.length, 0);
+      NodeFS.rmSync(replacedCwd, { force: true });
+    }),
+  );
+
+  // Turn start reaches startSession through the reactor's ensure-session step,
+  // not through sendTurn's recovery path, so the guard has to cover both.
+  it.effect("refuses to start a resuming session whose cwd no longer exists", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const removedCwd = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-provider-start-removed-worktree-"),
+      );
+
+      const initial = yield* provider.startSession(asThreadId("thread-start-removed-worktree"), {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-start-removed-worktree"),
+        cwd: removedCwd,
+        runtimeMode: "full-access",
+      });
+
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+
+      NodeFS.rmSync(removedCwd, { recursive: true, force: true });
+
+      // Mirrors the reactor: restart with the persisted resume cursor.
+      const failure = yield* Effect.result(
+        provider.startSession(initial.threadId, {
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeAgentInstanceId,
+          threadId: initial.threadId,
+          cwd: removedCwd,
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.equal(failure._tag, "Failure");
+      if (failure._tag !== "Failure") {
+        return;
+      }
+      assert.equal(failure.failure._tag, "ProviderSessionWorkspaceMissingError");
+      if (failure.failure._tag !== "ProviderSessionWorkspaceMissingError") {
+        return;
+      }
+      assert.equal(failure.failure.cwd, removedCwd);
+      assert.equal(routing.claude.startSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("refuses to resume a stale session whose persisted cwd no longer exists", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      // Owned by this test alone, because the test deletes it mid-flight.
+      const removedCwd = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-provider-removed-worktree-"),
+      );
+
+      const initial = yield* provider.startSession(asThreadId("thread-removed-worktree"), {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-removed-worktree"),
+        cwd: removedCwd,
+        runtimeMode: "full-access",
+      });
+
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+
+      // The worktree disappears between turns.
+      NodeFS.rmSync(removedCwd, { recursive: true, force: true });
+
+      const failure = yield* Effect.result(
+        provider.sendTurn({ threadId: initial.threadId, input: "resume", attachments: [] }),
+      );
+
+      assert.equal(failure._tag, "Failure");
+      if (failure._tag !== "Failure") {
+        return;
+      }
+      assert.equal(failure.failure._tag, "ProviderSessionWorkspaceMissingError");
+      if (failure.failure._tag !== "ProviderSessionWorkspaceMissingError") {
+        return;
+      }
+      assert.equal(failure.failure.cwd, removedCwd);
+
+      // The doomed resume is never handed to the adapter, and the persisted
+      // resume cursor survives so the thread can recover once the worktree is
+      // restored.
+      assert.equal(routing.claude.startSession.mock.calls.length, 0);
+      assert.equal(routing.claude.sendTurn.mock.calls.length, 0);
+
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const binding = yield* directory.getBinding(initial.threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.resumeCursor, initial.resumeCursor);
+      }
     }),
   );
 

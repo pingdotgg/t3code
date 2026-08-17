@@ -1505,12 +1505,24 @@ function toolResultBlocksFromUserMessage(message: SDKMessage): Array<{
   return blocks;
 }
 
+// A bare "not found" substring is not enough to conclude the session id is
+// unknown: the SDK uses the same wording for a missing CLI binary and for
+// missing files under the resumed cwd. Treating those as session errors sent
+// callers into session recovery for problems recovery cannot fix, and buried
+// the real cause behind "Unknown claudeAgent adapter thread". Require the
+// message to actually be about a session.
+const CLAUDE_UNKNOWN_SESSION_PATTERNS: ReadonlyArray<RegExp> = [
+  /unknown session/,
+  /session\b[^.\n]*\bnot found\b/,
+  /no conversation found/,
+];
+
 function toSessionError(
   threadId: ThreadId,
   cause: unknown,
 ): ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError | undefined {
   const normalized = toMessage(cause, "").toLowerCase();
-  if (normalized.includes("unknown session") || normalized.includes("not found")) {
+  if (CLAUDE_UNKNOWN_SESSION_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
       threadId,
