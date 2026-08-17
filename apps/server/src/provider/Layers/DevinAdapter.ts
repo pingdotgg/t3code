@@ -870,7 +870,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
               new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId: input.threadId,
-                detail: cause.message,
+                detail: "Failed to start the Devin ACP session process.",
                 cause,
               }),
           ),
