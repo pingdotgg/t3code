@@ -22,7 +22,7 @@ import {
 import { useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Kbd } from "../ui/kbd";
 import {
   SidebarContent,
@@ -191,12 +191,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <>
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup className="gap-2 p-[var(--sidebar-content-inset)]">
-          <div className="ms-px flex h-8 items-center gap-[var(--sidebar-control-gap)] rounded-lg border border-sidebar-border bg-background px-[calc(var(--sidebar-row-content-inset)-1px)] text-sm font-medium text-sidebar-muted-foreground shadow-xs/5 transition-shadow ring-ring/24 not-dark:bg-clip-padding focus-within:border-ring focus-within:ring-[3px] dark:bg-sidebar-foreground/5">
-            <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
-            <Input
+          <InputGroup className="ms-px h-8 rounded-lg border-sidebar-border bg-background px-[calc(var(--sidebar-row-content-inset)-1px)] text-sm font-medium text-sidebar-muted-foreground shadow-xs/5 dark:bg-sidebar-foreground/5">
+            <InputGroupAddon className="gap-[var(--sidebar-control-gap)] ps-0">
+              <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
+            </InputGroupAddon>
+            <InputGroupInput
               ref={searchInputRef}
               nativeInput
-              unstyled
               type="search"
               value={query}
               onChange={(event) => {
@@ -236,7 +237,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 /
               </Kbd>
             )}
-          </div>
+          </InputGroup>
           {isSearching && results.length === 0 ? (
             <p
               role="status"
