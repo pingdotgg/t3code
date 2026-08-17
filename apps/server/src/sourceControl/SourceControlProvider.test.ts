@@ -41,3 +41,25 @@ it("keeps provider wrapper messages structural while sanitizing the transport ca
     message: "raw upstream https://gitlab.example.test/group/repo",
   });
 });
+
+it("preserves finite rate-limit fields in the transport cause", () => {
+  const error = sourceControlProviderError({
+    provider: "bitbucket",
+    operation: "listChangeRequests",
+    cwd: "/repo",
+    error: {
+      _tag: "BitbucketResponseError",
+      failureKind: "rate-limited",
+      status: 429,
+      retryAt: 121_000,
+      detail: "Bitbucket returned HTTP 429.",
+    },
+  });
+
+  assert.deepInclude(error.cause, {
+    _tag: "BitbucketResponseError",
+    failureKind: "rate-limited",
+    status: 429,
+    retryAt: 121_000,
+  });
+});

@@ -109,6 +109,14 @@ function readStringField(value: unknown, key: string): string | undefined {
   return typeof field === "string" ? field : undefined;
 }
 
+function safeNumberField(error: unknown, key: string): Record<string, number> {
+  if (typeof error !== "object" || error === null || !(key in error)) {
+    return {};
+  }
+  const value = (error as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? { [key]: value } : {};
+}
+
 function normalizedSourceControlProviderCause(error: unknown) {
   if (typeof error !== "object" || error === null) {
     return {
@@ -121,10 +129,13 @@ function normalizedSourceControlProviderCause(error: unknown) {
     ...safeErrorField(error, "name"),
     ...safeErrorField(error, "command"),
     ...safeErrorField(error, "operation"),
+    ...safeErrorField(error, "failureKind"),
     ...safeErrorField(error, "reference"),
     ...safeErrorField(error, "repository"),
     ...safeErrorField(error, "detail"),
     ...safeErrorField(error, "message"),
+    ...safeNumberField(error, "status"),
+    ...safeNumberField(error, "retryAt"),
   };
 }
 

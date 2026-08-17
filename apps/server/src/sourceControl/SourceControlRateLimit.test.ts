@@ -1,8 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
-import { SourceControlProviderError } from "@t3tools/contracts";
 
+import { sourceControlProviderError } from "./SourceControlProvider.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
 const github = { provider: "github" as const, host: "github.com" };
@@ -127,15 +127,15 @@ it.effect("shares provider backoff with best-effort panel reads", () =>
     yield* TestClock.setTime(1_000);
     const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
     let attempts = 0;
-    const rateLimited = new SourceControlProviderError({
+    const rateLimited = sourceControlProviderError({
       provider: "bitbucket",
       operation: "listChangeRequests",
       cwd: "/repo",
-      detail: "Failed to list change requests.",
-      cause: {
+      error: {
         _tag: "BitbucketResponseError",
         status: 429,
         retryAt: 121_000,
+        detail: "Bitbucket returned HTTP 429.",
       },
     });
 
@@ -176,12 +176,12 @@ it.effect("shares provider backoff with best-effort panel reads", () =>
 it.effect("does not pause panel reads after ordinary provider failures", () =>
   Effect.gen(function* () {
     const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
-    const failed = new SourceControlProviderError({
+    const failed = sourceControlProviderError({
       provider: "gitlab",
       operation: "getCommitAvatarUrl",
       cwd: "/repo",
+      error: { _tag: "GitLabCliCommandError" },
       detail: "Provider request failed.",
-      cause: { _tag: "GitLabCliCommandError" },
     });
 
     yield* SourceControlRateLimit.protectProviderRequest({
