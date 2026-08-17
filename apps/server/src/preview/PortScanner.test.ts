@@ -54,8 +54,10 @@ const TestIntegrationNet = Layer.succeed(Net.NetService, {
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
 
-const successfulWebFetch: typeof globalThis.fetch = async () =>
-  new Response("<html></html>", { headers: { "content-type": "text/html" } });
+const successfulWebFetch: typeof globalThis.fetch = Object.assign(
+  async () => new Response("<html></html>", { headers: { "content-type": "text/html" } }),
+  { preconnect: () => undefined },
+);
 
 const makeProbeFailureLayer = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
