@@ -544,19 +544,23 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         </Button>
       }
     >
-      {/*
-        Dimmed as a whole when the section is unavailable. The built-in rows
-        are a plain span and a badge rather than `h3`/`p` or disabled controls,
-        so the block's own dimming does not reach them and they would be the
-        only full-contrast content inside "only available in the desktop app".
-      */}
-      <div className={cn("mt-1 space-y-1", disabled && "opacity-64")}>
+      <div className="mt-1 space-y-1">
         {resolveBrowserProfiles(userProfiles).map((profile) => {
           const builtIn = isBuiltInBrowserProfileId(profile.id);
           return (
             <div key={profile.id} className={ITEM_ROW_INNER_CLASSNAME}>
               {builtIn ? (
-                <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                // Dimmed here rather than on the list, which is the only
+                // content in the row without a disabled treatment of its own:
+                // a wrapper-level dim would stack with the rename field's and
+                // the remove button's, landing them near 0.41 while every
+                // other disabled control in the block sits at 0.64.
+                <span
+                  className={cn(
+                    "flex min-w-0 items-center gap-2 text-sm text-foreground",
+                    disabled && "opacity-64",
+                  )}
+                >
                   {profile.name}
                   <Badge variant="outline">
                     {profile.kind === "incognito" ? "Ephemeral" : "Built-in"}
