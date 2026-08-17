@@ -14,7 +14,10 @@ import {
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  BrowserImportResult,
+  BrowserImportSource,
   DesktopPreviewClearDataInputSchema,
+  DesktopPreviewImportCookiesInputSchema,
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
@@ -29,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
@@ -263,6 +267,37 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
       preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };
+  }),
+});
+
+/**
+ * Registered separately from `methods`: these carry `BrowserImport` in their
+ * context and their own failure type, so they do not unify with the
+ * manager-backed handlers the shared loop iterates.
+ */
+export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(BrowserImportSource),
+  handler: Effect.fn("desktop.ipc.preview.listBrowserImportSources")(function* () {
+    const browserImport = yield* BrowserImport.BrowserImport;
+    return yield* browserImport.listSources;
+  }),
+});
+
+export const importBrowserCookies = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_IMPORT_COOKIES_CHANNEL,
+  payload: DesktopPreviewImportCookiesInputSchema,
+  result: BrowserImportResult,
+  handler: Effect.fn("desktop.ipc.preview.importBrowserCookies")(function* ({
+    environmentId,
+    ...importInput
+  }) {
+    const browserImport = yield* BrowserImport.BrowserImport;
+    // Derived in main from the same helper the webview config uses, so cookies
+    // land in exactly the partition the profile's tabs attach to.
+    const { scope, persistent } = resolvePartitionScope(environmentId, importInput.targetProfileId);
+    return yield* browserImport.importCookies({ input: importInput, scope, persistent });
   }),
 });
 
