@@ -4,6 +4,7 @@ import type { BrowserImportSource } from "@t3tools/contracts";
 import {
   initialWizardStep,
   isRetryableReason,
+  formatSkippedDomains,
   outcomeToStep,
   refreshedSourceStep,
 } from "./browserImportWizard.logic";
@@ -35,8 +36,20 @@ describe("initialWizardStep", () => {
 describe("outcomeToStep", () => {
   it("lands on done after a successful import", () => {
     expect(
-      outcomeToStep({ kind: "imported", imported: 12, skipped: 3, targetName: "Work" }),
-    ).toEqual({ step: "done", imported: 12, skipped: 3, targetName: "Work" });
+      outcomeToStep({
+        kind: "imported",
+        imported: 12,
+        skipped: 3,
+        skippedDomains: ["example.com"],
+        targetName: "Work",
+      }),
+    ).toEqual({
+      step: "done",
+      imported: 12,
+      skipped: 3,
+      skippedDomains: ["example.com"],
+      targetName: "Work",
+    });
   });
 
   it("routes a reopened browser back to the quit screen", () => {
@@ -76,5 +89,20 @@ describe("isRetryableReason", () => {
   it("does not offer a retry for a permanent failure", () => {
     expect(isRetryableReason("unsupportedPlatform")).toBe(false);
     expect(isRetryableReason("keychainItemMissing")).toBe(false);
+  });
+});
+
+describe("formatSkippedDomains", () => {
+  it("joins a short list naturally", () => {
+    expect(formatSkippedDomains([])).toBe("");
+    expect(formatSkippedDomains(["a.com"])).toBe("a.com");
+    expect(formatSkippedDomains(["a.com", "b.com"])).toBe("a.com and b.com");
+    expect(formatSkippedDomains(["a.com", "b.com", "c.com"])).toBe("a.com, b.com and c.com");
+  });
+
+  it("summarizes a long list", () => {
+    expect(formatSkippedDomains(["a.com", "b.com", "c.com", "d.com", "e.com"])).toBe(
+      "a.com, b.com, c.com and 2 more",
+    );
   });
 });

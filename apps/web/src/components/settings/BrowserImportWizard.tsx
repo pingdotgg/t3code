@@ -20,6 +20,7 @@ import { Spinner } from "../ui/spinner";
 import {
   initialWizardStep,
   isRetryableReason,
+  formatSkippedDomains,
   outcomeToStep,
   refreshedSourceStep,
   type ImportOutcome,
@@ -338,11 +339,13 @@ function ImportingStep() {
 function DoneStep({
   imported,
   skipped,
+  skippedDomains,
   targetName,
   onClose,
 }: {
   readonly imported: number;
   readonly skipped: number;
+  readonly skippedDomains: ReadonlyArray<string>;
   readonly targetName: string;
   readonly onClose: () => void;
 }) {
@@ -358,6 +361,14 @@ function DoneStep({
             : "There were no cookies to bring over."}
         </DialogDescription>
       </DialogHeader>
+      {skippedDomains.length > 0 ? (
+        <DialogPanel>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Skipped
+          </p>
+          <p className="mt-1 text-sm text-foreground">{formatSkippedDomains(skippedDomains)}</p>
+        </DialogPanel>
+      ) : null}
       <DialogFooter>
         <DialogClose render={<Button />} onClick={onClose}>
           Done

@@ -803,7 +803,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       } else {
         targetName = input.target.name;
       }
-      return { kind: "imported", imported: result.imported, skipped: result.skipped, targetName };
+      return {
+        kind: "imported",
+        imported: result.imported,
+        skipped: result.skipped,
+        skippedDomains: result.skippedDomains,
+        targetName,
+      };
     } catch (cause) {
       return { kind: "blocked", reason: importFailureReason(cause) };
     }

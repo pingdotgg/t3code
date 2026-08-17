@@ -10,6 +10,7 @@ export type ImportOutcome =
       readonly kind: "imported";
       readonly imported: number;
       readonly skipped: number;
+      readonly skippedDomains: ReadonlyArray<string>;
       readonly targetName: string;
     }
   | { readonly kind: "blocked"; readonly reason: BrowserImportFailureReason };
@@ -26,6 +27,7 @@ export type WizardStep =
       readonly step: "done";
       readonly imported: number;
       readonly skipped: number;
+      readonly skippedDomains: ReadonlyArray<string>;
       readonly targetName: string;
     }
   | { readonly step: "blocked"; readonly reason: BrowserImportFailureReason };
@@ -48,6 +50,7 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
       step: "done",
       imported: outcome.imported,
       skipped: outcome.skipped,
+      skippedDomains: outcome.skippedDomains,
       targetName: outcome.targetName,
     };
   }
@@ -78,4 +81,15 @@ export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Names the sites whose cookies were skipped: "example.com and google.com",
+ * or "a, b, c and 4 more" past a few, so the line stays short.
+ */
+export function formatSkippedDomains(domains: ReadonlyArray<string>): string {
+  if (domains.length === 0) return "";
+  if (domains.length === 1) return domains[0]!;
+  if (domains.length <= 3) return `${domains.slice(0, -1).join(", ")} and ${domains.at(-1)}`;
+  return `${domains.slice(0, 3).join(", ")} and ${domains.length - 3} more`;
 }

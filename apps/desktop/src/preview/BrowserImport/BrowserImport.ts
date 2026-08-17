@@ -73,6 +73,15 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   return undefined;
 });
 
+/** The host a constructed cookie URL points at, for naming what was skipped. */
+const cookieHost = (url: string): string => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
 export const make = Effect.gen(function* BrowserImportMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
   const platform = yield* HostProcessPlatform;
@@ -175,6 +184,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
     // Rows the reader could not decrypt are already lost cookies, so they
     // count as skipped rather than vanishing from the tally.
     let skipped = read.undecryptable;
+    const skippedDomains = new Set(read.undecryptableHosts);
     for (const cookie of read.cookies) {
       const written = yield* Effect.tryPromise({
         try: () =>
@@ -199,11 +209,17 @@ export const make = Effect.gen(function* BrowserImportMake() {
         Effect.as(true),
         Effect.catchCause(() => Effect.succeed(false)),
       );
-      if (written) imported += 1;
-      else skipped += 1;
+      if (written) {
+        imported += 1;
+      } else {
+        skipped += 1;
+        skippedDomains.add(cookieHost(cookie.url));
+      }
     }
 
-    return { imported, skipped };
+    // Capped: a broken key can skip thousands, and the user only needs a sense
+    // of which sites didn't come over, not an exhaustive list.
+    return { imported, skipped, skippedDomains: [...skippedDomains].slice(0, 20) };
   });
 
   return BrowserImport.of({ listSources, importCookies });

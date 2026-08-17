@@ -215,6 +215,10 @@ export const cookieScope = (
   };
 };
 
+/** The host without Chromium's domain-cookie leading dot, for display. */
+const bareHost = (hostKey: string): string =>
+  hostKey.startsWith(".") ? hostKey.slice(1) : hostKey;
+
 const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): string | null => {
   const buffer = Buffer.from(encrypted);
   if (buffer.length === 0) return "";
@@ -244,6 +248,8 @@ const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): strin
 export interface CookieReadResult {
   readonly cookies: ReadonlyArray<ChromiumCookie>;
   readonly undecryptable: number;
+  /** Distinct hosts of the rows that could not be decrypted. */
+  readonly undecryptableHosts: ReadonlyArray<string>;
 }
 
 export interface ChromiumCookieSource {
@@ -316,10 +322,12 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
   // user does not get, and reporting an import that quietly dropped most of
   // its rows as a clean success is the worst of the options.
   let undecryptable = 0;
+  const undecryptableHosts = new Set<string>();
   for (const row of rows) {
     const value = decryptValue(row.encrypted_value, key, row.host_key);
     if (value === null) {
       undecryptable += 1;
+      undecryptableHosts.add(bareHost(row.host_key));
       continue;
     }
     const secure = row.is_secure === 1;
@@ -336,5 +344,9 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
       sameSite: sameSiteFromColumn(row.samesite),
     });
   }
-  return { cookies, undecryptable } satisfies CookieReadResult;
+  return {
+    cookies,
+    undecryptable,
+    undecryptableHosts: [...undecryptableHosts],
+  } satisfies CookieReadResult;
 });

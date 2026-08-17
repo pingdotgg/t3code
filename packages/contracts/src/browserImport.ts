@@ -102,11 +102,17 @@ export const BrowserImportResult = Schema.Struct({
   /** Cookies successfully written into the target partition. */
   imported: Schema.Int,
   /**
-   * Cookies read but not written — expired, or rejected by Chromium as
-   * malformed. Surfaced rather than hidden so a mostly-failed import doesn't
-   * look like a success.
+   * Cookies read but not written — expired, rejected as malformed, or held
+   * under a key we could not use. Surfaced rather than hidden so a
+   * mostly-failed import doesn't look like a success.
    */
   skipped: Schema.Int,
+  /**
+   * The distinct hosts those skipped cookies belonged to, so the user can be
+   * told what didn't come over rather than just how many. Capped, since a
+   * broken key can skip thousands across many sites.
+   */
+  skippedDomains: Schema.Array(Schema.String),
 });
 export type BrowserImportResult = typeof BrowserImportResult.Type;
 
