@@ -1,8 +1,9 @@
 import type { BrowserImportSource } from "@t3tools/contracts";
 import { BROWSER_IMPORT_FAILURE_COPY } from "@t3tools/contracts";
+import { ArrowDownIcon, ArrowRightIcon, CheckIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
-import { randomUUID } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 
 import { Button } from "../ui/button";
 import {
@@ -15,7 +16,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Radio, RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
 import {
   initialWizardStep,
@@ -117,7 +117,7 @@ export function BrowserImportWizard({
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogPopup className="max-w-md">
+      <DialogPopup className="max-w-lg">
         {step.step === "quit" ? (
           <QuitStep source={source} onCancel={onClose} onRechecked={recheckAfterQuit} />
         ) : step.step === "importing" ? (
@@ -176,6 +176,28 @@ function QuitStep({
   );
 }
 
+/** "5,065 cookies", or "no cookies", or nothing when the store is unreadable. */
+function cookieCountLabel(count: number | undefined): string | undefined {
+  if (count === undefined) return undefined;
+  if (count === 0) return "no cookies";
+  return `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
+}
+
+type ConfigureStepProps = {
+  readonly source: BrowserImportSource;
+  readonly targetProfiles: ReadonlyArray<WizardTargetProfile>;
+  readonly canCreateProfile: boolean;
+  readonly sourceProfileDirectory: string;
+  readonly onSourceProfileChange: (directory: string) => void;
+  readonly target: string;
+  readonly onTargetChange: (target: string) => void;
+  readonly onCancel: () => void;
+  readonly onImport: () => void;
+};
+
+// TEMP: an in-dialog layout switcher for comparing directions live — the ui.sh
+// picker can't load under the app's CSP. Collapse to the chosen variant and
+// delete this switcher before merge.
 function ConfigureStep({
   source,
   targetProfiles,
@@ -186,71 +208,121 @@ function ConfigureStep({
   onTargetChange,
   onCancel,
   onImport,
-}: {
-  readonly source: BrowserImportSource;
-  readonly targetProfiles: ReadonlyArray<WizardTargetProfile>;
-  readonly canCreateProfile: boolean;
-  readonly sourceProfileDirectory: string;
-  readonly onSourceProfileChange: (directory: string) => void;
-  readonly target: string;
-  readonly onTargetChange: (target: string) => void;
-  readonly onCancel: () => void;
-  readonly onImport: () => void;
-}) {
-  const hasMultipleSourceProfiles = source.profiles.length > 1;
+}: ConfigureStepProps) {
   return (
     <>
       <DialogHeader>
         <DialogTitle>Import from {source.name}</DialogTitle>
-        <DialogDescription>
-          Copy {source.name}&rsquo;s cookies and logins into a browser profile here.
-        </DialogDescription>
+        <DialogDescription>Cookies flow from the browser into a profile here.</DialogDescription>
       </DialogHeader>
-      <DialogPanel className="space-y-5">
-        {hasMultipleSourceProfiles ? (
-          <section className="space-y-2">
-            <p className="text-sm font-medium text-foreground">Which {source.name} profile?</p>
-            <RadioGroup value={sourceProfileDirectory} onValueChange={onSourceProfileChange}>
-              {source.profiles.map((profile) => (
-                <label
-                  key={profile.directory}
-                  className="flex cursor-pointer items-center gap-2 text-sm text-foreground"
-                >
-                  <Radio value={profile.directory} />
-                  <span className="min-w-0 truncate">{profile.name}</span>
-                </label>
-              ))}
-            </RadioGroup>
+      <DialogPanel>
+        {/* Side by side when the dialog has room, stacked when it doesn't. */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <section className="flex-1 space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              From
+            </p>
+            {source.profiles.map((profile) => (
+              <SelectableTile
+                key={profile.directory}
+                selected={sourceProfileDirectory === profile.directory}
+                title={profile.name}
+                subtitle={cookieCountLabel(profile.cookieCount)}
+                onSelect={() => onSourceProfileChange(profile.directory)}
+              />
+            ))}
           </section>
-        ) : null}
-        <section className="space-y-2">
-          <p className="text-sm font-medium text-foreground">Import into</p>
-          <RadioGroup value={target} onValueChange={onTargetChange}>
+          <div className="flex shrink-0 items-center justify-center text-muted-foreground">
+            <ArrowDownIcon className="size-4 sm:hidden" />
+            <ArrowRightIcon className="hidden size-4 sm:block" />
+          </div>
+          <section className="flex-1 space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Into
+            </p>
             {canCreateProfile ? (
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
-                <Radio value={NEW_TARGET_VALUE} />
-                <span>New profile</span>
-              </label>
+              <SelectableTile
+                selected={target === NEW_TARGET_VALUE}
+                title="New profile"
+                subtitle="Created for these cookies"
+                onSelect={() => onTargetChange(NEW_TARGET_VALUE)}
+              />
             ) : null}
             {targetProfiles.map((profile) => (
-              <label
+              <SelectableTile
                 key={profile.id}
-                className="flex cursor-pointer items-center gap-2 text-sm text-foreground"
-              >
-                <Radio value={profile.id} />
-                <span className="min-w-0 truncate">{profile.name}</span>
-              </label>
+                selected={target === profile.id}
+                title={profile.name}
+                subtitle="Existing profile"
+                onSelect={() => onTargetChange(profile.id)}
+              />
             ))}
-          </RadioGroup>
-        </section>
+          </section>
+        </div>
       </DialogPanel>
-      <DialogFooter>
-        <Button variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button onClick={onImport}>Import</Button>
-      </DialogFooter>
+      <ConfigureFooter onCancel={onCancel} onImport={onImport} />
     </>
+  );
+}
+
+/** Shared footer so the step keeps one set of actions. */
+function ConfigureFooter({
+  onCancel,
+  onImport,
+}: {
+  readonly onCancel: () => void;
+  readonly onImport: () => void;
+}) {
+  return (
+    <DialogFooter>
+      <Button variant="outline" onClick={onCancel}>
+        Cancel
+      </Button>
+      <Button onClick={onImport}>Import</Button>
+    </DialogFooter>
+  );
+}
+
+/** One selectable option: a name, an optional detail line, and a check. */
+function SelectableTile({
+  selected,
+  title,
+  subtitle,
+  onSelect,
+}: {
+  readonly selected: boolean;
+  readonly title: string;
+  readonly subtitle?: string | undefined;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors",
+        selected
+          ? "border-primary bg-primary/8"
+          : "border-border/60 hover:border-border hover:bg-muted/40",
+      )}
+    >
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium text-foreground">{title}</span>
+        {subtitle ? (
+          <span className="block truncate text-xs tabular-nums text-muted-foreground">
+            {subtitle}
+          </span>
+        ) : null}
+      </span>
+      <span
+        className={cn(
+          "grid size-4 shrink-0 place-items-center rounded-full border",
+          selected ? "border-primary bg-primary text-primary-foreground" : "border-input",
+        )}
+      >
+        {selected ? <CheckIcon className="size-2.5" /> : null}
+      </span>
+    </button>
   );
 }
 

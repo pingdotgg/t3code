@@ -64,6 +64,12 @@ export const BrowserImportSourceProfile = Schema.Struct({
   directory: TrimmedNonEmptyString,
   /** The name the source browser shows for it. */
   name: TrimmedNonEmptyString,
+  /**
+   * How many cookies the profile holds. Counted without decrypting, so it is
+   * cheap; absent when the store could not be read yet (Safari before Full
+   * Disk Access is granted).
+   */
+  cookieCount: Schema.optional(Schema.Int),
 });
 export type BrowserImportSourceProfile = typeof BrowserImportSourceProfile.Type;
 

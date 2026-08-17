@@ -9,11 +9,13 @@
  * @module BrowserImportSources
  */
 import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /**
  * Where a source's files live, resolved once per call rather than read from
@@ -78,6 +80,49 @@ const isSafeProfileDirectory = (directory: string): boolean =>
   !/[\\/]/.test(directory) &&
   !directory.includes("\u0000");
 
+const CookieCountRow = Schema.Struct({ count: Schema.Number });
+const decodeCookieCount = Schema.decodeUnknownEffect(Schema.Array(CookieCountRow));
+
+/**
+ * How many cookies a profile holds, counted without decrypting anything — a
+ * bare `COUNT(*)` needs no key. Best effort: a locked, missing or non-Chromium
+ * database (Firefox's table is named differently, Safari's is not SQL) yields
+ * `undefined` rather than failing the listing.
+ */
+const countProfileCookies = Effect.fnUntraced(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+  directory: string,
+): Effect.fn.Return<number | undefined, never> {
+  return yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql`select count(*) as count from cookies`;
+    const [row] = yield* decodeCookieCount(rows);
+    return row?.count;
+  }).pipe(
+    Effect.provide(
+      NodeSqliteClient.layer({
+        filename: cookieDatabasePath(definition, paths, directory),
+        readonly: true,
+      }),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+const withCookieCounts = (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+  profiles: ReadonlyArray<BrowserImportSourceProfile>,
+) =>
+  Effect.forEach(profiles, (profile) =>
+    countProfileCookies(definition, paths, profile.directory).pipe(
+      Effect.map((cookieCount) =>
+        cookieCount === undefined ? profile : { ...profile, cookieCount },
+      ),
+    ),
+  );
+
 /**
  * Profiles the source browser knows about, read from its `Local State`.
  *
@@ -108,7 +153,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
     ),
     Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
   );
-  if (declared.length > 0) return declared;
+  if (declared.length > 0) return yield* withCookieCounts(definition, paths, declared);
 
   // `Local State` is missing, unreadable or malformed. Scanning for
   // directories that hold a cookie database finds the profiles anyway;
@@ -123,7 +168,11 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
       Effect.map((exists) => (exists ? { directory, name: directory } : undefined)),
     ),
   );
-  return found.filter((profile) => profile !== undefined);
+  return yield* withCookieCounts(
+    definition,
+    paths,
+    found.filter((profile) => profile !== undefined),
+  );
 });
 
 /**

@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - Builds a Chromium-shaped cookie
+// table with the same native bindings the source reads.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -5,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
+import * as NodeSqlite from "node:sqlite";
 
 import {
   BROWSER_IMPORT_SOURCES,
@@ -30,6 +33,16 @@ const withSourceHome = Effect.fnUntraced(function* () {
 
 const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
   effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
+/** Writes a Chromium-shaped cookie table with `count` rows. */
+const writeCookieDatabase = (file: string, count: number) =>
+  Effect.sync(() => {
+    const database = new NodeSqlite.DatabaseSync(file);
+    database.exec("create table cookies (host_key text, name text)");
+    const insert = database.prepare("insert into cookies (host_key, name) values (?, ?)");
+    for (let index = 0; index < count; index += 1) insert.run("example.test", `c${index}`);
+    database.close();
+  });
 
 describe("isSourceRunning", () => {
   it.effect("reads Chromium's dangling SingletonLock symlink as a running browser", () =>
@@ -147,6 +160,21 @@ describe("listSourceProfiles", () => {
       Effect.gen(function* () {
         const paths = yield* withSourceHome();
         assert.deepEqual(yield* listSourceProfiles(helium, paths), []);
+      }),
+    ),
+  );
+
+  it.effect("counts a profile's cookies without decrypting them", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        const root = helium.userDataDirectory(paths);
+        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
+        yield* writeCookieDatabase(`${root}/Default/Cookies`, 3);
+
+        const [profile] = yield* listSourceProfiles(helium, paths);
+        assert.equal(profile?.cookieCount, 3);
       }),
     ),
   );
