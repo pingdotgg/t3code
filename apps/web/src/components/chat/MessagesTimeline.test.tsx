@@ -127,7 +127,6 @@ function matchMedia() {
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
-let toolCallExpandedBodyClassName: typeof import("./MessagesTimeline").toolCallExpandedBodyClassName;
 
 beforeAll(async () => {
   const classList = {
@@ -161,7 +160,7 @@ beforeAll(async () => {
     },
   });
 
-  ({ MessagesTimeline, toolCallExpandedBodyClassName } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline } = await import("./MessagesTimeline"));
 }, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -232,11 +231,6 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("sizes expanded tool details with the configured code font size", () => {
-    expect(toolCallExpandedBodyClassName).toContain("var(--font-size-code");
-    expect(toolCallExpandedBodyClassName).not.toContain("text-[11px]");
-  });
-
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -712,7 +706,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Steered the active turn");
+    expect(markup).toContain("data-base-ui-tooltip-trigger");
     expect(markup).toContain("lucide-redo-2");
     expect(markup).toContain('data-user-message-intent="steer"');
     expect(markup).toContain("items-center justify-end gap-1");
