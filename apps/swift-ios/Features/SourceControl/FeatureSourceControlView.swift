@@ -196,7 +196,9 @@ public struct FeatureSourceControlView: View {
         await load(force: true)
     }
 
-    private func load(force: Bool) async {
+    /// `clearsError` is false when recovering after a failed action, so the
+    /// reason that action failed survives the refresh it triggers.
+    private func load(force: Bool, clearsError: Bool = true) async {
         loadGeneration += 1
         statusGeneration += 1
         let loadID = loadGeneration
@@ -212,19 +214,19 @@ public struct FeatureSourceControlView: View {
                 let refreshed = try await client.sourceControlStatus(threadID: threadID)
                 guard statusID == statusGeneration else { return }
                 status = refreshed
-                errorMessage = nil
+                if clearsError { errorMessage = nil }
             } else {
                 let statuses = try await client.sourceControlStatuses(threadID: threadID)
                 for try await nextStatus in statuses {
                     guard statusID == statusGeneration else { return }
                     status = nextStatus
-                    errorMessage = nil
+                    if clearsError { errorMessage = nil }
                 }
             }
         } catch is CancellationError {
             return
         } catch {
-            guard statusID == statusGeneration else { return }
+            guard statusID == statusGeneration, clearsError else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -252,6 +254,11 @@ public struct FeatureSourceControlView: View {
         } catch {
             guard statusID == statusGeneration else { return }
             errorMessage = error.localizedDescription
+            // This action superseded an in-flight stream, so the remote half it
+            // was still waiting on would otherwise never arrive: the screen
+            // would keep withholding the pull-request actions until the user
+            // reloaded by hand. Recover, without losing the reason above.
+            await load(force: false, clearsError: false)
         }
     }
 }
