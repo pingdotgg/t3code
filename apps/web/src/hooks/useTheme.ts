@@ -473,6 +473,10 @@ export function useTheme() {
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;
     try {
+      // Preserve the current mode before replacing a legacy or inferred theme
+      // preference. Otherwise a fresh System preference is re-inferred from
+      // the new theme's base appearance, which can switch a dark UI to light.
+      writeAppearanceModePreference(readAppearanceModePreference(getStored()));
       // Choosing a whole theme replaces any automatic-mode mix. The mix is
       // captured first so a failed preference write can put it back instead
       // of erasing it or leaving it attached to the new theme.

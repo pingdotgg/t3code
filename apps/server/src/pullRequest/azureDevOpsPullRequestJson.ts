@@ -35,6 +35,12 @@ const RawPullRequestSchema = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /**
+   * Who armed auto-complete, which is the only thing Azure says about it: the field carries an
+   * identity while the pull request is set to complete on its own, and Azure leaves it out
+   * entirely once nobody has. So its presence is the answer, and there is no third state.
+   */
+  autoCompleteSetBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
@@ -124,6 +130,8 @@ export interface AzureDevOpsPullRequest {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   /** Where this pull request's threads live, when Azure said enough to work it out. */
   readonly threadsUrl: string | null;
+  /** Whether Azure is set to complete this on its own once its policies pass. */
+  readonly autoMergeEnabled: boolean;
 }
 
 function trimmed(value: string | null | undefined): string | null {
@@ -223,6 +231,7 @@ function toPullRequest(
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
     threadsUrl: toThreadsUrl(raw),
+    autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
   };
 }
 

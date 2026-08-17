@@ -9,7 +9,15 @@ describe("azure devops viewer permissions", () => {
     // and an unknown permission is granted rather than guessed away. Azure refuses the ones it
     // will not allow, at the moment they are taken, in words this could not have written.
     expect(AZURE_DEVOPS_VIEWER_PERMISSIONS).toEqual({
-      actions: ["merge", "ready", "draft", "close", "reopen"],
+      actions: [
+        "merge",
+        "ready",
+        "draft",
+        "close",
+        "reopen",
+        "enable-auto-merge",
+        "disable-auto-merge",
+      ],
       // False because the host itself cannot post one, not because this viewer may not.
       comment: false,
       resolve: false,

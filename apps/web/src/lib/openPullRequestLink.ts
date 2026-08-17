@@ -1,4 +1,4 @@
-import type { LocalApi, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, LocalApi, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
@@ -173,10 +173,19 @@ export function findProjectForChangeRequest(
  * should still be reading it afterwards. Any change request opens there, not only the thread's
  * own, since the panel is told which one to show.
  */
+export function shouldOpenPullRequestExternally(
+  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
+): boolean {
+  return event.metaKey || event.ctrlKey;
+}
+
 export function useOpenChangeRequestLink(
   threadRef?: ScopedThreadRef,
 ): (
-  event: Pick<MouseEvent<HTMLElement>, "preventDefault" | "stopPropagation">,
+  event: Pick<
+    MouseEvent<HTMLElement>,
+    "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
+  >,
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
 ) => boolean {
@@ -186,21 +195,30 @@ export function useOpenChangeRequestLink(
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useCallback(
     (event, targetUrl, targetThreadRef) => {
+      if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
-      const environmentId = resolvedThreadRef?.environmentId ?? primaryEnvironmentId;
-      if (
-        environmentId === null ||
-        serverConfigs.get(environmentId)?.environment.capabilities.pullRequests !== true
-      ) {
-        return false;
-      }
+      const parsed = parseChangeRequestUrl(targetUrl);
+      if (parsed === null) return false;
+      const reads = (environmentId: string) =>
+        serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
+        true;
       // Beside a thread the panel reads on that thread's environment, so a project from another
       // one could not be read there whatever its remote says: two environments can hold the same
       // repository, and handing the panel the wrong one's id opens a surface that never loads.
-      const projects = allProjects.filter((project) => project.environmentId === environmentId);
-      const parsed = parseChangeRequestUrl(targetUrl);
-      const project = parsed === null ? undefined : findProjectForChangeRequest(projects, parsed);
-      if (parsed === null || project === undefined) return false;
+      //
+      // The page has no such tie — it lists every server at once — so the link is resolved
+      // against all of them, the primary first where two hold the same repository.
+      const projects = resolvedThreadRef
+        ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
+        : allProjects
+            .filter((project) => reads(project.environmentId))
+            .toSorted(
+              (left, right) =>
+                Number(right.environmentId === primaryEnvironmentId) -
+                Number(left.environmentId === primaryEnvironmentId),
+            );
+      const project = findProjectForChangeRequest(projects, parsed);
+      if (project === undefined || !reads(project.environmentId)) return false;
       event.preventDefault();
       event.stopPropagation();
       if (resolvedThreadRef) {
@@ -223,6 +241,8 @@ export function useOpenChangeRequestLink(
           repository: parsed.repository,
           number: parsed.number,
           selectedProjectId: project.id,
+          // Named so the page opens the right one of two servers holding this project.
+          selectedEnvironmentId: project.environmentId,
         },
       });
       return true;
@@ -235,9 +255,17 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   return useCallback(
     (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
-      event.preventDefault();
       event.stopPropagation();
-      if (openChangeRequest(event, prUrl, targetThreadRef)) return true;
+      const openInBrowser = shouldOpenPullRequestExternally(event);
+      const isAnchor =
+        event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
+      // A real link already knows how to cmd/ctrl+click. Leave its default
+      // action alone so the browser (or Electron's window-open handler) opens
+      // the host. Buttons have no href, so they still go through openExternal.
+      if (openInBrowser && isAnchor) return false;
+
+      event.preventDefault();
+      if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
 
       const api = readLocalApi();
       if (!api) {

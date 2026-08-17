@@ -6,8 +6,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { clearConnectOnboardingRequest, connectOnboardingRequestAtom } from "./connectOnboarding";
 import { isConnectOnboardingOptedOut } from "./connectOnboardingOptOut";
 
-// Sign-in happens inside the Settings sheet; give its detent/session-state
-// transitions a beat to settle before presenting another formSheet on top.
+// Sign-in happens inside the Settings sheet; give its session-state transition
+// a beat to settle before presenting another formSheet on top.
 const PRESENT_ONBOARDING_DELAY_MS = 600;
 
 /**

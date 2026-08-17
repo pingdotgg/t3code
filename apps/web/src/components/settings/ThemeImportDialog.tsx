@@ -28,6 +28,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
  * A full theme export is a few KB, so anything past this is not a theme file.
@@ -78,13 +79,13 @@ function highlightJson(value: string): string {
     const index = match.index ?? 0;
     highlighted += escapeJsonHtml(value.slice(cursor, index));
 
-    let tokenClass = "theme-json-number";
+    let tokenClass = "text-[var(--app-theme-secondary-foreground,var(--color-amber-600))]";
     if (token.startsWith('"')) {
       tokenClass = /^\s*:/.test(value.slice(index + token.length))
-        ? "theme-json-key"
-        : "theme-json-string";
+        ? "text-[var(--app-theme-accent,var(--color-blue-600))]"
+        : "text-[var(--app-theme-message-action,var(--color-emerald-600))]";
     } else if (token === "true" || token === "false" || token === "null") {
-      tokenClass = "theme-json-constant";
+      tokenClass = "text-[var(--app-theme-accent-surface-foreground,var(--color-violet-600))]";
     }
     highlighted += `<span class="${tokenClass}">${escapeJsonHtml(token)}</span>`;
     cursor = index + token.length;
@@ -360,9 +361,16 @@ export function ThemeImportDialog({
           : null;
       for (const theme of conflicts) {
         try {
+          const existingTheme =
+            mode === "update"
+              ? getCustomThemes().find((candidate) => candidate.id === theme.id)
+              : undefined;
+          const themeToUpdate = existingTheme?.collection
+            ? { ...theme, collection: existingTheme.collection }
+            : theme;
           resolved.push(
             mode === "update"
-              ? updateCustomTheme(theme)
+              ? updateCustomTheme(themeToUpdate)
               : installCustomTheme(versionedCopy(theme, preferredName)),
           );
         } catch (cause) {
@@ -426,7 +434,23 @@ export function ThemeImportDialog({
         <DialogHeader>
           <DialogTitle>Add a theme</DialogTitle>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel className="space-y-5">
+          <ThemeSearchSection
+            onInstalled={(themes, context) => {
+              onImportedMany(themes, context);
+              onOpenChange(false);
+            }}
+            open={open}
+          />
+
+          <div className="flex items-center gap-3" aria-hidden>
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-muted-foreground text-[11px] uppercase tracking-wider">
+              or import a file
+            </span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           {(() => {
             const dropHandlers = {
               onDragEnter: (event: DragEvent<HTMLDivElement>) => {

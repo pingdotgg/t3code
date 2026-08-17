@@ -2,12 +2,14 @@ import type {
   PullRequestActor,
   PullRequestCheck,
   PullRequestCheckStatus,
+  PullRequestChecksState,
   PullRequestMergeability,
   PullRequestState,
 } from "@t3tools/contracts";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
+  CircleDotIcon,
   CircleXIcon,
   GitMergeIcon,
   GitPullRequestClosedIcon,
@@ -144,6 +146,51 @@ export function PullRequestCheckStatusIcon({ status }: { status: PullRequestChec
   );
 }
 
+/**
+ * The rollup a listing row carries, which is one word rather than the checks behind it. The
+ * headline is GitHub's own wording, so a reader who knows that page reads this one the same way.
+ */
+const CHECKS_STATE_PRESENTATION = {
+  passing: {
+    label: "All checks have passed",
+    Icon: CircleCheckIcon,
+    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+  },
+  failing: {
+    label: "Some checks were not successful",
+    Icon: CircleXIcon,
+    toneClassName: "text-destructive",
+  },
+  pending: {
+    label: "Some checks haven't completed yet",
+    Icon: CircleDotIcon,
+    toneClassName: "text-amber-600 dark:text-amber-400/90",
+  },
+} as const satisfies Record<
+  PullRequestChecksState,
+  { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
+>;
+
+export function pullRequestChecksStatePresentation(state: PullRequestChecksState) {
+  return CHECKS_STATE_PRESENTATION[state];
+}
+
+/**
+ * The same rollup the server sends with a listing row, worked out here from the checks a detail
+ * already holds — so the header shows the icon without a second field travelling with it.
+ *
+ * Null for a change request with no checks: nothing to show beats a tick nobody earned.
+ */
+export function pullRequestChecksState(
+  checks: ReadonlyArray<PullRequestCheck>,
+): PullRequestChecksState | null {
+  if (checks.length === 0) return null;
+  const statuses = checks.map((check) => check.status);
+  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
+  if (statuses.includes("pending")) return "pending";
+  return statuses.includes("success") ? "passing" : null;
+}
+
 export function PullRequestActorAvatar({
   actor,
   className,
@@ -179,16 +226,31 @@ export function PullRequestActorAvatar({
 export function PullRequestActorLabel({
   actor,
   className,
+  tooltip = true,
 }: {
   actor: PullRequestActor | null;
   className?: string;
+  tooltip?: boolean;
 }) {
   const login = actor?.login ?? "ghost";
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)} title={login}>
+  const label = (
+    <>
       <PullRequestActorAvatar actor={actor} />
       <span className="truncate">{login}</span>
-    </span>
+    </>
+  );
+  if (!tooltip) {
+    return <span className={cn("flex min-w-0 items-center gap-1.5", className)}>{label}</span>;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className={cn("flex min-w-0 items-center gap-1.5", className)} />}
+      >
+        {label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{login}</TooltipPopup>
+    </Tooltip>
   );
 }
 

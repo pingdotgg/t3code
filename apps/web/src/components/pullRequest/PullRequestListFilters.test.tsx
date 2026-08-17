@@ -1,9 +1,9 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { CircleIcon } from "lucide-react";
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { PullRequestFiltersMenu } from "./PullRequestListFilters";
+import { PullRequestFiltersMenu, pullRequestProjectKey } from "./PullRequestListFilters";
 
 function findValueChange(
   node: ReactNode,
@@ -53,12 +53,17 @@ function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) 
     involvement: "all",
     involvementOptions: [{ value: "all", label: "All", Icon: CircleIcon }],
     onInvolvement: () => undefined,
+    filters: {},
+    onFilters: () => undefined,
     host: undefined,
     hostOptions: [],
     onHost: () => undefined,
-    environmentId: null,
+    server: undefined,
+    serverOptions: [],
+    onServer: () => undefined,
     projects: [],
     projectId: undefined,
+    projectEnvironmentId: undefined,
     unavailable: new Map(),
     onProject: () => undefined,
     ...overrides,
@@ -79,21 +84,98 @@ describe("pull request filters menu", () => {
     expect(onState).toHaveBeenCalledWith("closed");
   });
 
+  it("names the chosen narrowing and leaves the others alone", () => {
+    const onFilters = vi.fn();
+    const group = findValueChange(
+      findLabeledGroup(menu({ filters: { review: "approved" }, onFilters }), "Draft"),
+    );
+    expect(group).toBeDefined();
+
+    group?.props.onValueChange("hide");
+    expect(onFilters).toHaveBeenCalledWith({ review: "approved", draft: "hide" });
+  });
+
+  it("drops a narrowing chosen back to all rather than sending it as undefined", () => {
+    const onFilters = vi.fn();
+    const group = findValueChange(
+      findLabeledGroup(
+        menu({ filters: { review: "none", checks: "failing" }, onFilters }),
+        "Review",
+      ),
+    );
+    expect(group).toBeDefined();
+
+    group?.props.onValueChange("all");
+    expect(onFilters).toHaveBeenCalledWith({ checks: "failing" });
+  });
+
   it("does not emit a change when the selected project is chosen again", () => {
     const projectId = "project-1" as ProjectId;
+    const environmentId = "env-1" as EnvironmentId;
     const onProject = vi.fn();
     const view = menu({
-      projects: [{ id: projectId, title: "T3 Code", workspaceRoot: "/work/t3code" }],
+      projects: [
+        {
+          id: projectId,
+          environmentId,
+          title: "T3 Code",
+          workspaceRoot: "/work/t3code",
+        },
+      ],
       projectId,
+      projectEnvironmentId: environmentId,
       onProject,
     });
     const radioGroup = findValueChange(view);
     expect(radioGroup).toBeDefined();
 
-    radioGroup?.props.onValueChange(projectId);
+    radioGroup?.props.onValueChange(pullRequestProjectKey({ id: projectId, environmentId }));
     expect(onProject).not.toHaveBeenCalled();
 
     radioGroup?.props.onValueChange("all");
-    expect(onProject).toHaveBeenCalledWith(undefined);
+    expect(onProject).toHaveBeenCalledWith(undefined, undefined);
+  });
+
+  it("passes the environment along so a duplicate project id on another server is told apart", () => {
+    const projectId = "project-1" as ProjectId;
+    const onProject = vi.fn();
+    const view = menu({
+      projects: [
+        {
+          id: projectId,
+          environmentId: "env-1" as EnvironmentId,
+          title: "T3 Code · one",
+          workspaceRoot: "/work/t3code-1",
+        },
+        {
+          id: projectId,
+          environmentId: "env-2" as EnvironmentId,
+          title: "T3 Code · two",
+          workspaceRoot: "/work/t3code-2",
+        },
+      ],
+      onProject,
+    });
+    const radioGroup = findValueChange(view);
+    expect(radioGroup).toBeDefined();
+
+    radioGroup?.props.onValueChange(
+      pullRequestProjectKey({ id: projectId, environmentId: "env-2" as EnvironmentId }),
+    );
+    expect(onProject).toHaveBeenCalledWith(projectId, "env-2");
+  });
+
+  it("does not collide when environment and project ids contain spaces", () => {
+    expect(
+      pullRequestProjectKey({
+        environmentId: "a b" as EnvironmentId,
+        id: "c" as ProjectId,
+      }),
+    ).not.toBe(
+      pullRequestProjectKey({
+        environmentId: "a" as EnvironmentId,
+        id: "b c" as ProjectId,
+      }),
+    );
   });
 });

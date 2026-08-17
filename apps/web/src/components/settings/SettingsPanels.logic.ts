@@ -3,6 +3,7 @@ import type {
   BackgroundActivitySettings,
   ProviderDriverKind,
   ProviderInstanceConfig,
+  PreviewViewportSetting,
   ProviderInstanceId,
   ServerSettings,
   SidebarProjectGroupingMode,
@@ -72,6 +73,89 @@ export function hasChangedBackgroundActivitySettings(
       DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
     )
   );
+}
+
+type TypographySettings = Pick<
+  UnifiedSettings,
+  | "fontFamilySans"
+  | "fontFamilyComposer"
+  | "fontFamilyCode"
+  | "fontFamilyTerminal"
+  | "fontSizeInterface"
+  | "fontSizePrompt"
+  | "fontSizeCode"
+  | "fontSizeTerminal"
+>;
+
+/** Labels the font rows whose family or size differs from the defaults. */
+export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
+  return [
+    ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
+    settings.fontSizeInterface !== DEFAULT_UNIFIED_SETTINGS.fontSizeInterface
+      ? ["Interface font"]
+      : []),
+    ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer ||
+    settings.fontSizePrompt !== DEFAULT_UNIFIED_SETTINGS.fontSizePrompt
+      ? ["Prompt font"]
+      : []),
+    ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ||
+    settings.fontSizeCode !== DEFAULT_UNIFIED_SETTINGS.fontSizeCode
+      ? ["Code font"]
+      : []),
+    ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal ||
+    settings.fontSizeTerminal !== DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal
+      ? ["Terminal font"]
+      : []),
+  ];
+}
+
+export type BrowserDefaultSettings = Pick<
+  UnifiedSettings,
+  | "browserDefaultViewport"
+  | "browserDefaultZoomFactor"
+  | "browserDefaultAppearance"
+  | "browserAutoShowFloatingPreview"
+>;
+
+/**
+ * True when two viewport settings describe the same viewport.
+ *
+ * The setting is a tagged union rather than a scalar, so identity comparison
+ * reports every stored viewport as changed — including one that matches the
+ * default.
+ */
+export function isSamePreviewViewport(
+  left: PreviewViewportSetting,
+  right: PreviewViewportSetting,
+): boolean {
+  if (left._tag !== right._tag) return false;
+  if (left._tag === "fill" || right._tag === "fill") return true;
+  if (left.width !== right.width || left.height !== right.height) return false;
+  return left._tag === "preset" && right._tag === "preset"
+    ? left.presetId === right.presetId
+    : true;
+}
+
+/** Labels the browser-default rows that differ from the defaults. */
+export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
+  return [
+    ...(isSamePreviewViewport(
+      settings.browserDefaultViewport,
+      DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport,
+    )
+      ? []
+      : ["Browser viewport"]),
+    ...(settings.browserDefaultZoomFactor !== DEFAULT_UNIFIED_SETTINGS.browserDefaultZoomFactor
+      ? ["Browser zoom"]
+      : []),
+    ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
+      ? ["Browser appearance"]
+      : []),
+    ...(settings.browserAutoShowFloatingPreview !==
+    DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
+      ? ["Floating preview"]
+      : []),
+  ];
 }
 
 export function resolveBackgroundActivityProfileOption(
