@@ -436,12 +436,18 @@ function GitActionProgressButtonContent({
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <p
-            className="truncate pt-0.5 text-left text-[11px] font-normal text-muted-foreground"
-            title={progress.output ?? undefined}
-          >
-            {progress.output}
-          </p>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <p className="truncate pt-0.5 text-left text-[11px] font-normal text-muted-foreground" />
+              }
+            >
+              {progress.output}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom" className="max-w-96 break-words">
+              {progress.output}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -466,12 +472,18 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <p
-            className="truncate pt-0.5 text-left text-[11px] font-normal text-muted-foreground"
-            title={success.description ?? undefined}
-          >
-            {success.description}
-          </p>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <p className="truncate pt-0.5 text-left text-[11px] font-normal text-muted-foreground" />
+              }
+            >
+              {success.description}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom" className="max-w-96 break-words">
+              {success.description}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       </div>
     </div>

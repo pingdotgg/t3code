@@ -6,6 +6,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/connections"
@@ -51,6 +52,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Schedule Tasks",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -321,6 +323,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     searchTerms: ["refresh availability versions auth state models background probes seconds off"],
     providerSettingsOnly: true,
+  },
+  {
+    id: "agent-browser-access",
+    title: "Agent browser access",
+    to: "/settings/integrations",
+    targetId: "browser",
+  },
+  {
+    id: "browser-default-viewport",
+    title: "Default browser viewport",
+    to: "/settings/integrations",
+    targetId: "browser",
+  },
+  {
+    id: "browser-default-zoom",
+    title: "Default browser zoom",
+    to: "/settings/integrations",
+    targetId: "browser",
+  },
+  {
+    id: "browser-default-appearance",
+    title: "Default browser appearance",
+    to: "/settings/integrations",
+    targetId: "browser",
+  },
+  {
+    id: "browser-auto-show-floating-preview",
+    title: "Auto-show floating preview",
+    to: "/settings/integrations",
+    targetId: "browser",
   },
   {
     id: "source-control",

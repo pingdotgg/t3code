@@ -1227,20 +1227,26 @@ function UserMessageIntentMarker({
           };
   const IntentIcon = presentation.icon;
   return (
-    <div
-      className="me-1 flex items-center justify-end gap-1 text-xs leading-none text-muted-foreground"
-      data-user-message-intent={intent}
-      title={
-        intent === "queued_turn"
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            className="me-1 flex items-center justify-end gap-1 text-xs leading-none text-muted-foreground"
+            data-user-message-intent={intent}
+          />
+        }
+      >
+        {IntentIcon ? <IntentIcon aria-hidden="true" className="size-3" /> : null}
+        {presentation.label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {intent === "queued_turn"
           ? "Queued behind the active turn"
           : intent === "promoted_queued_to_steer"
             ? "Originally queued, then promoted to steer the active turn"
-            : "Steered the active turn"
-      }
-    >
-      {IntentIcon ? <IntentIcon aria-hidden="true" className="size-3" /> : null}
-      {presentation.label}
-    </div>
+            : "Steered the active turn"}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -2500,7 +2506,7 @@ function T3CodeToolLogo({ className }: { className?: string }) {
         "flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-[4px] bg-background ring-1 ring-border/65",
         className,
       )}
-      title="T3 Code MCP tool"
+      aria-label="T3 Code MCP tool"
     >
       <img alt="" aria-hidden="true" className="size-4 object-cover" src={logoUrl} />
     </span>
@@ -2613,7 +2619,7 @@ function buildToolCallExpandedBody(
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
-export const toolCallExpandedBodyClassName =
+const toolCallExpandedBodyClassName =
   "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
