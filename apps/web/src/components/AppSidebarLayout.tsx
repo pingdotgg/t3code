@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -10,6 +11,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
+import { RIGHT_PANEL_INLINE_LAYOUT_BREAKPOINT_PX } from "../rightPanelLayout";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
@@ -143,11 +145,18 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isOnSessionGrid = pathname === "/grid";
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => !(isOnSessionGrid && window.innerWidth <= RIGHT_PANEL_INLINE_LAYOUT_BREAKPOINT_PX),
+  );
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
   // and a clamped drag ends with an unchanged width, which skips the re-render
   // that would otherwise refresh a render-time snapshot.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
+  const sessionGridUsesNarrowLayout =
+    isOnSessionGrid && viewportWidth <= RIGHT_PANEL_INLINE_LAYOUT_BREAKPOINT_PX;
+  const previousSessionGridNarrowLayoutRef = useRef(sessionGridUsesNarrowLayout);
+  const sidebarAutoCollapsedForNarrowGridRef = useRef(false);
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
   const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
     const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;
@@ -161,6 +170,23 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}),
   } as CSSProperties;
+
+  useEffect(() => {
+    if (sessionGridUsesNarrowLayout && !previousSessionGridNarrowLayoutRef.current) {
+      sidebarAutoCollapsedForNarrowGridRef.current = sidebarOpen;
+      if (sidebarOpen) {
+        setSidebarOpen(false);
+      }
+    } else if (
+      !sessionGridUsesNarrowLayout &&
+      previousSessionGridNarrowLayoutRef.current &&
+      sidebarAutoCollapsedForNarrowGridRef.current
+    ) {
+      sidebarAutoCollapsedForNarrowGridRef.current = false;
+      setSidebarOpen(true);
+    }
+    previousSessionGridNarrowLayoutRef.current = sessionGridUsesNarrowLayout;
+  }, [sessionGridUsesNarrowLayout, sidebarOpen]);
 
   useEffect(() => {
     if (!isMacosDesktop) return;
@@ -200,7 +226,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate, pathname]);
 
   return (
-    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
+    <SidebarProvider
+      className="h-dvh! min-h-0!"
+      onOpenChange={setSidebarOpen}
+      open={sidebarOpen}
+      style={sidebarProviderStyle}
+    >
       <ProjectProjectionRetention />
       <Sidebar
         side="left"

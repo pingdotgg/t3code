@@ -157,7 +157,11 @@ export function DraftHeroHeadline({
   return (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
       {hasResolvedProject ? (
-        <>What should we build in {projectSelector}?</>
+        <span className="inline-flex max-w-full items-baseline justify-center whitespace-nowrap">
+          <span>What should we build in</span>
+          <span className="ml-[0.25em] inline-flex min-w-0 items-baseline">{projectSelector}</span>
+          <span>?</span>
+        </span>
       ) : canChooseProject ? (
         <>{projectSelector} to start</>
       ) : (

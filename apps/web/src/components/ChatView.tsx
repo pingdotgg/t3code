@@ -1406,7 +1406,8 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const narrowViewportUsesRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const shouldUseRightPanelSheet = !isGridPane && narrowViewportUsesRightPanelSheet;
+  const shouldUseRightPanelSheet = narrowViewportUsesRightPanelSheet;
+  const previousRightPanelSheetLayoutRef = useRef(shouldUseRightPanelSheet);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
@@ -3391,6 +3392,24 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore.getState().close(activeThreadRef);
     }
   }, [activeThreadRef]);
+  useEffect(() => {
+    const previouslyUsedSheet = previousRightPanelSheetLayoutRef.current;
+    previousRightPanelSheetLayoutRef.current = shouldUseRightPanelSheet;
+    if (previouslyUsedSheet || !shouldUseRightPanelSheet || !ownsGlobalInteraction) return;
+
+    if (sourceControlOpen) {
+      useSourceControlStore.getState().setOpen(false);
+    }
+    if (rightPanelOpen) {
+      closePreviewPanel();
+    }
+  }, [
+    closePreviewPanel,
+    ownsGlobalInteraction,
+    rightPanelOpen,
+    shouldUseRightPanelSheet,
+    sourceControlOpen,
+  ]);
   const addTerminalSurface = useCallback(() => {
     if (!activeThreadRef || !activeThreadId || !activeProject) return;
     const cwd = gitCwd ?? activeProject.workspaceRoot;
@@ -6338,7 +6357,7 @@ function ChatViewContent(props: ChatViewProps) {
       {isGridPane && ownsGlobalInteraction && panelControlsPortalTarget
         ? createPortal(panelToggleControls, panelControlsPortalTarget)
         : null}
-      {isGridPane && ownsGlobalInteraction && rightPanelPortalTarget
+      {isGridPane && !shouldUseRightPanelSheet && ownsGlobalInteraction && rightPanelPortalTarget
         ? createPortal(
             <>
               {rightPanelOpen && activeThreadRef ? (

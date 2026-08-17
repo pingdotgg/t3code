@@ -2721,7 +2721,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   answers={activePendingDraftAnswers}
                   questionIndex={activePendingQuestionIndex}
                   onToggleOption={onSelectActivePendingUserInputOption}
-                  onAdvance={onAdvanceActivePendingUserInput}
                 />
               </div>
             ) : showPlanFollowUpPrompt && activeProposedPlan ? (
@@ -2761,7 +2760,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 answers={activePendingDraftAnswers}
                 questionIndex={activePendingQuestionIndex}
                 onToggleOption={onSelectActivePendingUserInputOption}
-                onAdvance={onAdvanceActivePendingUserInput}
               />
               <div className="px-3 pb-3 sm:px-4">
                 <div
@@ -3030,36 +3028,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 )}
 
-              <div className="relative">
-                <ComposerPromptEditor
-                  editorRef={composerEditorRef}
-                  value={
-                    isComposerApprovalState
-                      ? ""
-                      : activePendingProgress
-                        ? activePendingProgress.customAnswer
-                        : prompt
-                  }
-                  cursor={composerCursor}
-                  terminalContexts={
-                    !isComposerApprovalState && pendingUserInputs.length === 0
-                      ? composerTerminalContexts
-                      : []
-                  }
-                  skills={selectedProviderStatus?.skills ?? []}
-                  className={cn(
-                    compact && "min-h-7! max-h-24!",
-                    showMobilePendingAnswerActions && "max-sm:pb-11",
-                  )}
-                  onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
-                  onChange={onPromptChange}
-                  onCommandKeyDown={onComposerCommandKey}
-                  onPaste={onComposerPaste}
-                  placeholder={
-                    isComposerApprovalState
-                      ? (activePendingApproval?.detail ??
-                        "Resolve this approval request to continue")
-                      : activePendingProgress
+              {isComposerApprovalState ? null : (
+                <div className="relative">
+                  <ComposerPromptEditor
+                    editorRef={composerEditorRef}
+                    value={activePendingProgress ? activePendingProgress.customAnswer : prompt}
+                    cursor={composerCursor}
+                    terminalContexts={
+                      pendingUserInputs.length === 0 ? composerTerminalContexts : []
+                    }
+                    skills={selectedProviderStatus?.skills ?? []}
+                    className={cn(
+                      compact && "min-h-7! max-h-24!",
+                      showMobilePendingAnswerActions && "max-sm:pb-11",
+                    )}
+                    onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
+                    onChange={onPromptChange}
+                    onCommandKeyDown={onComposerCommandKey}
+                    onPaste={onComposerPaste}
+                    placeholder={
+                      activePendingProgress
                         ? "Type your own answer, or leave this blank to use the selected option"
                         : showPlanFollowUpPrompt && activeProposedPlan
                           ? "Add feedback to refine the plan, or leave this blank to implement it"
@@ -3070,45 +3058,46 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               : phase === "disconnected"
                                 ? "Ask for follow-up changes or attach images"
                                 : "Ask anything, @tag files/folders, $use skills, or / for commands"
-                  }
-                  disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
-                />
-                {showMobilePendingAnswerActions ? (
-                  <div
-                    data-chat-composer-mobile-pending-actions="true"
-                    className="absolute bottom-0 right-0 flex justify-end"
-                  >
-                    <ComposerPrimaryActions
-                      compact
-                      pendingAction={pendingPrimaryAction}
-                      isRunning={false}
-                      showPlanFollowUpPrompt={false}
-                      promptHasText={false}
-                      isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
-                      isConnecting={isConnecting}
-                      isEnvironmentUnavailable={
-                        environmentUnavailable !== null ||
-                        noProviderAvailable ||
-                        projectSelectionRequired
-                      }
-                      isPreparingWorktree={false}
-                      hasSendableContent={false}
-                      preserveComposerFocusOnPointerDown
-                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                      onInterrupt={handleInterruptPrimaryAction}
-                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
-                    />
-                  </div>
-                ) : null}
-              </div>
+                    }
+                    disabled={isConnecting || projectSelectionRequired}
+                  />
+                  {showMobilePendingAnswerActions ? (
+                    <div
+                      data-chat-composer-mobile-pending-actions="true"
+                      className="absolute bottom-0 right-0 flex justify-end"
+                    >
+                      <ComposerPrimaryActions
+                        compact
+                        pendingAction={pendingPrimaryAction}
+                        isRunning={false}
+                        showPlanFollowUpPrompt={false}
+                        promptHasText={false}
+                        isSendBusy={isSendBusy}
+                        sendDisabledReason={sendDisabledReason}
+                        isConnecting={isConnecting}
+                        isEnvironmentUnavailable={
+                          environmentUnavailable !== null ||
+                          noProviderAvailable ||
+                          projectSelectionRequired
+                        }
+                        isPreparingWorktree={false}
+                        hasSendableContent={false}
+                        preserveComposerFocusOnPointerDown
+                        onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                        onInterrupt={handleInterruptPrimaryAction}
+                        onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             {/* Bottom toolbar */}
             {isComposerCollapsedMobile ? null : activePendingApproval ? (
               <div
                 className={cn(
-                  "flex items-center justify-end gap-2",
+                  "flex flex-wrap items-center justify-end gap-2",
                   compact ? "px-2 pb-1.5" : "px-3 pb-3 sm:px-4 sm:pb-4",
                 )}
               >
