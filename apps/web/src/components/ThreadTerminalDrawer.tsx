@@ -965,8 +965,9 @@ export function TerminalViewport({
       terminal.write(current.buffer.slice(previous.buffer.length));
     } else {
       // A replace repoints every coordinate, so the old selection is meaningless.
+      // resetAndWrite drops it, which keeps the invariant with the surface that
+      // owns the coordinates rather than with each caller that replaces a buffer.
       writeTerminalBuffer(terminal, current.buffer);
-      terminal.clearSelection();
     }
 
     if (current.error !== null && current.error !== previous.error) {

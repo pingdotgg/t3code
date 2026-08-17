@@ -804,9 +804,11 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.core.resetAndWrite(data);
     // Replacing the buffer repoints every screen coordinate at new content, so
-    // anything captured against the old one is void. Appends do not: those
-    // coordinates stay pinned to the rows they named.
+    // everything anchored to the old one is void: captures held by embedders,
+    // and the anchor a keyboard selection would resume from. Appends invalidate
+    // neither, since those coordinates stay pinned to the rows they named.
     this.bufferGeneration += 1;
+    this.clearSelection();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
