@@ -216,22 +216,6 @@ describe("ServerSettings.sourceControlWritingStyle", () => {
   });
 });
 
-describe("ServerSettings terminal shell", () => {
-  it("defaults to automatic shell selection and trims configured commands", () => {
-    expect(decodeServerSettings({}).defaultTerminalShell).toBe("");
-    expect(
-      decodeServerSettings({ defaultTerminalShell: "  C:\\Program Files\\Git\\bin\\bash.exe  " })
-        .defaultTerminalShell,
-    ).toBe("C:\\Program Files\\Git\\bin\\bash.exe");
-  });
-
-  it("accepts a terminal shell settings patch", () => {
-    expect(decodeServerSettingsPatch({ defaultTerminalShell: "pwsh.exe" })).toEqual({
-      defaultTerminalShell: "pwsh.exe",
-    });
-  });
-});
-
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});
@@ -266,6 +250,7 @@ describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",
+      defaultTerminalShell: "  C:\\Program Files\\Git\\bin\\bash.exe  ",
       textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
       observability: {
         otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
@@ -287,6 +272,7 @@ describe("ServerSettingsPatch string normalization", () => {
     });
 
     expect(patch.addProjectBaseDirectory).toBe("~/Development");
+    expect(patch.defaultTerminalShell).toBe("C:\\Program Files\\Git\\bin\\bash.exe");
     expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
     expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
