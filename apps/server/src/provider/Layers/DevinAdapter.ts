@@ -442,7 +442,6 @@ function buildThreadTokenUsageSnapshot(input: {
 
   const inputTokens = input.inputTokens ?? 0;
   const outputTokens = input.outputTokens ?? 0;
-  const cachedReadTokens = input.cachedReadTokens ?? 0;
   const turnTokens = inputTokens + outputTokens;
   const usedDelta = Math.max(0, input.usedTokens - previousUsedTokens);
 
@@ -867,7 +866,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.mapError(
             (cause) =>
-                detail: "Failed to start the Devin ACP session.",
+              new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId: input.threadId,
                 detail: "Failed to start the Devin ACP session process.",
