@@ -4,7 +4,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import { reactHookHarness } from "../../test/reactHookHarness";
 import { visitElements } from "../../test/reactElementTree";
-import { SelectTrigger } from "../ui/select";
+import { Select, SelectTrigger, SelectValue } from "../ui/select";
 import { DRIVER_OPTION_BY_VALUE } from "./providerDriverMeta";
 import {
   deriveProviderSettingsFields,
@@ -164,6 +164,32 @@ describe("ProviderSettingsForm helpers", () => {
   it("reads missing boolean config values from the supplied default", () => {
     expect(readProviderConfigBoolean({}, "experimental", true)).toBe(true);
   });
+
+  it("omits string fields when the value equals the schema default", () => {
+    const next = nextProviderConfigWithFieldValue(
+      undefined,
+      {
+        key: "permissionMode",
+        control: "select",
+        label: "Permission mode",
+        clearWhenEmpty: "omit",
+        defaultValue: "normal",
+      },
+      "normal",
+    );
+
+    expect(next).toBeUndefined();
+  });
+
+  it("sources string default values from the schema", () => {
+    const devin = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("devin")];
+    expect(devin).toBeDefined();
+
+    const permissionMode = deriveProviderSettingsFields(devin!).find(
+      (field) => field.key === "permissionMode",
+    );
+    expect(permissionMode?.defaultValue).toBe("normal");
+  });
 });
 
 function containsSelectTrigger(node: unknown, id: string): boolean {
@@ -220,5 +246,36 @@ describe("ProviderSettingsForm select field", () => {
     expect(className).not.toMatch(/\bmt-1\.5\b/);
 
     expect(hasLabelWrappingSelectTrigger(tree, inputId)).toBe(false);
+  });
+
+  it("renders the schema default when the config omits the select field", () => {
+    const field = {
+      key: "permissionMode",
+      control: "select",
+      label: "Permission mode",
+      description: "Permission mode passed to `devin`.",
+      clearWhenEmpty: "omit",
+      defaultValue: "normal",
+      options: [
+        { value: "normal", label: "Normal" },
+        { value: "accept-edits", label: "Accept edits" },
+      ],
+    } as const;
+
+    const tree = ProviderSettingsFieldRow({
+      field,
+      value: {},
+      idPrefix: "test",
+      variant: "dialog",
+      onChange: () => {},
+    });
+
+    const select = visitElements(tree, (element) => element.type === Select);
+    expect(select).not.toBeNull();
+    expect(select!.props.value).toBe("normal");
+
+    const value = visitElements(tree, (element) => element.type === SelectValue);
+    expect(value).not.toBeNull();
+    expect(value!.props.children).toBe("Normal");
   });
 });

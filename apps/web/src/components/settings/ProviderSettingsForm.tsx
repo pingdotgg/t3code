@@ -25,6 +25,7 @@ export interface ProviderSettingsFieldModel {
   readonly placeholder?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   readonly defaultBooleanValue?: boolean | undefined;
+  readonly defaultValue?: string | undefined;
   readonly options?: ReadonlyArray<{ readonly value: string; readonly label: string }> | undefined;
 }
 
@@ -71,6 +72,14 @@ function readFieldBooleanDefault(
   return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
 }
 
+function readFieldStringDefault(
+  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
+): string | undefined {
+  const decodeDefault = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
+  const decoded = decodeDefault(undefined);
+  return Option.isSome(decoded) && typeof decoded.value === "string" ? decoded.value : undefined;
+}
+
 export function deriveProviderSettingsFields(
   definition: ProviderClientDefinition,
 ): ReadonlyArray<ProviderSettingsFieldModel> {
@@ -107,7 +116,9 @@ export function deriveProviderSettingsFields(
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
-            : {}),
+            : formAnnotation.control === "select"
+              ? { defaultValue: readFieldStringDefault(fieldSchema) }
+              : {}),
           ...(formAnnotation.options !== undefined ? { options: formAnnotation.options } : {}),
         } satisfies ProviderSettingsFieldModel,
       ];
@@ -149,7 +160,11 @@ export function nextProviderConfigWithFieldValue(
   }
 
   const trimmed = value.trim();
-  if (field.clearWhenEmpty === "omit" && trimmed.length === 0) {
+  const isDefault =
+    field.clearWhenEmpty === "omit" &&
+    field.defaultValue !== undefined &&
+    trimmed === field.defaultValue;
+  if (field.clearWhenEmpty === "omit" && (trimmed.length === 0 || isDefault)) {
     delete base[field.key];
   } else {
     base[field.key] = value;
@@ -242,7 +257,7 @@ export function ProviderSettingsFieldRow({
   }
 
   if (field.control === "select") {
-    const currentValue = readProviderConfigString(value, field.key);
+    const currentValue = readProviderConfigString(value, field.key) || (field.defaultValue ?? "");
     const selectedOption = field.options?.find((option) => option.value === currentValue);
     return (
       <FieldFrame variant={variant}>
@@ -261,7 +276,7 @@ export function ProviderSettingsFieldRow({
               aria-label={field.label}
             >
               <SelectValue placeholder={field.placeholder ?? field.label}>
-                {selectedOption?.label ?? currentValue}
+                {selectedOption?.label}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup>
