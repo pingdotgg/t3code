@@ -626,12 +626,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }),
     );
     if (result.pollIntervalChanged) yield* wakePollSchedule;
-    if (currentListener === undefined) {
-      yield* Effect.forEach(result.deliveries, Deferred.await, {
-        concurrency: "unbounded",
-        discard: true,
-      });
-    }
+    return currentListener === undefined ? result.deliveries : [];
   });
 
   const scanOnce: PortDiscovery["Service"]["scan"] = (configuredUrls = []) => {
@@ -645,10 +640,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
     function* () {
-      yield* scanLock.withPermit(
+      const deliveries = yield* scanLock.withPermit(
         Effect.gen(function* () {
           const state = yield* Ref.get(stateRef);
-          if (state.retainCount <= 0) return;
+          if (state.retainCount <= 0) return [];
           const configuredUrls = [
             ...new Set([
               ...state.retainedConfiguredUrls.keys(),
@@ -658,9 +653,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             ]),
           ];
           const snapshot = yield* scanUnlocked(configuredUrls);
-          yield* publishSnapshot(snapshot, configuredUrls);
+          return yield* publishSnapshot(snapshot, configuredUrls);
         }),
       );
+      yield* Effect.forEach(deliveries, Deferred.await, {
+        concurrency: "unbounded",
+        discard: true,
+      });
     },
     Effect.catchCause((cause: Cause.Cause<never>) =>
       Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
@@ -758,9 +757,24 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         if (count <= 1) retainedConfiguredUrls.delete(configuredUrl);
         else retainedConfiguredUrls.set(configuredUrl, count - 1);
       }
+      const becameIdle = state.retainCount > 0 && retainCount === 0;
+      if (!becameIdle) {
+        return [false, { ...state, retainCount, retainedConfiguredUrls }] as const;
+      }
+      const listeners = new Map<ListenerRegistration, ReadonlyArray<DiscoveredLocalServer>>();
+      for (const registration of state.listeners.keys()) {
+        listeners.set(registration, []);
+      }
       return [
-        state.retainCount > 0 && retainCount === 0,
-        { ...state, retainCount, retainedConfiguredUrls },
+        true,
+        {
+          ...state,
+          lastSnapshot: { discovered: [], configured: new Map() },
+          lastScanConfiguredUrls: new Set<string>(),
+          listeners,
+          retainCount,
+          retainedConfiguredUrls,
+        },
       ] as const;
     });
     if (becameIdle) yield* wakePollSchedule;
