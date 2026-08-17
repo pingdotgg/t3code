@@ -50,12 +50,22 @@ export class ChromiumKeyError extends Schema.TaggedErrorClass<ChromiumKeyError>(
   "ChromiumKeyError",
   {
     reason: ChromiumKeyFailure,
+    /**
+     * The metadata file the failure is about, when it is about one. Without it
+     * an unreadable `Local State` is reported against the cookie database the
+     * caller names instead.
+     */
+    localStatePath: Schema.optional(Schema.String),
+    /** Exit status of the helper that was asked to unwrap the key. */
+    exitCode: Schema.optional(Schema.Number),
     /** Kept for the log; never surfaced to the user. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Could not obtain the Chromium cookie key: ${this.reason}.`;
+    const where = this.localStatePath === undefined ? "" : ` at ${this.localStatePath}`;
+    const status = this.exitCode === undefined ? "" : ` (helper exited with ${this.exitCode})`;
+    return `Could not obtain the Chromium cookie key${where}: ${this.reason}${status}.`;
   }
 }
 
@@ -72,6 +82,8 @@ export interface ChromiumKeyMaterial {
   /** AES-256-GCM on Windows. */
   readonly gcmV10?: Buffer;
 }
+
+const isChromiumKeyError = Schema.is(ChromiumKeyError);
 
 const derive = (passphrase: string, iterations: number) =>
   NodeCrypto.pbkdf2Sync(passphrase, KEY_SALT, iterations, KEY_LENGTH, "sha1");
@@ -146,17 +158,11 @@ const unprotectWithDpapi = Effect.fn("ChromiumKeys.unprotectWithDpapi")(function
   // `gcmV10` would be populated with an unusable key: every record then fails
   // to decrypt and the import reports success having written nothing.
   if (exitCode !== 0) {
-    return yield* new ChromiumKeyError({
-      reason: "keychainItemMissing",
-      cause: new Error(`powershell.exe exited with ${exitCode}`),
-    });
+    return yield* new ChromiumKeyError({ reason: "readFailed", exitCode });
   }
   const unwrapped = Buffer.from(stdout.trim(), "base64");
   if (unwrapped.length === 0) {
-    return yield* new ChromiumKeyError({
-      reason: "keychainItemMissing",
-      cause: new Error("powershell.exe returned no key material"),
-    });
+    return yield* new ChromiumKeyError({ reason: "readFailed", exitCode });
   }
   return unwrapped;
 });
@@ -184,7 +190,9 @@ const readLocalState = Effect.fn("ChromiumKeys.readLocalState")(function* (local
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(localStatePath).pipe(
     Effect.flatMap(decodeLocalState),
-    Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })),
+    Effect.mapError(
+      (cause) => new ChromiumKeyError({ reason: "readFailed", localStatePath, cause }),
+    ),
   );
 });
 
@@ -254,7 +262,14 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
     const unwrapped = yield* unprotectWithDpapi(stripDpapiMarker(encodedKey)).pipe(
       // Scoped here so the PowerShell process is reaped before we return.
       Effect.scoped,
-      Effect.mapError((cause) => new ChromiumKeyError({ reason: "keychainItemMissing", cause })),
+      // A `ChromiumKeyError` already says what went wrong and passes through.
+      // Only a spawn failure — no `powershell.exe`, or one that cannot be
+      // launched — arrives as something else, and that is a read failure, not
+      // a browser that has no key.
+      Effect.catchIf(
+        (error) => !isChromiumKeyError(error),
+        (cause) => new ChromiumKeyError({ reason: "readFailed", cause }),
+      ),
     );
     return { gcmV10: unwrapped };
   }
