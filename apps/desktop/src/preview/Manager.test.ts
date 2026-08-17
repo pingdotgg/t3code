@@ -979,7 +979,10 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("mirrors Electron's effective zoom across registration and navigation", () =>
+  // The guest reports whatever zoom level Chromium handed it from the app
+  // window, so the tab's own zoom is the source of truth in both directions:
+  // asserted onto every guest, never read back off one.
+  effectIt.effect("keeps the tab's own zoom instead of the guest's reported zoom", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         let effectiveZoom = 0.9;
@@ -1025,18 +1028,13 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_zoom");
         yield* manager.registerWebview("tab_zoom", 42);
 
-        expect(states.at(-1)?.zoomFactor).toBe(0.9);
-        expect(setZoomFactor).not.toHaveBeenCalled();
+        expect(states.at(-1)?.zoomFactor).toBe(1);
+        expect(setZoomFactor).toHaveBeenCalledWith(1);
 
-        effectiveZoom = 1.25;
-        listeners.get("did-navigate")?.();
-        yield* Effect.yieldNow;
-
-        expect(states.at(-1)?.zoomFactor).toBe(1.25);
-        expect(setZoomFactor).not.toHaveBeenCalled();
-
-        zoomReadable = false;
-        url = "https://example.com/after-zoom-read-failed";
+        // An app zoom leaves the guest reporting the inherited level. Navigating
+        // must not adopt it as the preview's zoom.
+        effectiveZoom = 0.8;
+        url = "https://example.com/after-app-zoom";
         listeners.get("did-navigate")?.();
         yield* Effect.yieldNow;
 
@@ -1045,7 +1043,18 @@ describe("PreviewManager", () => {
           url,
           title: "Example",
         });
-        expect(states.at(-1)?.zoomFactor).toBe(1.25);
+        expect(states.at(-1)?.zoomFactor).toBe(1);
+
+        // Only the preview's own zoom controls move it.
+        yield* manager.zoomIn("tab_zoom");
+        expect(setZoomFactor).toHaveBeenCalledWith(1.1);
+        expect(states.at(-1)?.zoomFactor).toBe(1.1);
+
+        zoomReadable = false;
+        listeners.get("did-navigate")?.();
+        yield* Effect.yieldNow;
+
+        expect(states.at(-1)?.zoomFactor).toBe(1.1);
 
         const replacementSetZoomFactor = vi.fn();
         fromId.mockReturnValue({
@@ -1074,8 +1083,103 @@ describe("PreviewManager", () => {
 
         yield* manager.registerWebview("tab_zoom", 43);
 
-        expect(replacementSetZoomFactor).toHaveBeenCalledWith(1.25);
-        expect(states.at(-1)?.zoomFactor).toBe(1.25);
+        expect(replacementSetZoomFactor).toHaveBeenCalledWith(1.1);
+        expect(states.at(-1)?.zoomFactor).toBe(1.1);
+      }),
+    ),
+  );
+
+  // Zooming the app UI pushes the window's zoom level onto every guest, so the
+  // preview has to be put back at the zoom the user gave it.
+  effectIt.effect("re-applies each tab's own zoom when the app window zooms", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setZoomFactor = vi.fn();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_reapply");
+        yield* manager.registerWebview("tab_reapply", 42);
+        yield* manager.zoomIn("tab_reapply");
+        setZoomFactor.mockClear();
+
+        yield* manager.reapplyZoom();
+
+        expect(setZoomFactor).toHaveBeenCalledTimes(1);
+        expect(setZoomFactor).toHaveBeenCalledWith(1.1);
+      }),
+    ),
+  );
+
+  // did-attach and dom-ready both re-register the guest that is already
+  // attached, and a guest that just inherited the app window's zoom needs its
+  // own back — without that round trip republishing tab state.
+  effectIt.effect("re-asserts the tab's zoom when the active guest registers again", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setZoomFactor = vi.fn();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+
+        yield* manager.createTab("tab_reregister_zoom");
+        yield* manager.registerWebview("tab_reregister_zoom", 42);
+        yield* manager.zoomIn("tab_reregister_zoom");
+        setZoomFactor.mockClear();
+        const publishedBefore = states.length;
+
+        yield* manager.registerWebview("tab_reregister_zoom", 42);
+
+        expect(setZoomFactor).toHaveBeenCalledWith(1.1);
+        expect(states.length).toBe(publishedBefore);
+        expect(states.at(-1)?.zoomFactor).toBe(1.1);
       }),
     ),
   );
@@ -2131,6 +2235,69 @@ describe("PreviewManager", () => {
 
         listeners.get("did-start-navigation")?.({}, "https://example.com/next", false, true);
         expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect("navigates the guest history when the thumb-button ipc fires", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let mouseNavigate: ((event: unknown, payload: unknown) => void) | undefined;
+        const goBack = vi.fn();
+        const goForward = vi.fn();
+        let canGoBack = true;
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof mouseNavigate) => {
+              if (channel === "preview:mouse-navigate") mouseNavigate = listener;
+            }),
+            off: vi.fn(),
+          },
+          send: webviewSend,
+          navigationHistory: {
+            canGoBack: () => canGoBack,
+            canGoForward: () => true,
+            goBack,
+            goForward,
+          },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_nav");
+        yield* manager.registerWebview("tab_nav", 42);
+        expect(mouseNavigate).toBeDefined();
+
+        mouseNavigate?.({}, { direction: "back" });
+        yield* Effect.yieldNow;
+        expect(goBack).toHaveBeenCalledOnce();
+
+        mouseNavigate?.({}, { direction: "forward" });
+        yield* Effect.yieldNow;
+        expect(goForward).toHaveBeenCalledOnce();
+
+        // Ignores unknown payloads and never navigates when history is exhausted.
+        mouseNavigate?.({}, { direction: "sideways" });
+        canGoBack = false;
+        mouseNavigate?.({}, { direction: "back" });
+        yield* Effect.yieldNow;
+        expect(goBack).toHaveBeenCalledOnce();
       }),
     ),
   );
