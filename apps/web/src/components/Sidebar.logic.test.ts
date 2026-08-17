@@ -12,6 +12,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -408,6 +409,27 @@ describe("isTrailingDoubleClick", () => {
 
   it("ignores further clicks of a triple-click", () => {
     expect(isTrailingDoubleClick(3)).toBe(true);
+  });
+});
+
+describe("isSidebarNestedLinkClick", () => {
+  const linkTarget = {
+    closest: (selector: string) => (selector === "a[href]" ? ({} as Element) : null),
+  } as unknown as EventTarget;
+
+  it("ignores row clicks that originated on a nested link", () => {
+    expect(isSidebarNestedLinkClick(linkTarget)).toBe(true);
+  });
+
+  it("walks up from a text node to the enclosing link", () => {
+    expect(isSidebarNestedLinkClick({ parentElement: linkTarget } as unknown as EventTarget)).toBe(
+      true,
+    );
+  });
+
+  it("leaves ordinary row clicks alone", () => {
+    expect(isSidebarNestedLinkClick({ closest: () => null } as unknown as EventTarget)).toBe(false);
+    expect(isSidebarNestedLinkClick(null)).toBe(false);
   });
 });
 

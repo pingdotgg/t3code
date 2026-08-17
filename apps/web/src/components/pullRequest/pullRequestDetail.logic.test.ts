@@ -1,13 +1,14 @@
-import type {
-  PullRequestCheck,
-  PullRequestComment,
-  PullRequestDetailView,
-  PullRequestReviewThread,
+import {
+  PullRequestAction,
+  type PullRequestCheck,
+  type PullRequestComment,
+  type PullRequestDetailView,
+  type PullRequestReviewThread,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  buildAskAboutLinesHandoff,
+  buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
@@ -15,11 +16,20 @@ import {
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
+  isThreadOwnPullRequest,
+  mergePullRequestThreadComments,
   orderPullRequestComments,
+  pullRequestActionMenuHasGroup,
+  pullRequestActionNeedsHostRefresh,
+  pullRequestComposerTarget,
   pullRequestFindingKey,
+  pullRequestHandoffLabels,
   readableFailure,
+  shouldRefreshPullRequestActivity,
+  resolveBaseFreshness,
   buildPullRequestTimeline,
   describePullRequestState,
+  editPullRequestThreadComment,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -48,12 +58,108 @@ const TIMELINE_SOURCE: Pick<
   closedAt: null,
 };
 
+describe("pull request activity refresh", () => {
+  const first = {
+    key: "project:acme/web#7",
+    updatedAt: "2026-08-13T13:00:00Z",
+  };
+
+  it("refreshes activity only after the same pull request changes", () => {
+    expect(
+      shouldRefreshPullRequestActivity(first, {
+        ...first,
+        updatedAt: "2026-08-13T13:01:00Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not duplicate the first activity read or carry a revision across pull requests", () => {
+    expect(shouldRefreshPullRequestActivity(null, first)).toBe(false);
+    expect(shouldRefreshPullRequestActivity(first, first)).toBe(false);
+    expect(
+      shouldRefreshPullRequestActivity(first, {
+        key: "project:acme/web#8",
+        updatedAt: "2026-08-13T13:01:00Z",
+      }),
+    ).toBe(false);
+  });
+});
+describe("review thread comment pages", () => {
+  it("appends new comments once and keeps refreshed base comments", () => {
+    expect(
+      mergePullRequestThreadComments(
+        [
+          { id: "c1", body: "refreshed" },
+          { id: "c2", body: "already in base" },
+        ],
+        [
+          { id: "c2", body: "stale page copy" },
+          { id: "c3", body: "next page" },
+        ],
+      ),
+    ).toEqual([
+      { id: "c1", body: "refreshed" },
+      { id: "c2", body: "already in base" },
+      { id: "c3", body: "next page" },
+    ]);
+  });
+
+  it("keeps a loaded comment after its body is edited", () => {
+    const loaded = [
+      { id: "c2", body: "old body" },
+      { id: "c3", body: "another loaded comment" },
+    ];
+
+    expect(editPullRequestThreadComment(loaded, "c2", "saved body")).toEqual([
+      { id: "c2", body: "saved body" },
+      { id: "c3", body: "another loaded comment" },
+    ]);
+  });
+});
+
+describe("pull request action menu", () => {
+  it("keeps the group divider when auto-merge is the only action", () => {
+    expect(pullRequestActionMenuHasGroup(false, true, false)).toBe(true);
+  });
+});
+
 describe("pull request state description", () => {
   it("keeps draft and conflicts orthogonal to the terminal states", () => {
     expect(describePullRequestState("open", true)).toBe("Draft");
     expect(describePullRequestState("open", false)).toBe("Ready for review");
     expect(describePullRequestState("merged", true)).toBe("Merged");
     expect(describePullRequestState("closed", false)).toBe("Closed");
+  });
+});
+
+describe("pull request handoff labels", () => {
+  it("names the open thread when actions write to its composer", () => {
+    expect(pullRequestHandoffLabels(true)).toEqual({
+      fixFinding: "Fix in this thread",
+      fixCheck: "Fix in this thread",
+      fixFindings: "Fix findings in this thread",
+      resolve: "Resolve in this thread",
+      resolveConflicts: "Resolve conflicts in this thread",
+    });
+  });
+
+  it("keeps the standalone pull request page labels", () => {
+    expect(pullRequestHandoffLabels(false)).toEqual({
+      fixFinding: "Fix in a thread",
+      fixCheck: "Fix",
+      fixFindings: "Fix findings in a thread",
+      resolve: "Resolve in a new thread",
+      resolveConflicts: "Resolve conflicts in a thread",
+    });
+  });
+});
+
+describe("pull request composer target", () => {
+  it("rejects a page composer so agent comments cannot open another thread", () => {
+    const target = { environmentId: "env-1", threadId: "thread-1" };
+
+    expect(pullRequestComposerTarget("page", target)).toBeNull();
+    expect(pullRequestComposerTarget("thread", target)).toBe(target);
   });
 });
 
@@ -639,7 +745,7 @@ describe("asking about a change rather than working on it", () => {
     expect(handoff.reviewComments[0]?.text).toContain("Explain only. Do not change any code.");
   });
 
-  it("takes what the reader typed on the lines as the question", () => {
+  it("puts the reader's request in the composer and the selected lines in chips", () => {
     const comment = {
       id: "pull-request-selection:page.tsx:12:18",
       sectionId: "pull-request:42",
@@ -651,10 +757,10 @@ describe("asking about a change rather than working on it", () => {
       text: "what is this for?",
       diff: "+const answer = 42;",
     };
-    const handoff = buildAskAboutLinesHandoff({
+    const handoff = buildAddSelectionToAgentHandoff({
       ...base,
       comment,
-      question: "what is this for?",
+      request: "what is this for?",
     });
     expect(handoff.prompt).toBe("what is this for?");
     // Two chips: which pull request, and which lines.
@@ -662,25 +768,8 @@ describe("asking about a change rather than working on it", () => {
       "PR #42",
       "apps/web/src/page.tsx",
     ]);
-  });
-
-  it("leaves the composer empty where the reader marked lines and typed nothing", () => {
-    const handoff = buildAskAboutLinesHandoff({
-      ...base,
-      comment: {
-        id: "pull-request-selection:page.tsx:4:4",
-        sectionId: "pull-request:42",
-        sectionTitle: "PR #42 review",
-        filePath: "apps/web/src/page.tsx",
-        startIndex: 3,
-        endIndex: 3,
-        rangeLabel: "L4 (before)",
-        text: "",
-        diff: "-const answer = 41;",
-      },
-      question: "   ",
-    });
-    expect(handoff.prompt).toBe("");
+    expect(handoff.reviewComments[0]?.text).not.toContain("Do not change any code");
+    expect(handoff.reviewComments[1]?.text).toBe("");
   });
 });
 
@@ -785,5 +874,128 @@ describe("a second ask into the same composer", () => {
       "file-comment:3",
       "pull-request-context:42",
     ]);
+  });
+});
+
+describe("how the branch stands against its base", () => {
+  const detail = (overrides: Record<string, unknown> = {}) =>
+    ({
+      state: "open",
+      mergeability: "mergeable",
+      baseComparison: "behind",
+      behindBy: 12,
+      capabilities: { updateMethods: ["merge", "rebase"] },
+      viewerPermissions: { updateMethods: ["merge", "rebase"] },
+      ...overrides,
+    }) as Parameters<typeof resolveBaseFreshness>[0];
+
+  it("offers both ways where the host and the reader both allow them", () => {
+    expect(resolveBaseFreshness(detail())).toEqual({ behindBy: 12, methods: ["merge", "rebase"] });
+  });
+
+  it("says nothing about a branch that is already current", () => {
+    expect(resolveBaseFreshness(detail({ baseComparison: "up-to-date" }))).toBeNull();
+  });
+
+  it("says nothing where the host could not compare, rather than claiming it is current", () => {
+    expect(resolveBaseFreshness(detail({ baseComparison: "unknown" }))).toBeNull();
+    expect(resolveBaseFreshness(detail({ baseComparison: undefined }))).toBeNull();
+  });
+
+  it("leaves a conflicting branch to the conflicts row", () => {
+    expect(resolveBaseFreshness(detail({ mergeability: "conflicting" }))).toBeNull();
+  });
+
+  it("says nothing where the host has no merge verdict yet", () => {
+    expect(resolveBaseFreshness(detail({ mergeability: "unknown" }))).toBeNull();
+  });
+
+  it("says nothing about a merged or closed pull request", () => {
+    expect(resolveBaseFreshness(detail({ state: "merged" }))).toBeNull();
+    expect(resolveBaseFreshness(detail({ state: "closed" }))).toBeNull();
+  });
+
+  it("narrows to what this reader may actually take", () => {
+    expect(
+      resolveBaseFreshness(detail({ viewerPermissions: { updateMethods: ["merge"] } }))?.methods,
+    ).toEqual(["merge"]);
+  });
+
+  it("still reports the news where the reader may take none of it", () => {
+    // Somebody reading another account's pull request is told why it is blocked without being
+    // offered a button the host would refuse.
+    expect(resolveBaseFreshness(detail({ viewerPermissions: {} }))).toEqual({
+      behindBy: 12,
+      methods: [],
+    });
+  });
+
+  it("reports a count only where the host counted", () => {
+    expect(resolveBaseFreshness(detail({ behindBy: undefined }))?.behindBy).toBeNull();
+  });
+});
+
+describe("whether the panel is showing the thread's own pull request", () => {
+  const surface = { projectId: "proj-a", repository: "acme/app", number: 7 };
+
+  it("matches on project, repository and number together", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 7 }, surface),
+    ).toBe(true);
+  });
+
+  it("rejects a second checkout of the same repository under another project", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-b", repository: "acme/app", number: 7 }, surface),
+    ).toBe(false);
+  });
+
+  it("rejects another repository or another number", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/web", number: 7 }, surface),
+    ).toBe(false);
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 8 }, surface),
+    ).toBe(false);
+  });
+
+  it("rejects a thread with no project or no pull request of its own", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: null, repository: "acme/app", number: 7 }, surface),
+    ).toBe(false);
+    expect(
+      isThreadOwnPullRequest(
+        { projectId: "proj-a", repository: "acme/app", number: null },
+        surface,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("which actions need the host read again after they run", () => {
+  it("classifies every action the contract knows about", () => {
+    // Imported from the contract rather than hand-listed, so a new PullRequestAction fails this
+    // test until somebody decides which side of the diff it belongs on.
+    expect(PullRequestAction.literals.map(pullRequestActionNeedsHostRefresh)).toEqual(
+      PullRequestAction.literals.map((action) => action === "update-branch"),
+    );
+  });
+
+  it("sends update-branch back to the host, having moved the head commit", () => {
+    expect(pullRequestActionNeedsHostRefresh("update-branch")).toBe(true);
+  });
+
+  it("leaves every action that only changes metadata to the cheaper detail refresh", () => {
+    for (const action of [
+      "ready",
+      "draft",
+      "close",
+      "reopen",
+      "enable-auto-merge",
+      "disable-auto-merge",
+      "merge",
+    ] as const) {
+      expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
+    }
   });
 });

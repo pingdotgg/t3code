@@ -18,6 +18,8 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
+import { dedupeChecks } from "./pullRequestChecks.ts";
+
 /**
  * Bitbucket's enums are decoded as plain strings and normalized here, in the same tolerant
  * style as the GitHub and GitLab decoders: a new pull request state or build status must not
@@ -547,21 +549,33 @@ export function decodeStatusesJson(
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const checks: PullRequestCheck[] = [];
+  const checks: Array<{
+    readonly check: PullRequestCheck;
+    readonly workflowName: string | null;
+    readonly at: string | null;
+  }> = [];
   for (const entry of decoded.success.values) {
     const decodedStatus = decodeStatusEntry(entry);
     if (Exit.isFailure(decodedStatus)) continue;
     const status = decodedStatus.value;
     const name = trimmed(status.name) ?? trimmed(status.key);
     if (name === null) continue;
+    // Bitbucket re-uses a status key when a pipeline is run again, so the same check can appear
+    // twice on one page. Nothing decoded here says which copy is newer, so the later one wins,
+    // which is the order Bitbucket writes an update in. The key is kept as the workflow name so
+    // two different pipelines that display the same name are not folded into one.
     checks.push({
-      name,
-      status: toBuildStatus(status.state),
-      description: trimmed(status.description),
-      url: trimmed(status.url),
+      check: {
+        name,
+        status: toBuildStatus(status.state),
+        description: trimmed(status.description),
+        url: trimmed(status.url),
+      },
+      workflowName: trimmed(status.key),
+      at: null,
     });
   }
-  return Result.succeed({ items: checks, next: trimmed(decoded.success.next) });
+  return Result.succeed({ items: dedupeChecks(checks), next: trimmed(decoded.success.next) });
 }
 
 export interface BitbucketDiffStat {
