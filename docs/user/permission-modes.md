@@ -17,8 +17,8 @@ without prompting; commands and anything else still stop for approval.
 
 **Auto**: routine actions proceed without you; risky ones still ask. How this is enforced depends
 on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
-permission mode, and providers without an equivalent (such as OpenCode) fall back to asking, like
-Supervised.
+permission mode, Prime Agent currently exposes only full host access through its IPython tool, and
+providers without an equivalent (such as OpenCode) fall back to asking, like Supervised.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.
@@ -40,8 +40,9 @@ shell commands.
 
 Each provider maps these modes onto its own approval and sandbox settings. Codex, for example,
 translates the mode into its approval policy and sandbox level, so **Supervised** runs the CLI
-with prompting enabled and a restricted workspace while **Full access** disables both. The
-labels above describe what you get; the exact per-provider translation is internal and may
-change.
+with prompting enabled and a restricted workspace while **Full access** disables both. Prime Agent
+is currently limited to **Full access** because its ACP interface has no approval or sandbox
+concept. The labels above describe what you get; the exact per-provider translation is internal
+and may change.
 
 Mobile offers the same four modes with the same labels and descriptions.
