@@ -2345,7 +2345,7 @@ export function GeneralSettingsPanel() {
               className="w-full sm:w-72"
               value={settings.defaultTerminalShell}
               onCommit={(next) => updateSettings({ defaultTerminalShell: next })}
-              placeholder={isElectron ? "pwsh.exe" : "Platform default"}
+              placeholder="Platform default"
               spellCheck={false}
               aria-label="Default terminal shell"
             />
