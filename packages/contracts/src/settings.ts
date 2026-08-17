@@ -128,6 +128,25 @@ export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
 
+/**
+ * Native OS notification when a thread's turn finishes. Off by default: the
+ * first enable is what asks the browser for notification permission, so it
+ * has to be a deliberate click rather than something a fresh install does on
+ * the user's behalf.
+ */
+export const DEFAULT_THREAD_COMPLETION_NOTIFICATIONS = false;
+export const DEFAULT_THREAD_COMPLETION_NOTIFICATION_SOUND = true;
+export const MIN_NOTIFICATION_VOLUME = 10;
+export const MAX_NOTIFICATION_VOLUME = 100;
+export const NotificationVolume = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_NOTIFICATION_VOLUME,
+    maximum: MAX_NOTIFICATION_VOLUME,
+  }),
+);
+export type NotificationVolume = typeof NotificationVolume.Type;
+export const DEFAULT_NOTIFICATION_VOLUME: NotificationVolume = 70;
+
 export const ClientSettingsSchema = Schema.Struct({
   browserDefaultViewport: PreviewViewportSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_VIEWPORT)),
@@ -234,6 +253,15 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
+  ),
+  threadCompletionNotifications: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_COMPLETION_NOTIFICATIONS)),
+  ),
+  threadCompletionNotificationSound: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_COMPLETION_NOTIFICATION_SOUND)),
+  ),
+  threadCompletionNotificationVolume: NotificationVolume.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_NOTIFICATION_VOLUME)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -858,6 +886,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
+  threadCompletionNotifications: Schema.optionalKey(Schema.Boolean),
+  threadCompletionNotificationSound: Schema.optionalKey(Schema.Boolean),
+  threadCompletionNotificationVolume: Schema.optionalKey(NotificationVolume),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
