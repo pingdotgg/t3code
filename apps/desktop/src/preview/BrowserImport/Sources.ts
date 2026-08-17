@@ -78,17 +78,13 @@ const isSafeProfileDirectory = (directory: string): boolean =>
   !/[\\/]/.test(directory) &&
   !directory.includes("\u0000");
 
-const DEFAULT_PROFILES: ReadonlyArray<BrowserImportSourceProfile> = [
-  { directory: "Default", name: "Default" },
-];
-
 /**
  * Profiles the source browser knows about, read from its `Local State`.
  *
- * Falls back to the `Default` directory when that file is unreadable or has no
- * profile cache: a browser that has only ever had one profile is the common
- * case, and failing the whole import over a missing display name would be
- * disproportionate.
+ * When that file is missing, unreadable or malformed, the user-data directory
+ * is scanned for directories that hold a cookie database. Assuming `Default`
+ * instead would report a browser whose cookies live in `Profile 1` as having
+ * nothing to import — and it is then left out of the menu entirely.
  */
 export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProfiles")(function* (
   definition: BrowserImportSourceDefinition,
@@ -97,7 +93,8 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
   const fileSystem = yield* FileSystem.FileSystem;
   const localStatePath = paths.path.join(definition.userDataDirectory(paths), "Local State");
 
-  const profiles = yield* fileSystem.readFileString(localStatePath).pipe(
+  const root = definition.userDataDirectory(paths);
+  const declared = yield* fileSystem.readFileString(localStatePath).pipe(
     Effect.flatMap(decodeLocalState),
     Effect.map((state) => Object.entries(state.profile?.info_cache ?? {})),
     // The keys are directory names from the browser's own metadata file, which
@@ -111,8 +108,22 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
     ),
     Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
   );
+  if (declared.length > 0) return declared;
 
-  return profiles.length === 0 ? DEFAULT_PROFILES : profiles;
+  // `Local State` is missing, unreadable or malformed. Scanning for
+  // directories that hold a cookie database finds the profiles anyway;
+  // assuming `Default` would report a browser whose cookies live in
+  // `Profile 1` as having nothing to import, and it is then hidden entirely.
+  const entries = yield* fileSystem
+    .readDirectory(root)
+    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  const candidates = entries.filter(isSafeProfileDirectory);
+  const found = yield* Effect.forEach(candidates, (directory) =>
+    entryExists(cookieDatabasePath(definition, paths, directory)).pipe(
+      Effect.map((exists) => (exists ? { directory, name: directory } : undefined)),
+    ),
+  );
+  return found.filter((profile) => profile !== undefined);
 });
 
 /**

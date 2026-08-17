@@ -71,6 +71,13 @@ describe("isSourceInstalled", () => {
         yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
         assert.isTrue(yield* isSourceInstalled(helium, paths));
 
+        // A real install whose cookies live outside `Default` still counts:
+        // reporting it as absent hides the source from the menu entirely.
+        yield* fileSystem.remove(`${root}/Default`, { recursive: true });
+        yield* fileSystem.makeDirectory(`${root}/Profile 1`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/Profile 1/Cookies`, "db");
+        assert.isTrue(yield* isSourceInstalled(helium, paths));
+
         yield* fileSystem.remove(root, { recursive: true });
         assert.isFalse(yield* isSourceInstalled(helium, paths));
       }),
@@ -79,12 +86,20 @@ describe("isSourceInstalled", () => {
 });
 
 describe("listSourceProfiles", () => {
-  it.effect("falls back to Default when Local State is absent", () =>
+  it.effect("discovers profiles by their cookie database when Local State is absent", () =>
     run(
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
         const paths = yield* withSourceHome();
+        const root = helium.userDataDirectory(paths);
+        // Assuming `Default` would report a browser whose cookies live in
+        // `Profile 1` as having nothing to import, and it is then hidden.
+        yield* fileSystem.makeDirectory(`${root}/Profile 1`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/Profile 1/Cookies`, "db");
+        yield* fileSystem.makeDirectory(`${root}/NativeMessagingHosts`, { recursive: true });
+
         assert.deepEqual(yield* listSourceProfiles(helium, paths), [
-          { directory: "Default", name: "Default" },
+          { directory: "Profile 1", name: "Profile 1" },
         ]);
       }),
     ),
@@ -110,19 +125,28 @@ describe("listSourceProfiles", () => {
     ),
   );
 
-  it.effect("falls back to Default when Local State is malformed", () =>
+  it.effect("scans for profiles when Local State is malformed", () =>
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const paths = yield* withSourceHome();
-        yield* fileSystem.writeFileString(
-          `${helium.userDataDirectory(paths)}/Local State`,
-          "{not-json",
-        );
+        const root = helium.userDataDirectory(paths);
+        yield* fileSystem.writeFileString(`${root}/Local State`, "{not-json");
+        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
 
         assert.deepEqual(yield* listSourceProfiles(helium, paths), [
           { directory: "Default", name: "Default" },
         ]);
+      }),
+    ),
+  );
+
+  it.effect("reports nothing when no directory holds a cookie database", () =>
+    run(
+      Effect.gen(function* () {
+        const paths = yield* withSourceHome();
+        assert.deepEqual(yield* listSourceProfiles(helium, paths), []);
       }),
     ),
   );
