@@ -697,11 +697,15 @@ export function PreviewView({
           // "Default" would be noise on the common case, while a tab in
           // another profile is exactly what needs calling out.
           activeProfile && activeProfile.id !== browserDefaults.profileId ? (
-            // Capped and truncated: profile names run to 48 characters, and an
-            // unbounded badge in this row takes its width from the URL input,
-            // the only flexible element in the compact chrome.
-            <Badge variant="outline" className="max-w-28 shrink-0 truncate">
-              {activeProfile.name}
+            // Capped: profile names run to 48 characters, and an unbounded
+            // badge in this row takes its width from the URL input, the only
+            // flexible element in the compact chrome. The cap sits on the
+            // badge and the truncation on an inner span, because `Badge` is an
+            // `inline-flex` with `whitespace-nowrap` — `text-overflow` never
+            // reaches a bare text node inside it, so the name would be cut off
+            // at both ends with no ellipsis.
+            <Badge variant="outline" className="max-w-28 shrink-0" title={activeProfile.name}>
+              <span className="truncate">{activeProfile.name}</span>
             </Badge>
           ) : null
         }
