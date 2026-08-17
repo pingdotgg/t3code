@@ -58,7 +58,10 @@ export function SidebarSettledLifecycleControls({
                 event.stopPropagation();
                 if (!archiveDisabled) onArchive(event);
               }}
-              className={cn(SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "aria-disabled:opacity-50")}
+              className={cn(
+                SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME,
+                "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:text-muted-foreground",
+              )}
             >
               <ArchiveIcon aria-hidden className="size-3.5" />
             </button>

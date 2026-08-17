@@ -73,6 +73,8 @@ describe("SidebarSettledLifecycleControls", () => {
     expect(markup).not.toContain("title=");
     expect(markup).toContain('data-slot="tooltip-trigger"');
     expect(markup).toContain('aria-disabled="true"');
+    expect(markup).toContain("aria-disabled:cursor-not-allowed");
+    expect(markup).toContain("aria-disabled:hover:text-muted-foreground");
     expect(includesText(controls, "Cannot archive while work is still active")).toBe(true);
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(stopPropagation).toHaveBeenCalledOnce();
