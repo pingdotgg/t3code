@@ -142,6 +142,25 @@ describe("preview automation open readiness", () => {
     });
   });
 
+  it("does not require visibility when browser defaults keep a reused tab in the background", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        {} as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "Success",
+          url: "https://example.com/",
+          title: "Example",
+        }),
+        true,
+        false,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
+  });
+
   it("gives newly-created automation tabs a stable desktop viewport", () => {
     expect(previewAutomationDefaultViewport(false, snapshot({ _tag: "Idle" }))).toEqual(
       DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
@@ -156,5 +175,20 @@ describe("preview automation open readiness", () => {
         viewport: { _tag: "freeform", width: 900, height: 600 },
       }),
     ).toBeNull();
+  });
+});
+
+describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () => {
+  it("honours the preference when the agent said nothing either way", () => {
+    // `preview_open` no longer arrives with `open` pre-filled, so an agent
+    // that omitted it leaves the decision to the user's setting.
+    expect(shouldOpenPreviewMiniPlayer({}, false)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({}, true)).toBe(true);
+  });
+
+  it("lets an explicit request outrank the preference in both directions", () => {
+    expect(shouldOpenPreviewMiniPlayer({ open: true }, false)).toBe(true);
+    expect(shouldOpenPreviewMiniPlayer({ open: false }, true)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({ show: true }, false)).toBe(true);
   });
 });

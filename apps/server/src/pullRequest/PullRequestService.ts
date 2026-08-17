@@ -40,6 +40,8 @@ import {
   type PullRequestSubmitReviewInput,
   type PullRequestThreadReplyInput,
   type PullRequestThreadResolutionInput,
+  type PullRequestThreadCommentsInput,
+  type PullRequestThreadCommentsResult,
   type PullRequestUpdateInput,
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
@@ -48,11 +50,12 @@ import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/source
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
   type ProviderChangeRequest,
   type ProviderListCursor,
   type PullRequestProviderApi,
-  type PullRequestProviderError,
+  PullRequestProviderError,
 } from "./PullRequestProvider.ts";
 import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
 
@@ -132,6 +135,9 @@ export class PullRequestService extends Context.Service<
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
+    readonly threadComments: (
+      input: PullRequestThreadCommentsInput,
+    ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
     readonly diff: (
       input: PullRequestDiffInput,
     ) => Effect.Effect<PullRequestDiffResult, PullRequestError>;
@@ -366,6 +372,103 @@ function toPullRequestError(
       : new PullRequestOperationError({ operation, detail: error.detail, cause: error });
 }
 
+function withRateLimitBackoff(
+  api: PullRequestProviderApi,
+  host: string,
+  limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
+): PullRequestProviderApi {
+  const key = { provider: api.kind, host };
+  const protect = <A>(
+    operation: string,
+    effect: Effect.Effect<A, PullRequestProviderError>,
+    allowPaused: boolean,
+  ) =>
+    limits.check(key, allowPaused ? { allowPaused: true } : undefined).pipe(
+      Effect.mapError(
+        (error) =>
+          new PullRequestProviderError({
+            provider: api.kind,
+            operation,
+            reason: "rate-limited",
+            detail: error.detail,
+            retryAt: error.retryAt,
+            cause: error,
+          }),
+      ),
+      Effect.flatMap((lease) =>
+        effect.pipe(
+          Effect.tap(() => limits.recordSuccess({ ...key, lease })),
+          Effect.tapError((error) =>
+            error.reason === "rate-limited"
+              ? limits.recordRateLimit({
+                  ...key,
+                  lease,
+                  ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+                })
+              : Effect.void,
+          ),
+        ),
+      ),
+    );
+  const wrap =
+    <Args extends ReadonlyArray<unknown>, A>(
+      operation: string,
+      call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
+      allowPaused = false,
+    ) =>
+    (...args: Args) =>
+      protect(operation, call(...args), allowPaused);
+  const interactive = <Args extends ReadonlyArray<unknown>, A>(
+    operation: string,
+    call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
+  ) => wrap(operation, call, true);
+
+  return {
+    kind: api.kind,
+    capabilities: api.capabilities,
+    getViewer: wrap("getViewer", api.getViewer),
+    listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
+    ...(api.listChangeRequestsAcross === undefined
+      ? {}
+      : {
+          listChangeRequestsAcross: wrap("listChangeRequestsAcross", api.listChangeRequestsAcross),
+        }),
+    ...(api.listChangeRequestStats === undefined
+      ? {}
+      : {
+          listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
+        }),
+    getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    getChangeRequestActivity: wrap("getChangeRequestActivity", api.getChangeRequestActivity),
+    ...(api.getReviewThreadComments === undefined
+      ? {}
+      : {
+          getReviewThreadComments: wrap("getReviewThreadComments", api.getReviewThreadComments),
+        }),
+    getViewerPermissions: interactive("getViewerPermissions", api.getViewerPermissions),
+    getDiff: wrap("getDiff", api.getDiff),
+    ...(api.getDiffFileContents === undefined
+      ? {}
+      : { getDiffFileContents: wrap("getDiffFileContents", api.getDiffFileContents) }),
+    runAction: interactive("runAction", api.runAction),
+    ...(api.updateChangeRequest === undefined
+      ? {}
+      : {
+          updateChangeRequest: interactive("updateChangeRequest", api.updateChangeRequest),
+        }),
+    comment: interactive("comment", api.comment),
+    ...(api.updateComment === undefined
+      ? {}
+      : { updateComment: interactive("updateComment", api.updateComment) }),
+    submitReview: interactive("submitReview", api.submitReview),
+    listReviewerCandidates: interactive("listReviewerCandidates", api.listReviewerCandidates),
+    setReviewerRequest: interactive("setReviewerRequest", api.setReviewerRequest),
+    replyToThread: interactive("replyToThread", api.replyToThread),
+    setReaction: interactive("setReaction", api.setReaction),
+    setThreadResolution: interactive("setThreadResolution", api.setThreadResolution),
+  };
+}
+
 /**
  * The provider-native repository selector. `displayName` is the full path below the host, which
  * is what nested GitLab groups need; owner/name is the two-segment fallback for identities
@@ -394,6 +497,7 @@ export const make = Effect.gen(function* () {
   const registry = yield* PullRequestProviderRegistry;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -511,7 +615,12 @@ export const make = Effect.gen(function* () {
             else counted.projectCount += 1;
             continue;
           }
-          supported.push({ project, api, repository, host });
+          supported.push({
+            project,
+            api: withRateLimitBackoff(api, host, rateLimits),
+            repository,
+            host,
+          });
         }
         return { supported, unimplemented, viewerRoots };
       }),
@@ -1113,6 +1222,31 @@ export const make = Effect.gen(function* () {
               }),
             ),
           ),
+      ),
+    );
+
+  const threadComments: PullRequestService["Service"]["threadComments"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap(
+        (project): Effect.Effect<PullRequestThreadCommentsResult, PullRequestError> => {
+          const read = project.api.getReviewThreadComments;
+          if (read === undefined) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "threadComments",
+                detail: "This host does not page review thread comments.",
+              }),
+            );
+          }
+          return read({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+            threadId: input.threadId,
+            cursor: input.cursor,
+          }).pipe(Effect.mapError(toPullRequestError("threadComments")));
+        },
       ),
     );
 
@@ -1993,6 +2127,7 @@ export const make = Effect.gen(function* () {
     listStats,
     detail,
     activity,
+    threadComments,
     diff,
     diffFileContents,
     runAction: invalidatedByMutation(runAction),

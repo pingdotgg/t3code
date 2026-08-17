@@ -37,6 +37,7 @@ import {
 } from "~/browser/browserRecording";
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
@@ -368,6 +369,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 input: {
                   threadId: request.threadId,
                   ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
+                  // An agent that didn't state a size gets the user's
+                  // configured default, same as a hand-opened tab.
+                  viewport: browserDefaultOpenViewport(await resolveBrowserDefaults()),
                 },
               });
               if (result._tag === "Failure") {
@@ -416,12 +420,22 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 updatePreviewServerSnapshot(threadRef, resizeResult.value);
               }
             }
-            const shouldPresentPreview = shouldOpenPreviewMiniPlayer(input);
+            const autoShowFloatingPreview = (await resolveBrowserDefaults())
+              .autoShowFloatingPreview;
+            const shouldPresentPreview = shouldOpenPreviewMiniPlayer(
+              input,
+              autoShowFloatingPreview,
+            );
             if (shouldPresentPreview) {
               revealPreviewAutomationTab(threadRef, activeTabId);
             }
             const waitPolicy = activeSnapshot
-              ? resolvePreviewAutomationOpenWaitPolicy(input, activeSnapshot, reusedExistingTab)
+              ? resolvePreviewAutomationOpenWaitPolicy(
+                  input,
+                  activeSnapshot,
+                  reusedExistingTab,
+                  autoShowFloatingPreview,
+                )
               : null;
             if (waitPolicy?.acknowledgeAfterCreation) {
               return await currentStatus(threadRef, activeTabId);
