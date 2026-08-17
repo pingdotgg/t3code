@@ -958,11 +958,16 @@ export function TerminalViewport({
       current.buffer.length >= previous.buffer.length &&
       current.buffer.startsWith(previous.buffer)
     ) {
+      // An append leaves the selection alone: Ghostty pins it to its content,
+      // so it survives the output scrolling past. Clearing here dates from the
+      // xterm.js renderer, whose selection was invalidated by any write, and
+      // kept making a selection impossible to hold on a live log.
       terminal.write(current.buffer.slice(previous.buffer.length));
     } else {
+      // A replace repoints every coordinate, so the old selection is meaningless.
       writeTerminalBuffer(terminal, current.buffer);
+      terminal.clearSelection();
     }
-    terminal.clearSelection();
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);
