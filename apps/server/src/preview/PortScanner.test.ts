@@ -744,6 +744,61 @@ effectIt("rescans once after terminal PIDs settle without repeating unchanged pr
   }).pipe(Effect.provide(layer));
 });
 
+effectIt("preserves the terminal settle scan while no client is retained", () => {
+  let probeCount = 0;
+  const replayedPorts: Array<ReadonlyArray<number>> = [];
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 2 ? "p42\ncnode\nn*:3000\n" : "",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    expect(probeCount).toBe(0);
+
+    yield* scanner.retain();
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        replayedPorts.push(servers.map((server) => server.port));
+      }),
+    );
+
+    expect(probeCount).toBe(2);
+    expect(replayedPorts).toEqual([[3000]]);
+  }).pipe(Effect.provide(layer));
+});
+
 effectIt("uses the active polling interval after the initial scan finds a server", () => {
   let probeCount = 0;
   const layer = makeProbeFailureLayer(() =>

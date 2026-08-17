@@ -896,6 +896,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         const existing = terminalProcesses.get(key);
         if (existing && processIdsEqual(existing.processIds, processIds)) {
           if (!existing.needsSettleScan) return [false, state] as const;
+          if (state.retainCount <= 0) return [false, state] as const;
           terminalProcesses.set(key, { ...existing, needsSettleScan: false });
           return [true, { ...state, terminalProcesses }] as const;
         }
