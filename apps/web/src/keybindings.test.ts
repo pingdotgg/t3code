@@ -679,6 +679,22 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("resolves a custom right panel maximize binding", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("m", { shiftKey: true }),
+        command: "rightPanel.toggleMaximized",
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "m", metaKey: true, shiftKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "rightPanel.toggleMaximized",
+    );
+  });
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(
@@ -710,6 +726,35 @@ describe("resolveShortcutCommand", () => {
         { platform: "MacIntel" },
       ),
       "rightPanel.toggle",
+    );
+  });
+
+  it("matches non-Latin layout letters using the physical key code", () => {
+    const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "в", code: "KeyD", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "diff.toggle",
+    );
+  });
+
+  it("ignores the physical key code when the layout types a different Latin letter", () => {
+    const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
+
+    // On a remapped layout the physical D key types "a"; only the physical
+    // key whose layout output is "d" may trigger the shortcut.
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "a", code: "KeyD", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "d", code: "KeyL", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "diff.toggle",
     );
   });
 });

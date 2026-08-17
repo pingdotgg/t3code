@@ -1,5 +1,5 @@
 // @effect-diagnostics globalDate:off -- A fixed instant keeps calendar-window assertions deterministic.
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   enumerateHourStarts,
@@ -53,5 +53,21 @@ describe("hourly usage formatting", () => {
     expect(window.resolution).toBe("hour");
     expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
     expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+  });
+
+  it("degrades an unknown resolved zone to UTC instead of crashing", () => {
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    const resolvedOptions = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ ...resolved, timeZone: "Etc/Unknown" });
+
+    try {
+      const now = new Date("2026-08-11T12:37:42.123Z");
+
+      expect(makeWindow(1, now, "hour").timeZone).toBe("UTC");
+      expect(makeWindow(30, now).timeZone).toBe("UTC");
+    } finally {
+      resolvedOptions.mockRestore();
+    }
   });
 });
