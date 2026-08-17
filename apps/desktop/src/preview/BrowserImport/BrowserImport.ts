@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
@@ -34,6 +35,7 @@ import {
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
+  localStatePath,
   sourcePathContext,
   type BrowserImportPathContext,
   type BrowserImportSourceDefinition,
@@ -73,11 +75,6 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   context: BrowserImportPathContext,
 ): Effect.fn.Return<BrowserImportUnavailableReason | undefined, never, FileSystem.FileSystem> {
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
-  // Chromium's key lives in an OS credential store, and only the macOS one is
-  // implemented; Firefox needs no key at all, so it works everywhere.
-  if (definition.engine === "chromium" && context.platform !== "darwin") {
-    return "unsupportedPlatform";
-  }
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
   if (yield* isSourceRunning(definition, context)) return "browserRunning";
   return undefined;
@@ -89,7 +86,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
   const executablePath = yield* HostProcessExecutablePath;
   // Captured here so the service's methods stay free of a requirements
   // channel: the layer is built where NodeServices is already in scope.
-  const platformServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  const platformServices = yield* Effect.context<
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  >();
   const pathContext = yield* sourcePathContext;
 
   const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.forEach(
@@ -171,7 +170,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
     const read: Effect.Effect<
       CookieReadResult,
       ChromiumCookieReadError | FirefoxCookieReadError,
-      FileSystem.FileSystem | Path.Path | Scope.Scope
+      FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
     > =
       definition.engine === "firefox"
         ? readFirefoxCookies(databasePath).pipe(
@@ -179,10 +178,11 @@ export const make = Effect.gen(function* BrowserImportMake() {
           )
         : readChromiumCookies({
             cookieDatabasePath: databasePath,
-            // Only reached on macOS: `unavailableReason` rejects Chromium
-            // elsewhere until those key stores are implemented.
-            keychainService: definition.keychainService ?? "",
-            keychainAccount: definition.keychainAccount ?? "",
+            // Only Windows reads it; the other platforms take their key from a
+            // credential store and ignore the path entirely.
+            localStatePath: localStatePath(definition, pathContext) ?? "",
+            keychainService: definition.keychainService,
+            keychainAccount: definition.keychainAccount,
             platform,
           });
 

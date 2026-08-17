@@ -42,6 +42,7 @@ export const BrowserImportUnavailableReason = Schema.Literals([
   "notInstalled",
   "needsKeychainApproval",
   "keychainItemMissing",
+  "appBoundEncryption",
   "browserRunning",
   "unsupportedPlatform",
 ]);
@@ -120,6 +121,7 @@ export const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<
   needsKeychainApproval: "Needs Keychain access to read its cookies.",
   keychainItemMissing:
     "No encryption key in your Keychain — sign in to that browser once, then retry.",
+  appBoundEncryption: "This browser binds its cookie key to itself, so no other app can read it.",
   browserRunning: "Quit the browser first so its cookie database can be read.",
   unsupportedPlatform: "Importing from this browser isn't possible on this platform.",
 };
