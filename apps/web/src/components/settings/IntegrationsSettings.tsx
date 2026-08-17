@@ -7,8 +7,6 @@
  * @module IntegrationsSettings
  */
 import {
-  BROWSER_IMPORT_FAILURE_COPY,
-  BROWSER_IMPORT_UNAVAILABLE_COPY,
   BrowserImportFailureReason,
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserLinkTarget,
@@ -38,7 +36,7 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -54,9 +52,6 @@ import {
   MenuItem,
   MenuPopup,
   MenuSeparator,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
@@ -97,6 +92,8 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
+import type { ImportOutcome } from "./browserImportWizard.logic";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -655,7 +652,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const { environments, isReady: environmentsReady } = useEnvironments();
   const environmentId = usePrimaryEnvironment()?.environmentId;
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [importSource, setImportSource] = useState<BrowserImportSource | null>(null);
+  const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
   const [profileRemovalError, setProfileRemovalError] = useState<string | null>(null);
   const [profileRemovalInFlight, setProfileRemovalInFlight] = useState(false);
   const removalAvailable = browserProfileRemovalAvailable(
@@ -757,77 +755,73 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     (source) => source.unavailable !== "notInstalled",
   );
 
+  // Refreshed without blanking the last result: the menu shows the cached list
+  // straight away so it doesn't reflow on open, and the source list is stable
+  // (names only) since choosing what to import happens in the wizard, not here.
   const loadSources = () => {
     if (!previewBridge) return;
-    // Cleared first: availability changes while the app runs (quitting a
-    // browser clears `browserRunning`), and showing the previous answer during
-    // the refresh lets the user start an import the source no longer supports.
-    setSources(null);
     void previewBridge
       .listBrowserImportSources()
       .then(setSources)
-      .catch(() => setSources([]));
+      .catch(() => setSources((previous) => previous ?? []));
   };
 
-  const runImport = (
+  // Loaded once so the first open is instant instead of flashing a spinner.
+  useEffect(() => {
+    loadSources();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Runs one import for the wizard. A new profile is registered only once the
+  // import succeeds — the cookies land in its partition first — so a blocked
+  // attempt never leaves an empty profile behind.
+  const runWizardImport = async (
     source: BrowserImportSource,
-    sourceProfileDirectory: string,
-    targetProfileId: string,
-    targetName: string,
-  ) => {
-    if (!environmentId || !previewBridge) return;
-    setBusy(true);
-    void previewBridge
-      .importBrowserCookies({
+    input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
+  ): Promise<ImportOutcome> => {
+    if (!environmentId || !previewBridge) return { kind: "blocked", reason: "sessionUnavailable" };
+    try {
+      const result = await previewBridge.importBrowserCookies({
         environmentId,
         sourceId: source.id,
-        sourceProfileDirectory,
-        targetProfileId,
-      })
-      .then((result) => {
-        toastManager.add({
-          type: result.imported > 0 ? "success" : "error",
-          title:
-            result.imported > 0
-              ? `Imported ${result.imported} cookies into ${targetName}`
-              : `No cookies imported from ${source.name}`,
-          // Surfaced rather than hidden: a mostly-skipped import should not
-          // read as a clean success.
-          ...(result.skipped > 0 ? { description: `${result.skipped} skipped.` } : {}),
-        });
-      })
-      .catch((cause: unknown) => {
-        toastManager.add({
-          type: "error",
-          title: `Could not import from ${source.name}`,
-          description: BROWSER_IMPORT_FAILURE_COPY[importFailureReason(cause)],
-        });
-      })
-      .finally(() => setBusy(false));
+        sourceProfileDirectory: input.sourceProfileDirectory,
+        targetProfileId: input.target.profileId,
+      });
+      let targetName: string;
+      if (input.target.kind === "new") {
+        targetName = uniqueName(source.name);
+        // Registered only when something actually came over: an import that
+        // found no cookies should not leave a new, empty profile behind.
+        if (result.imported > 0) {
+          updateSettings({
+            browserProfiles: [
+              ...userProfiles,
+              { id: input.target.profileId, name: targetName, kind: "persistent" as const },
+            ],
+          });
+        }
+      } else {
+        targetName = input.target.name;
+      }
+      return { kind: "imported", imported: result.imported, skipped: result.skipped, targetName };
+    } catch (cause) {
+      return { kind: "blocked", reason: importFailureReason(cause) };
+    }
   };
 
-  const importInto = (
-    source: BrowserImportSource,
-    sourceProfileDirectory: string,
-    target: "new" | { readonly id: string; readonly name: string },
-  ) => {
-    // Checked before creating anything. `runImport` bails on the same
-    // condition, so creating first left an empty profile named after the
-    // source browser behind, with no toast to explain it.
-    if (!environmentId || !previewBridge) {
-      toastManager.add({
-        type: "error",
-        title: `Could not import from ${source.name}`,
-        description: "No environment is connected yet.",
-      });
-      return;
+  // Re-checks a source's availability after the user quits the browser, and
+  // keeps the cached list in step so the menu reflects it too.
+  const refreshImportSource = async (
+    sourceId: BrowserImportSource["id"],
+  ): Promise<BrowserImportSource | undefined> => {
+    if (!previewBridge) return undefined;
+    try {
+      const latest = await previewBridge.listBrowserImportSources();
+      setSources(latest);
+      return latest.find((source) => source.id === sourceId);
+    } catch {
+      return undefined;
     }
-    if (target === "new") {
-      const created = createProfile(source.name);
-      runImport(source, sourceProfileDirectory, created.id, created.name);
-      return;
-    }
-    runImport(source, sourceProfileDirectory, target.id, target.name);
   };
 
   const atProfileLimit = userProfiles.length >= BROWSER_PROFILE_MAX_COUNT;
@@ -838,7 +832,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       description="Each profile keeps its own cookies and logins, so a tab opened under one can't see another's. Incognito isn't listed here — it keeps nothing, and you pick it when opening a tab."
       control={
         <Menu onOpenChange={(open) => open && loadSources()}>
-          <MenuTrigger render={<Button size="sm" variant="outline" disabled={disabled || busy} />}>
+          <MenuTrigger render={<Button size="sm" variant="outline" disabled={disabled} />}>
             <PlusIcon />
             Add profile
           </MenuTrigger>
@@ -854,60 +848,14 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               ) : importableSources.length === 0 ? (
                 <MenuItem disabled>No supported browsers found</MenuItem>
               ) : (
-                importableSources.flatMap((source) =>
-                  source.unavailable
-                    ? [
-                        // Kept visible with its reason, because each remaining
-                        // reason is something the user can act on: "Helium is
-                        // running, quit it" beats "Helium isn't listed".
-                        <MenuItem key={source.id} disabled>
-                          <span className="flex flex-col items-start">
-                            <span>{source.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {BROWSER_IMPORT_UNAVAILABLE_COPY[source.unavailable]}
-                            </span>
-                          </span>
-                        </MenuItem>,
-                      ]
-                    : source.profiles.map((sourceProfile) => (
-                        <MenuSub key={`${source.id}:${sourceProfile.directory}`}>
-                          <MenuSubTrigger>
-                            {source.profiles.length > 1
-                              ? `${source.name} — ${sourceProfile.name}`
-                              : source.name}
-                          </MenuSubTrigger>
-                          <MenuSubPopup className="min-w-44">
-                            <MenuItem
-                              disabled={atProfileLimit}
-                              onClick={() => importInto(source, sourceProfile.directory, "new")}
-                            >
-                              New profile
-                            </MenuItem>
-                            <MenuSeparator />
-                            <MenuGroup>
-                              <MenuGroupLabel>Existing profile</MenuGroupLabel>
-                              {profiles
-                                // Incognito is discarded on quit, so importing
-                                // into it would throw the work away.
-                                .filter((profile) => profile.kind !== "incognito")
-                                .map((profile) => (
-                                  <MenuItem
-                                    key={profile.id}
-                                    onClick={() =>
-                                      importInto(source, sourceProfile.directory, {
-                                        id: profile.id,
-                                        name: profile.name,
-                                      })
-                                    }
-                                  >
-                                    {profile.name}
-                                  </MenuItem>
-                                ))}
-                            </MenuGroup>
-                          </MenuSubPopup>
-                        </MenuSub>
-                      )),
-                )
+                // Every source is a plain row — running, needs-permission and
+                // ready all look the same here. The wizard picks up whatever
+                // state the source is in and walks the user forward from there.
+                importableSources.map((source) => (
+                  <MenuItem key={source.id} onClick={() => setImportSource(source)}>
+                    {source.name}
+                  </MenuItem>
+                ))
               )}
             </MenuGroup>
           </MenuPopup>
@@ -1051,6 +999,16 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
+      {importSource ? (
+        <BrowserImportWizard
+          source={importSource}
+          targetProfiles={listedProfiles.map((profile) => ({ id: profile.id, name: profile.name }))}
+          canCreateProfile={!atProfileLimit}
+          onImport={(input) => runWizardImport(importSource, input)}
+          onRefreshSource={() => refreshImportSource(importSource.id)}
+          onClose={() => setImportSource(null)}
+        />
+      ) : null}
     </SettingsRow>
   );
 }
