@@ -21,6 +21,10 @@ export const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
 export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX = 31;
 export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY = 0.001;
 
+export function resolveHostedBrowserWebviewAriaHidden(active: boolean): true | undefined {
+  return active ? undefined : true;
+}
+
 export function resolveHostedBrowserWebviewPresentation(input: {
   readonly backgroundCaptureRequested: boolean;
   readonly hasRect: boolean;

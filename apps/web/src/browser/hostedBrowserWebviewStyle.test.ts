@@ -4,9 +4,17 @@ import {
   BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY,
   BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX,
   HIDDEN_BROWSER_WEBVIEW_OFFSET,
+  resolveHostedBrowserWebviewAriaHidden,
   resolveHostedBrowserWebviewPresentation,
   resolveHostedBrowserWebviewWrapperStyle,
 } from "./hostedBrowserWebviewStyle";
+
+describe("resolveHostedBrowserWebviewAriaHidden", () => {
+  it("exposes only the active guest to host assistive technology", () => {
+    expect(resolveHostedBrowserWebviewAriaHidden(true)).toBeUndefined();
+    expect(resolveHostedBrowserWebviewAriaHidden(false)).toBe(true);
+  });
+});
 
 describe("resolveHostedBrowserWebviewPresentation", () => {
   it("stages a background capture when visibility is stale after selection changes", () => {

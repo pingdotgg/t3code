@@ -83,7 +83,7 @@ import {
   resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
-import { isPreviewViewportReady } from "./previewViewportReadiness";
+import { waitForPreviewViewportReadiness } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
 
 interface ExecutablePreviewWebview extends Element {
@@ -144,31 +144,23 @@ const waitForRenderedViewport = async (
     readonly threadId: PreviewAutomationRequest["threadId"];
   },
 ): Promise<PreviewRenderedViewportSize> => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
-    assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, context);
-    try {
+  const renderedViewport = await waitForPreviewViewportReadiness({
+    setting,
+    timeoutMs,
+    assertCurrent: () => assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, context),
+    readViewport: async () => {
       const webview = findPreviewWebview(runtimeTabId);
+      if (!webview) return null;
       const appliedSettingKey = webview?.getAttribute("data-preview-viewport-key") ?? null;
       const declaredViewport = readDeclaredViewport(webview);
-      const renderedViewport = webview ? await readWebviewViewport(webview) : null;
-      if (
-        renderedViewport &&
-        isPreviewViewportReady({
-          setting,
-          appliedSettingKey,
-          declaredViewport,
-          renderedViewport,
-        })
-      ) {
-        return renderedViewport;
-      }
-    } catch {
-      // Registration and navigation can transiently replace the guest while
-      // React applies the server snapshot. Retry until the operation deadline.
-    }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
-  }
+      return {
+        appliedSettingKey,
+        declaredViewport,
+        renderedViewport: await readWebviewViewport(webview),
+      };
+    },
+  });
+  if (renderedViewport) return renderedViewport;
   throw new PreviewAutomationViewportTimeoutError({
     ...context,
     tabId,
@@ -373,6 +365,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const reusedExistingTab = activeTabId !== null;
             tabId = activeTabId;
             if (!activeTabId) {
+              remainingOperationBudget();
               const result = await open({
                 environmentId,
                 input: {
@@ -412,6 +405,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                       activeRuntimeTabId,
                       request,
                     );
+                    remainingOperationBudget();
                     return await resize({
                       environmentId,
                       input: {
@@ -430,6 +424,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               }
             }
             if (shouldPresentPreview) {
+              remainingOperationBudget();
               revealPreviewAutomationTab(threadRef, activeTabId);
             }
             const waitPolicy = activeSnapshot
@@ -465,6 +460,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             }
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
+              remainingOperationBudget();
               await previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl);
               await waitForNavigationReadiness(
                 threadRef,

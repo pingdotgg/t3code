@@ -24,6 +24,7 @@ import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
 import {
+  resolveHostedBrowserWebviewAriaHidden,
   resolveHostedBrowserWebviewPresentation,
   resolveHostedBrowserWebviewWrapperStyle,
 } from "./hostedBrowserWebviewStyle";
@@ -308,7 +309,7 @@ export function HostedBrowserWebview(props: {
                 ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
                 : effectiveViewport.height
           }
-          aria-hidden={active || backgroundCapture ? undefined : true}
+          aria-hidden={resolveHostedBrowserWebviewAriaHidden(active)}
           className={cn(
             "absolute flex overflow-hidden bg-background",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
