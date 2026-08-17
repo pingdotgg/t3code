@@ -83,8 +83,6 @@ export interface ChromiumKeyMaterial {
   readonly gcmV10?: Buffer;
 }
 
-const isChromiumKeyError = Schema.is(ChromiumKeyError);
-
 const derive = (passphrase: string, iterations: number) =>
   NodeCrypto.pbkdf2Sync(passphrase, KEY_SALT, iterations, KEY_LENGTH, "sha1");
 
@@ -262,14 +260,14 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
     const unwrapped = yield* unprotectWithDpapi(stripDpapiMarker(encodedKey)).pipe(
       // Scoped here so the PowerShell process is reaped before we return.
       Effect.scoped,
-      // A `ChromiumKeyError` already says what went wrong and passes through.
-      // Only a spawn failure — no `powershell.exe`, or one that cannot be
-      // launched — arrives as something else, and that is a read failure, not
-      // a browser that has no key.
-      Effect.catchIf(
-        (error) => !isChromiumKeyError(error),
-        (cause) => new ChromiumKeyError({ reason: "readFailed", cause }),
-      ),
+      // Only the spawn failure is translated — no `powershell.exe`, or one
+      // that cannot be launched, is a read failure rather than a browser with
+      // no key. A `ChromiumKeyError` already says what went wrong and passes
+      // through untouched.
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          Effect.fail(new ChromiumKeyError({ reason: "readFailed", cause })),
+      }),
     );
     return { gcmV10: unwrapped };
   }
