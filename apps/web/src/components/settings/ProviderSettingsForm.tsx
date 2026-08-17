@@ -183,7 +183,7 @@ interface ProviderSettingsFieldRowProps {
   readonly onChange: ProviderSettingsFormProps["onChange"];
 }
 
-function ProviderSettingsFieldRow({
+export function ProviderSettingsFieldRow({
   field,
   value,
   idPrefix,
@@ -246,7 +246,7 @@ function ProviderSettingsFieldRow({
     const selectedOption = field.options?.find((option) => option.value === currentValue);
     return (
       <FieldFrame variant={variant}>
-        <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
+        <div className={cn(variant === "card" && "block")}>
           {label}
           <Select
             value={currentValue}
@@ -257,7 +257,8 @@ function ProviderSettingsFieldRow({
           >
             <SelectTrigger
               id={inputId}
-              className={cn("mt-1.5 w-full bg-background", variant !== "card" && "bg-background")}
+              className={cn(variant === "card" && "mt-1.5")}
+              aria-label={field.label}
             >
               <SelectValue placeholder={field.placeholder ?? field.label}>
                 {selectedOption?.label ?? currentValue}
@@ -272,7 +273,7 @@ function ProviderSettingsFieldRow({
             </SelectPopup>
           </Select>
           {description}
-        </label>
+        </div>
       </FieldFrame>
     );
   }

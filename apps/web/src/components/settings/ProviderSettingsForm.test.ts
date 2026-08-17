@@ -1,13 +1,22 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { isValidElement } from "react";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import { reactHookHarness } from "../../test/reactHookHarness";
+import { visitElements } from "../../test/reactElementTree";
+import { SelectTrigger } from "../ui/select";
 import { DRIVER_OPTION_BY_VALUE } from "./providerDriverMeta";
 import {
   deriveProviderSettingsFields,
   nextProviderConfigWithFieldValue,
+  ProviderSettingsFieldRow,
   readProviderConfigBoolean,
   readProviderConfigString,
 } from "./ProviderSettingsForm";
+
+vi.mock("react/compiler-runtime", async () => {
+  return { c: reactHookHarness.useMemoCache };
+});
 
 describe("ProviderSettingsForm helpers", () => {
   it("derives visible provider config fields from the client definition schema", () => {
@@ -154,5 +163,62 @@ describe("ProviderSettingsForm helpers", () => {
 
   it("reads missing boolean config values from the supplied default", () => {
     expect(readProviderConfigBoolean({}, "experimental", true)).toBe(true);
+  });
+});
+
+function containsSelectTrigger(node: unknown, id: string): boolean {
+  return (
+    visitElements(node, (element) => element.type === SelectTrigger && element.props.id === id) !==
+    null
+  );
+}
+
+function hasLabelWrappingSelectTrigger(node: unknown, id: string): boolean {
+  if (Array.isArray(node)) {
+    return node.some((child) => hasLabelWrappingSelectTrigger(child, id));
+  }
+  if (!isValidElement<Record<string, unknown>>(node)) return false;
+  if (typeof node.type === "string" && node.type === "label") {
+    return containsSelectTrigger(node.props.children, id);
+  }
+  return hasLabelWrappingSelectTrigger(node.props.children, id);
+}
+
+describe("ProviderSettingsForm select field", () => {
+  it("renders the trigger outside a label, with a direct aria-label and without redundant classes", () => {
+    const inputId = "test-permissionMode";
+    const field = {
+      key: "permissionMode",
+      control: "select",
+      label: "Permission mode",
+      description: "Permission mode passed to `devin`.",
+      clearWhenEmpty: "omit",
+      options: [
+        { value: "normal", label: "Normal" },
+        { value: "accept-edits", label: "Accept edits" },
+      ],
+    } as const;
+
+    const tree = ProviderSettingsFieldRow({
+      field,
+      value: { permissionMode: "normal" },
+      idPrefix: "test",
+      variant: "dialog",
+      onChange: () => {},
+    });
+
+    const trigger = visitElements(
+      tree,
+      (element) => element.type === SelectTrigger && element.props.id === inputId,
+    );
+    expect(trigger).not.toBeNull();
+    expect(trigger!.props["aria-label"]).toBe("Permission mode");
+
+    const className = String(trigger!.props.className ?? "");
+    expect(className).not.toMatch(/\bw-full\b/);
+    expect(className).not.toMatch(/\bbg-background\b/);
+    expect(className).not.toMatch(/\bmt-1\.5\b/);
+
+    expect(hasLabelWrappingSelectTrigger(tree, inputId)).toBe(false);
   });
 });
