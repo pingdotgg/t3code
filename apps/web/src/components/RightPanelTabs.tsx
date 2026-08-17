@@ -617,9 +617,6 @@ function SurfaceIcon({
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
-  // Controlled so the submenu trigger's own action can dismiss the menu; a
-  // submenu trigger does not close it the way a plain item does.
-  const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
