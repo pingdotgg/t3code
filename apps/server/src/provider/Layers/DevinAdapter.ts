@@ -867,10 +867,10 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.mapError(
             (cause) =>
-              new ProviderAdapterProcessError({
+                detail: "Failed to start the Devin ACP session.",
                 provider: PROVIDER,
                 threadId: input.threadId,
-                detail: cause.message,
+                detail: "Failed to start the Devin ACP session process.",
                 cause,
               }),
           ),
@@ -1203,7 +1203,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                       new ProviderAdapterRequestError({
                         provider: PROVIDER,
                         method: "session/prompt",
-                        detail: cause.message,
+                        detail: `Failed to read attachment '${attachment.id}'.`,
                         cause,
                       }),
                   ),
