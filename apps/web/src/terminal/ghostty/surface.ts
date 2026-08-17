@@ -1019,7 +1019,20 @@ export class GhosttyTerminalSurface {
    * coordinates stay pinned to their content, so the range survives that.
    */
   commandOutputRangeAt(clientX: number, clientY: number): GhosttySelectionRange["screen"] | null {
-    const cell = this.cellAt(clientX, clientY);
+    // Exact hit testing, not the clamping `cellAt` a drag wants: a click in the
+    // padding or the slack below the grid lands on no cell, and offering the
+    // nearest row's command there would act on output nobody pointed at.
+    const cell = terminalGridCellAt({
+      bounds: this.canvas.getBoundingClientRect(),
+      clientX,
+      clientY,
+      cols: this.cols,
+      rows: this.rows,
+      metrics: this.metrics,
+      padding: CONTENT_PADDING,
+      originY: this.originY,
+    });
+    if (cell === null) return null;
     return this.core.outputRangeAt(cell.x, cell.y);
   }
 
