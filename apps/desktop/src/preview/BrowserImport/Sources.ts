@@ -70,6 +70,14 @@ const LocalState = Schema.Struct({
 });
 const decodeLocalState = Schema.decodeUnknownEffect(Schema.fromJsonString(LocalState));
 
+/** A single plain path segment: no separators, no `.`/`..`, not empty. */
+const isSafeProfileDirectory = (directory: string): boolean =>
+  directory.length > 0 &&
+  directory !== "." &&
+  directory !== ".." &&
+  !/[\\/]/.test(directory) &&
+  !directory.includes("\u0000");
+
 const DEFAULT_PROFILES: ReadonlyArray<BrowserImportSourceProfile> = [
   { directory: "Default", name: "Default" },
 ];
@@ -92,6 +100,12 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
   const profiles = yield* fileSystem.readFileString(localStatePath).pipe(
     Effect.flatMap(decodeLocalState),
     Effect.map((state) => Object.entries(state.profile?.info_cache ?? {})),
+    // The keys are directory names from the browser's own metadata file, which
+    // is writable by anything running as the user. Anything but a single plain
+    // segment is dropped: `..` or a path separator would otherwise be handed
+    // to `cookieDatabasePath` and read a database outside the user-data
+    // directory.
+    Effect.map((entries) => entries.filter(([directory]) => isSafeProfileDirectory(directory))),
     Effect.map((entries) =>
       entries.map(([directory, info]) => ({ directory, name: info.name?.trim() || directory })),
     ),

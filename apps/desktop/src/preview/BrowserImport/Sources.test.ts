@@ -141,3 +141,28 @@ describe("cookieDatabasePath", () => {
     ),
   );
 });
+
+describe("listSourceProfiles hardening", () => {
+  it.effect("drops profile directories that are not a single plain segment", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        // `Local State` is writable by anything running as the user, so a
+        // crafted key must not reach `cookieDatabasePath` and read a database
+        // outside the browser's user-data directory.
+        yield* fileSystem.writeFileString(
+          `${helium.userDataDirectory(paths)}/Local State`,
+          `{"profile":{"info_cache":{"Default":{"name":"You"},"../../../../secrets":{"name":"Escape"},"a/b":{"name":"Nested"},"..":{"name":"Parent"}}}}`,
+        );
+
+        const profiles = yield* listSourceProfiles(helium, paths);
+
+        assert.deepEqual(
+          profiles.map((profile) => profile.directory),
+          ["Default"],
+        );
+      }),
+    ),
+  );
+});
