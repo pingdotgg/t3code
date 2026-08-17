@@ -1000,6 +1000,16 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
 export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   colorScheme: DesktopPreviewColorSchemeSchema,
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(60_000)),
+  ),
+});
+
+export const DesktopPreviewRecordingStartInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(60_000)),
+  ),
 });
 
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
@@ -1152,7 +1162,11 @@ export interface DesktopPreviewBridge {
    * Emulate `prefers-color-scheme` on the guest page ("system" clears the
    * override). Persists per tab and is re-applied across webview swaps.
    */
-  setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  setColorScheme: (
+    tabId: string,
+    colorScheme: DesktopPreviewColorScheme,
+    timeoutMs?: number,
+  ) => Promise<void>;
   /** Open the guest webview's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
@@ -1184,7 +1198,7 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
   };
   recording: {
-    startScreencast: (tabId: string) => Promise<void>;
+    startScreencast: (tabId: string, timeoutMs?: number) => Promise<void>;
     stopScreencast: (tabId: string) => Promise<void>;
     save: (
       tabId: string,

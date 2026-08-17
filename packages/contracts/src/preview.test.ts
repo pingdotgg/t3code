@@ -15,8 +15,12 @@ import {
   PreviewAutomationHost,
   PreviewAutomationError,
   PreviewAutomationOpenInput,
+  PreviewAutomationPressInput,
+  PreviewAutomationRecordingStartInput,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
+  PreviewAutomationScrollInput,
+  PreviewAutomationSetColorSchemeInput,
   PreviewAutomationStatus,
 } from "./previewAutomation.ts";
 
@@ -32,6 +36,21 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodePressInput = Schema.decodeUnknownSync(PreviewAutomationPressInput);
+const decodeScrollInput = Schema.decodeUnknownSync(PreviewAutomationScrollInput);
+const decodeSetColorSchemeInput = Schema.decodeUnknownSync(PreviewAutomationSetColorSchemeInput);
+const decodeRecordingStartInput = Schema.decodeUnknownSync(PreviewAutomationRecordingStartInput);
+
+describe("Preview automation mutation deadlines", () => {
+  it("preserves explicit deadlines for mutations that follow overlay readiness", () => {
+    expect(decodePressInput({ key: "Enter", timeoutMs: 1_250 }).timeoutMs).toBe(1_250);
+    expect(decodeScrollInput({ deltaY: 100, timeoutMs: 1_250 }).timeoutMs).toBe(1_250);
+    expect(decodeSetColorSchemeInput({ colorScheme: "dark", timeoutMs: 1_250 }).timeoutMs).toBe(
+      1_250,
+    );
+    expect(decodeRecordingStartInput({ timeoutMs: 1_250 }).timeoutMs).toBe(1_250);
+  });
+});
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {

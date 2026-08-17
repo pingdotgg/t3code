@@ -272,13 +272,19 @@ const recordingStartupCancelledError = (
 const isRecordingStarting = (recording: ActiveRecording): boolean =>
   activeRecordings.get(recording.tabId) === recording && recording.lifecycle.phase === "starting";
 
-const waitForFirstFrameSize = async (recording: ActiveRecording): Promise<boolean> => {
+const waitForFirstFrameSize = async (
+  recording: ActiveRecording,
+  timeoutMs = BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS,
+): Promise<boolean> => {
   if (recording.frameSizeEstablished) return true;
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const outcome = await Promise.race([
     recording.firstFrameSize,
     new Promise<"timeout">((resolve) => {
-      timeout = setTimeout(() => resolve("timeout"), BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS);
+      timeout = setTimeout(
+        () => resolve("timeout"),
+        Math.min(BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS, Math.max(0, timeoutMs)),
+      );
     }),
   ]);
   if (timeout !== null) clearTimeout(timeout);
@@ -314,9 +320,13 @@ export async function startBrowserRecording(
   tabId: string,
   threadRef: ScopedThreadRef | null = null,
   serverTabId = tabId,
+  timeoutMs?: number,
 ): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
+  const deadline = timeoutMs === undefined ? null : Date.now() + timeoutMs;
+  const remainingStartupBudget = (): number | undefined =>
+    deadline === null ? undefined : Math.max(0, deadline - Date.now());
   const activeRecording = activeRecordings.get(tabId);
   if (activeRecording) {
     if (activeRecording.lifecycle.phase === "recording") {
@@ -389,7 +399,9 @@ export async function startBrowserRecording(
       });
     }
     try {
-      await bridge.recording.startScreencast(tabId);
+      const startBudget = remainingStartupBudget();
+      if (startBudget === undefined) await bridge.recording.startScreencast(tabId);
+      else await bridge.recording.startScreencast(tabId, startBudget);
     } catch (cause) {
       if (!isRecordingStarting(recording)) {
         throw recordingStartupCancelledError(recording, cause);
@@ -420,10 +432,17 @@ export async function startBrowserRecording(
       throw recordingStartupCancelledError(recording);
     };
     await throwIfStartupCancelled();
-    const hasFirstFrame = await waitForFirstFrameSize(recording);
+    const hasFirstFrame = await waitForFirstFrameSize(
+      recording,
+      remainingStartupBudget() ?? BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS,
+    );
     await throwIfStartupCancelled();
-    if (!hasFirstFrame) {
-      const cause = new Error(`No valid recording frame arrived for tab ${tabId}.`);
+    if (!hasFirstFrame || remainingStartupBudget() === 0) {
+      const cause = new Error(
+        hasFirstFrame
+          ? `Browser recording startup exceeded its deadline for tab ${tabId}.`
+          : `No valid recording frame arrived for tab ${tabId}.`,
+      );
       const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
       throw new BrowserRecordingOperationError({
         operation: "wait-first-frame",

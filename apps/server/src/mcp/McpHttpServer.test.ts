@@ -160,6 +160,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const routedRequests: Array<{
         readonly operation: string;
         readonly tabId?: string | undefined;
+        readonly timeoutMs?: number | undefined;
       }> = [];
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
@@ -282,8 +283,8 @@ it.effect("registers annotated tools and preserves authenticated request context
       const actionRequests = [
         { name: "preview_click", arguments: { x: 10, y: 10 } },
         { name: "preview_type", arguments: { text: "Hello" } },
-        { name: "preview_press", arguments: { key: "Enter" } },
-        { name: "preview_scroll", arguments: { deltaY: 100 } },
+        { name: "preview_press", arguments: { key: "Enter", timeoutMs: 1_234 } },
+        { name: "preview_scroll", arguments: { deltaY: 100, timeoutMs: 1_234 } },
         { name: "preview_wait_for", arguments: { text: "Example" } },
       ];
       for (const request of actionRequests) {
@@ -297,6 +298,8 @@ it.effect("registers annotated tools and preserves authenticated request context
         expect(result.structuredContent).toEqual({});
         expect(result.content).toEqual([{ type: "text", text: "{}" }]);
       }
+      expect(routedRequests.find(({ operation }) => operation === "press")?.timeoutMs).toBe(1_234);
+      expect(routedRequests.find(({ operation }) => operation === "scroll")?.timeoutMs).toBe(1_234);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

@@ -221,6 +221,26 @@ describe("browser recording", () => {
     expect(events.at(-1)).toBe("clear");
   });
 
+  it("bounds screencast and first-frame startup with the caller's remaining deadline", async () => {
+    vi.useFakeTimers();
+    startScreencast.mockImplementationOnce(async () => {
+      events.push("start-screencast");
+    });
+
+    const startPromise = startBrowserRecording("recording-tab", null, "recording-tab", 40);
+    const rejection = expect(startPromise).rejects.toMatchObject({
+      operation: "wait-first-frame",
+      tabId: "recording-tab",
+    });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(40);
+
+    await rejection;
+    expect(startScreencast).toHaveBeenCalledWith("recording-tab", 40);
+    expect(stopScreencast).toHaveBeenCalledWith("recording-tab");
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
   it("fixes hidden recording dimensions before MediaRecorder starts", async () => {
     const drawImage = vi.fn();
     const fillRect = vi.fn();

@@ -76,19 +76,25 @@ const handlers = {
   preview_resize: (input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_set_appearance: (input) =>
-    invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
+    invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input, input.timeoutMs),
   preview_snapshot: (input) => invokeTargeted<PreviewAutomationSnapshot>("snapshot", input ?? {}),
   preview_click: (input) =>
     invokeTargeted<void>("click", input, input.timeoutMs).pipe(Effect.as({})),
   preview_type: (input) => invokeTargeted<void>("type", input, input.timeoutMs).pipe(Effect.as({})),
-  preview_press: (input) => invokeTargeted<void>("press", input).pipe(Effect.as({})),
-  preview_scroll: (input) => invokeTargeted<void>("scroll", input).pipe(Effect.as({})),
+  preview_press: (input) =>
+    invokeTargeted<void>("press", input, input.timeoutMs).pipe(Effect.as({})),
+  preview_scroll: (input) =>
+    invokeTargeted<void>("scroll", input, input.timeoutMs).pipe(Effect.as({})),
   preview_evaluate: (input) =>
     invokeTargeted<unknown>("evaluate", input).pipe(Effect.map((result) => result ?? null)),
   preview_wait_for: (input) =>
     invokeTargeted<void>("waitFor", input, input.timeoutMs).pipe(Effect.as({})),
   preview_recording_start: (input) =>
-    invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
+    invokeTargeted<PreviewAutomationRecordingStatus>(
+      "recordingStart",
+      input ?? {},
+      input?.timeoutMs,
+    ),
   preview_recording_stop: (input) =>
     invokeTargeted<PreviewAutomationRecordingArtifact>("recordingStop", input ?? {}),
 } satisfies Parameters<typeof PreviewToolkit.toLayer>[0];

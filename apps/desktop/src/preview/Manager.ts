@@ -2331,10 +2331,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
     tabId: string,
     colorScheme: DesktopPreviewColorScheme,
+    timeoutMs?: number,
   ) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (!tab) {
       return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    if (timeoutMs !== undefined) {
+      const wc = yield* requireWebContents(tabId);
+      yield* withControlSession(
+        tabId,
+        wc,
+        "set-color-scheme",
+        (send) =>
+          send("Emulation.setEmulatedMedia", {
+            features: [
+              {
+                name: "prefers-color-scheme",
+                value: colorScheme === "system" ? "" : colorScheme,
+              },
+            ],
+          }),
+        timeoutMs,
+      );
+      if (tab.colorScheme !== colorScheme) {
+        yield* update(tabId, { colorScheme });
+      }
+      return;
     }
     if (tab.colorScheme !== colorScheme) {
       // Record the choice even when the CDP call below can't run yet (no
@@ -2880,8 +2903,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* Effect.failCause(initializationExit.cause);
   });
 
-  const startRecording = Effect.fn("PreviewManager.startRecording")(function* (tabId: string) {
-    yield* startFrameCapture(tabId, "recording");
+  const startRecording = Effect.fn("PreviewManager.startRecording")(function* (
+    tabId: string,
+    timeoutMs?: number,
+  ) {
+    const start = startFrameCapture(tabId, "recording");
+    if (timeoutMs === undefined) {
+      yield* start;
+      return;
+    }
+    const result = yield* start.pipe(Effect.timeoutOption(automationExecutionBudget(timeoutMs)));
+    if (Option.isSome(result)) return;
+    yield* stopFrameCapture(tabId, "recording").pipe(Effect.ignore);
+    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
   });
 
   const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (tabId: string) {
@@ -3701,8 +3735,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationPressInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "press", (send, sendCleanup) =>
-      performAutomationPress(tabId, wc, input, send, sendCleanup),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "press",
+      (send, sendCleanup) => performAutomationPress(tabId, wc, input, send, sendCleanup),
+      input.timeoutMs,
     );
   });
 
@@ -3757,8 +3795,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationScrollInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "scroll", (send) =>
-      performAutomationScroll(tabId, input, send),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "scroll",
+      (send) => performAutomationScroll(tabId, input, send),
+      input.timeoutMs,
     );
   });
 
@@ -4259,6 +4301,7 @@ export class PreviewManager extends Context.Service<
     readonly setColorScheme: (
       tabId: string,
       colorScheme: DesktopPreviewColorScheme,
+      timeoutMs?: number,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
@@ -4278,7 +4321,10 @@ export class PreviewManager extends Context.Service<
     readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly openPictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly closePictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-    readonly startRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly startRecording: (
+      tabId: string,
+      timeoutMs?: number,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly stopRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly saveRecording: (
       tabId: string,

@@ -1721,6 +1721,73 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("does not persist a color-scheme mutation after its deadline", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let attached = false;
+        const attach = vi.fn(() => {
+          attached = true;
+        });
+        const detach = vi.fn(() => {
+          attached = false;
+        });
+        const sendCommand = vi.fn(() => new Promise<unknown>(() => undefined));
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => attached,
+            attach,
+            detach,
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_scheme_timeout");
+        yield* manager.registerWebview("tab_scheme_timeout", 42);
+        yield* Effect.yieldNow;
+
+        const mutation = yield* manager
+          .setColorScheme("tab_scheme_timeout", "dark", 100)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(100);
+        const result = yield* Effect.exit(Fiber.join(mutation));
+
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(result.cause))).toMatchObject({
+            _tag: "PreviewAutomationTimeoutError",
+            tabId: "tab_scheme_timeout",
+            timeoutMs: 100,
+          });
+        }
+        expect(states.at(-1)?.colorScheme).toBe("system");
+        expect(detach).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
   effectIt.effect("blocks late webview and capture starts during tab close", () =>
     withManager((manager) =>
       Effect.gen(function* () {

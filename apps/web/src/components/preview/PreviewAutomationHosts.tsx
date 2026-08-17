@@ -588,7 +588,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "setColorScheme": {
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationSetColorSchemeInput;
-            await ready.bridge.setColorScheme(ready.runtimeTabId, input.colorScheme);
+            await ready.bridge.setColorScheme(
+              ready.runtimeTabId,
+              input.colorScheme,
+              remainingOperationBudget(input.timeoutMs ?? request.timeoutMs),
+            );
             return {
               tabId: ready.tabId,
               colorScheme: input.colorScheme,
@@ -637,16 +641,26 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "press": {
             const ready = await requireReadyTab();
+            const input = request.input as Parameters<typeof ready.bridge.automation.press>[1];
             return await ready.bridge.automation.press(
               ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.press>[1],
+              previewAutomationInputWithRemainingTimeout(
+                input,
+                request.timeoutMs,
+                remainingOperationBudget,
+              ),
             );
           }
           case "scroll": {
             const ready = await requireReadyTab();
+            const input = request.input as Parameters<typeof ready.bridge.automation.scroll>[1];
             return await ready.bridge.automation.scroll(
               ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.scroll>[1],
+              previewAutomationInputWithRemainingTimeout(
+                input,
+                request.timeoutMs,
+                remainingOperationBudget,
+              ),
             );
           }
           case "evaluate": {
@@ -674,6 +688,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               ready.runtimeTabId,
               threadRef,
               ready.tabId,
+              remainingOperationBudget(request.timeoutMs),
             );
             return {
               tabId: ready.tabId,

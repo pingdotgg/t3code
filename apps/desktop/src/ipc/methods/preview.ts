@@ -11,6 +11,7 @@ import {
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
+  DesktopPreviewRecordingStartInputSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
@@ -149,9 +150,13 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL,
   payload: DesktopPreviewSetColorSchemeInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({ tabId, colorScheme }) {
+  handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({
+    tabId,
+    colorScheme,
+    timeoutMs,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.setColorScheme(tabId, colorScheme);
+    yield* manager.setColorScheme(tabId, colorScheme, timeoutMs);
   }),
 });
 export const openDevTools = tabMethod(
@@ -164,11 +169,15 @@ export const cancelPickElement = tabMethod(
   "desktop.ipc.preview.cancelPickElement",
   (manager, tabId) => manager.cancelPickElement(tabId),
 );
-export const startRecording = tabMethod(
-  IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
-  "desktop.ipc.preview.startRecording",
-  (manager, tabId) => manager.startRecording(tabId),
-);
+export const startRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
+  payload: DesktopPreviewRecordingStartInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.startRecording")(function* ({ tabId, timeoutMs }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.startRecording(tabId, timeoutMs);
+  }),
+});
 export const stopRecording = tabMethod(
   IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
   "desktop.ipc.preview.stopRecording",

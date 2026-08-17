@@ -6,6 +6,7 @@ import {
   PreviewAutomationOpenInput,
   PreviewAutomationPressInput,
   PreviewAutomationRecordingArtifact,
+  PreviewAutomationRecordingStartInput,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
@@ -186,7 +187,7 @@ export const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
     description:
       "Start recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted.",
-    parameters: PreviewAutomationTabTargetInput,
+    parameters: PreviewAutomationRecordingStartInput,
     success: PreviewAutomationRecordingStatus,
     failure: PreviewAutomationError,
     dependencies,
