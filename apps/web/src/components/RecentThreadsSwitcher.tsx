@@ -196,7 +196,7 @@ function RecentThreadsSwitcherOverlay({
   }, [selectedIndex]);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-50 flex justify-center">
+    <div className="pointer-events-none fixed inset-0 z-100 flex justify-center px-4">
       <div
         ref={listRef}
         role="listbox"
