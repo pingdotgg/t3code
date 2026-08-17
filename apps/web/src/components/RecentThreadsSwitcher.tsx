@@ -58,16 +58,28 @@ export function RecentThreadsSwitcher() {
     select: (params) => resolveThreadRouteTarget(params),
   });
   const [session, setSession] = useState<SwitcherSession | null>(null);
+  // Keydown and keyup are native window listeners with no React flush between
+  // them, so the ref is written eagerly on every transition — reading state
+  // through the render-synced ref would let a keyup commit a cancelled session.
   const sessionRef = useRef(session);
-  sessionRef.current = session;
+  const updateSession = (next: SwitcherSession | null) => {
+    sessionRef.current = next;
+    setSession(next);
+  };
+
+  const cancel = useEffectEvent(() => {
+    if (sessionRef.current === null) return;
+    updateSession(null);
+  });
 
   const commit = useEffectEvent((index?: number) => {
     const current = sessionRef.current;
     if (!current) return;
-    setSession(null);
+    updateSession(null);
     const key = current.entries[index ?? current.selectedIndex];
     const ref = key === undefined ? null : parseScopedThreadKey(key);
-    if (!ref || readThreadShell(ref) === null) return;
+    const shell = ref === null ? null : readThreadShell(ref);
+    if (!ref || shell === null || shell.archivedAt !== null) return;
     void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
   });
 
@@ -77,7 +89,7 @@ export function RecentThreadsSwitcher() {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        setSession(null);
+        cancel();
         return;
       }
       if (event.key === "Enter") {
@@ -100,10 +112,13 @@ export function RecentThreadsSwitcher() {
     if (!current && isCommandPaletteOpen()) return;
     event.preventDefault();
     event.stopPropagation();
+    // Swallow key repeats after claiming the shortcut: one step per physical
+    // press keeps held-modifier cycling controllable.
+    if (event.repeat) return;
     const step = direction === "next" ? 1 : -1;
     if (current) {
       const count = current.entries.length;
-      setSession({
+      updateSession({
         ...current,
         selectedIndex: (current.selectedIndex + step + count) % count,
       });
@@ -119,7 +134,7 @@ export function RecentThreadsSwitcher() {
         : direction === "next"
           ? 0
           : entries.length - 1;
-    setSession({
+    updateSession({
       entries,
       selectedIndex: start,
       holdsCtrl: event.ctrlKey,
@@ -142,7 +157,7 @@ export function RecentThreadsSwitcher() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => handleWindowKeyDown(event);
     const onKeyUp = (event: KeyboardEvent) => handleWindowKeyUp(event);
-    const onWindowBlur = () => setSession(null);
+    const onWindowBlur = () => cancel();
     // Capture phase so held-modifier cycling beats focused editors and the
     // terminal drawer, mirroring the sidebar toggle listener.
     window.addEventListener("keydown", onKeyDown, true);
@@ -187,7 +202,7 @@ function RecentThreadsSwitcherOverlay({
         role="listbox"
         aria-label="Recent threads"
         data-testid="recent-threads-switcher"
-        className="dialog-glass pointer-events-auto mt-[14vh] flex h-fit max-h-[60vh] w-full max-w-md flex-col gap-0.5 overflow-y-auto rounded-2xl border p-1.5 shadow-2xl shadow-black/20"
+        className="dialog-glass pointer-events-auto mt-[14vh] flex h-fit max-h-[60vh] w-full max-w-md flex-col gap-0.5 overflow-y-auto rounded-2xl border p-1.5"
       >
         {entries.map((threadKey, index) => (
           <RecentThreadsSwitcherRow
@@ -223,10 +238,13 @@ function RecentThreadsSwitcherRow({
     <button
       type="button"
       role="option"
+      // Keyboard interaction is owned by the window listener; keep rows out of
+      // the tab order so focus stays where the user left it.
+      tabIndex={-1}
       aria-selected={selected}
       onClick={onClick}
       className={cn(
-        "flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left",
+        "flex w-full cursor-pointer flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left",
         selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
       )}
     >
