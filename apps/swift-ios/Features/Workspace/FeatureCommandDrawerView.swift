@@ -65,15 +65,18 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
 
     private var drawerLayer: some View {
         GeometryReader { proxy in
-            // This layer spans the whole window, so its own reported top inset
-            // is the offset of the app's content and the closed drawer's edge.
+            // Deliberately laid out inside the page rather than under
+            // `ignoresSafeArea`: there the proxy reports a zero top inset and the
+            // drawer's own content ends up beneath the status bar. Here the
+            // proxy reports the real inset and the page's height, and the drawer
+            // still reaches the window's top edge because overlays do not clip.
             let topInset = proxy.safeAreaInsets.top
             let measured = FeatureCommandDrawerGeometry.openHeight(
-                availableHeight: proxy.size.height - topInset
+                availableHeight: proxy.size.height
             )
 
             drawer(openHeight: measured, topInset: topInset)
-                .offset(y: state.reveal - measured)
+                .offset(y: state.reveal - measured - topInset)
                 .opacity(state.isVisible ? 1 : 0)
                 .accessibilityHidden(!state.isOpen)
                 .onChange(of: measured, initial: true) { _, height in
@@ -81,7 +84,6 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                     state.synchronize(openHeight: height)
                 }
         }
-        .ignoresSafeArea(edges: .top)
         .allowsHitTesting(state.isVisible)
     }
 
@@ -113,8 +115,10 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             .accessibilityElement()
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel("Close commands")
-            .accessibilityHidden(!state.isOpen)
             .accessibilityIdentifier("command-drawer-scrim")
+            // Must stay last: a later accessibility modifier re-exposes the
+            // element, leaving a phantom Close button while the drawer is shut.
+            .accessibilityHidden(!state.isOpen)
     }
 
     private func drawer(openHeight: CGFloat, topInset: CGFloat) -> some View {
