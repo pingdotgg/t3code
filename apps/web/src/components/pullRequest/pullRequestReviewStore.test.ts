@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { type PendingReviewComment, usePullRequestReviewStore } from "./pullRequestReviewStore";
 
 function comment(id: string, body = id): PendingReviewComment {
-  return { id, body, path: "src/app.ts", line: 1, side: "right" };
+  return { id, body, path: "src/app.ts", position: { kind: "added", newLine: 1 } };
 }
 
 describe("pull request review drafts", () => {

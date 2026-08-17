@@ -1147,8 +1147,16 @@ describe("review submission payload", () => {
         verdict: "request-changes",
         body: "Two things.",
         comments: [
-          { path: "src/a.ts", line: 12, side: "right", body: "rename this" },
-          { path: "src/b.ts", line: 3, side: "left", body: "why remove?" },
+          {
+            path: "src/a.ts",
+            position: { kind: "added", newLine: 12 },
+            body: "rename this",
+          },
+          {
+            path: "src/b.ts",
+            position: { kind: "deleted", oldLine: 3 },
+            body: "why remove?",
+          },
         ],
       }),
     ) as Record<string, unknown>;
