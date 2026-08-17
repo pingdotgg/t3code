@@ -144,7 +144,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
       });
     }
 
-    const cookies = yield* readChromiumCookies({
+    const read = yield* readChromiumCookies({
       cookieDatabasePath: cookieDatabasePath(definition, paths, requestedProfile.directory),
       keychainService: definition.keychainService,
       keychainAccount: definition.keychainAccount,
@@ -172,8 +172,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
     // Written one at a time rather than in parallel: Chromium's cookie store
     // serialises writes anyway, and a rejected cookie should only cost itself.
     let imported = 0;
-    let skipped = 0;
-    for (const cookie of cookies) {
+    // Rows the reader could not decrypt are already lost cookies, so they
+    // count as skipped rather than vanishing from the tally.
+    let skipped = read.undecryptable;
+    for (const cookie of read.cookies) {
       const written = yield* Effect.tryPromise({
         try: () =>
           session.cookies.set({
