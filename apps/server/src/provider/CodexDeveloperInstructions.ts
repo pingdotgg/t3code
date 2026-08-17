@@ -11,7 +11,19 @@ For browser work, first call \`preview_status\`. If no automation-capable previe
 Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the T3 preview tools are absent, the user explicitly requests another browser, or \`preview_open\` returns an explicit unsupported/unavailable error. A failed T3 preview tool call should be inspected and retried with corrected arguments when the error is actionable.
 `;
 
-export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
+/**
+ * The browser block is omitted entirely when the preview tools aren't attached.
+ * Describing `preview_*` tools that aren't in the turn's tool list would be
+ * worse than saying nothing: the instructions actively steer the model away
+ * from Playwright and agent-browser, so leaving them in would talk it out of
+ * the only browser automation it still has.
+ */
+const browserToolInstructions = (browserToolsAvailable: boolean): string =>
+  browserToolsAvailable ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "";
+
+export const codexPlanModeDeveloperInstructions = (
+  browserToolsAvailable: boolean,
+): string => `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
 
@@ -139,10 +151,12 @@ Do not ask "should I proceed?" in the final output. The user can easily switch o
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
 
 If the user stays in Plan mode and asks for revisions after a prior \`<proposed_plan>\`, any new \`<proposed_plan>\` must be a complete replacement. If the user indicates that the prior plan is not acceptable but does not provide enough information to produce a complete replacement, address the concern and continue planning without producing a \`<proposed_plan>\` block. If the follow-up neither requires changes nor calls the plan into question (e.g. clarifying question), answer it before the block, then reproduce the prior \`<proposed_plan>\` unchanged.
-${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+${browserToolInstructions(browserToolsAvailable)}
 </collaboration_mode>`;
 
-export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
+export const codexDefaultModeDeveloperInstructions = (
+  browserToolsAvailable: boolean,
+): string => `<collaboration_mode># Collaboration Mode: Default
 
 You are now in Default mode. Any previous instructions for other modes (e.g. Plan mode) are no longer active.
 
@@ -153,7 +167,7 @@ Your active mode changes only when new developer instructions with a different \
 Use the \`request_user_input\` tool only when it is listed in the available tools for this turn.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
-${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+${browserToolInstructions(browserToolsAvailable)}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {
@@ -169,11 +183,17 @@ function toSingleLine(value: string): string {
 export function buildCodexDeveloperInstructions(
   interactionMode: ProviderInteractionMode,
   runtime: CodexRuntimeInfo,
+  /**
+   * Whether the `t3-code` MCP server is attached to this turn. Callers derive
+   * it from the session's actual MCP configuration rather than re-reading the
+   * setting, so the prompt cannot claim tools the turn doesn't have.
+   */
+  browserToolsAvailable = true,
 ): string {
   const base =
     interactionMode === "plan"
-      ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-      : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+      ? codexPlanModeDeveloperInstructions(browserToolsAvailable)
+      : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
   return `${base}
 
 <runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>`;

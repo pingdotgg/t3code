@@ -584,6 +584,18 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Whether agents may drive the in-app preview browser. Turning this off
+   * withholds the MCP credential, so the `t3-code` server (and with it every
+   * `preview_*` tool) is never attached to a provider session, and the prompt
+   * text describing those tools is dropped along with them. The user's own
+   * browser panel is unaffected — this gates agent access only.
+   *
+   * Server-authoritative rather than client-local: tool injection and prompt
+   * construction both happen on the server, and the answer must not differ
+   * between a desktop window and a phone attached to the same server.
+   */
+  enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -747,6 +759,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
+  enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
