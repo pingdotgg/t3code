@@ -103,6 +103,7 @@ import {
   buildResolveConflictsPrompt,
   handoffPrompt,
   handoffReviewComments,
+  latestPullRequestReviewOutcomes,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestComposerTarget,
@@ -123,7 +124,9 @@ import {
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
+  PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
+  pullRequestReviewOutcomeToneClassName,
   resolvePullRequestState,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
@@ -1075,6 +1078,19 @@ export function PullRequestDetailPanel({
     : null;
   const checksSummary = detail ? summarizePullRequestChecks(detail.checks) : null;
   const checksState = detail ? pullRequestChecksState(detail.checks) : null;
+  // Approvals that still stand, and only those. A superseded one is dimmed beside the reviewer
+  // who gave it, so counting it here would have the header assert in a number what the row next
+  // to it has just qualified.
+  //
+  // Not counted at all from a conversation this page only holds the recent end of: an approval
+  // older than the window would be missing, and "1" beside a tick is read as the whole answer.
+  // The Summary tab's row can say it may be short; a bare number cannot, so it stays away.
+  const approvalCount =
+    detail && !detail.commentsTruncated
+      ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
+          (entry) => entry.outcome === "approved" && !entry.stale,
+        ).length
+      : 0;
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">
@@ -1813,6 +1829,24 @@ export function PullRequestDetailPanel({
                             ? "…"
                             : detail.commits.length.toLocaleString()}
                       </span>
+                      {/* Only once somebody has approved: a nought beside a tick would read as a
+                          verdict of its own on a change nobody has looked at yet. */}
+                      {approvalCount > 0 ? (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            pullRequestReviewOutcomeToneClassName("approved"),
+                          )}
+                        >
+                          <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
+                          {approvalCount.toLocaleString()}
+                          {/* The icon is decorative and a name written onto a generic span is
+                              not announced, so the bare number says what it counts in words. */}
+                          <span className="sr-only">
+                            {approvalCount === 1 ? "approval" : "approvals"}
+                          </span>
+                        </span>
+                      ) : null}
                     </PullRequestMetaLine>
                     <Button
                       size="xs"

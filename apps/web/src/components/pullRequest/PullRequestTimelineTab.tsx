@@ -27,9 +27,14 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildPullRequestTimeline,
   groupPullRequestTimelineConversations,
+  isPullRequestVerdictStale,
+  newestPullRequestCommitAt,
+  pullRequestReviewOutcome,
+  type PullRequestReviewOutcome,
   type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
@@ -40,6 +45,10 @@ import {
   PullRequestActorAvatar,
   PullRequestDiffStat,
   PullRequestMetaLine,
+  PullRequestReviewOutcomeIcon,
+  pullRequestReviewOutcomeLabel,
+  pullRequestReviewOutcomeStaleLabel,
+  pullRequestReviewOutcomeToneClassName,
 } from "./pullRequestPresentation";
 
 /** What every comment on the timeline needs to react; only the subject differs between them. */
@@ -411,6 +420,100 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
   );
 }
 
+/**
+ * A verdict, as its own row rather than a line inside a collapsed conversation. It wears the
+ * reviewer's face on the rail and the verdict's own icon beside their name, so "approved" reads
+ * at a glance from the same place a merge or a commit does.
+ */
+function ReviewVerdictEvent({
+  event,
+  outcome,
+  stale,
+  cwd,
+  onOpen,
+  reactions,
+}: {
+  event: PullRequestTimelineEvent;
+  outcome: PullRequestReviewOutcome;
+  /** Commits landed after this verdict, so it speaks for code the branch no longer has. */
+  stale: boolean;
+  cwd: string;
+  onOpen: (url: string) => void;
+  reactions: ReactionSurface;
+}) {
+  return (
+    <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
+      {/* Pinned rather than centred: this row grows with a body and a reaction bar, and a
+          centred avatar drifts down beside them instead of sitting by the name. */}
+      <ActorTimelineMarker
+        actors={event.actor ? [event.actor] : []}
+        className="top-6"
+        fallback={<PullRequestReviewOutcomeIcon outcome={outcome} />}
+      />
+      <div className="flex min-w-0 items-start gap-2 py-1.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+            <ActorName actor={event.actor} />
+            {/* The word alone, in the verdict's own colour — green for an approval, red for a
+                request for changes. A verdict overtaken by later commits keeps its word and
+                loses that colour: it still happened, and it no longer speaks for what is on the
+                branch. Lowercased in the styling rather than the string, so what a screen reader
+                announces stays the label every other surface uses. */}
+            <Tooltip disabled={!stale}>
+              <TooltipTrigger
+                render={
+                  <span
+                    className={cn(
+                      "font-medium lowercase",
+                      stale
+                        ? "text-muted-foreground opacity-70"
+                        : pullRequestReviewOutcomeToneClassName(outcome),
+                    )}
+                  />
+                }
+              >
+                {pullRequestReviewOutcomeLabel(outcome)}
+                {stale ? <span className="sr-only">, before the latest commits</span> : null}
+              </TooltipTrigger>
+              <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome)}</TooltipPopup>
+            </Tooltip>
+          </div>
+          {/* The reaction bar rides this line rather than taking one of its own. Its add button
+              is invisible until hovered but still occupies `h-6`, and under a verdict — usually a
+              single line with no body — a row of that reserved on its own reads as a hole. */}
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <PullRequestMetaLine className="flex-wrap text-[11px] text-muted-foreground">
+              <span>{formatRelativeTimeLabel(event.at)}</span>
+              {event.path ? (
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <FileCode2Icon aria-hidden className="size-3 shrink-0" />
+                  <span className="truncate">{event.path}</span>
+                </span>
+              ) : null}
+            </PullRequestMetaLine>
+            {reactions.canReact || event.reactions.length > 0 ? (
+              <PullRequestReactionBar
+                reactions={event.reactions}
+                canReact={reactions.canReact}
+                subjectId={event.id}
+                environmentId={reactions.environmentId}
+                reference={reactions.reference}
+                onRefresh={reactions.onRefresh}
+              />
+            ) : null}
+          </div>
+          {/* An approval usually carries no words. When it does they are the review, so they stay
+              visible rather than being folded away with the ordinary conversation. */}
+          {event.body ? (
+            <TimelineBody body={event.body} markdown={event.markdown} cwd={cwd} />
+          ) : null}
+        </div>
+        <OpenOnHostButton url={event.url} onOpen={onOpen} />
+      </div>
+    </div>
+  );
+}
+
 export function PullRequestTimelineTab({
   detail,
   environmentId,
@@ -427,6 +530,7 @@ export function PullRequestTimelineTab({
   onRefresh: () => void;
 }) {
   const events = buildPullRequestTimeline(detail);
+  const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,
     environmentId,
@@ -467,6 +571,20 @@ export function PullRequestTimelineTab({
             const event = row.event;
             if (event.kind === "commit") {
               return <CommitEvent key={event.id} event={event} onOpen={onOpenCommit} />;
+            }
+            const outcome = pullRequestReviewOutcome(event.reviewState);
+            if (outcome !== null) {
+              return (
+                <ReviewVerdictEvent
+                  key={event.id}
+                  event={event}
+                  outcome={outcome}
+                  stale={isPullRequestVerdictStale(event.at, newestCommitAt)}
+                  cwd={detail.workspaceRoot}
+                  onOpen={openOnHost}
+                  reactions={reactions}
+                />
+              );
             }
             return <LifecycleEvent key={event.id} event={event} />;
           })}
