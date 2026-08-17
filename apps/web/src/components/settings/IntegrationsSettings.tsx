@@ -34,7 +34,7 @@ import type { ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { previewBridge } from "~/components/preview/previewBridge";
-import { randomUUID } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { isElectron } from "../../env";
 
@@ -544,7 +544,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         </Button>
       }
     >
-      <div className="mt-1 space-y-1">
+      {/*
+        Dimmed as a whole when the section is unavailable. The built-in rows
+        are a plain span and a badge rather than `h3`/`p` or disabled controls,
+        so the block's own dimming does not reach them and they would be the
+        only full-contrast content inside "only available in the desktop app".
+      */}
+      <div className={cn("mt-1 space-y-1", disabled && "opacity-64")}>
         {resolveBrowserProfiles(userProfiles).map((profile) => {
           const builtIn = isBuiltInBrowserProfileId(profile.id);
           return (
