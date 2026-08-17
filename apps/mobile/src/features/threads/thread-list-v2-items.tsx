@@ -135,10 +135,11 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       </Text>
       <View className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
       <SymbolView
-        name={props.expanded ? "chevron.up" : "chevron.down"}
+        name="chevron.down"
         size={10}
         tintColor={colorScheme === "dark" ? SNOOZE_ACCENT_DARK : SNOOZE_ACCENT_LIGHT}
         type="monochrome"
+        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
@@ -171,10 +172,11 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
       </Text>
       <View className="h-px flex-1 bg-border" />
       <SymbolView
-        name={props.expanded ? "chevron.up" : "chevron.down"}
+        name="chevron.down"
         size={10}
         tintColor={mutedColor}
         type="monochrome"
+        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
