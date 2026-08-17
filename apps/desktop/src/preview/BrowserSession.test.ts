@@ -192,6 +192,28 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("clears a partition whose session has not been opened yet", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-untouched");
+
+      // Deriving the partition string does not create the session, and the
+      // clear only walks sessions it already holds. Without loading it first
+      // this reports success and deletes nothing — which is what a user
+      // clearing a profile after a restart would get.
+      assert.isUndefined(sessions.get(partition));
+      yield* browserSessions.clearCookies([partition]);
+      assert.isUndefined(sessions.get(partition));
+
+      yield* browserSessions.getSession("scope-untouched");
+      yield* browserSessions.clearCookies([partition]);
+
+      const created = sessions.get(partition);
+      assert.isDefined(created);
+      assert.strictEqual(created.clearStorageData.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("correlates clear failures while still attempting every session", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
