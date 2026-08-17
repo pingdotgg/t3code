@@ -3,6 +3,7 @@ import { MonitorIcon, ServerIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import {
   isFederatedSourceControlTargetExpanded,
@@ -91,12 +92,22 @@ export function SourceControlPanel({
             <span className="min-w-0 truncate text-xs font-medium text-foreground">
               {target.label}
             </span>
-            <span
-              className="ml-auto min-w-0 truncate font-mono text-[10px] text-muted-foreground/70"
-              title={target.cwd}
-            >
-              {target.cwd}
-            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="ml-auto min-w-0 truncate font-mono text-[10px] text-muted-foreground/70" />
+                }
+              >
+                {target.cwd}
+              </TooltipTrigger>
+              <TooltipPopup
+                align="end"
+                side="bottom"
+                className="max-w-80 break-all font-mono text-left"
+              >
+                {target.cwd}
+              </TooltipPopup>
+            </Tooltip>
           </>
         );
         return (

@@ -11,6 +11,7 @@ import type {
   VcsPanelRemote,
   VcsPanelStashDetails,
   VcsRef,
+  SourceControlProviderError,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 
@@ -20,6 +21,7 @@ import type { ExecuteGitProgress } from "../vcs/GitVcsDriver.ts";
 import { parseRemoteRefWithRemoteNames } from "../git/remoteRefs.ts";
 import type { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import {
   parseAheadBehindCounts,
   branchActivityTime,
@@ -55,12 +57,29 @@ export interface SourceControlPanelReaderDependencies {
   readonly run: Run;
   readonly serverSettings: ServerSettingsService["Service"];
   readonly sourceControlProviders: SourceControlProviderRegistry["Service"] | undefined;
+  readonly sourceControlRateLimits:
+    | SourceControlRateLimit.SourceControlRateLimit["Service"]
+    | undefined;
   readonly textGeneration: TextGeneration["Service"] | undefined;
 }
 
 export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDependencies) {
-  const { run, serverSettings, sourceControlProviders, textGeneration } = deps;
+  const { run, serverSettings, sourceControlProviders, sourceControlRateLimits, textGeneration } =
+    deps;
   const COMMIT_PAGE_SIZE = 10;
+
+  const protectProviderRequest = <A>(
+    context: SourceControlProvider.SourceControlProviderContext,
+    effect: Effect.Effect<A, SourceControlProviderError>,
+  ) =>
+    sourceControlRateLimits === undefined
+      ? effect
+      : SourceControlRateLimit.protectProviderRequest({
+          limits: sourceControlRateLimits,
+          provider: context.provider.kind,
+          baseUrl: context.provider.baseUrl,
+          effect,
+        });
 
   const readWorkingTreeChangeGroups = (
     cwd: string,
@@ -242,14 +261,15 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
           .get(context.provider.kind)
           .pipe(Effect.orElseSucceed(() => null));
         if (!provider) continue;
-        const avatarUrl = yield* provider
-          .getCommitAvatarUrl({
+        const avatarUrl = yield* protectProviderRequest(
+          context,
+          provider.getCommitAvatarUrl({
             cwd,
             context,
             sha: commit.sha,
             authorEmail: commit.authorEmail,
-          })
-          .pipe(Effect.orElseSucceed(() => null));
+          }),
+        ).pipe(Effect.orElseSucceed(() => null));
         if (avatarUrl) return avatarUrl;
       }
       return null;
@@ -419,26 +439,27 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
             Effect.forEach(
               localBranches,
               (localBranch) =>
-                provider
-                  .listChangeRequests({
+                protectProviderRequest(
+                  context,
+                  provider.listChangeRequests({
                     cwd,
                     context,
                     headSelector: localBranch.name,
                     state: "open",
                     limit: 20,
-                  })
-                  .pipe(
-                    Effect.flatMap((changeRequests) =>
-                      Effect.forEach(
-                        changeRequests,
-                        (changeRequest) =>
-                          actionableForkForChangeRequest(cwd, localBranch, remote, changeRequest),
-                        { concurrency: 4 },
-                      ),
+                  }),
+                ).pipe(
+                  Effect.flatMap((changeRequests) =>
+                    Effect.forEach(
+                      changeRequests,
+                      (changeRequest) =>
+                        actionableForkForChangeRequest(cwd, localBranch, remote, changeRequest),
+                      { concurrency: 4 },
                     ),
-                    Effect.map((forks) => forks.flatMap((fork) => (fork ? [fork] : []))),
-                    Effect.orElseSucceed(() => []),
                   ),
+                  Effect.map((forks) => forks.flatMap((fork) => (fork ? [fork] : []))),
+                  Effect.orElseSucceed(() => []),
+                ),
               { concurrency: 4 },
             ),
           ),

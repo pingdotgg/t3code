@@ -279,6 +279,8 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 
+const SourceControlRateLimitLayerLive = SourceControlRateLimit.layer;
+
 const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(ProjectSetupScriptRunner.layer),
   Layer.provideMerge(GitVcsDriver.layer),
@@ -305,6 +307,7 @@ const SourceControlPanelServiceLayerLive = SourceControlPanelService.layer.pipe(
   Layer.provideMerge(GitWorkflowLayerLive),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
+  Layer.provide(SourceControlRateLimitLayerLive),
   Layer.provideMerge(TextGeneration.layer),
   Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
 );
@@ -450,7 +453,7 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
   // One registry entry per supported host; the service only knows the registry.
   Layer.provide(PullRequestProviderRegistry.layer),
   Layer.provide(SourceControlProviderRegistryLayerLive),
-  Layer.provide(SourceControlRateLimit.layer),
+  Layer.provide(SourceControlRateLimitLayerLive),
   Layer.provide(VcsProcess.layer),
 );
 

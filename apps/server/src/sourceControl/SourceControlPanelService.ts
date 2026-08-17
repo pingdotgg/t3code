@@ -70,6 +70,7 @@ import {
   type WorktreeBranchEntry,
 } from "./SourceControlPanelParsers.ts";
 import { makeSourceControlPanelReaders } from "./SourceControlPanelReaders.ts";
+import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import {
   mergeNumstats,
   panelStatusFromLocal,
@@ -262,6 +263,9 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const serverSettings = yield* ServerSettingsService;
   const sourceControlProviders = Option.getOrUndefined(
     yield* Effect.serviceOption(SourceControlProviderRegistry),
+  );
+  const sourceControlRateLimits = Option.getOrUndefined(
+    yield* Effect.serviceOption(SourceControlRateLimit.SourceControlRateLimit),
   );
   const textGeneration = Option.getOrUndefined(yield* Effect.serviceOption(TextGeneration));
 
@@ -491,6 +495,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     run,
     serverSettings,
     sourceControlProviders,
+    sourceControlRateLimits,
     textGeneration,
   });
   const unstagedFilesWithUntrackedRenames = (cwd: string, untrackedPaths: readonly string[]) =>

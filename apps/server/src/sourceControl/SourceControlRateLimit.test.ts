@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
+import { SourceControlProviderError } from "@t3tools/contracts";
 
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
@@ -118,5 +119,72 @@ it.effect("keeps a fresh provider reset from an older request", () =>
     yield* limits.recordRateLimit({ ...github, lease: staleLease, retryAt: 61_000 });
 
     assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 61_000);
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("shares provider backoff with best-effort panel reads", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(1_000);
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    let attempts = 0;
+    const rateLimited = new SourceControlProviderError({
+      provider: "bitbucket",
+      operation: "listChangeRequests",
+      cwd: "/repo",
+      detail: "Failed to list change requests.",
+      cause: {
+        _tag: "BitbucketResponseError",
+        status: 429,
+        retryAt: 121_000,
+      },
+    });
+
+    yield* SourceControlRateLimit.protectProviderRequest({
+      limits,
+      provider: "bitbucket",
+      baseUrl: "https://Bitbucket.example.test:8443/path",
+      effect: Effect.sync(() => {
+        attempts += 1;
+      }).pipe(Effect.andThen(Effect.fail(rateLimited))),
+    }).pipe(Effect.exit);
+
+    const paused = yield* SourceControlRateLimit.protectProviderRequest({
+      limits,
+      provider: "bitbucket",
+      baseUrl: "https://bitbucket.example.test:8443/other",
+      effect: Effect.sync(() => {
+        attempts += 1;
+      }),
+    }).pipe(Effect.flip);
+
+    assert.equal(attempts, 1);
+    assert.deepInclude(paused, {
+      _tag: "SourceControlRateLimitPausedError",
+      provider: "bitbucket",
+      host: "bitbucket.example.test:8443",
+      retryAt: 121_000,
+    });
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("does not pause panel reads after ordinary provider failures", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    const failed = new SourceControlProviderError({
+      provider: "gitlab",
+      operation: "getCommitAvatarUrl",
+      cwd: "/repo",
+      detail: "Provider request failed.",
+      cause: { _tag: "GitLabCliCommandError" },
+    });
+
+    yield* SourceControlRateLimit.protectProviderRequest({
+      limits,
+      provider: "gitlab",
+      baseUrl: "https://gitlab.example.test",
+      effect: Effect.fail(failed),
+    }).pipe(Effect.exit);
+
+    assert.equal(yield* limits.check({ provider: "gitlab", host: "gitlab.example.test" }), 0);
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
 );

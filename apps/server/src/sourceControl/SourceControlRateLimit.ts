@@ -3,9 +3,11 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
+  type SourceControlProviderError,
   SourceControlProviderKind as SourceControlProviderKindSchema,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -80,6 +82,63 @@ export function retryAtFromHeader(value: string | undefined, now: number): numbe
   }
   const retryAt = Date.parse(normalized);
   return Number.isFinite(retryAt) && retryAt > now ? retryAt : undefined;
+}
+
+function providerHost(baseUrl: string, provider: SourceControlProviderKind): string {
+  try {
+    const host = new URL(baseUrl).host.trim().toLowerCase();
+    return host.length > 0 ? host : provider;
+  } catch {
+    return provider;
+  }
+}
+
+function providerRateLimit(
+  error: SourceControlProviderError,
+): { readonly retryAt?: number } | null {
+  const cause = error.cause;
+  if (!Predicate.isObject(cause)) return null;
+
+  const tag = Predicate.isString(cause._tag) ? cause._tag.toLowerCase() : "";
+  const failureKind = Predicate.isString(cause.failureKind) ? cause.failureKind.toLowerCase() : "";
+  const detail = Predicate.isString(cause.detail) ? cause.detail.toLowerCase() : "";
+  const status = Predicate.isNumber(cause.status) ? cause.status : undefined;
+  const isRateLimited =
+    tag.includes("ratelimit") ||
+    failureKind === "rate-limited" ||
+    status === 429 ||
+    detail.includes("rate limit") ||
+    detail.includes("too many requests");
+  if (!isRateLimited) return null;
+
+  const retryAt =
+    Predicate.isNumber(cause.retryAt) && Number.isFinite(cause.retryAt) ? cause.retryAt : undefined;
+  return retryAt === undefined ? {} : { retryAt };
+}
+
+export function protectProviderRequest<A>(input: {
+  readonly limits: SourceControlRateLimit["Service"];
+  readonly provider: SourceControlProviderKind;
+  readonly baseUrl: string;
+  readonly effect: Effect.Effect<A, SourceControlProviderError>;
+}) {
+  const key = {
+    provider: input.provider,
+    host: providerHost(input.baseUrl, input.provider),
+  };
+  return input.limits.check(key).pipe(
+    Effect.flatMap((lease) =>
+      input.effect.pipe(
+        Effect.tap(() => input.limits.recordSuccess({ ...key, lease })),
+        Effect.tapError((error) => {
+          const rateLimit = providerRateLimit(error);
+          return rateLimit === null
+            ? Effect.void
+            : input.limits.recordRateLimit({ ...key, lease, ...rateLimit });
+        }),
+      ),
+    ),
+  );
 }
 
 export const make = Effect.gen(function* () {

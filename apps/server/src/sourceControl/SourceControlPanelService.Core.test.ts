@@ -1303,9 +1303,11 @@ describe("SourceControlPanelService", () => {
         makeTestLayer(
           (input) =>
             Effect.succeed(
-              input.args.includes("feature/failure")
-                ? failure("branch creation failed")
-                : success(),
+              input.operation === "vcs.panel.resolveGitCommonDir"
+                ? success("/repo/.git")
+                : input.args.includes("feature/failure")
+                  ? failure("branch creation failed")
+                  : success(),
             ),
           {},
           {},
