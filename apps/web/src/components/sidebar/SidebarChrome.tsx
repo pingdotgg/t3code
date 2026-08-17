@@ -88,10 +88,6 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       )}
       to="/"
     >
-      {/* Mark and word share one line box so the mark rides the text baseline.
-          Centering the two as separate boxes only lines up for a font whose
-          ascent and descent match the default stack, and the interface font is
-          a user setting. */}
       <span className="truncate text-sm font-medium tracking-tight">
         <T3Wordmark />{" "}
         <span className={onBackdrop ? "text-white/70" : "text-muted-foreground"}>Code</span>
