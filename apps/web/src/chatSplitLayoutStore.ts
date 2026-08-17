@@ -21,11 +21,12 @@ import {
   replaceLeafTarget as replaceLeafTargetInLayout,
   setLeafDiff,
   setSplitRatio as setSplitRatioInLayout,
+  sanitizeDiffRouteState,
   splitLeaf,
   splitLeafWithTarget,
   toggleLeafMaximized,
 } from "./chatSplitLayout";
-import type { ThreadRouteTarget } from "./threadRoutes";
+import { threadRouteTargetsEqual, type ThreadRouteTarget } from "./threadRoutes";
 
 function allTargetsShareSplitScope(targets: readonly ThreadRouteTarget[]): boolean {
   const [firstTarget, ...remainingTargets] = targets;
@@ -44,6 +45,7 @@ function allTargetsShareSplitScope(targets: readonly ThreadRouteTarget[]): boole
 
 interface ChatSplitLayoutStoreState {
   layout: ChatSplitLayout | null;
+  diffByThreadKey: Record<string, DiffRouteSearch>;
   syncRouteTarget: (target: ThreadRouteTarget, diff?: DiffRouteSearch) => void;
   focusLeaf: (leafId: ChatSplitNodeId) => ThreadRouteTarget | null;
   focusNeighbor: (direction: ChatSplitFocusDirection) => ThreadRouteTarget | null;
@@ -67,6 +69,12 @@ interface ChatSplitLayoutStoreState {
   closeFocusedLeaf: () => ThreadRouteTarget | null;
   toggleFocusedLeafMaximized: () => void;
   setSplitRatio: (splitId: ChatSplitNodeId, ratio: number) => void;
+}
+
+function threadTargetKey(target: ThreadRouteTarget): string | null {
+  return target.kind === "server"
+    ? `${target.threadRef.environmentId}:${target.threadRef.threadId}`
+    : null;
 }
 
 function createNodeId(): ChatSplitNodeId {
@@ -156,12 +164,19 @@ export function selectChatSplitNode(
 
 export const useChatSplitLayoutStore = create<ChatSplitLayoutStoreState>((set, get) => ({
   layout: null,
+  diffByThreadKey: {},
   syncRouteTarget: (target, diff) => {
     set((state) => {
       const activeLayout = selectActiveChatSplitLayout(state);
+      const focusedTarget = activeLayout ? getFocusedLeafTarget(activeLayout) : null;
+      const targetChanged =
+        focusedTarget !== null && !threadRouteTargetsEqual(focusedTarget, target);
+      const targetKey = threadTargetKey(target);
+      const rememberedDiff = targetKey ? state.diffByThreadKey[targetKey] : undefined;
+      const resolvedDiff = targetChanged && diff?.diff !== "1" ? (rememberedDiff ?? diff) : diff;
       const nextLayout = activeLayout
-        ? syncRouteTargetIntoLayout(activeLayout, target, diff)
-        : createSingleLeafLayout(target, diff);
+        ? syncRouteTargetIntoLayout(activeLayout, target, resolvedDiff)
+        : createSingleLeafLayout(target, resolvedDiff);
       if (nextLayout === activeLayout) {
         return state;
       }
@@ -195,16 +210,40 @@ export const useChatSplitLayoutStore = create<ChatSplitLayoutStoreState>((set, g
     return nextTarget;
   },
   replaceLeafTarget: (leafId, target, diff) => {
-    set((state) =>
-      updateActiveLayout(state, (layout) =>
-        replaceLeafTargetInLayout(layout, leafId, target, diff),
-      ),
-    );
+    set((state) => {
+      const targetKey = threadTargetKey(target);
+      return {
+        ...updateActiveLayout(state, (layout) =>
+          replaceLeafTargetInLayout(layout, leafId, target, diff),
+        ),
+        ...(targetKey && diff !== undefined
+          ? {
+              diffByThreadKey: {
+                ...state.diffByThreadKey,
+                [targetKey]: sanitizeDiffRouteState(diff),
+              },
+            }
+          : {}),
+      };
+    });
   },
   setFocusedLeafDiff: (diff) => {
-    set((state) =>
-      updateActiveLayout(state, (layout) => setLeafDiff(layout, layout.focusedLeafId, diff)),
-    );
+    set((state) => {
+      const activeLayout = selectActiveChatSplitLayout(state);
+      const focusedTarget = activeLayout ? getFocusedLeafTarget(activeLayout) : null;
+      const targetKey = focusedTarget ? threadTargetKey(focusedTarget) : null;
+      return {
+        ...updateActiveLayout(state, (layout) => setLeafDiff(layout, layout.focusedLeafId, diff)),
+        ...(targetKey
+          ? {
+              diffByThreadKey: {
+                ...state.diffByThreadKey,
+                [targetKey]: sanitizeDiffRouteState(diff),
+              },
+            }
+          : {}),
+      };
+    });
   },
   splitFocusedLeaf: (orientation) => {
     set((state) =>

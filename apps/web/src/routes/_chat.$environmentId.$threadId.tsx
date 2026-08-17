@@ -117,7 +117,6 @@ export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
   search: {
     middlewares: [
       retainSearchParams<DiffRouteSearch & AgentRunRouteSearch & ThreadMessageRouteSearch>([
-        "diff",
         "message",
       ]),
     ],
