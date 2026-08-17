@@ -4,8 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 
-import { parseBinaryCookies, readSafariCookies, SafariCookieReadError } from "./SafariCookies.ts";
+import {
+  isPermissionDenied,
+  parseBinaryCookies,
+  readSafariCookies,
+  SafariCookieReadError,
+} from "./SafariCookies.ts";
 
 const APPLE_EPOCH_OFFSET_SECONDS = 978_307_200;
 
@@ -220,4 +226,26 @@ describe("readSafariCookies", () => {
       assert.equal(error.reason, "readFailed");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+});
+
+describe("isPermissionDenied", () => {
+  // Shapes taken from a real `FileSystem.readFile` failure on macOS — verified
+  // against Safari's TCC-protected jar, whose denial is EPERM, tagged
+  // `Unknown` rather than `PermissionDenied`.
+  const platformError = (reasonTag: string, code: string): PlatformError.PlatformError =>
+    ({ _tag: "PlatformError", reason: { _tag: reasonTag, cause: { code } } }) as never;
+
+  it("treats a TCC EPERM denial as permission denied", () => {
+    // The regression: EPERM is tagged `Unknown`, so checking the tag alone
+    // reported Safari's Full Disk Access refusal as a generic read failure.
+    expect(isPermissionDenied(platformError("Unknown", "EPERM"))).toBe(true);
+  });
+
+  it("treats an EACCES denial as permission denied", () => {
+    expect(isPermissionDenied(platformError("PermissionDenied", "EACCES"))).toBe(true);
+  });
+
+  it("does not treat an unrelated failure as permission denied", () => {
+    expect(isPermissionDenied(platformError("Unknown", "EIO"))).toBe(false);
+  });
 });

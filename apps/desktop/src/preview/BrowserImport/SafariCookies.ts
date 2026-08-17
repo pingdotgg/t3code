@@ -21,6 +21,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import type { ImportedCookie } from "./CookieDatabase.ts";
@@ -159,17 +160,33 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
   return cookies;
 }
 
+/**
+ * Whether a filesystem error is the OS refusing access.
+ *
+ * A TCC denial arrives as EPERM, which Effect tags `Unknown` rather than
+ * `PermissionDenied` (reserved for EACCES), so the underlying errno is checked
+ * too — otherwise a Full Disk Access refusal is reported as a generic read
+ * failure and the user is never told what to grant.
+ */
+export const isPermissionDenied = (error: PlatformError.PlatformError): boolean => {
+  if (error.reason._tag === "PermissionDenied") return true;
+  const code = (error.reason as { cause?: { code?: unknown } }).cause?.code;
+  return code === "EPERM" || code === "EACCES";
+};
+
 export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(function* (
   cookiePath: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const contents = yield* fileSystem.readFile(cookiePath).pipe(
     Effect.mapError((cause) => {
-      // TCC denies the read even though the file exists, which is a permission
-      // the user can grant rather than a missing browser.
-      const denied = cause.reason._tag === "PermissionDenied";
+      // TCC denies the read even though the file exists — a permission the user
+      // grants in System Settings rather than a missing browser. macOS never
+      // prompts for Full Disk Access, so there is no dialog to wait on; the
+      // read just fails, and it fails with EPERM, which Effect surfaces as an
+      // `Unknown` system error rather than `PermissionDenied` (that is EACCES).
       return new SafariCookieReadError({
-        reason: denied ? "needsFullDiskAccess" : "readFailed",
+        reason: isPermissionDenied(cause) ? "needsFullDiskAccess" : "readFailed",
         cookieDatabasePath: cookiePath,
         cause,
       });
