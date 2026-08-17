@@ -251,10 +251,13 @@ function finiteNonNegativeDelta(
   return Number.isFinite(delta) && delta > 0 ? Math.floor(delta) : 0;
 }
 
-function devinUsageDeltaTotals(
+export function devinUsageDeltaTotals(
   current: EffectAcpSchema.Usage,
   previous: EffectAcpSchema.Usage | undefined,
-): UsageTokenTotals {
+): UsageTokenTotals | undefined {
+  if (previous !== undefined && current.totalTokens < previous.totalTokens) {
+    return undefined;
+  }
   const inputTokens = finiteNonNegativeDelta(current.inputTokens, previous?.inputTokens);
   const cachedReadTokens = finiteNonNegativeDelta(
     current.cachedReadTokens,
@@ -302,7 +305,7 @@ export function isAcpUsageGreaterOrNew(
 ): boolean {
   if (!current) return true;
   if (next.totalTokens !== current.totalTokens) {
-    return next.totalTokens > current.totalTokens;
+    return true;
   }
   return (
     next.inputTokens !== current.inputTokens ||
@@ -1103,6 +1106,12 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                   if (isAcpUsageGreaterOrNew(ctx.lastAcpUsage, acpUsage)) {
                     ctx.lastAcpUsage = acpUsage;
                   }
+                  if (
+                    ctx.lastWrittenAcpUsage !== undefined &&
+                    acpUsage.totalTokens < ctx.lastWrittenAcpUsage.totalTokens
+                  ) {
+                    ctx.lastWrittenAcpUsage = acpUsage;
+                  }
 
                   yield* offerRuntimeEvent({
                     type: "thread.token-usage.updated",
@@ -1415,31 +1424,35 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
 
             if (usage) {
               const deltaTotals = devinUsageDeltaTotals(usage, ctx.lastWrittenAcpUsage);
-              const totalDeltaTokens =
-                deltaTotals.uncachedInputTokens +
-                deltaTotals.cachedInputTokens +
-                deltaTotals.cacheCreationTokens +
-                deltaTotals.outputTokens;
+              if (deltaTotals === undefined) {
+                ctx.lastWrittenAcpUsage = usage;
+              } else {
+                const totalDeltaTokens =
+                  deltaTotals.uncachedInputTokens +
+                  deltaTotals.cachedInputTokens +
+                  deltaTotals.cacheCreationTokens +
+                  deltaTotals.outputTokens;
 
-              if (totalDeltaTokens > 0) {
-                const observedAt = yield* nowIso;
-                const usageModel = prepared.displayModel ?? ctx.session.model ?? "adaptive";
-                const nextPromptIndex = (ctx.promptIndexByTurn.get(prepared.turnId) ?? 0) + 1;
-                ctx.promptIndexByTurn.set(prepared.turnId, nextPromptIndex);
-                const written = yield* writeDevinUsageTranscriptLine(devinSettings, {
-                  timestamp: observedAt,
-                  sessionId: ctx.acpSessionId,
-                  turnId: prepared.turnId,
-                  promptIndex: nextPromptIndex,
-                  model: usageModel,
-                  totals: deltaTotals,
-                  reportedCostUsd: null,
-                }).pipe(
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                );
-                if (written) {
-                  ctx.lastWrittenAcpUsage = usage;
+                if (totalDeltaTokens > 0) {
+                  const observedAt = yield* nowIso;
+                  const usageModel = prepared.displayModel ?? ctx.session.model ?? "adaptive";
+                  const nextPromptIndex = (ctx.promptIndexByTurn.get(prepared.turnId) ?? 0) + 1;
+                  ctx.promptIndexByTurn.set(prepared.turnId, nextPromptIndex);
+                  const written = yield* writeDevinUsageTranscriptLine(devinSettings, {
+                    timestamp: observedAt,
+                    sessionId: ctx.acpSessionId,
+                    turnId: prepared.turnId,
+                    promptIndex: nextPromptIndex,
+                    model: usageModel,
+                    totals: deltaTotals,
+                    reportedCostUsd: null,
+                  }).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  );
+                  if (written) {
+                    ctx.lastWrittenAcpUsage = usage;
+                  }
                 }
               }
             }

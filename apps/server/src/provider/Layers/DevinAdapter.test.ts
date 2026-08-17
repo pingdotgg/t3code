@@ -3,6 +3,7 @@ import * as EffectAcpSchema from "effect-acp/schema";
 
 import type { AcpParsedSessionEvent } from "../acp/AcpRuntimeModel.ts";
 import {
+  devinUsageDeltaTotals,
   isAcpUsageGreaterOrNew,
   makeDevinTokenUsageSnapshot,
   makeDevinTokenUsageSnapshotFromUsageUpdate,
@@ -107,8 +108,8 @@ describe("isAcpUsageGreaterOrNew", () => {
     expect(isAcpUsageGreaterOrNew(baseUsage, { ...baseUsage, totalTokens: 20 })).toBe(true);
   });
 
-  it("returns false when total tokens decreased", () => {
-    expect(isAcpUsageGreaterOrNew(baseUsage, { ...baseUsage, totalTokens: 10 })).toBe(false);
+  it("returns true when total tokens decreased (context compaction)", () => {
+    expect(isAcpUsageGreaterOrNew(baseUsage, { ...baseUsage, totalTokens: 10 })).toBe(true);
   });
 
   it("returns false when everything is identical", () => {
@@ -150,6 +151,54 @@ describe("isAcpUsageGreaterOrNew", () => {
     ).toBe(true);
   });
 });
+
+describe("devinUsageDeltaTotals", () => {
+  const baseUsage = {
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15,
+    cachedReadTokens: null,
+    cachedWriteTokens: null,
+    thoughtTokens: null,
+  } satisfies EffectAcpSchema.Usage;
+
+  it("returns deltas when usage increases", () => {
+    const current = {
+      ...baseUsage,
+      inputTokens: 20,
+      outputTokens: 10,
+      totalTokens: 30,
+    } satisfies EffectAcpSchema.Usage;
+    expect(devinUsageDeltaTotals(current, baseUsage)).toEqual({
+      uncachedInputTokens: 10,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 5,
+      reasoningTokens: 0,
+    });
+  });
+
+  it("returns full totals when there is no previous usage", () => {
+    expect(devinUsageDeltaTotals(baseUsage, undefined)).toEqual({
+      uncachedInputTokens: 10,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 5,
+      reasoningTokens: 0,
+    });
+  });
+
+  it("returns undefined when total tokens decreased (context compaction)", () => {
+    const current = {
+      ...baseUsage,
+      inputTokens: 6,
+      outputTokens: 2,
+      totalTokens: 8,
+    } satisfies EffectAcpSchema.Usage;
+    expect(devinUsageDeltaTotals(current, baseUsage)).toBeUndefined();
+  });
+});
+
 describe("makeDevinTokenUsageSnapshotFromUsageUpdate", () => {
   it("uses size as maxTokens and used as usedTokens", () => {
     const event = makeUsageUpdatedEvent({
