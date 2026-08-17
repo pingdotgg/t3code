@@ -255,9 +255,6 @@ export function devinUsageDeltaTotals(
   current: EffectAcpSchema.Usage,
   previous: EffectAcpSchema.Usage | undefined,
 ): UsageTokenTotals | undefined {
-  if (previous !== undefined && current.totalTokens < previous.totalTokens) {
-    return undefined;
-  }
   const inputTokens = finiteNonNegativeDelta(current.inputTokens, previous?.inputTokens);
   const cachedReadTokens = finiteNonNegativeDelta(
     current.cachedReadTokens,
@@ -274,13 +271,21 @@ export function devinUsageDeltaTotals(
   // tokens, matching the other transcript parsers.
   const uncachedInputTokens = Math.max(0, inputTokens - cachedReadTokens - cachedWriteTokens);
 
-  return {
+  const deltaTotals = {
     uncachedInputTokens,
     cachedInputTokens: cachedReadTokens,
     cacheCreationTokens: cachedWriteTokens,
     outputTokens,
     reasoningTokens: Math.min(outputTokens, thoughtTokens),
   };
+
+  const totalDeltaTokens =
+    deltaTotals.uncachedInputTokens +
+    deltaTotals.cachedInputTokens +
+    deltaTotals.cacheCreationTokens +
+    deltaTotals.outputTokens;
+
+  return totalDeltaTokens > 0 ? deltaTotals : undefined;
 }
 
 export function usageFromUsageUpdate(
@@ -1006,125 +1011,122 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
 
         const nf = yield* Stream.runDrain(
           Stream.mapEffect(acp.getEvents(), (event) =>
-            Effect.gen(function* () {
-              if (event._tag === "EventStreamBarrier") {
-                yield* Deferred.succeed(event.acknowledge, undefined);
-                return;
-              }
-              if (
-                event._tag === "PlanUpdated" ||
-                event._tag === "ToolCallUpdated" ||
-                event._tag === "ContentDelta"
-              ) {
-                yield* logNative(ctx.threadId, "session/update", event.rawPayload);
-              }
-
-              if (event._tag === "ModeChanged") {
-                return;
-              }
-
-              const notificationTurnId = resolveNotificationTurnId(ctx);
-              if (
-                notificationTurnId === undefined ||
-                ctx.interruptedTurnIds.has(notificationTurnId)
-              ) {
-                return;
-              }
-              const stamp = yield* makeEventStamp();
-
-              switch (event._tag) {
-                case "AssistantItemStarted":
-                  yield* offerRuntimeEvent(
-                    makeAcpAssistantItemEvent({
-                      stamp,
-                      provider: PROVIDER,
-                      threadId: ctx.threadId,
-                      turnId: notificationTurnId,
-                      itemId: event.itemId,
-                      lifecycle: "item.started",
-                    }),
-                  );
-                  return;
-                case "AssistantItemCompleted":
-                  yield* offerRuntimeEvent(
-                    makeAcpAssistantItemEvent({
-                      stamp,
-                      provider: PROVIDER,
-                      threadId: ctx.threadId,
-                      turnId: notificationTurnId,
-                      itemId: event.itemId,
-                      lifecycle: "item.completed",
-                    }),
-                  );
-                  return;
-                case "PlanUpdated":
-                  yield* emitPlanUpdate(
-                    ctx,
-                    notificationTurnId,
-                    stamp,
-                    event.payload,
-                    event.rawPayload,
-                    "session/update",
-                  );
-                  return;
-                case "ToolCallUpdated":
-                  yield* offerRuntimeEvent(
-                    makeAcpToolCallEvent({
-                      stamp,
-                      provider: PROVIDER,
-                      threadId: ctx.threadId,
-                      turnId: notificationTurnId,
-                      toolCall: event.toolCall,
-                      rawPayload: event.rawPayload,
-                    }),
-                  );
-                  return;
-                case "ContentDelta":
-                  yield* offerRuntimeEvent(
-                    makeAcpContentDeltaEvent({
-                      stamp,
-                      provider: PROVIDER,
-                      threadId: ctx.threadId,
-                      turnId: notificationTurnId,
-                      ...(event.itemId ? { itemId: event.itemId } : {}),
-                      text: event.text,
-                      rawPayload: event.rawPayload,
-                    }),
-                  );
-                  return;
-                case "UsageUpdated": {
-                  const tokenUsage = makeDevinTokenUsageSnapshotFromUsageUpdate(
-                    event,
-                    ctx.lastKnownTokenUsage,
-                  );
-                  if (!tokenUsage) {
-                    return;
-                  }
-                  ctx.lastKnownTokenUsage = tokenUsage;
-
-                  const acpUsage = usageFromUsageUpdate(event);
-                  if (isAcpUsageGreaterOrNew(ctx.lastAcpUsage, acpUsage)) {
-                    ctx.lastAcpUsage = acpUsage;
-                  }
-                  if (
-                    ctx.lastWrittenAcpUsage !== undefined &&
-                    acpUsage.totalTokens < ctx.lastWrittenAcpUsage.totalTokens
-                  ) {
-                    ctx.lastWrittenAcpUsage = acpUsage;
-                  }
-
-                  yield* offerRuntimeEvent({
-                    type: "thread.token-usage.updated",
-                    ...stamp,
-                    provider: PROVIDER,
-                    threadId: ctx.threadId,
-                    turnId: notificationTurnId,
-                    payload: { usage: tokenUsage },
-                  });
+            withThreadLock(
+              ctx.threadId,
+              Effect.gen(function* () {
+                if (event._tag === "EventStreamBarrier") {
+                  yield* Deferred.succeed(event.acknowledge, undefined);
                   return;
                 }
-              }
-            }),
+                if (
+                  event._tag === "PlanUpdated" ||
+                  event._tag === "ToolCallUpdated" ||
+                  event._tag === "ContentDelta"
+                ) {
+                  yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+                }
+
+                if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                const notificationTurnId = resolveNotificationTurnId(ctx);
+                if (
+                  notificationTurnId === undefined ||
+                  ctx.interruptedTurnIds.has(notificationTurnId)
+                ) {
+                  return;
+                }
+                const stamp = yield* makeEventStamp();
+
+                switch (event._tag) {
+                  case "AssistantItemStarted":
+                    yield* offerRuntimeEvent(
+                      makeAcpAssistantItemEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: notificationTurnId,
+                        itemId: event.itemId,
+                        lifecycle: "item.started",
+                      }),
+                    );
+                    return;
+                  case "AssistantItemCompleted":
+                    yield* offerRuntimeEvent(
+                      makeAcpAssistantItemEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: notificationTurnId,
+                        itemId: event.itemId,
+                        lifecycle: "item.completed",
+                      }),
+                    );
+                    return;
+                  case "PlanUpdated":
+                    yield* emitPlanUpdate(
+                      ctx,
+                      notificationTurnId,
+                      stamp,
+                      event.payload,
+                      event.rawPayload,
+                      "session/update",
+                    );
+                    return;
+                  case "ToolCallUpdated":
+                    yield* offerRuntimeEvent(
+                      makeAcpToolCallEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: notificationTurnId,
+                        toolCall: event.toolCall,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "ContentDelta":
+                    yield* offerRuntimeEvent(
+                      makeAcpContentDeltaEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: notificationTurnId,
+                        ...(event.itemId ? { itemId: event.itemId } : {}),
+                        text: event.text,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "UsageUpdated": {
+                    const tokenUsage = makeDevinTokenUsageSnapshotFromUsageUpdate(
+                      event,
+                      ctx.lastKnownTokenUsage,
+                    );
+                    if (!tokenUsage) {
+                      return;
+                    }
+                    ctx.lastKnownTokenUsage = tokenUsage;
+
+                    const acpUsage = usageFromUsageUpdate(event);
+                    if (isAcpUsageGreaterOrNew(ctx.lastAcpUsage, acpUsage)) {
+                      ctx.lastAcpUsage = acpUsage;
+                    }
+
+                    yield* offerRuntimeEvent({
+                      type: "thread.token-usage.updated",
+                      ...stamp,
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      turnId: notificationTurnId,
+                      payload: { usage: tokenUsage },
+                    });
+                    return;
+                  }
+                }
+              }),
+            ),
           ),
         ).pipe(
           Effect.catch((cause) =>
@@ -1424,9 +1426,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
 
             if (usage) {
               const deltaTotals = devinUsageDeltaTotals(usage, ctx.lastWrittenAcpUsage);
-              if (deltaTotals === undefined) {
-                ctx.lastWrittenAcpUsage = usage;
-              } else {
+              if (deltaTotals !== undefined) {
                 const totalDeltaTokens =
                   deltaTotals.uncachedInputTokens +
                   deltaTotals.cachedInputTokens +

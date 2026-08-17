@@ -188,7 +188,7 @@ describe("devinUsageDeltaTotals", () => {
     });
   });
 
-  it("returns undefined when total tokens decreased (context compaction)", () => {
+  it("returns undefined when all token fields decreased (context compaction)", () => {
     const current = {
       ...baseUsage,
       inputTokens: 6,
@@ -196,6 +196,57 @@ describe("devinUsageDeltaTotals", () => {
       totalTokens: 8,
     } satisfies EffectAcpSchema.Usage;
     expect(devinUsageDeltaTotals(current, baseUsage)).toBeUndefined();
+  });
+
+  it("returns positive deltas when totalTokens drops but input and output grow", () => {
+    const previous = {
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      cachedReadTokens: null,
+      cachedWriteTokens: null,
+      thoughtTokens: null,
+    } satisfies EffectAcpSchema.Usage;
+
+    const current = {
+      ...previous,
+      inputTokens: 120,
+      outputTokens: 70,
+      totalTokens: 90,
+    } satisfies EffectAcpSchema.Usage;
+
+    expect(devinUsageDeltaTotals(current, previous)).toEqual({
+      uncachedInputTokens: 20,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 20,
+      reasoningTokens: 0,
+    });
+  });
+
+  it("returns undefined when all delta fields are zero", () => {
+    const current = { ...baseUsage } satisfies EffectAcpSchema.Usage;
+    expect(devinUsageDeltaTotals(current, baseUsage)).toBeUndefined();
+  });
+
+  it("does not recount tokens when the baseline has larger input and output", () => {
+    const previous = {
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      cachedReadTokens: null,
+      cachedWriteTokens: null,
+      thoughtTokens: null,
+    } satisfies EffectAcpSchema.Usage;
+
+    const current = {
+      ...previous,
+      inputTokens: 80,
+      outputTokens: 30,
+      totalTokens: 200,
+    } satisfies EffectAcpSchema.Usage;
+
+    expect(devinUsageDeltaTotals(current, previous)).toBeUndefined();
   });
 });
 
@@ -363,6 +414,28 @@ describe("makeDevinTokenUsageSnapshot", () => {
 
     expect(snapshot?.usedTokens).toBe(1_000);
     expect(snapshot?.totalProcessedTokens).toBe(1_150);
+    expect(snapshot?.lastUsedTokens).toBe(0);
+  });
+
+  it("keeps totalProcessedTokens as the maximum when prompt totalTokens falls below previous context", () => {
+    const previous = {
+      usedTokens: 5_000,
+      totalProcessedTokens: 6_000,
+    } as const;
+
+    const usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 1_000,
+      cachedReadTokens: null,
+      cachedWriteTokens: null,
+      thoughtTokens: null,
+    } satisfies EffectAcpSchema.Usage;
+
+    const snapshot = makeDevinTokenUsageSnapshot(usage, previous);
+
+    expect(snapshot?.usedTokens).toBe(5_000);
+    expect(snapshot?.totalProcessedTokens).toBe(6_000);
     expect(snapshot?.lastUsedTokens).toBe(0);
   });
 });
