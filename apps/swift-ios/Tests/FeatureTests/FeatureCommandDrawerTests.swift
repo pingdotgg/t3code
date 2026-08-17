@@ -7,22 +7,76 @@ import Testing
 struct FeatureCommandDrawerTests {
     // MARK: - Geometry
 
+    // iPhone-shaped window used for the coverage invariants below.
+    private static let windowHeight: CGFloat = 874
+    private static let topInset: CGFloat = 62
+    private static let bottomInset: CGFloat = 34
+    private static let keyboardHeight: CGFloat = 336
+
     @Test
-    func fullyOpenFillsEveryPointAboveTheKeyboard() {
-        // With the keyboard up, the drawer stops exactly where the keyboard
-        // starts rather than settling at some fraction of the screen.
-        #expect(
-            FeatureCommandDrawerGeometry.openHeight(
-                availableHeight: 778,
-                keyboardHeight: 336
-            ) == 442
+    func theOpenDrawersBottomEdgeMeetsTheTopOfTheKeyboard() {
+        // The rejected build left a band of the page showing between the
+        // drawer and the keyboard. The drawer's edge must land exactly on the
+        // keyboard's top edge so nothing underneath is visible.
+        let edge = FeatureCommandDrawerGeometry.openEdge(
+            windowHeight: Self.windowHeight,
+            topInset: Self.topInset,
+            bottomInset: Self.bottomInset,
+            keyboardHeight: Self.keyboardHeight
         )
-        // Without a keyboard it simply takes the whole page.
+        let keyboardTop = Self.windowHeight - Self.keyboardHeight
+
+        #expect(edge == keyboardTop)
+        #expect(edge == 538)
+    }
+
+    @Test
+    func withoutAKeyboardTheDrawerReachesTheHomeIndicator() {
+        let edge = FeatureCommandDrawerGeometry.openEdge(
+            windowHeight: Self.windowHeight,
+            topInset: Self.topInset,
+            bottomInset: Self.bottomInset
+        )
+        // Everything above the home indicator is covered.
+        #expect(edge == Self.windowHeight - Self.bottomInset)
+        #expect(edge == 840)
+    }
+
+    @Test
+    func theKeyboardIsNeverSubtractedTwice() {
+        // The page height already excludes the home indicator, and the keyboard
+        // is measured from the bottom of the screen, so only the part of the
+        // keyboard beyond that inset actually covers page content.
+        let pageHeight = Self.windowHeight - Self.topInset - Self.bottomInset
+        let open = FeatureCommandDrawerGeometry.openHeight(
+            availableHeight: pageHeight,
+            keyboardHeight: Self.keyboardHeight,
+            bottomInset: Self.bottomInset
+        )
+        #expect(open == pageHeight - (Self.keyboardHeight - Self.bottomInset))
+        #expect(open == 476)
+
+        // Ignoring the inset would shorten the drawer by the inset and expose
+        // that much of the page; guard against regressing to it.
+        #expect(open != pageHeight - Self.keyboardHeight)
+    }
+
+    @Test
+    func withoutAKeyboardTheDrawerCoversTheWholePage() {
         #expect(FeatureCommandDrawerGeometry.openHeight(availableHeight: 778) == 778)
         #expect(
             FeatureCommandDrawerGeometry.openHeight(
                 availableHeight: 778,
-                keyboardHeight: 0
+                keyboardHeight: 0,
+                bottomInset: 34
+            ) == 778
+        )
+        // A keyboard that only covers the home indicator takes nothing from it.
+        #expect(
+            FeatureCommandDrawerGeometry.openHeight(
+                availableHeight: 778,
+                keyboardHeight: 30,
+                bottomInset: 34
             ) == 778
         )
     }
@@ -33,7 +87,8 @@ struct FeatureCommandDrawerTests {
         #expect(
             FeatureCommandDrawerGeometry.openHeight(
                 availableHeight: 500,
-                keyboardHeight: 460
+                keyboardHeight: 480,
+                bottomInset: 0
             ) == FeatureCommandDrawerGeometry.minimumOpenHeight
         )
         // The floor never exceeds the space that actually exists.

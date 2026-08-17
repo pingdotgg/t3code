@@ -19,17 +19,41 @@ enum FeatureCommandDrawerGeometry {
     /// Points per second at which a flick decides the settle on its own.
     static let settleVelocity: CGFloat = 420
 
-    /// Fully open is every point the page can still show: the drawer runs from
-    /// the top edge down to wherever the software keyboard begins. The palette
-    /// exists to be typed into, so the keyboard is part of its resting layout
-    /// rather than something that later covers it.
+    /// Fully open covers the whole page: the drawer runs from the top of the
+    /// screen down to the keyboard's top edge, or to the home indicator when
+    /// there is no keyboard. No part of the page underneath stays visible.
+    ///
+    /// `availableHeight` must be the page height *before* keyboard avoidance
+    /// shrinks it, and `bottomInset` the home-indicator inset it already
+    /// excludes. The keyboard is measured from the bottom of the screen, so it
+    /// only intrudes into the page by whatever it covers beyond that inset —
+    /// subtracting its full height from an already-shrunken page counts the
+    /// keyboard twice and leaves a band of page showing beneath the drawer.
     static func openHeight(
         availableHeight: CGFloat,
-        keyboardHeight: CGFloat = 0
+        keyboardHeight: CGFloat = 0,
+        bottomInset: CGFloat = 0
     ) -> CGFloat {
         guard availableHeight > 0 else { return 0 }
-        let exposed = availableHeight - max(0, keyboardHeight)
+        let intrusion = max(0, keyboardHeight - max(0, bottomInset))
+        let exposed = availableHeight - intrusion
         return max(exposed, min(minimumOpenHeight, availableHeight))
+    }
+
+    /// Where the open drawer's bottom edge lands in window coordinates. The
+    /// drawer is only correct when this meets the top of whatever is below it.
+    static func openEdge(
+        windowHeight: CGFloat,
+        topInset: CGFloat,
+        bottomInset: CGFloat,
+        keyboardHeight: CGFloat = 0
+    ) -> CGFloat {
+        let pageHeight = windowHeight - topInset - bottomInset
+        return topInset + openHeight(
+            availableHeight: pageHeight,
+            keyboardHeight: keyboardHeight,
+            bottomInset: bottomInset
+        )
     }
 
     /// Drawer edge position for a drag, measured down from the closed edge.

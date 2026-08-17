@@ -103,7 +103,8 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             let topInset = proxy.safeAreaInsets.top
             let measured = FeatureCommandDrawerGeometry.openHeight(
                 availableHeight: proxy.size.height,
-                keyboardHeight: keyboardHeight
+                keyboardHeight: keyboardHeight,
+                bottomInset: proxy.safeAreaInsets.bottom
             )
 
             drawer(openHeight: measured, topInset: topInset)
@@ -115,6 +116,11 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                     state.synchronize(openHeight: height)
                 }
         }
+        // The drawer sizes itself against the keyboard explicitly, so it must
+        // measure the page at its full height. Letting SwiftUI's keyboard
+        // avoidance shrink this layer too would subtract the keyboard twice and
+        // leave a band of the page showing between drawer and keyboard.
+        .ignoresSafeArea(.keyboard)
         .allowsHitTesting(state.isVisible)
     }
 
@@ -165,7 +171,10 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
         .padding(.top, topInset)
         .frame(height: topInset + openHeight, alignment: .top)
         .frame(maxWidth: .infinity)
+        // Two layers: the palette surface must be fully opaque so no page
+        // content shows through the area the drawer is meant to cover.
         .background(T3Colors.sheet)
+        .background(T3Colors.background)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(T3Colors.border)
