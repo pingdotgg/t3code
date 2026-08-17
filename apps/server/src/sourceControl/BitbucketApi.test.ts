@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import {
   HttpClient,
   HttpClientError,
@@ -566,6 +567,24 @@ it.effect("keeps Bitbucket response bodies out of checkout diagnostics", () => {
       "Bitbucket API failed in getPullRequest: Bitbucket returned HTTP 403.",
     );
     assert.notInclude(error.message, "secret-value");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("keeps a 429 Retry-After time on the response error", () => {
+  const { layer } = makeLayer({
+    response: () => new Response("busy", { status: 429, headers: { "Retry-After": "120" } }),
+  });
+
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(1_000);
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const error = yield* bitbucket
+      .request({ method: "GET", url: "/repositories/acme/web" })
+      .pipe(Effect.flip);
+
+    assert.instanceOf(error, BitbucketApi.BitbucketResponseError);
+    assert.strictEqual(error.status, 429);
+    assert.strictEqual(error.retryAt, 121_000);
   }).pipe(Effect.provide(layer));
 });
 
