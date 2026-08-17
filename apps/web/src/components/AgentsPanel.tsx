@@ -217,13 +217,13 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
   return (
     <div className="flex flex-wrap items-center gap-x-1 gap-y-1 px-1.5 pb-1 pt-1.5">
       {group.phases.map((phase, index) => (
-        <div key={phase.index} className="flex items-center gap-1">
+        <div key={phase.index} className="flex min-w-0 max-w-full items-center gap-1">
           {index > 0 ? (
-            <ChevronRight aria-hidden className="size-3 text-muted-foreground/40" />
+            <ChevronRight aria-hidden className="size-3 shrink-0 text-muted-foreground/40" />
           ) : null}
           <div
             className={cn(
-              "flex items-center gap-1 rounded-sm border px-1.5 py-0.5",
+              "flex min-w-0 items-center gap-1 rounded-sm border px-1.5 py-0.5",
               phase.state === "running"
                 ? "border-info/40"
                 : phase.state === "done"
@@ -233,7 +233,7 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
           >
             <span
               className={cn(
-                "font-mono text-[.65rem]",
+                "shrink-0 font-mono text-[.65rem]",
                 phase.state === "running"
                   ? "text-info-foreground"
                   : phase.state === "done"
@@ -244,7 +244,7 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
               {phase.state === "done" ? "✓ " : ""}
               {phase.title}
             </span>
-            <span className="flex items-center gap-0.5">
+            <span className="flex min-w-0 flex-wrap items-center gap-0.5">
               {phase.members.length === 0 ? (
                 <span className="font-mono text-[.6rem] text-muted-foreground/50">–</span>
               ) : (
