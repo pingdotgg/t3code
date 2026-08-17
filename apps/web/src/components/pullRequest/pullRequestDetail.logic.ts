@@ -14,6 +14,35 @@ import type {
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
+/** Activity changes only when the same host resource reports a newer revision. */
+export function shouldRefreshPullRequestActivity(
+  previous: { readonly key: string; readonly updatedAt: string } | null,
+  next: { readonly key: string; readonly updatedAt: string },
+): boolean {
+  return previous !== null && previous.key === next.key && previous.updatedAt !== next.updatedAt;
+}
+/** Appends fetched pages without replacing fresher comments already in the activity response. */
+export function mergePullRequestThreadComments<T extends { readonly id: string }>(
+  base: ReadonlyArray<T>,
+  loaded: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  const seen = new Set(base.map((comment) => comment.id));
+  return [
+    ...base,
+    ...loaded.filter((comment) => {
+      if (seen.has(comment.id)) return false;
+      seen.add(comment.id);
+      return true;
+    }),
+  ];
+}
+
+export function editPullRequestThreadComment<
+  T extends { readonly id: string; readonly body: string },
+>(comments: ReadonlyArray<T>, commentId: string, body: string): ReadonlyArray<T> {
+  return comments.map((comment) => (comment.id === commentId ? { ...comment, body } : comment));
+}
+
 /**
  * Whether the pull request on a right-panel surface is the thread's own one. Repository and
  * number are not enough: one environment can hold two checkouts of the same repository under
