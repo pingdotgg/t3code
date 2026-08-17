@@ -97,13 +97,15 @@ enum NativeWorkspaceMapper {
         files: [VCSWorkingTreeFile],
         aheadCount: Int,
         behindCount: Int,
-        pullRequest: VCSChangeRequest?
+        pullRequest: VCSChangeRequest?,
+        isRemoteKnown: Bool = true
     ) -> FeatureSourceControlStatus {
         FeatureSourceControlStatus(
             isRepository: isRepository,
             branch: branch,
             aheadCount: aheadCount,
             behindCount: behindCount,
+            isRemoteKnown: isRemoteKnown,
             files: files.map {
                 FeatureSourceControlFile(
                     path: $0.path,
@@ -123,33 +125,21 @@ enum NativeWorkspaceMapper {
         )
     }
 
+    /// The streamed counterpart, where the remote half arrives separately and
+    /// may still be pending.
     static func sourceControl(
         local: VCSLocalStatus,
-        remote: VCSRemoteStatus?
+        remote: VCSRemoteStatus?,
+        isRemoteKnown: Bool
     ) -> FeatureSourceControlStatus {
-        FeatureSourceControlStatus(
+        sourceControl(
             isRepository: local.isRepo,
             branch: local.refName,
+            files: local.workingTree.files,
             aheadCount: remote?.aheadCount ?? 0,
             behindCount: remote?.behindCount ?? 0,
-            // A workspace with no repository or no primary remote will never
-            // receive a remote half, so nothing is pending in those cases.
-            isRemoteKnown: remote != nil || !local.isRepo || !local.hasPrimaryRemote,
-            files: local.workingTree.files.map {
-                FeatureSourceControlFile(
-                    path: $0.path,
-                    state: .modified,
-                    isStaged: false
-                )
-            },
-            pullRequest: remote?.pr.map {
-                FeaturePullRequest(
-                    number: $0.number,
-                    title: $0.title,
-                    state: $0.state,
-                    url: URL(string: $0.url)
-                )
-            }
+            pullRequest: remote?.pr,
+            isRemoteKnown: isRemoteKnown
         )
     }
 
@@ -406,32 +396,46 @@ enum NativeWorkspaceMapper {
     }
 }
 
-/// Folds `vcs.subscribeStatus` events into successive UI statuses, mirroring
-/// `applyGitStatusStreamEvent` in packages/shared: the last known remote half is
-/// carried across local-only updates instead of being dropped.
+/// Folds `vcs.subscribeStatus` events into successive UI statuses. Modelled on
+/// `applyGitStatusStreamEvent` in packages/shared — a snapshot replaces both
+/// halves, while the last known remote half is carried across same-branch local
+/// updates and discarded when the branch changes. The explicit pending state is
+/// needed because this client presents partial status.
 struct NativeSourceControlStatusAccumulator {
     private var local: VCSLocalStatus?
     private var remote: VCSRemoteStatus?
+    /// Tracked separately from `remote` because the remote half can legitimately
+    /// resolve to nil — "known to be absent" is not the same as "still pending".
+    private var isRemoteResolved = false
     private(set) var isComplete = false
 
     mutating func consume(_ event: VCSStatusEvent) -> FeatureSourceControlStatus? {
         switch event {
         case let .snapshot(nextLocal, nextRemote):
             local = nextLocal
-            if let nextRemote { remote = nextRemote }
+            remote = nextRemote
+            isRemoteResolved = nextRemote != nil
         case let .localUpdated(nextLocal):
+            if let previousLocal = local, previousLocal.refName != nextLocal.refName {
+                remote = nil
+                isRemoteResolved = false
+            }
             local = nextLocal
         case let .remoteUpdated(nextRemote):
             remote = nextRemote
+            isRemoteResolved = true
         }
 
         guard let local else { return nil }
-        // Latches: a later local-only update must not reopen a stream whose
-        // remote half already arrived.
-        if remote != nil || !local.isRepo || !local.hasPrimaryRemote {
-            isComplete = true
-        }
-        return NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
+        // A workspace with no repository or no primary remote never receives a
+        // remote half, so nothing is pending in those cases.
+        let isRemoteKnown = isRemoteResolved || !local.isRepo || !local.hasPrimaryRemote
+        isComplete = isRemoteKnown
+        return NativeWorkspaceMapper.sourceControl(
+            local: local,
+            remote: remote,
+            isRemoteKnown: isRemoteKnown
+        )
     }
 
     func validateEnd() throws {
