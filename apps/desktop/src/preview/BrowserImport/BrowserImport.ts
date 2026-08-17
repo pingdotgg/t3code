@@ -180,7 +180,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
             url: cookie.url,
             name: cookie.name,
             value: cookie.value,
-            domain: cookie.domain,
+            // Omitted for host-only cookies: Electron reads any `domain` as a
+            // domain cookie and re-adds the leading dot, which would widen the
+            // scope of every host-only cookie the source had.
+            ...(cookie.domain === undefined ? {} : { domain: cookie.domain }),
             path: cookie.path,
             secure: cookie.secure,
             httpOnly: cookie.httpOnly,

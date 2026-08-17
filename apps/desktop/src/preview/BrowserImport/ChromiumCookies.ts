@@ -36,7 +36,13 @@ export interface ChromiumCookie {
   readonly url: string;
   readonly name: string;
   readonly value: string;
-  readonly domain: string;
+  /**
+   * Set only for domain cookies, which Chromium stores with a leading dot.
+   * A host-only cookie leaves this undefined: Electron treats any `domain` it
+   * is given as a domain cookie and re-adds the dot, which would widen the
+   * cookie to every subdomain of the host it was scoped to.
+   */
+  readonly domain: string | undefined;
   readonly path: string;
   readonly secure: boolean;
   readonly httpOnly: boolean;
@@ -186,6 +192,29 @@ const snapshotCookieDatabase = Effect.fn("ChromiumCookies.snapshotCookieDatabase
   return target;
 });
 
+/**
+ * The URL and domain Electron should register a stored row under.
+ *
+ * Chromium marks a domain cookie with a leading dot on `host_key`. Electron
+ * matches on a URL, so the dot comes off for that; `domain` is passed through
+ * only for domain cookies, because supplying it at all makes Electron treat
+ * the cookie as one and re-add the dot — widening a host-only cookie to every
+ * subdomain of the host it was scoped to, and rejecting `__Host-` cookies,
+ * which require it to be absent.
+ */
+export const cookieScope = (
+  hostKey: string,
+  path: string,
+  secure: boolean,
+): { readonly url: string; readonly domain: string | undefined } => {
+  const isDomainCookie = hostKey.startsWith(".");
+  const host = isDomainCookie ? hostKey.slice(1) : hostKey;
+  return {
+    url: `${secure ? "https" : "http"}://${host}${path}`,
+    ...(isDomainCookie ? { domain: hostKey } : { domain: undefined }),
+  };
+};
+
 const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): string | null => {
   const buffer = Buffer.from(encrypted);
   if (buffer.length === 0) return "";
@@ -277,15 +306,12 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
     const value = decryptValue(row.encrypted_value, key, row.host_key);
     if (value === null) continue;
     const secure = row.is_secure === 1;
-    // Electron matches cookies to a URL rather than a bare domain, so a
-    // host-only entry keeps its leading dot stripped for the URL but not for
-    // the domain it is registered under.
-    const host = row.host_key.startsWith(".") ? row.host_key.slice(1) : row.host_key;
+    const scope = cookieScope(row.host_key, row.path, secure);
     cookies.push({
-      url: `${secure ? "https" : "http"}://${host}${row.path}`,
+      url: scope.url,
       name: row.name,
       value,
-      domain: row.host_key,
+      domain: scope.domain,
       path: row.path,
       secure,
       httpOnly: row.is_httponly === 1,
