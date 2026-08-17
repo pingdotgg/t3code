@@ -24,6 +24,7 @@ import {
   pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
+  quoteReplyDraft,
   readableFailure,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
@@ -174,6 +175,28 @@ describe("ordering comments", () => {
     expect(orderPullRequestComments(comments, "oldest")).toEqual(comments);
     // The source array is chronological input, not a mutation target.
     expect(comments).toEqual([{ createdAt: "a" }, { createdAt: "b" }, { createdAt: "c" }]);
+  });
+});
+
+describe("quote replying to a comment", () => {
+  it("prefixes every line and leaves an empty line for the reply to start on", () => {
+    expect(quoteReplyDraft("", "First point.\n\nSecond point.")).toBe(
+      "> First point.\n>\n> Second point.\n\n",
+    );
+  });
+
+  it("lands under an existing draft instead of replacing it", () => {
+    expect(quoteReplyDraft("What I typed so far.\n", "A remark.")).toBe(
+      "What I typed so far.\n\n> A remark.\n\n",
+    );
+  });
+
+  it("normalizes Windows line endings and surrounding whitespace from the host", () => {
+    expect(quoteReplyDraft("", "\r\nline one\r\nline two\r\n")).toBe("> line one\n> line two\n\n");
+  });
+
+  it("treats a whitespace-only draft as empty rather than stacking blank lines", () => {
+    expect(quoteReplyDraft("   \n", "A remark.")).toBe("> A remark.\n\n");
   });
 });
 

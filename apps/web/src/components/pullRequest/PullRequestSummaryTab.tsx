@@ -12,11 +12,12 @@ import {
   HammerIcon,
   MessageSquareIcon,
   PencilIcon,
+  ReplyIcon,
   SendIcon,
   TagIcon,
   UsersIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type Ref } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -40,6 +41,7 @@ import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavai
 import {
   orderPullRequestComments,
   pullRequestFindingKey,
+  quoteReplyDraft,
   type PullRequestFinding,
 } from "./pullRequestDetail.logic";
 import {
@@ -96,10 +98,13 @@ interface CommentEditing {
 function CommentBody({
   comment,
   editing,
+  quoteButton,
   className,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
+  /** Built by the owner of the composer, so this stays a view over whatever actions it is handed. */
+  quoteButton?: ReactNode;
   className?: string | undefined;
 }) {
   if (editing.editingId === comment.id) {
@@ -118,6 +123,7 @@ function CommentBody({
   return (
     <div className={cn("flex items-start gap-1", className)}>
       <PullRequestMarkdown className="min-w-0 flex-1" text={comment.body} cwd={editing.cwd} />
+      {quoteButton}
       {editing.canEdit(comment) ? (
         <Button
           size="icon-xs"
@@ -138,11 +144,13 @@ function CollapsedComment({
   comment,
   editing,
   label,
+  quoteButton,
   reactionBar,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
   label: string;
+  quoteButton?: ReactNode;
   reactionBar: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -181,7 +189,12 @@ function CollapsedComment({
                   <TooltipPopup side="top">{comment.path}</TooltipPopup>
                 </Tooltip>
               ) : null}
-              <CommentBody className="mt-2" comment={comment} editing={editing} />
+              <CommentBody
+                className="mt-2"
+                comment={comment}
+                editing={editing}
+                quoteButton={quoteButton}
+              />
               {reactionBar}
             </div>
           ) : null}
@@ -285,43 +298,22 @@ function Section({
 }
 
 function CommentComposer({
-  environmentId,
-  detail,
-  onCommented,
+  body,
+  posting,
+  textareaRef,
+  onBodyChange,
+  onSubmit,
 }: {
-  environmentId: EnvironmentId;
-  detail: PullRequestDetailView;
-  onCommented: () => void;
+  body: string;
+  posting: boolean;
+  textareaRef: Ref<HTMLTextAreaElement>;
+  onBodyChange: (body: string) => void;
+  onSubmit: () => void;
 }) {
-  const [body, setBody] = useState("");
-  const [posting, setPosting] = useState(false);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
-
-  const submit = async () => {
-    const trimmed = body.trim();
-    if (trimmed.length === 0 || posting) return;
-    setPosting(true);
-    const result = await postComment({
-      environmentId,
-      input: {
-        projectId: detail.projectId,
-        repository: detail.repository,
-        number: detail.number,
-        body: trimmed,
-      },
-    });
-    setPosting(false);
-    if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not post the comment" });
-      return;
-    }
-    setBody("");
-    onCommented();
-  };
-
   return (
     <div className="mt-3 space-y-2">
       <Textarea
+        ref={textareaRef}
         // Locked while posting: the body is cleared on success, which would otherwise throw
         // away a new draft typed while the request was still in flight.
         disabled={posting}
@@ -329,14 +321,14 @@ function CommentComposer({
         rows={3}
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
-        onChange={(event) => setBody(event.target.value)}
+        onChange={(event) => onBodyChange(event.target.value)}
       />
       <div className="flex justify-end">
         <Button
           size="xs"
           variant="outline"
           disabled={body.trim().length === 0 || posting}
-          onClick={() => void submit()}
+          onClick={onSubmit}
         >
           <SendIcon className="size-3.5" />
           {posting ? "Posting..." : "Comment"}
@@ -386,6 +378,78 @@ export function PullRequestSummaryTab({
   const hiddenCommentCount = detail.comments.length - recentComments.length;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const visibleComments = orderPullRequestComments(recentComments, commentOrder);
+
+  const canComment = detail.capabilities.comment && detail.viewerPermissions.comment;
+  // The draft is keyed by the pull request the same way the paging window is, so opening another
+  // one starts from an empty box rather than a half-written reply to a different conversation.
+  const [draft, setDraft] = useState({ url: detail.url, body: "" });
+  const draftBody = draft.url === detail.url ? draft.body : "";
+  const setDraftBody = (body: string) => setDraft({ url: detail.url, body });
+  const [posting, setPosting] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+
+  const submitComment = async () => {
+    const trimmed = draftBody.trim();
+    if (trimmed.length === 0 || posting) return;
+    setPosting(true);
+    const result = await postComment({
+      environmentId,
+      input: {
+        projectId: detail.projectId,
+        repository: detail.repository,
+        number: detail.number,
+        body: trimmed,
+      },
+    });
+    setPosting(false);
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not post the comment" });
+      return;
+    }
+    // Cleared only if the draft still belongs to this pull request: by the time the request
+    // lands, the reader may already be drafting on another one.
+    setDraft((value) => (value.url === detail.url ? { url: value.url, body: "" } : value));
+    onRefresh();
+  };
+
+  const quoteReply = (commentBody: string) => {
+    setDraftBody(quoteReplyDraft(draftBody, commentBody));
+    // After React commits the merged draft: the cursor belongs at its end, below the quote,
+    // with the composer in view.
+    requestAnimationFrame(() => {
+      const element = composerRef.current;
+      if (element === null) return;
+      element.focus();
+      element.setSelectionRange(element.value.length, element.value.length);
+      element.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  // Rides beside the edit pencil on every remark, collapsed conversations included — but only
+  // where the composer below exists to receive the quote, and only for comments with something
+  // to quote: a review that is all verdict and no words would quote as an empty block. Gone
+  // rather than disabled while posting — the composer is locked and the success clear would eat
+  // the quote, and a disabled button's own opacity would defeat the hover reveal.
+  const quoteReplyButton = (comment: PullRequestComment): ReactNode =>
+    canComment && !posting && comment.body.trim().length > 0 ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="Quote reply"
+              size="icon-xs"
+              variant="ghost"
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+              onClick={() => quoteReply(comment.body)}
+            />
+          }
+        >
+          <ReplyIcon className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup>Quote reply</TooltipPopup>
+      </Tooltip>
+    ) : null;
 
   // A comment that already lives on a review thread is that thread: the thread carries the line
   // and side the bare comment has lost, and a resolved one is finished work nobody should be
@@ -705,6 +769,7 @@ export function PullRequestSummaryTab({
                         comment={comment}
                         editing={commentEditing}
                         label={thread?.isResolved ? "Resolved" : "Approval dismissed"}
+                        quoteButton={quoteReplyButton(comment)}
                         reactionBar={
                           <PullRequestReactionBar
                             className="mt-2"
@@ -771,7 +836,12 @@ export function PullRequestSummaryTab({
                           <TooltipPopup side="top">{comment.path}</TooltipPopup>
                         </Tooltip>
                       ) : null}
-                      <CommentBody className="mt-2" comment={comment} editing={commentEditing} />
+                      <CommentBody
+                        className="mt-2"
+                        comment={comment}
+                        editing={commentEditing}
+                        quoteButton={quoteReplyButton(comment)}
+                      />
                       <PullRequestReactionBar
                         className="mt-2"
                         reactions={comment.reactions ?? []}
@@ -789,12 +859,13 @@ export function PullRequestSummaryTab({
           </>
         )}
         {/* Posting is a core capability and remains usable even if the activity read failed. */}
-        {detail.capabilities.comment && detail.viewerPermissions.comment ? (
+        {canComment ? (
           <CommentComposer
-            key={`${environmentId}:${detail.projectId}/${detail.repository}#${detail.number}`}
-            environmentId={environmentId}
-            detail={detail}
-            onCommented={onRefresh}
+            body={draftBody}
+            posting={posting}
+            textareaRef={composerRef}
+            onBodyChange={setDraftBody}
+            onSubmit={() => void submitComment()}
           />
         ) : null}
       </Section>
