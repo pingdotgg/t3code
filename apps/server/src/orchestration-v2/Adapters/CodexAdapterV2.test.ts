@@ -469,6 +469,7 @@ describe("CodexAdapterV2 process spawning", () => {
       providerInstanceId: ProviderInstanceId.make("codex"),
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-codex-token",
+      browserToolsAvailable: true,
     });
 
     try {

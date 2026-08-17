@@ -345,6 +345,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-claude-token",
+      browserToolsAvailable: true,
     });
     try {
       run();
@@ -480,6 +481,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer rotated-claude-token",
+        browserToolsAvailable: true,
       });
 
       const rotatedKey = claudeEffectiveQueryPolicyKey(
@@ -510,6 +512,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-claude-token",
+      browserToolsAvailable: true,
     });
 
     try {
