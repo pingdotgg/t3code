@@ -3,6 +3,7 @@ import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  fileSurfaceId,
   migratePersistedRightPanelState,
   pullRequestSurfaceId,
   selectActiveRightPanel,
@@ -90,10 +91,10 @@ describe("rightPanelStore", () => {
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
-          activeSurfaceId: "file:src/index.ts",
+          activeSurfaceId: fileSurfaceId("src/index.ts"),
           surfaces: [
             {
-              id: "file:src/index.ts",
+              id: fileSurfaceId("src/index.ts"),
               kind: "file",
               relativePath: "src/index.ts",
               revealLine: null,
@@ -133,10 +134,10 @@ describe("rightPanelStore", () => {
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
-          activeSurfaceId: "file:/repo.worktrees/feature:src/index.ts",
+          activeSurfaceId: fileSurfaceId("src/index.ts", "/repo.worktrees/feature"),
           surfaces: [
             {
-              id: "file:/repo.worktrees/feature:src/index.ts",
+              id: fileSurfaceId("src/index.ts", "/repo.worktrees/feature"),
               kind: "file",
               cwd: "/repo.worktrees/feature",
               relativePath: "src/index.ts",
@@ -144,7 +145,7 @@ describe("rightPanelStore", () => {
               revealRequestId: 0,
             },
             {
-              id: "file:README.md",
+              id: fileSurfaceId("README.md"),
               kind: "file",
               relativePath: "README.md",
               revealLine: null,
@@ -336,17 +337,17 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:README.md",
+      activeSurfaceId: fileSurfaceId("README.md"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 2,
         },
         {
-          id: "file:README.md",
+          id: fileSurfaceId("README.md"),
           kind: "file",
           relativePath: "README.md",
           revealLine: null,
@@ -362,10 +363,10 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      activeSurfaceId: fileSurfaceId("src/index.ts"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: 87,
@@ -378,10 +379,10 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      activeSurfaceId: fileSurfaceId("src/index.ts"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: null,
@@ -398,17 +399,17 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:/repo.worktrees/a:src/index.ts",
+      activeSurfaceId: fileSurfaceId("src/index.ts", "/repo.worktrees/a"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 1,
         },
         {
-          id: "file:/repo.worktrees/a:src/index.ts",
+          id: fileSurfaceId("src/index.ts", "/repo.worktrees/a"),
           kind: "file",
           cwd: "/repo.worktrees/a",
           relativePath: "src/index.ts",
@@ -417,6 +418,18 @@ describe("rightPanelStore", () => {
         },
       ],
     });
+  });
+
+  it("uses unambiguous ids for cwd and relative-path pairs", () => {
+    useRightPanelStore.getState().openFile(refA, "a:b", undefined, "/repo");
+    useRightPanelStore.getState().openFile(refA, "b", undefined, "/repo:a");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(2);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      fileSurfaceId("a:b", "/repo"),
+      fileSurfaceId("b", "/repo:a"),
+    ]);
   });
 
   it("removes persisted file surfaces when their workspace no longer exists", () => {
@@ -743,14 +756,14 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openTerminal(refA, "term-1");
 
-    useRightPanelStore.getState().closeOtherSurfaces(refA, "file:src/index.ts");
+    useRightPanelStore.getState().closeOtherSurfaces(refA, fileSurfaceId("src/index.ts"));
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      activeSurfaceId: fileSurfaceId("src/index.ts"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: null,

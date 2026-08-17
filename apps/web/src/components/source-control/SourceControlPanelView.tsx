@@ -116,6 +116,9 @@ export function SourceControlPanelView({
     compareBaseDialogTarget,
     compareBaseQuery,
     copyText,
+    closeCreateBranchDialog,
+    createBranchCommitTarget,
+    createBranchName,
     cwd,
     dialogCommitMessage,
     dialogStashMessage,
@@ -134,6 +137,7 @@ export function SourceControlPanelView({
     remoteName,
     remoteUrl,
     runAction,
+    runCreateBranchFromCommit,
     runDivergedSync,
     runGeneratedPanelStash,
     runPanelCommit,
@@ -143,6 +147,7 @@ export function SourceControlPanelView({
     setCommitDialogOpen,
     setCompareBaseDialogTarget,
     setCompareBaseQuery,
+    setCreateBranchName,
     setDialogCommitMessage,
     setDialogStashMessage,
     setDivergedSyncBranch,
@@ -401,6 +406,51 @@ export function SourceControlPanelView({
           </div>
         </div>
       </TooltipProvider>
+      <Dialog
+        open={createBranchCommitTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeCreateBranchDialog();
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Create branch</DialogTitle>
+            <DialogDescription>
+              Create a branch from {createBranchCommitTarget?.shortSha ?? "this commit"}.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <Input
+              size="sm"
+              value={createBranchName}
+              placeholder="feature/my-branch"
+              aria-label="Branch name"
+              disabled={isActionRunning(
+                `commit-create-branch:${createBranchCommitTarget?.sha ?? ""}`,
+              )}
+              onChange={(event) => setCreateBranchName(event.currentTarget.value)}
+            />
+          </DialogPanel>
+          <DialogFooter>
+            <Button size="sm" variant="ghost" onClick={closeCreateBranchDialog}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={
+                !createBranchName.trim() ||
+                isActionRunning(`commit-create-branch:${createBranchCommitTarget?.sha ?? ""}`)
+              }
+              onClick={() => void runCreateBranchFromCommit()}
+            >
+              {isActionRunning(`commit-create-branch:${createBranchCommitTarget?.sha ?? ""}`) ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       <Dialog open={addRemoteOpen} onOpenChange={setAddRemoteOpen}>
         <DialogPopup>
           <DialogHeader>

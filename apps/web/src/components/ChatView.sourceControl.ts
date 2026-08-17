@@ -87,6 +87,13 @@ interface SourceControlServerMetadataUpdateInput {
   readonly updateThreadMetadata: UpdateThreadMetadata;
 }
 
+interface QueuedSourceControlServerMetadataUpdateInput {
+  readonly activeThreadRef: ScopedThreadRef;
+  readonly expectedBranch: string | null;
+  readonly metadata: SourceControlThreadRefChange;
+  readonly updateThreadMetadata: UpdateThreadMetadata;
+}
+
 type SourceControlServerMetadataUpdateResult =
   | {
       readonly _tag: "Success";
@@ -284,6 +291,50 @@ export async function runSourceControlServerMetadataUpdate(
   };
 }
 
+export function createSourceControlServerMetadataUpdateQueue() {
+  const expectedBranchByThreadKey = new Map<string, string | null>();
+  const pendingByThreadKey = new Map<string, Promise<void>>();
+  const sequenceByThreadKey = new Map<string, number>();
+
+  return {
+    enqueue(input: QueuedSourceControlServerMetadataUpdateInput) {
+      const targetThreadKey = scopedThreadKey(input.activeThreadRef);
+      const previous = pendingByThreadKey.get(targetThreadKey);
+      if (!previous) {
+        expectedBranchByThreadKey.set(targetThreadKey, input.expectedBranch);
+      }
+
+      const result = (previous ?? Promise.resolve()).then(async () => {
+        const requestSequence = (sequenceByThreadKey.get(targetThreadKey) ?? 0) + 1;
+        sequenceByThreadKey.set(targetThreadKey, requestSequence);
+        const updateResult = await runSourceControlServerMetadataUpdate({
+          activeThreadRef: input.activeThreadRef,
+          expectedBranch: expectedBranchByThreadKey.get(targetThreadKey) ?? null,
+          getCurrentSequence: () => sequenceByThreadKey.get(targetThreadKey),
+          metadata: input.metadata,
+          requestSequence,
+          updateThreadMetadata: input.updateThreadMetadata,
+        });
+        if (updateResult._tag === "Success") {
+          expectedBranchByThreadKey.set(targetThreadKey, input.metadata.branch);
+        }
+        return updateResult;
+      });
+      const pending = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      pendingByThreadKey.set(targetThreadKey, pending);
+      void pending.finally(() => {
+        if (pendingByThreadKey.get(targetThreadKey) === pending) {
+          pendingByThreadKey.delete(targetThreadKey);
+        }
+      });
+      return result;
+    },
+  };
+}
+
 export function useSourceControlRightPanelSurfaceState(
   input: UseSourceControlRightPanelSurfaceInput,
 ): SourceControlRightPanelSurfaceState {
@@ -332,9 +383,12 @@ export function useSourceControlThreadMetadataRouting(
     setDraftThreadContext,
     updateThreadMetadata,
   } = input;
-  // Keep sequence values for the hook lifetime so a reopened thread key cannot reuse the
-  // request number of an older update that is still resolving.
-  const metadataUpdateSequenceByThreadKeyRef = useRef<Record<string, number>>({});
+  const metadataUpdateQueueRef = useRef<ReturnType<
+    typeof createSourceControlServerMetadataUpdateQueue
+  > | null>(null);
+  const metadataUpdateQueue =
+    metadataUpdateQueueRef.current ?? createSourceControlServerMetadataUpdateQueue();
+  metadataUpdateQueueRef.current = metadataUpdateQueue;
   const [metadataErrorsByThreadKey, setMetadataErrorsByThreadKey] = useState<
     Record<string, string | null>
   >({});
@@ -379,17 +433,10 @@ export function useSourceControlThreadMetadataRouting(
 
       if (!activeThreadMetadataRef) return;
       const targetThreadKey = scopedThreadKey(activeThreadMetadataRef);
-      // This counter intentionally stays monotonic per live thread key: reusing values while an
-      // older async update is still pending would let stale results match the latest request.
-      const requestSequence =
-        (metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey] ?? 0) + 1;
-      metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey] = requestSequence;
-      const result = await runSourceControlServerMetadataUpdate({
+      const result = await metadataUpdateQueue.enqueue({
         activeThreadRef: activeThreadMetadataRef,
         expectedBranch,
-        getCurrentSequence: () => metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey],
         metadata,
-        requestSequence,
         updateThreadMetadata,
       });
       if (result._tag === "Success") {
@@ -409,6 +456,7 @@ export function useSourceControlThreadMetadataRouting(
       draftId,
       expectedBranch,
       isServerThread,
+      metadataUpdateQueue,
       setDraftThreadContext,
       updateThreadMetadata,
     ],

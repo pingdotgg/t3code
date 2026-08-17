@@ -361,7 +361,7 @@ export function WorkingFileTooltipRow({
             role="button"
             tabIndex={0}
             data-file-change-tooltip-anchor
-            className="group relative flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+            className="group relative flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
             onClick={onToggle}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget) return;

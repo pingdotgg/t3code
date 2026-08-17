@@ -71,7 +71,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 replaces ambiguous cwd/path file-surface ids with encoded tuple ids.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -149,13 +150,17 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
     ? { id: `browser:${tabId}`, kind: "preview", resourceId: tabId }
     : { id: "browser:new", kind: "preview", resourceId: null };
 
+export function fileSurfaceId(relativePath: string, cwd?: string): `file:${string}` {
+  return `file:${encodeURIComponent(JSON.stringify([cwd ?? null, relativePath]))}`;
+}
+
 const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
   cwd?: string,
 ): RightPanelSurface => ({
-  id: cwd ? `file:${cwd}:${relativePath}` : `file:${relativePath}`,
+  id: fileSurfaceId(relativePath, cwd),
   kind: "file",
   ...(cwd ? { cwd } : {}),
   relativePath,
@@ -268,12 +273,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             .map(([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
+              const migratedSurfaceIds = new Map<string, string>();
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     // Dropped surface kind: plans now render inline in the
                     // transcript (v9).
                     if ((surface as { kind?: string }).kind === "plan") return [];
                     if (surface.kind === "file") {
+                      if (typeof surface.relativePath !== "string") return [];
                       const { cwd: _persistedCwd, ...surfaceWithoutCwd } = surface;
                       const cwd = typeof _persistedCwd === "string" ? _persistedCwd : undefined;
                       const revealLine =
@@ -287,14 +294,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [
-                        {
-                          ...surfaceWithoutCwd,
-                          ...(cwd ? { cwd } : {}),
-                          revealLine,
-                          revealRequestId,
-                        },
-                      ];
+                      const migratedSurface = fileSurface(
+                        surfaceWithoutCwd.relativePath,
+                        revealLine,
+                        revealRequestId,
+                        cwd,
+                      );
+                      migratedSurfaceIds.set(surface.id, migratedSurface.id);
+                      return [migratedSurface];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -350,10 +357,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                   })
                 : [];
               const rawActiveSurfaceId = validThreadState?.activeSurfaceId;
+              const migratedActiveSurfaceId =
+                typeof rawActiveSurfaceId === "string"
+                  ? (migratedSurfaceIds.get(rawActiveSurfaceId) ?? rawActiveSurfaceId)
+                  : rawActiveSurfaceId;
               const persistedActiveSurfaceId = surfaces.some(
-                (surface) => surface.id === rawActiveSurfaceId,
+                (surface) => surface.id === migratedActiveSurfaceId,
               )
-                ? (rawActiveSurfaceId ?? null)
+                ? (migratedActiveSurfaceId ?? null)
                 : rawActiveSurfaceId === "pull-request"
                   ? (surfaces.find((surface) => surface.kind === "pull-request")?.id ?? null)
                   : null;
@@ -412,9 +423,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
-            const surfaceId: `file:${string}` = cwd
-              ? `file:${cwd}:${relativePath}`
-              : `file:${relativePath}`;
+            const surfaceId = fileSurfaceId(relativePath, cwd);
             const existing = withoutStandaloneExplorer.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",

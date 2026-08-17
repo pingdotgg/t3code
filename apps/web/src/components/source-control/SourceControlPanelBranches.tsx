@@ -174,7 +174,7 @@ export function makeSourceControlPanelBranchRenderers(
               <div
                 role="button"
                 tabIndex={0}
-                className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                className="group relative flex h-7 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
                 onClick={() => toggleTree(key)}
                 onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
                 onContextMenu={(event) =>
@@ -323,7 +323,7 @@ export function makeSourceControlPanelBranchRenderers(
         <div
           role="button"
           tabIndex={0}
-          className="flex h-6 min-w-0 items-center gap-1.5 rounded px-1.5 text-xs hover:bg-accent/60"
+          className="flex h-6 min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-xs hover:bg-accent/60"
           onClick={() => toggleTree(key, defaultExpanded)}
           onKeyDown={(event) => toggleTreeFromKeyboard(key, event, defaultExpanded)}
         >
@@ -504,7 +504,7 @@ export function makeSourceControlPanelBranchRenderers(
               <div
                 role="button"
                 tabIndex={0}
-                className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                className="group relative flex h-7 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
                 onClick={() => toggleBranchTree(key, branch, options.compareBaseRef, detailsKey)}
                 onKeyDown={(event) =>
                   toggleBranchTreeFromKeyboard(
@@ -706,7 +706,7 @@ export function makeSourceControlPanelBranchRenderers(
               <div
                 role="button"
                 tabIndex={0}
-                className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                className="group relative flex h-7 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
                 onClick={() => toggleBranchTree(key, branch)}
                 onKeyDown={(event) => toggleBranchTreeFromKeyboard(key, branch, event)}
                 onContextMenu={(event) =>

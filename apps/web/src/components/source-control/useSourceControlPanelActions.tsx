@@ -87,6 +87,9 @@ export function useSourceControlPanelActions(
   refresh: (mode?: "full" | "working-tree") => Promise<void>,
 ) {
   const runningActionKeysRef = useRef(new Set<string>());
+  const [createBranchCommitTarget, setCreateBranchCommitTarget] =
+    useState<VcsPanelCommitSummary | null>(null);
+  const [createBranchName, setCreateBranchName] = useState("");
   const {
     api,
     changedFiles,
@@ -410,22 +413,30 @@ export function useSourceControlPanelActions(
     [api, confirm, cwd, onThreadRefChange, runAction, worktreePath],
   );
 
-  const createBranchFromCommit = useCallback(
-    (commit: VcsPanelCommitSummary) =>
-      void (async () => {
-        const branchName = window.prompt(`Create branch from ${commit.shortSha}`, "");
-        const trimmed = branchName?.trim();
-        if (!trimmed) return;
-        await runAction(`commit-create-branch:${commit.sha}`, async () => {
-          await api?.vcs.createBranchFromCommit({
-            cwd,
-            sha: commit.sha,
-            branchName: trimmed,
-          });
-        });
-      })(),
-    [api, cwd, runAction],
-  );
+  const createBranchFromCommit = useCallback((commit: VcsPanelCommitSummary) => {
+    setCreateBranchName("");
+    setCreateBranchCommitTarget(commit);
+  }, []);
+
+  const runCreateBranchFromCommit = useCallback(async () => {
+    const target = createBranchCommitTarget;
+    const branchName = createBranchName.trim();
+    if (!target || !branchName) return;
+    setCreateBranchCommitTarget(null);
+    setCreateBranchName("");
+    await runAction(`commit-create-branch:${target.sha}`, async () => {
+      await api?.vcs.createBranchFromCommit({
+        cwd,
+        sha: target.sha,
+        branchName,
+      });
+    });
+  }, [api, createBranchCommitTarget, createBranchName, cwd, runAction]);
+
+  const closeCreateBranchDialog = useCallback(() => {
+    setCreateBranchCommitTarget(null);
+    setCreateBranchName("");
+  }, []);
 
   const publishBranch = useCallback(
     (branch: VcsRef, remoteName?: string, force = false) =>
@@ -793,7 +804,10 @@ export function useSourceControlPanelActions(
     commitSelectedInCwd,
     confirm,
     copyText,
+    closeCreateBranchDialog,
+    createBranchCommitTarget,
     createBranchFromCommit,
+    createBranchName,
     createStash,
     deleteBranch,
     discardSelectedChanges,
@@ -814,12 +828,14 @@ export function useSourceControlPanelActions(
     revertCommit,
     runAction,
     runBranchSync,
+    runCreateBranchFromCommit,
     runDivergedSync,
     runGeneratedPanelCommit,
     runGeneratedPanelStash,
     runPanelCommit,
     runPanelStash,
     stashSelectedInCwd,
+    setCreateBranchName,
     switchRef,
     syncBranch,
     toggleFileDiff,

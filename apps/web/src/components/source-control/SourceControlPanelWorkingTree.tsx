@@ -605,7 +605,7 @@ export function makeSourceControlPanelWorkingTreeRenderers(
               <div
                 role="button"
                 tabIndex={0}
-                className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                className="group relative flex h-7 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
                 onClick={() => toggleTree(key, changeSet.current)}
                 onKeyDown={(event) => toggleTreeFromKeyboard(key, event, changeSet.current)}
                 onContextMenu={(event) =>

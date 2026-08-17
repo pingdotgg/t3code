@@ -10,6 +10,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import {
+  fileSurfaceId,
   type RightPanelSurface,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
@@ -17,6 +18,7 @@ import {
 } from "../rightPanelStore";
 import { retainThreadKeyRecord } from "./ChatView.logic";
 import {
+  createSourceControlServerMetadataUpdateQueue,
   filterVisibleSourceControlSurfaces,
   isSourceControlAvailable,
   resolveSourceControlPanelTarget,
@@ -238,7 +240,7 @@ describe("source control right panel surface visibility", () => {
     ).toBe(null);
 
     const siblingFileSurface = {
-      id: "file:/repo/sibling:src/index.ts",
+      id: fileSurfaceId("src/index.ts", "/repo/sibling"),
       kind: "file",
       cwd: "/repo/sibling",
       relativePath: "src/index.ts",
@@ -450,6 +452,47 @@ describe("runSourceControlServerMetadataUpdate", () => {
     });
 
     expect(result).toEqual({ _tag: "Stale" });
+  });
+
+  it("serializes branch metadata updates and chains their expected branches", async () => {
+    const queue = createSourceControlServerMetadataUpdateQueue();
+    const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
+    const releases: Array<() => void> = [];
+    const updateThreadMetadata = async (
+      input: Parameters<Parameters<typeof queue.enqueue>[0]["updateThreadMetadata"]>[0],
+    ) => {
+      calls.push({
+        expectedBranch: input.input.expectedBranch ?? null,
+        branch: input.input.branch ?? null,
+      });
+      await new Promise<void>((resolve) => releases.push(resolve));
+      return AsyncResult.success(undefined);
+    };
+
+    const first = queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/one", worktreePath: null },
+      updateThreadMetadata,
+    });
+    const second = queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/two", worktreePath: null },
+      updateThreadMetadata,
+    });
+
+    await Promise.resolve();
+    expect(calls).toEqual([{ expectedBranch: "main", branch: "feature/one" }]);
+    releases.shift()?.();
+    await first;
+    await Promise.resolve();
+    expect(calls).toEqual([
+      { expectedBranch: "main", branch: "feature/one" },
+      { expectedBranch: "feature/one", branch: "feature/two" },
+    ]);
+    releases.shift()?.();
+    await expect(second).resolves.toEqual({ _tag: "Success" });
   });
 
   it("drops stale thrown errors after a newer server-thread metadata request", async () => {

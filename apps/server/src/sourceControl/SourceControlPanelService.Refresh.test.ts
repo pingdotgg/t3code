@@ -401,6 +401,81 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("keeps snapshot generations unique after cwd cache eviction", () => {
+    let firstSnapshotStarted: Deferred.Deferred<void> | null = null;
+    let releaseFirstSnapshot: Deferred.Deferred<void> | null = null;
+    let rootLocalBranchesCalls = 0;
+    return Effect.gen(function* () {
+      firstSnapshotStarted = yield* Deferred.make<void>();
+      releaseFirstSnapshot = yield* Deferred.make<void>();
+      const service = yield* SourceControlPanelService;
+
+      const olderSnapshotFiber = yield* Effect.forkChild(
+        service.snapshot({ cwd: "/repo", refresh: "full" }),
+      );
+      yield* Deferred.await(firstSnapshotStarted);
+
+      for (let index = 0; index < 64; index += 1) {
+        yield* service.snapshot({ cwd: `/repo-${index}`, refresh: "full" });
+      }
+
+      const newerSnapshot = yield* service.snapshot({ cwd: "/repo", refresh: "full" });
+      assert.equal(newerSnapshot.localBranches[0]?.name, "newer");
+
+      yield* Deferred.succeed(releaseFirstSnapshot, undefined);
+      yield* Fiber.join(olderSnapshotFiber);
+
+      const cachedSnapshot = yield* service.snapshot({
+        cwd: "/repo",
+        refresh: "working-tree",
+      });
+      assert.equal(cachedSnapshot.localBranches[0]?.name, "newer");
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.gen(function* () {
+              switch (input.operation) {
+                case "vcs.panel.localBranches": {
+                  if (input.cwd !== "/repo") {
+                    return success(`main\t*\t${input.cwd}\t2026-07-20T10:00:00.000Z\t\t`);
+                  }
+                  rootLocalBranchesCalls += 1;
+                  if (rootLocalBranchesCalls === 1) {
+                    if (!firstSnapshotStarted || !releaseFirstSnapshot) {
+                      throw new Error("Expected snapshot gates to be initialized");
+                    }
+                    yield* Deferred.succeed(firstSnapshotStarted, undefined);
+                    yield* Deferred.await(releaseFirstSnapshot);
+                    return success("older\t*\t/repo\t2026-07-20T10:00:00.000Z\t\t");
+                  }
+                  return success("newer\t*\t/repo\t2026-07-20T10:00:00.000Z\t\t");
+                }
+                case "vcs.panel.statusPorcelain":
+                  return success(["# branch.oid abc", "# branch.head main"].join("\n"));
+                default:
+                  return success("");
+              }
+            }),
+          {
+            status: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "main",
+                isDefaultRef: true,
+                hasWorkingTreeChanges: false,
+                hasUpstream: false,
+                aheadCount: 0,
+                behindCount: 0,
+                aheadOfDefaultCount: 0,
+                pr: null,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
   it.effect("allows incremental refreshes after a full snapshot fails", () => {
     let localBranchesCalls = 0;
     return Effect.gen(function* () {

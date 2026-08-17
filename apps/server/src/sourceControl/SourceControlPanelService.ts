@@ -98,6 +98,7 @@ function isConfiguredSourceControlProviderKind(
 }
 
 interface PanelSnapshotCacheState {
+  readonly nextRequestId: number;
   readonly latestRequestByCwd: ReadonlyMap<string, number>;
   readonly latestFullRequestByCwd: ReadonlyMap<string, number>;
   readonly completedFullRequestByCwd: ReadonlyMap<string, number>;
@@ -315,6 +316,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     );
 
   const snapshotCacheRef = yield* Ref.make<PanelSnapshotCacheState>({
+    nextRequestId: 0,
     latestRequestByCwd: new Map(),
     latestFullRequestByCwd: new Map(),
     completedFullRequestByCwd: new Map(),
@@ -814,7 +816,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     function* (input) {
       const cacheKey = path.resolve(input.cwd);
       const request = yield* Ref.modify(snapshotCacheRef, (state) => {
-        const requestId = (state.latestRequestByCwd.get(cacheKey) ?? 0) + 1;
+        const requestId = state.nextRequestId + 1;
         const cached = state.snapshotsByCwd.get(cacheKey) ?? null;
         const latestFullRequest = state.latestFullRequestByCwd.get(cacheKey) ?? 0;
         const completedFullRequest = state.completedFullRequestByCwd.get(cacheKey) ?? 0;
@@ -842,7 +844,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
             cached,
             full,
           },
-          { ...state, latestRequestByCwd, latestFullRequestByCwd },
+          { ...state, nextRequestId: requestId, latestRequestByCwd, latestFullRequestByCwd },
         ] as const;
       });
 

@@ -160,7 +160,7 @@ export function makeSourceControlPanelRepositoryRenderers(
         <div
           role="button"
           tabIndex={0}
-          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+          className="group relative flex h-7 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleTree(key)}
           onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
           onContextMenu={(event) =>
@@ -251,7 +251,7 @@ export function makeSourceControlPanelRepositoryRenderers(
         <div
           role="button"
           tabIndex={0}
-          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+          className="group relative flex h-7 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleTree(key)}
           onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
           onContextMenu={(event) =>
@@ -320,7 +320,7 @@ export function makeSourceControlPanelRepositoryRenderers(
         <div
           role="button"
           tabIndex={0}
-          className="group relative flex h-7 min-w-0 items-center justify-between gap-1.5 rounded px-1.5 text-xs hover:bg-accent/60"
+          className="group relative flex h-7 min-w-0 cursor-pointer items-center justify-between gap-1.5 rounded px-1.5 text-xs hover:bg-accent/60"
           onClick={() => toggleStashTree(key, stash)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;

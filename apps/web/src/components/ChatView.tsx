@@ -124,6 +124,7 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
+  fileSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
@@ -1698,7 +1699,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadKey,
     activeThreadRef,
     draftId,
-    expectedBranch: serverThread?.branch ?? null,
+    expectedBranch: activeServerThread?.branch ?? null,
     existingThreadKeys,
     isServerThread,
     setDraftThreadContext,
@@ -1815,7 +1816,7 @@ function ChatViewContent(props: ChatViewProps) {
       const cwd = activeFileSurface?.cwd;
       setPendingFileSurfaceIdsByProject((currentByProject) => {
         const current = currentByProject.get(activeProjectKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS;
-        const surfaceId = cwd ? `file:${cwd}:${relativePath}` : `file:${relativePath}`;
+        const surfaceId = fileSurfaceId(relativePath, cwd);
         if (current.has(surfaceId) === pending) return currentByProject;
         const next = new Set(current);
         if (pending) next.add(surfaceId);
