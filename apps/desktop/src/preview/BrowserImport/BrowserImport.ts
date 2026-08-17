@@ -27,7 +27,6 @@ import {
   readChromiumCookies,
   type CookieReadResult,
 } from "./ChromiumCookies.ts";
-import type { ImportedCookie } from "./CookieDatabase.ts";
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
@@ -164,11 +163,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
       });
     }
 
-    // Both branches fail with a tagged error carrying a `reason`, so the union
-    // stays structurally identifiable rather than collapsing to an anonymous
-    // shape that `Effect.catchTags` could not tell apart.
     // Both branches fail with a tagged error, so the union stays structurally
-    // identifiable. The success side is normalized to one shape too, so the
+    // identifiable and each tag is handled on its own below. The success side
+    // is normalized to one shape too, so the
     // skipped tally survives either engine — Firefox stores plaintext, so
     // nothing there is ever unreadable.
     const read: Effect.Effect<
@@ -192,17 +189,19 @@ export const make = Effect.gen(function* BrowserImportMake() {
     const result = yield* read.pipe(
       Effect.scoped,
       Effect.provide(platformServices),
-      Effect.mapError(
-        (cause) =>
-          new BrowserImportFailedError({
-            sourceId: definition.id,
-            // Firefox has one failure mode — its plaintext database would not
-            // open — so its error carries no reason of its own and the
-            // user-facing one is supplied here.
-            reason: cause._tag === "FirefoxCookieReadError" ? "readFailed" : cause.reason,
-            cause,
-          }),
-      ),
+      Effect.catchTags({
+        ChromiumCookieReadError: (cause) =>
+          Effect.fail(
+            new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
+          ),
+        // Firefox has one failure mode — its plaintext database would not open
+        // — so its error carries no reason of its own and the user-facing one
+        // is supplied here.
+        FirefoxCookieReadError: (cause) =>
+          Effect.fail(
+            new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed", cause }),
+          ),
+      }),
     );
 
     const session = yield* browserSession.getSession(input.scope, input.persistent).pipe(
