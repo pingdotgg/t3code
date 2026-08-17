@@ -196,11 +196,14 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
             let actions = HomeThreadSwipeAction
                 .trailingActions(for: thread, isArchived: isArchived, at: .now)
-                .map { contextualAction($0, for: thread) }
-            let configuration = UISwipeActionsConfiguration(actions: actions)
-            // A full swipe never fires the first action: the leading slot is
-            // destructive, and pinned rows now carry a settlement action too.
-            configuration.performsFirstActionWithFullSwipe = false
+            let configuration = UISwipeActionsConfiguration(
+                actions: actions.map { contextualAction($0, for: thread) }
+            )
+            // A full swipe runs the edge action, which is only ever settlement.
+            // Delete can never reach that slot, so the gesture cannot destroy a
+            // thread; rows with nothing to settle keep the full swipe disabled.
+            configuration.performsFirstActionWithFullSwipe =
+                HomeThreadSwipeAction.performsFullSwipe(with: actions)
             return configuration
         }
 
@@ -600,7 +603,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 /// gesture semantics stay deterministic and testable without hosting a
 /// collection view. Order is outermost-first, matching
 /// `UISwipeActionsConfiguration`, which lays trailing actions out from the
-/// trailing edge inward.
+/// trailing edge inward and runs the first action on a full swipe.
 enum HomeThreadSwipeAction: Equatable {
     case delete
     case restore
@@ -619,33 +622,48 @@ enum HomeThreadSwipeAction: Equatable {
         case setSettled(Bool)
     }
 
-    /// Archived rows stay restore-only. A pinned row keeps Delete and Unpin
-    /// where they already were and gains its settlement action beside them, in
-    /// the same Unpin-before-Settle order the row's context menu uses: the
-    /// pinned shelf also holds settled threads, so before this a pinned task
-    /// could only be settled or reopened by unpinning it first or by opening
-    /// the context menu.
+    /// Settlement owns the edge slot on every row that can settle, so a full
+    /// swipe clears the task in one motion and a partial swipe still reveals
+    /// every button. Delete is always last and therefore can never be the
+    /// full-swipe action. A pinned row keeps Unpin between the two: settling
+    /// already clears the pin, so the full swipe unpins and settles together.
+    /// Archived rows stay restore-only, and a row with nothing to settle keeps
+    /// its reversible action at the edge with the full swipe turned off.
     static func trailingActions(
         for thread: FeatureThread,
         isArchived: Bool,
         at now: Date
     ) -> [HomeThreadSwipeAction] {
-        guard !isArchived else { return [.delete, .restore] }
+        guard !isArchived else { return [.restore, .delete] }
 
         let settlement: HomeThreadSwipeAction? = thread.canToggleSettlement
             ? (thread.isEffectivelySettled(at: now) ? .reopen : .settle)
             : nil
+        let isPinned = thread.pinnedAt != nil && thread.canTogglePin
 
-        var actions: [HomeThreadSwipeAction] = [.delete]
-        if thread.pinnedAt != nil, thread.canTogglePin {
-            actions.append(.unpin)
-            if let settlement {
-                actions.append(settlement)
+        var actions: [HomeThreadSwipeAction] = []
+        if let settlement {
+            actions.append(settlement)
+            if isPinned {
+                actions.append(.unpin)
             }
+        } else if isPinned {
+            actions.append(.unpin)
         } else {
-            actions.append(settlement ?? .archive)
+            actions.append(.archive)
         }
+        actions.append(.delete)
         return actions
+    }
+
+    /// The full swipe is armed only when the edge action settles or reopens.
+    /// Nothing else may run from the gesture alone.
+    static func performsFullSwipe(with actions: [HomeThreadSwipeAction]) -> Bool {
+        actions.first?.isSettlement ?? false
+    }
+
+    var isSettlement: Bool {
+        self == .settle || self == .reopen
     }
 
     var intent: Intent {

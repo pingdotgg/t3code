@@ -9,139 +9,156 @@ struct HomeThreadSwipeActionTests {
     private let now = Date(timeIntervalSince1970: 20_000)
 
     @Test
-    func pinnedRowsRevealSettleBesideUnpin() {
-        let pinned = thread(id: "pinned", pinnedAt: now.addingTimeInterval(-30))
+    func settlementOwnsTheEdgeSlotSoAFullSwipeSettles() {
+        let active = thread(id: "active")
+        let actions = HomeThreadSwipeAction.trailingActions(
+            for: active,
+            isArchived: false,
+            at: now
+        )
 
+        #expect(actions == [.settle, .delete])
+        #expect(actions.first == .settle)
+        #expect(actions.first?.intent == .setSettled(true))
+        #expect(HomeThreadSwipeAction.performsFullSwipe(with: actions))
+        #expect(actions.map(\.title) == ["Settle", "Delete"])
+    }
+
+    @Test
+    func pinnedRowsSettleFromTheEdgeAndKeepUnpinBesideIt() {
+        let pinned = thread(id: "pinned", pinnedAt: now.addingTimeInterval(-30))
         let actions = HomeThreadSwipeAction.trailingActions(
             for: pinned,
             isArchived: false,
             at: now
         )
 
-        #expect(actions == [.delete, .unpin, .settle])
-        #expect(actions.map(\.title) == ["Delete", "Unpin", "Settle"])
-        #expect(actions.map(\.systemImage) == ["trash", "pin.slash", "checkmark"])
+        #expect(actions == [.settle, .unpin, .delete])
+        #expect(HomeThreadSwipeAction.performsFullSwipe(with: actions))
+        #expect(actions.map(\.title) == ["Settle", "Unpin", "Delete"])
+        #expect(actions.map(\.systemImage) == ["checkmark", "pin.slash", "trash"])
     }
 
-    /// The pinned shelf also holds settled threads, so a pinned row has to be
-    /// able to offer the reverse action instead of a second settle.
+    /// The pinned shelf also holds settled threads, so the edge action has to be
+    /// able to reverse instead of settling a second time.
     @Test
-    func pinnedSettledRowsRevealReopenInsteadOfSettle() {
-        var pinnedSettled = thread(id: "pinned-settled", pinnedAt: now.addingTimeInterval(-30))
-        pinnedSettled.isSettled = true
-
-        let actions = HomeThreadSwipeAction.trailingActions(
-            for: pinnedSettled,
+    func settledRowsPutReopenAtTheEdge() {
+        var settled = thread(id: "settled")
+        settled.isSettled = true
+        let settledActions = HomeThreadSwipeAction.trailingActions(
+            for: settled,
             isArchived: false,
             at: now
         )
+        #expect(settledActions == [.reopen, .delete])
+        #expect(settledActions.first?.intent == .setSettled(false))
+        #expect(HomeThreadSwipeAction.performsFullSwipe(with: settledActions))
 
-        #expect(actions == [.delete, .unpin, .reopen])
-        #expect(actions.map(\.title) == ["Delete", "Unpin", "Reopen"])
-
-        // A pinned row that has aged into automatic settlement reads the same way.
-        var restingPinned = thread(id: "resting-pinned", pinnedAt: now.addingTimeInterval(-30))
-        restingPinned.lastActivityAt = now.addingTimeInterval(-4 * 24 * 60 * 60)
+        var pinnedSettled = thread(id: "pinned-settled", pinnedAt: now.addingTimeInterval(-30))
+        pinnedSettled.isSettled = true
         #expect(
             HomeThreadSwipeAction.trailingActions(
-                for: restingPinned,
+                for: pinnedSettled,
                 isArchived: false,
                 at: now
-            ) == [.delete, .unpin, .reopen]
+            ) == [.reopen, .unpin, .delete]
+        )
+
+        // A row that aged into automatic settlement reads the same way.
+        var resting = thread(id: "resting")
+        resting.lastActivityAt = now.addingTimeInterval(-4 * 24 * 60 * 60)
+        #expect(
+            HomeThreadSwipeAction.trailingActions(
+                for: resting,
+                isArchived: false,
+                at: now
+            ) == [.reopen, .delete]
         )
     }
 
     @Test
-    func pinnedRowsWithoutSettlementSupportKeepOnlyUnpin() {
-        var unsupported = thread(id: "unsupported", pinnedAt: now.addingTimeInterval(-30))
-        unsupported.supportsSettlement = false
-
-        #expect(
-            HomeThreadSwipeAction.trailingActions(
-                for: unsupported,
-                isArchived: false,
-                at: now
-            ) == [.delete, .unpin]
-        )
-
-        // An already settled thread keeps its reverse action even when the
-        // environment reports no settlement capability.
-        unsupported.isSettled = true
-        #expect(
-            HomeThreadSwipeAction.trailingActions(
-                for: unsupported,
-                isArchived: false,
-                at: now
-            ) == [.delete, .unpin, .reopen]
-        )
-    }
-
-    @Test
-    func unpinnedAndArchivedRowsKeepTheirExistingActions() {
-        let active = thread(id: "active")
-        #expect(
-            HomeThreadSwipeAction.trailingActions(for: active, isArchived: false, at: now)
-                == [.delete, .settle]
-        )
-
-        var settled = thread(id: "settled")
-        settled.isSettled = true
-        #expect(
-            HomeThreadSwipeAction.trailingActions(for: settled, isArchived: false, at: now)
-                == [.delete, .reopen]
-        )
-
+    func rowsWithNothingToSettleKeepAReversibleEdgeActionAndNoFullSwipe() {
         var unsupported = thread(id: "no-settlement")
         unsupported.supportsSettlement = false
-        #expect(
-            HomeThreadSwipeAction.trailingActions(for: unsupported, isArchived: false, at: now)
-                == [.delete, .archive]
+        let unsupportedActions = HomeThreadSwipeAction.trailingActions(
+            for: unsupported,
+            isArchived: false,
+            at: now
         )
+        #expect(unsupportedActions == [.archive, .delete])
+        #expect(!HomeThreadSwipeAction.performsFullSwipe(with: unsupportedActions))
 
-        // Archived rows stay restore-only, including a pinned or settled one.
+        var pinnedUnsupported = thread(
+            id: "pinned-no-settlement",
+            pinnedAt: now.addingTimeInterval(-30)
+        )
+        pinnedUnsupported.supportsSettlement = false
+        let pinnedActions = HomeThreadSwipeAction.trailingActions(
+            for: pinnedUnsupported,
+            isArchived: false,
+            at: now
+        )
+        #expect(pinnedActions == [.unpin, .delete])
+        #expect(!HomeThreadSwipeAction.performsFullSwipe(with: pinnedActions))
+
+        // Archived rows stay restore-only, and restoring is not a full swipe.
         var archived = thread(id: "archived", pinnedAt: now.addingTimeInterval(-30))
         archived.isArchived = true
         archived.isSettled = true
-        #expect(
-            HomeThreadSwipeAction.trailingActions(for: archived, isArchived: true, at: now)
-                == [.delete, .restore]
+        let archivedActions = HomeThreadSwipeAction.trailingActions(
+            for: archived,
+            isArchived: true,
+            at: now
         )
+        #expect(archivedActions == [.restore, .delete])
+        #expect(!HomeThreadSwipeAction.performsFullSwipe(with: archivedActions))
     }
 
-    /// Delete stays in the outermost slot on every row and the configuration
-    /// disables the first-action full swipe, so widening a pinned row's actions
-    /// cannot turn a long swipe into a destructive one.
+    /// Delete must never reach the edge slot, because the edge slot is what a
+    /// full swipe runs. This sweeps every pinned/settled/capability/archived
+    /// combination rather than trusting the branch order.
     @Test
-    func everyRowKeepsOneDestructiveOutermostActionAndNoDuplicates() {
-        var candidates: [(FeatureThread, Bool)] = []
+    func deleteIsNeverTheEdgeActionAndOnlySettlementArmsTheFullSwipe() {
         for isSettled in [false, true] {
             for isPinned in [false, true] {
                 for supportsSettlement in [nil, true, false] as [Bool?] {
-                    for isArchived in [false, true] {
-                        var candidate = thread(
-                            id: "row-\(isSettled)-\(isPinned)-\(String(describing: supportsSettlement))",
-                            pinnedAt: isPinned ? now.addingTimeInterval(-30) : nil
-                        )
-                        candidate.isSettled = isSettled
-                        candidate.supportsSettlement = supportsSettlement
-                        candidate.isArchived = isArchived
-                        candidates.append((candidate, isArchived))
+                    for supportsPinning in [nil, true, false] as [Bool?] {
+                        for isArchived in [false, true] {
+                            var candidate = thread(
+                                id: "row",
+                                pinnedAt: isPinned ? now.addingTimeInterval(-30) : nil
+                            )
+                            candidate.isSettled = isSettled
+                            candidate.supportsSettlement = supportsSettlement
+                            candidate.supportsPinning = supportsPinning
+                            candidate.isArchived = isArchived
+
+                            let actions = HomeThreadSwipeAction.trailingActions(
+                                for: candidate,
+                                isArchived: isArchived,
+                                at: now
+                            )
+
+                            #expect(actions.last == .delete)
+                            #expect(actions.first != .delete)
+                            #expect(actions.count == Set(actions).count)
+                            #expect(actions.filter { $0.style == .destructive } == [.delete])
+                            #expect(actions.filter(\.isSettlement).count <= 1)
+
+                            let armsFullSwipe = HomeThreadSwipeAction.performsFullSwipe(with: actions)
+                            #expect(armsFullSwipe == (actions.first?.isSettlement ?? false))
+                            if armsFullSwipe {
+                                switch actions.first?.intent {
+                                case .setSettled:
+                                    break
+                                default:
+                                    Issue.record("A full swipe may only request settlement")
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
-
-        for (candidate, isArchived) in candidates {
-            let actions = HomeThreadSwipeAction.trailingActions(
-                for: candidate,
-                isArchived: isArchived,
-                at: now
-            )
-            #expect(actions.first == .delete)
-            #expect(actions.count == Set(actions).count)
-            #expect(actions.filter { $0.style == .destructive } == [.delete])
-            #expect(actions.filter { [.settle, .reopen].contains($0) }.count <= 1)
-            #expect(!actions.isEmpty)
         }
     }
 
@@ -154,8 +171,13 @@ struct HomeThreadSwipeActionTests {
         #expect(HomeThreadSwipeAction.restore.intent == .setArchived(false))
         #expect(HomeThreadSwipeAction.delete.intent == .delete)
 
+        #expect(HomeThreadSwipeAction.settle.isSettlement)
+        #expect(HomeThreadSwipeAction.reopen.isSettlement)
+        #expect(!HomeThreadSwipeAction.unpin.isSettlement)
+        #expect(!HomeThreadSwipeAction.delete.isSettlement)
+
         // The settlement actions keep the row's existing accent vocabulary and
-        // never inherit the destructive style.
+        // never inherit the destructive style that arms a destructive swipe.
         #expect(HomeThreadSwipeAction.settle.style == .normal)
         #expect(HomeThreadSwipeAction.settle.backgroundColor == .systemGreen)
         #expect(HomeThreadSwipeAction.reopen.backgroundColor == .systemBlue)
@@ -164,11 +186,12 @@ struct HomeThreadSwipeActionTests {
         #expect(HomeThreadSwipeAction.delete.backgroundColor == nil)
     }
 
-    /// The swipe action carries no settlement logic of its own: its intent is
-    /// applied through the same `FeatureRootModel.setSettled` call the row's
-    /// context menu uses, which reaches the client's real settlement request.
+    /// The full swipe carries no settlement logic of its own: its edge action is
+    /// applied through the same `FeatureRootModel.setSettled` call the context
+    /// menu uses, which reaches the client's real settlement request and clears
+    /// the pin, so one motion unpins and settles.
     @Test
-    func settlingAPinnedRowTakesTheRealSettlementPathAndClearsThePin() async throws {
+    func aFullSwipeOnAPinnedRowSettlesThroughTheRealPathAndClearsThePin() async throws {
         let client = SwipeSettlementClientStub()
         var pinned = thread(id: "pinned", pinnedAt: now.addingTimeInterval(-30))
         pinned.lastActivityAt = now
@@ -188,35 +211,35 @@ struct HomeThreadSwipeActionTests {
 
         #expect(presentation(for: model).pinned.map(\.id) == ["pinned"])
 
-        let settle = try #require(
-            HomeThreadSwipeAction.trailingActions(
-                for: pinned,
-                isArchived: false,
-                at: now
-            ).last
+        let actions = HomeThreadSwipeAction.trailingActions(
+            for: pinned,
+            isArchived: false,
+            at: now
         )
-        #expect(settle == .settle)
-        #expect(settle.intent == .setSettled(true))
+        let edge = try #require(actions.first)
+        #expect(edge == .settle)
+        #expect(HomeThreadSwipeAction.performsFullSwipe(with: actions))
 
-        // Applying that intent the way the row's `onSettle` closure does.
-        guard case let .setSettled(settled) = settle.intent else { return }
+        // Applying the edge action the way the row's `onSettle` closure does.
+        guard case let .setSettled(settled) = edge.intent else { return }
         await model.setSettled(pinned.id, settled: settled)
 
         #expect(client.settlementRequests == [SettlementRequest(id: "pinned", settled: true)])
+        #expect(client.pinRequests.isEmpty)
         let updated = try #require(model.snapshot.threads.first { $0.id == "pinned" })
         #expect(updated.isSettled)
         #expect(!updated.keepsActive)
         #expect(updated.settledAt != nil)
         #expect(updated.pinnedAt == nil)
 
-        // The row leaves the pinned shelf for Settled, where its swipe now
-        // offers the reverse action instead.
+        // One motion: the row leaves the pinned shelf for Settled, where its
+        // edge action is now the reverse.
         let shelves = presentation(for: model)
         #expect(shelves.pinned.isEmpty)
         #expect(shelves.settled.map(\.id) == ["pinned"])
         #expect(
             HomeThreadSwipeAction.trailingActions(for: updated, isArchived: false, at: now)
-                == [.delete, .reopen]
+                == [.reopen, .delete]
         )
     }
 
@@ -269,11 +292,16 @@ private struct SettlementRequest: Equatable {
 private final class SwipeSettlementClientStub: FeatureClient {
     var snapshot = FeatureSnapshot()
     var settlementRequests: [SettlementRequest] = []
+    var pinRequests: [String] = []
 
     func initialSnapshot() async throws -> FeatureSnapshot { snapshot }
 
     func setThreadSettled(id: String, settled: Bool) async throws {
         settlementRequests.append(SettlementRequest(id: id, settled: settled))
+    }
+
+    func setThreadPinned(id: String, pinned: Bool) async throws {
+        pinRequests.append(id)
     }
 
     func pair(endpoint: String, token: String?) async throws {}
