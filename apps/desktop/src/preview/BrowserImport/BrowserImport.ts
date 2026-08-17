@@ -17,20 +17,26 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as BrowserSession from "../BrowserSession.ts";
-import { readChromiumCookies } from "./ChromiumCookies.ts";
+import {
+  ChromiumCookieReadError,
+  readChromiumCookies,
+  type CookieReadResult,
+} from "./ChromiumCookies.ts";
+import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   cookieDatabasePath,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
-  sourcePaths,
+  sourcePathContext,
+  type BrowserImportPathContext,
   type BrowserImportSourceDefinition,
-  type SourcePaths,
 } from "./Sources.ts";
 
 export class BrowserImportFailedError extends Schema.TaggedErrorClass<BrowserImportFailedError>()(
@@ -64,12 +70,16 @@ export class BrowserImport extends Context.Service<
 
 const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function* (
   definition: BrowserImportSourceDefinition,
-  platform: NodeJS.Platform,
-  paths: SourcePaths,
+  context: BrowserImportPathContext,
 ): Effect.fn.Return<BrowserImportUnavailableReason | undefined, never, FileSystem.FileSystem> {
-  if (!definition.platforms.includes(platform)) return "unsupportedPlatform";
-  if (!(yield* isSourceInstalled(definition, paths))) return "notInstalled";
-  if (yield* isSourceRunning(definition, paths)) return "browserRunning";
+  if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
+  // Chromium's key lives in an OS credential store, and only the macOS one is
+  // implemented; Firefox needs no key at all, so it works everywhere.
+  if (definition.engine === "chromium" && context.platform !== "darwin") {
+    return "unsupportedPlatform";
+  }
+  if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
+  if (yield* isSourceRunning(definition, context)) return "browserRunning";
   return undefined;
 });
 
@@ -80,18 +90,19 @@ export const make = Effect.gen(function* BrowserImportMake() {
   // Captured here so the service's methods stay free of a requirements
   // channel: the layer is built where NodeServices is already in scope.
   const platformServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
-  const paths = yield* sourcePaths;
+  const pathContext = yield* sourcePathContext;
 
   const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.forEach(
     BROWSER_IMPORT_SOURCES,
     Effect.fnUntraced(function* (definition) {
-      const unavailable = yield* unavailableReason(definition, platform, paths);
+      const unavailable = yield* unavailableReason(definition, pathContext);
       return {
         id: definition.id,
         name: definition.name,
         // Listing profiles touches the source's own files, so skip it when the
         // source is unusable anyway.
-        profiles: unavailable === undefined ? yield* listSourceProfiles(definition, paths) : [],
+        profiles:
+          unavailable === undefined ? yield* listSourceProfiles(definition, pathContext) : [],
         ...(unavailable === undefined ? {} : { unavailable }),
       } satisfies BrowserImportSource;
     }),
@@ -112,7 +123,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
       });
     }
 
-    const blocked = yield* unavailableReason(definition, platform, paths).pipe(
+    const blocked = yield* unavailableReason(definition, pathContext).pipe(
       Effect.provide(platformServices),
     );
     if (blocked !== undefined) {
@@ -131,7 +142,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
     // source itself reported it. Forwarding it unchecked would let `..`
     // segments walk out of the browser's user-data directory and read any
     // cookie database reachable on disk.
-    const sourceProfiles = yield* listSourceProfiles(definition, paths).pipe(
+    const sourceProfiles = yield* listSourceProfiles(definition, pathContext).pipe(
       Effect.provide(platformServices),
     );
     const requestedProfile = sourceProfiles.find(
@@ -144,18 +155,53 @@ export const make = Effect.gen(function* BrowserImportMake() {
       });
     }
 
-    const read = yield* readChromiumCookies({
-      cookieDatabasePath: cookieDatabasePath(definition, paths, requestedProfile.directory),
-      keychainService: definition.keychainService,
-      keychainAccount: definition.keychainAccount,
-      platform,
-    }).pipe(
+    const databasePath = cookieDatabasePath(definition, pathContext, requestedProfile.directory);
+    if (databasePath === undefined) {
+      return yield* new BrowserImportFailedError({
+        sourceId: definition.id,
+        reason: "unsupportedPlatform",
+      });
+    }
+
+    // Both branches fail with a tagged error, so the union stays structurally
+    // identifiable and each tag is handled on its own below. The success side
+    // is normalized to one shape too, so the
+    // skipped tally survives either engine — Firefox stores plaintext, so
+    // nothing there is ever unreadable.
+    const read: Effect.Effect<
+      CookieReadResult,
+      ChromiumCookieReadError | FirefoxCookieReadError,
+      FileSystem.FileSystem | Path.Path | Scope.Scope
+    > =
+      definition.engine === "firefox"
+        ? readFirefoxCookies(databasePath).pipe(
+            Effect.map((cookies) => ({ cookies, undecryptable: 0 })),
+          )
+        : readChromiumCookies({
+            cookieDatabasePath: databasePath,
+            // Only reached on macOS: `unavailableReason` rejects Chromium
+            // elsewhere until those key stores are implemented.
+            keychainService: definition.keychainService ?? "",
+            keychainAccount: definition.keychainAccount ?? "",
+            platform,
+          });
+
+    const result = yield* read.pipe(
       Effect.scoped,
       Effect.provide(platformServices),
-      Effect.mapError(
-        (cause) =>
-          new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
-      ),
+      Effect.catchTags({
+        ChromiumCookieReadError: (cause) =>
+          Effect.fail(
+            new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
+          ),
+        // Firefox has one failure mode — its plaintext database would not open
+        // — so its error carries no reason of its own and the user-facing one
+        // is supplied here.
+        FirefoxCookieReadError: (cause) =>
+          Effect.fail(
+            new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed", cause }),
+          ),
+      }),
     );
 
     const session = yield* browserSession.getSession(input.scope, input.persistent).pipe(
@@ -174,8 +220,8 @@ export const make = Effect.gen(function* BrowserImportMake() {
     let imported = 0;
     // Rows the reader could not decrypt are already lost cookies, so they
     // count as skipped rather than vanishing from the tally.
-    let skipped = read.undecryptable;
-    for (const cookie of read.cookies) {
+    let skipped = result.undecryptable;
+    for (const cookie of result.cookies) {
       const written = yield* Effect.tryPromise({
         try: () =>
           session.cookies.set({

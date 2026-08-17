@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 
 import * as BrowserSession from "../BrowserSession.ts";
 import * as BrowserImport from "./BrowserImport.ts";
-import { BROWSER_IMPORT_SOURCES, sourcePaths } from "./Sources.ts";
+import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "./Sources.ts";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
 
@@ -34,15 +34,16 @@ const withImporter = Effect.fnUntraced(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-import-" });
   const environment = Layer.succeed(HostProcessEnvironment, { HOME: home });
-  const paths = yield* sourcePaths.pipe(
+  const context = yield* sourcePathContext.pipe(
     Effect.provideService(HostProcessEnvironment, { HOME: home }),
+    Effect.provideService(HostProcessPlatform, "darwin"),
   );
-  yield* fileSystem.makeDirectory(`${helium.userDataDirectory(paths)}/Default`, {
-    recursive: true,
-  });
+  const root = helium.userDataDirectory(context);
+  if (root === undefined) throw new Error("Helium has no macOS user-data directory");
+  yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
   // The cookie database is what marks a source as installed, so a fixture
   // without one is reported as absent before any other check runs.
-  yield* fileSystem.writeFileString(`${helium.userDataDirectory(paths)}/Default/Cookies`, "db");
+  yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
 
   const importer = yield* BrowserImport.BrowserImport.pipe(
     Effect.provide(
@@ -55,7 +56,7 @@ const withImporter = Effect.fnUntraced(function* () {
       ),
     ),
   );
-  return { importer, home, paths };
+  return { importer, home, root };
 });
 
 describe("BrowserImport.importCookies", () => {
@@ -89,13 +90,10 @@ describe("BrowserImport.importCookies", () => {
   it.effect("refuses to import while the source browser holds its profile", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const { importer, paths } = yield* withImporter();
+      const { importer, root } = yield* withImporter();
       // The lock Chromium leaves while it is running, dangling target and
       // all. This must stop the import before it ever asks the keychain.
-      yield* fileSystem.symlink(
-        "host-that-does-not-exist-1234",
-        `${helium.userDataDirectory(paths)}/SingletonLock`,
-      );
+      yield* fileSystem.symlink("host-that-does-not-exist-1234", `${root}/SingletonLock`);
 
       const error = yield* importer
         .importCookies({
