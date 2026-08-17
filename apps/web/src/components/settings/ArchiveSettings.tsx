@@ -673,12 +673,16 @@ export function ArchivedThreadsPanel() {
                       {project.title}
                     </span>
                     {environmentLabel ? (
-                      <span
-                        className="max-w-[30%] shrink-0 truncate text-[11px] text-muted-foreground/60"
-                        title={environmentLabel}
-                      >
-                        {environmentLabel}
-                      </span>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span className="max-w-[30%] shrink-0 truncate text-[11px] text-muted-foreground/60" />
+                          }
+                        >
+                          {environmentLabel}
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">{environmentLabel}</TooltipPopup>
+                      </Tooltip>
                     ) : null}
                     <span className="shrink-0 text-[11px] text-muted-foreground/60">
                       {projectThreads.length}
