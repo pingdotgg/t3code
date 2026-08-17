@@ -575,6 +575,16 @@ export function terminalSelectionOvershoot(
   return 0;
 }
 
+/**
+ * A command output resolved at one point in time, stamped with the buffer it
+ * came from so a later apply can tell whether that buffer is still the one on
+ * screen.
+ */
+export interface TerminalCommandOutputCapture {
+  readonly range: GhosttySelectionRange["screen"];
+  readonly generation: number;
+}
+
 export interface GhosttySelectionPosition {
   readonly start: { readonly x: number; readonly y: number };
   readonly end: { readonly x: number; readonly y: number };
@@ -636,6 +646,7 @@ export class GhosttyTerminalSurface {
   private selectionEndScreen: { x: number; y: number } | null = null;
   private selectionMode: "cell" | "word" | "line" = "cell";
   private selectionRectangle = false;
+  private bufferGeneration = 0;
   // Word/line selection base in screen coordinates so streaming output cannot
   // shift the origin of a drag selection.
   private selectionBase: {
@@ -792,6 +803,10 @@ export class GhosttyTerminalSurface {
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.core.resetAndWrite(data);
+    // Replacing the buffer repoints every screen coordinate at new content, so
+    // anything captured against the old one is void. Appends do not: those
+    // coordinates stay pinned to the rows they named.
+    this.bufferGeneration += 1;
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -1018,7 +1033,7 @@ export class GhosttyTerminalSurface {
    * puts a different command under the same point by the time it does. Screen
    * coordinates stay pinned to their content, so the range survives that.
    */
-  commandOutputRangeAt(clientX: number, clientY: number): GhosttySelectionRange["screen"] | null {
+  commandOutputRangeAt(clientX: number, clientY: number): TerminalCommandOutputCapture | null {
     // Exact hit testing, not the clamping `cellAt` a drag wants: a click in the
     // padding or the slack below the grid lands on no cell, and offering the
     // nearest row's command there would act on output nobody pointed at.
@@ -1033,11 +1048,18 @@ export class GhosttyTerminalSurface {
       originY: this.originY,
     });
     if (cell === null) return null;
-    return this.core.outputRangeAt(cell.x, cell.y);
+    const range = this.core.outputRangeAt(cell.x, cell.y);
+    return range === null ? null : { range, generation: this.bufferGeneration };
   }
 
-  /** Selects a command output range captured earlier by `commandOutputRangeAt`. */
-  selectCommandOutputRange(range: GhosttySelectionRange["screen"]): void {
+  /**
+   * Selects a command output captured earlier by `commandOutputRangeAt`, unless
+   * the buffer was replaced in between — a capture from a buffer that no longer
+   * exists would land on whatever content took those coordinates over.
+   */
+  selectCommandOutputRange(capture: TerminalCommandOutputCapture): void {
+    if (capture.generation !== this.bufferGeneration) return;
+    const range = capture.range;
     this.selectionEnd = null;
     this.selectionMode = "cell";
     this.selectionBase = null;
