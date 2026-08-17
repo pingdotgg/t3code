@@ -8,6 +8,7 @@ import type * as Electron from "electron";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopDeepLinkRouter from "./DesktopDeepLinkRouter.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -17,6 +18,7 @@ describe("DesktopLifecycle", () => {
   for (const platform of ["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>) {
     it.effect(`lets the updater's quit event proceed on ${platform}`, () => {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let deepLinkRouterConfigurations = 0;
 
       const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
         metadata: Effect.die("unexpected metadata read"),
@@ -71,6 +73,7 @@ describe("DesktopLifecycle", () => {
         createMain: Effect.die("unexpected window creation"),
         ensureMain: Effect.die("unexpected window creation"),
         revealOrCreateMain: Effect.die("unexpected window creation"),
+        openThread: () => Effect.void,
         activate: Effect.void,
         createMainIfBackendReady: Effect.void,
         showConnectingSplash: Effect.void,
@@ -91,6 +94,13 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(electronAppLayer),
         Layer.provideMerge(electronThemeLayer),
         Layer.provideMerge(desktopWindowLayer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopDeepLinkRouter.DesktopDeepLinkRouter, {
+            configure: Effect.sync(() => {
+              deepLinkRouterConfigurations += 1;
+            }),
+          }),
+        ),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
@@ -100,6 +110,7 @@ describe("DesktopLifecycle", () => {
         Effect.gen(function* () {
           const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
           yield* lifecycle.register;
+          assert.equal(deepLinkRouterConfigurations, 1);
 
           appListeners.get("before-quit-for-update")?.();
 

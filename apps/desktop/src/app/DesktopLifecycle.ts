@@ -7,6 +7,7 @@ import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
+import * as DesktopDeepLinkRouter from "./DesktopDeepLinkRouter.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
@@ -35,6 +36,10 @@ export type DesktopLifecycleRuntimeServices =
   | ElectronApp.ElectronApp
   | ElectronTheme.ElectronTheme;
 
+type DesktopLifecycleRegistrationServices =
+  | DesktopDeepLinkRouter.DesktopDeepLinkRouter
+  | DesktopLifecycleRuntimeServices;
+
 /**
  * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme
  */
@@ -44,7 +49,11 @@ export class DesktopLifecycle extends Context.Service<
     readonly relaunch: (
       reason: string,
     ) => Effect.Effect<void, never, DesktopLifecycleRuntimeServices>;
-    readonly register: Effect.Effect<void, never, Scope.Scope | DesktopLifecycleRuntimeServices>;
+    readonly register: Effect.Effect<
+      void,
+      never,
+      Scope.Scope | DesktopLifecycleRegistrationServices
+    >;
   }
 >()("@t3tools/desktop/app/DesktopLifecycle") {}
 
@@ -169,14 +178,16 @@ export const make = DesktopLifecycle.of({
     );
   }),
   register: Effect.gen(function* () {
+    const deepLinkRouter = yield* DesktopDeepLinkRouter.DesktopDeepLinkRouter;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronApp = yield* ElectronApp.ElectronApp;
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const context = yield* Effect.context<DesktopLifecycleRuntimeServices>();
+    const context = yield* Effect.context<DesktopLifecycleRegistrationServices>();
     const runEffect = Effect.runPromiseWith(context);
     let quitAllowed = false;
     let updaterQuitAllowed = false;
+    yield* deepLinkRouter.configure;
     yield* electronTheme.onUpdated(() => {
       void runEffect(
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
