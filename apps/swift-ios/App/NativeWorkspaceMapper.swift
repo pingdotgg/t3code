@@ -90,6 +90,33 @@ enum NativeWorkspaceMapper {
         )
     }
 
+    static func sourceControl(
+        local: VCSLocalStatus,
+        remote: VCSRemoteStatus?
+    ) -> FeatureSourceControlStatus {
+        FeatureSourceControlStatus(
+            isRepository: local.isRepo,
+            branch: local.refName,
+            aheadCount: remote?.aheadCount ?? 0,
+            behindCount: remote?.behindCount ?? 0,
+            files: local.workingTree.files.map {
+                FeatureSourceControlFile(
+                    path: $0.path,
+                    state: .modified,
+                    isStaged: false
+                )
+            },
+            pullRequest: remote?.pr.map {
+                FeaturePullRequest(
+                    number: $0.number,
+                    title: $0.title,
+                    state: $0.state,
+                    url: URL(string: $0.url)
+                )
+            }
+        )
+    }
+
     static func gitAction(_ action: FeatureSourceControlAction) -> GitStackedAction {
         switch action {
         case .commit: .commit
@@ -340,5 +367,37 @@ enum NativeWorkspaceMapper {
                 .first
                 ?? ""
         )
+    }
+}
+
+struct NativeSourceControlStatusAccumulator {
+    private var local: VCSLocalStatus?
+    private(set) var isComplete = false
+
+    mutating func consume(_ event: VCSStatusEvent) -> FeatureSourceControlStatus? {
+        switch event {
+        case let .snapshot(nextLocal, remote):
+            local = nextLocal
+            isComplete = remote != nil || !nextLocal.isRepo || !nextLocal.hasPrimaryRemote
+            return NativeWorkspaceMapper.sourceControl(local: nextLocal, remote: remote)
+        case let .localUpdated(nextLocal):
+            local = nextLocal
+            isComplete = !nextLocal.isRepo || !nextLocal.hasPrimaryRemote
+            return NativeWorkspaceMapper.sourceControl(local: nextLocal, remote: nil)
+        case let .remoteUpdated(remote):
+            guard let local else { return nil }
+            isComplete = true
+            return NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
+        }
+    }
+
+    var prematureEndError: RPCError {
+        RPCError.protocolViolation(
+            "The source-control status stream ended before completion."
+        )
+    }
+
+    func validateEnd() throws {
+        guard isComplete else { throw prematureEndError }
     }
 }

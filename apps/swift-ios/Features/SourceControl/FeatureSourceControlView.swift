@@ -100,7 +100,7 @@ public struct FeatureSourceControlView: View {
                         Label(action.title, systemImage: action.icon)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .disabled(isRunningAction)
+                    .disabled(isLoading || isRunningAction)
                 }
             }
 
@@ -131,7 +131,9 @@ public struct FeatureSourceControlView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .refreshable { await load() }
+        .refreshable {
+            if !isLoading { await load() }
+        }
         .overlay {
             if isRunningAction {
                 ProgressView()
@@ -154,8 +156,13 @@ public struct FeatureSourceControlView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            status = try await client.sourceControlStatus(threadID: threadID)
-            errorMessage = nil
+            let statuses = try await client.sourceControlStatuses(threadID: threadID)
+            for try await nextStatus in statuses {
+                status = nextStatus
+                errorMessage = nil
+            }
+        } catch is CancellationError {
+            return
         } catch {
             errorMessage = error.localizedDescription
         }

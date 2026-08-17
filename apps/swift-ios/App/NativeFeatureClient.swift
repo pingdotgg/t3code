@@ -1883,6 +1883,48 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
+    func sourceControlStatuses(
+        threadID: String
+    ) async throws -> AsyncThrowingStream<FeatureSourceControlStatus, Error> {
+        let route = try threadRoute(for: threadID)
+        let context = try workspaceContext(route: route)
+        let events = await route.client.vcsStatusEvents(cwd: context.cwd)
+        let (statuses, continuation) = AsyncThrowingStream.makeStream(
+            of: FeatureSourceControlStatus.self,
+            bufferingPolicy: .bufferingNewest(2)
+        )
+        let task = Task {
+            var accumulator = NativeSourceControlStatusAccumulator()
+            do {
+                for try await event in events {
+                    if let status = accumulator.consume(event) {
+                        continuation.yield(status)
+                    }
+                    if accumulator.isComplete {
+                        continuation.finish()
+                        return
+                    }
+                }
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    try accumulator.validateEnd()
+                    continuation.finish()
+                }
+            } catch is CancellationError {
+                continuation.finish()
+            } catch {
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+        continuation.onTermination = { @Sendable _ in task.cancel() }
+        return statuses
+    }
+
     func performSourceControlAction(
         threadID: String,
         action: FeatureSourceControlAction,

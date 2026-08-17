@@ -3,6 +3,171 @@ import Testing
 
 @Suite("Thread tool state")
 struct FeatureToolStateTests {
+    private static func vcsLocal(
+        isRepo: Bool = true,
+        hasPrimaryRemote: Bool = true,
+        refName: String? = "feature/cached",
+        files: [String] = []
+    ) -> VCSLocalStatus {
+        VCSLocalStatus(
+            isRepo: isRepo,
+            sourceControlProvider: nil,
+            hasPrimaryRemote: hasPrimaryRemote,
+            isDefaultRef: false,
+            refName: refName,
+            hasWorkingTreeChanges: files.isEmpty == false,
+            workingTree: VCSWorkingTree(
+                files: files.map {
+                    VCSWorkingTreeFile(path: $0, insertions: 1, deletions: 0)
+                },
+                insertions: files.count,
+                deletions: 0
+            )
+        )
+    }
+
+    private static func vcsRemote(
+        aheadCount: Int,
+        behindCount: Int = 0,
+        pullRequest: VCSChangeRequest? = nil
+    ) -> VCSRemoteStatus {
+        VCSRemoteStatus(
+            hasUpstream: true,
+            aheadCount: aheadCount,
+            behindCount: behindCount,
+            aheadOfDefaultCount: nil,
+            pr: pullRequest
+        )
+    }
+
+    @Test(
+        "Cached local status is available before remote status",
+        .bug("https://github.com/saphid/t3code-personal/issues/107")
+    )
+    func cachedLocalStatusArrivesFirst() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let consumedLocal = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(files: ["App/NativeFeatureClient.swift"]),
+                remote: nil
+            )
+        )
+        let localOnly = try #require(consumedLocal)
+
+        #expect(localOnly.branch == "feature/cached")
+        #expect(localOnly.files.map(\.path) == ["App/NativeFeatureClient.swift"])
+        #expect(localOnly.aheadCount == 0)
+        #expect(localOnly.pullRequest == nil)
+        #expect(accumulator.isComplete == false)
+    }
+
+    @Test(
+        "Remote status combines with the latest local status",
+        .bug("https://github.com/saphid/t3code-personal/issues/107")
+    )
+    func remoteStatusUsesLatestLocalState() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(local: Self.vcsLocal(refName: "feature/old"), remote: nil)
+        )
+        _ = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/new", files: ["new.swift"]))
+        )
+        let pullRequest = VCSChangeRequest(
+            number: 107,
+            title: "Cached status",
+            url: "https://github.com/saphid/t3code-personal/pull/107",
+            baseRef: "main",
+            headRef: "feature/new",
+            state: "OPEN"
+        )
+
+        let consumedRemote = accumulator.consume(
+            .remoteUpdated(
+                Self.vcsRemote(
+                    aheadCount: 2,
+                    behindCount: 1,
+                    pullRequest: pullRequest
+                )
+            )
+        )
+        let combined = try #require(consumedRemote)
+
+        #expect(combined.branch == "feature/new")
+        #expect(combined.files.map(\.path) == ["new.swift"])
+        #expect(combined.aheadCount == 2)
+        #expect(combined.behindCount == 1)
+        #expect(combined.pullRequest?.number == 107)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test(
+        "Remote-before-local ordering is ignored safely",
+        .bug("https://github.com/saphid/t3code-personal/issues/107")
+    )
+    func remoteBeforeLocalIsSafe() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let remoteBeforeLocal = accumulator.consume(
+            .remoteUpdated(Self.vcsRemote(aheadCount: 9))
+        )
+        #expect(remoteBeforeLocal == nil)
+        let consumedLocal = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/local"))
+        )
+        let localOnly = try #require(consumedLocal)
+        let consumedRemote = accumulator.consume(
+            .remoteUpdated(Self.vcsRemote(aheadCount: 3))
+        )
+        let combined = try #require(consumedRemote)
+
+        #expect(localOnly.aheadCount == 0)
+        #expect(combined.branch == "feature/local")
+        #expect(combined.aheadCount == 3)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test(
+        "Terminal local states do not wait for remote status",
+        .bug("https://github.com/saphid/t3code-personal/issues/107"),
+        arguments: [
+            Self.vcsLocal(isRepo: false, hasPrimaryRemote: false, refName: nil),
+            Self.vcsLocal(hasPrimaryRemote: false, refName: "local-only"),
+        ]
+    )
+    func terminalLocalStatesAreExplicit(local: VCSLocalStatus) throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let consumed = accumulator.consume(.snapshot(local: local, remote: nil))
+        let status = try #require(consumed)
+
+        #expect(status.isRepository == local.isRepo)
+        #expect(status.branch == local.refName)
+        #expect(status.pullRequest == nil)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test(
+        "Premature stream end has an explicit protocol error",
+        .bug("https://github.com/saphid/t3code-personal/issues/107")
+    )
+    func prematureStreamEndIsExplicit() {
+        let accumulator = NativeSourceControlStatusAccumulator()
+
+        do {
+            try accumulator.validateEnd()
+            Issue.record("Expected the incomplete stream to report a protocol error.")
+        } catch let error as RPCError {
+            #expect(
+                error.errorDescription
+                    == "The source-control status stream ended before completion."
+            )
+        } catch {
+            Issue.record("Unexpected stream error: \(error)")
+        }
+    }
+
     @Test
     func fileFilteringKeepsDirectoriesFirstAndHonorsHiddenFiles() {
         let entries = [
