@@ -99,6 +99,9 @@ enum NativeWorkspaceMapper {
             branch: local.refName,
             aheadCount: remote?.aheadCount ?? 0,
             behindCount: remote?.behindCount ?? 0,
+            // A workspace with no repository or no primary remote will never
+            // receive a remote half, so nothing is pending in those cases.
+            isRemoteKnown: remote != nil || !local.isRepo || !local.hasPrimaryRemote,
             files: local.workingTree.files.map {
                 FeatureSourceControlFile(
                     path: $0.path,
@@ -370,34 +373,39 @@ enum NativeWorkspaceMapper {
     }
 }
 
+/// Folds `vcs.subscribeStatus` events into successive UI statuses, mirroring
+/// `applyGitStatusStreamEvent` in packages/shared: the last known remote half is
+/// carried across local-only updates instead of being dropped.
 struct NativeSourceControlStatusAccumulator {
     private var local: VCSLocalStatus?
+    private var remote: VCSRemoteStatus?
     private(set) var isComplete = false
 
     mutating func consume(_ event: VCSStatusEvent) -> FeatureSourceControlStatus? {
         switch event {
-        case let .snapshot(nextLocal, remote):
+        case let .snapshot(nextLocal, nextRemote):
             local = nextLocal
-            isComplete = remote != nil || !nextLocal.isRepo || !nextLocal.hasPrimaryRemote
-            return NativeWorkspaceMapper.sourceControl(local: nextLocal, remote: remote)
+            if let nextRemote { remote = nextRemote }
         case let .localUpdated(nextLocal):
             local = nextLocal
-            isComplete = !nextLocal.isRepo || !nextLocal.hasPrimaryRemote
-            return NativeWorkspaceMapper.sourceControl(local: nextLocal, remote: nil)
-        case let .remoteUpdated(remote):
-            guard let local else { return nil }
-            isComplete = true
-            return NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
+        case let .remoteUpdated(nextRemote):
+            remote = nextRemote
         }
-    }
 
-    var prematureEndError: RPCError {
-        RPCError.protocolViolation(
-            "The source-control status stream ended before completion."
-        )
+        guard let local else { return nil }
+        // Latches: a later local-only update must not reopen a stream whose
+        // remote half already arrived.
+        if remote != nil || !local.isRepo || !local.hasPrimaryRemote {
+            isComplete = true
+        }
+        return NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
     }
 
     func validateEnd() throws {
-        guard isComplete else { throw prematureEndError }
+        guard isComplete else {
+            throw RPCError.protocolViolation(
+                "The source-control status stream ended before completion."
+            )
+        }
     }
 }

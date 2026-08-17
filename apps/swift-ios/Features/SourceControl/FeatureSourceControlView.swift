@@ -10,6 +10,7 @@ public struct FeatureSourceControlView: View {
     @State private var errorMessage: String?
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
+    @State private var loadGeneration = 0
 
     public init(client: any FeatureClient, threadID: String) {
         self.client = client
@@ -41,8 +42,8 @@ public struct FeatureSourceControlView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
-                    .disabled(isLoading || isRunningAction)
+                Button { Task { await reload() } } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(isRunningAction)
                     .accessibilityLabel("Reload source control")
             }
         }
@@ -65,18 +66,34 @@ public struct FeatureSourceControlView: View {
 
     private func statusList(_ status: FeatureSourceControlStatus) -> some View {
         List {
+            // Once a status is on screen the unavailable-state view is
+            // unreachable, so a later failure needs its own inline surface.
+            if let errorMessage {
+                Section {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(.orange)
+                }
+            }
+
             Section("Repository") {
                 LabeledContent("Branch", value: status.branch ?? "Detached HEAD")
                 if let upstream = status.upstream {
                     LabeledContent("Upstream", value: upstream)
                 }
-                HStack {
-                    Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
-                    Spacer()
-                    Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                if status.isRemoteKnown {
+                    HStack {
+                        Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
+                        Spacer()
+                        Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                    }
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                } else {
+                    Label("Checking remote…", systemImage: "arrow.triangle.2.circlepath")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
                 }
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
                 if let pullRequest = status.pullRequest {
                     if let url = pullRequest.url {
                         Link(destination: url) {
@@ -100,7 +117,7 @@ public struct FeatureSourceControlView: View {
                         Label(action.title, systemImage: action.icon)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .disabled(isLoading || isRunningAction)
+                    .disabled(isRunningAction)
                 }
             }
 
@@ -131,9 +148,7 @@ public struct FeatureSourceControlView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .refreshable {
-            if !isLoading { await load() }
-        }
+        .refreshable { await reload() }
         .overlay {
             if isRunningAction {
                 ProgressView()
@@ -152,18 +167,41 @@ public struct FeatureSourceControlView: View {
         }
     }
 
+    /// Streams the cached status first so the screen fills immediately.
     private func load() async {
+        await load(force: false)
+    }
+
+    /// Explicit refresh affordances bypass the server-side status cache: the
+    /// streaming path is cache-first, so without this a reload would only
+    /// replay what the server already had.
+    private func reload() async {
+        await load(force: true)
+    }
+
+    private func load(force: Bool) async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         do {
-            let statuses = try await client.sourceControlStatuses(threadID: threadID)
-            for try await nextStatus in statuses {
-                status = nextStatus
+            if force {
+                let refreshed = try await client.sourceControlStatus(threadID: threadID)
+                guard generation == loadGeneration else { return }
+                status = refreshed
                 errorMessage = nil
+            } else {
+                let statuses = try await client.sourceControlStatuses(threadID: threadID)
+                for try await nextStatus in statuses {
+                    guard generation == loadGeneration else { return }
+                    status = nextStatus
+                    errorMessage = nil
+                }
             }
         } catch is CancellationError {
             return
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }

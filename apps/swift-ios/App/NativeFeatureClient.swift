@@ -35,6 +35,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private static let olderThreadPageUserTurnLimit = 20
     private static let projectFaviconRefreshInterval: TimeInterval = 15 * 60
     private static let projectFaviconFallbackMarker = "project-favicon-missing"
+    private static let sourceControlStatusStreamTimeoutSeconds: TimeInterval = 10
 
     private let runtime: EnvironmentRuntime
     let t3ConnectController: T3ConnectController
@@ -1888,15 +1889,41 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) async throws -> AsyncThrowingStream<FeatureSourceControlStatus, Error> {
         let route = try threadRoute(for: threadID)
         let context = try workspaceContext(route: route)
-        let events = await route.client.vcsStatusEvents(cwd: context.cwd)
+        let client = route.client
+        let environmentID = route.environmentID
+        let generation = environmentGeneration
+        let events = await client.vcsStatusEvents(cwd: context.cwd)
+        // Each element is a whole status, so only the newest one is ever useful.
         let (statuses, continuation) = AsyncThrowingStream.makeStream(
             of: FeatureSourceControlStatus.self,
-            bufferingPolicy: .bufferingNewest(2)
+            bufferingPolicy: .bufferingNewest(1)
         )
-        let task = Task {
+        let task = Task { [weak self] in
+            // The server publishes `remoteUpdated` only when the remote
+            // fingerprint changes, and backs off silently when a remote refresh
+            // fails, so the remote half may never arrive. Bound the wait rather
+            // than leaving the screen loading forever.
+            let deadline = Task {
+                try? await Task.sleep(
+                    for: .seconds(Self.sourceControlStatusStreamTimeoutSeconds)
+                )
+                guard !Task.isCancelled else { return }
+                continuation.finish()
+            }
+            defer { deadline.cancel() }
+
             var accumulator = NativeSourceControlStatusAccumulator()
             do {
                 for try await event in events {
+                    guard !Task.isCancelled else { break }
+                    guard let self else { break }
+                    guard self.isKnownClient(
+                        client,
+                        environmentID: environmentID,
+                        generation: generation
+                    ) else {
+                        break
+                    }
                     if let status = accumulator.consume(event) {
                         continuation.yield(status)
                     }

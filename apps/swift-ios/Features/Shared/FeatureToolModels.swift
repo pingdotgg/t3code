@@ -842,6 +842,9 @@ public struct FeatureSourceControlStatus: Sendable, Equatable, Codable {
     public var upstream: String?
     public var aheadCount: Int
     public var behindCount: Int
+    /// `false` while the remote half of a streamed status is still pending, so
+    /// ahead/behind/pull-request fields are "not yet known" rather than zero.
+    public var isRemoteKnown: Bool
     public var files: [FeatureSourceControlFile]
     public var pullRequest: FeaturePullRequest?
     public var isBusy: Bool
@@ -852,6 +855,7 @@ public struct FeatureSourceControlStatus: Sendable, Equatable, Codable {
         upstream: String? = nil,
         aheadCount: Int = 0,
         behindCount: Int = 0,
+        isRemoteKnown: Bool = true,
         files: [FeatureSourceControlFile] = [],
         pullRequest: FeaturePullRequest? = nil,
         isBusy: Bool = false
@@ -861,6 +865,7 @@ public struct FeatureSourceControlStatus: Sendable, Equatable, Codable {
         self.upstream = upstream
         self.aheadCount = aheadCount
         self.behindCount = behindCount
+        self.isRemoteKnown = isRemoteKnown
         self.files = files
         self.pullRequest = pullRequest
         self.isBusy = isBusy
@@ -872,13 +877,15 @@ public struct FeatureSourceControlStatus: Sendable, Equatable, Codable {
         if !files.isEmpty {
             actions.append(.commit)
             actions.append(.commitAndPush)
-            if pullRequest == nil {
+            if isRemoteKnown, pullRequest == nil {
                 actions.append(.commitPushAndCreatePullRequest)
             }
         }
         if aheadCount > 0 { actions.append(.push) }
         if behindCount > 0 { actions.append(.pull) }
-        if pullRequest == nil { actions.append(.createPullRequest) }
+        // Withheld until the remote half lands: offering it against an unknown
+        // remote can propose a second PR for a branch that already has one.
+        if isRemoteKnown, pullRequest == nil { actions.append(.createPullRequest) }
         return actions
     }
 }

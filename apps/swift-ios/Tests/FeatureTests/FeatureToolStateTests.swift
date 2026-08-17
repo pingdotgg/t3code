@@ -40,10 +40,7 @@ struct FeatureToolStateTests {
         )
     }
 
-    @Test(
-        "Cached local status is available before remote status",
-        .bug("https://github.com/saphid/t3code-personal/issues/107")
-    )
+    @Test("Cached local status is available before remote status")
     func cachedLocalStatusArrivesFirst() throws {
         var accumulator = NativeSourceControlStatusAccumulator()
 
@@ -60,12 +57,15 @@ struct FeatureToolStateTests {
         #expect(localOnly.aheadCount == 0)
         #expect(localOnly.pullRequest == nil)
         #expect(accumulator.isComplete == false)
+        // Ahead/behind are unknown rather than zero, so remote-dependent
+        // actions stay withheld until the remote half lands.
+        #expect(localOnly.isRemoteKnown == false)
+        #expect(localOnly.availableActions.contains(.createPullRequest) == false)
+        #expect(localOnly.availableActions.contains(.commitPushAndCreatePullRequest) == false)
+        #expect(localOnly.availableActions.contains(.commit))
     }
 
-    @Test(
-        "Remote status combines with the latest local status",
-        .bug("https://github.com/saphid/t3code-personal/issues/107")
-    )
+    @Test("Remote status combines with the latest local status")
     func remoteStatusUsesLatestLocalState() throws {
         var accumulator = NativeSourceControlStatusAccumulator()
         _ = accumulator.consume(
@@ -75,9 +75,9 @@ struct FeatureToolStateTests {
             .localUpdated(Self.vcsLocal(refName: "feature/new", files: ["new.swift"]))
         )
         let pullRequest = VCSChangeRequest(
-            number: 107,
+            number: 42,
             title: "Cached status",
-            url: "https://github.com/saphid/t3code-personal/pull/107",
+            url: "https://example.com/pull/42",
             baseRef: "main",
             headRef: "feature/new",
             state: "OPEN"
@@ -98,31 +98,56 @@ struct FeatureToolStateTests {
         #expect(combined.files.map(\.path) == ["new.swift"])
         #expect(combined.aheadCount == 2)
         #expect(combined.behindCount == 1)
-        #expect(combined.pullRequest?.number == 107)
+        #expect(combined.pullRequest?.number == 42)
+        #expect(combined.isRemoteKnown)
         #expect(accumulator.isComplete)
     }
 
-    @Test(
-        "Remote-before-local ordering is ignored safely",
-        .bug("https://github.com/saphid/t3code-personal/issues/107")
-    )
-    func remoteBeforeLocalIsSafe() throws {
+    @Test("Remote status is retained across a later local-only update")
+    func localUpdateKeepsKnownRemoteStatus() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(refName: "feature/one"),
+                remote: Self.vcsRemote(aheadCount: 4, behindCount: 2)
+            )
+        )
+        #expect(accumulator.isComplete)
+
+        let consumed = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/one", files: ["later.swift"]))
+        )
+        let updated = try #require(consumed)
+
+        #expect(updated.files.map(\.path) == ["later.swift"])
+        #expect(updated.aheadCount == 4)
+        #expect(updated.behindCount == 2)
+        #expect(updated.isRemoteKnown)
+        // Completion latches: a local-only update must not reopen the stream.
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("Remote-before-local ordering retains the remote status")
+    func remoteBeforeLocalIsRetained() throws {
         var accumulator = NativeSourceControlStatusAccumulator()
 
         let remoteBeforeLocal = accumulator.consume(
             .remoteUpdated(Self.vcsRemote(aheadCount: 9))
         )
         #expect(remoteBeforeLocal == nil)
+        #expect(accumulator.isComplete == false)
+
         let consumedLocal = accumulator.consume(
             .localUpdated(Self.vcsLocal(refName: "feature/local"))
         )
-        let localOnly = try #require(consumedLocal)
+        let withRetainedRemote = try #require(consumedLocal)
         let consumedRemote = accumulator.consume(
             .remoteUpdated(Self.vcsRemote(aheadCount: 3))
         )
         let combined = try #require(consumedRemote)
 
-        #expect(localOnly.aheadCount == 0)
+        #expect(withRetainedRemote.aheadCount == 9)
+        #expect(withRetainedRemote.isRemoteKnown)
         #expect(combined.branch == "feature/local")
         #expect(combined.aheadCount == 3)
         #expect(accumulator.isComplete)
@@ -130,7 +155,6 @@ struct FeatureToolStateTests {
 
     @Test(
         "Terminal local states do not wait for remote status",
-        .bug("https://github.com/saphid/t3code-personal/issues/107"),
         arguments: [
             Self.vcsLocal(isRepo: false, hasPrimaryRemote: false, refName: nil),
             Self.vcsLocal(hasPrimaryRemote: false, refName: "local-only"),
@@ -145,27 +169,33 @@ struct FeatureToolStateTests {
         #expect(status.isRepository == local.isRepo)
         #expect(status.branch == local.refName)
         #expect(status.pullRequest == nil)
+        // No remote will ever arrive, so nothing is left pending.
+        #expect(status.isRemoteKnown)
         #expect(accumulator.isComplete)
     }
 
-    @Test(
-        "Premature stream end has an explicit protocol error",
-        .bug("https://github.com/saphid/t3code-personal/issues/107")
-    )
-    func prematureStreamEndIsExplicit() {
-        let accumulator = NativeSourceControlStatusAccumulator()
+    @Test("A stream ending after only a cached local status is a protocol error")
+    func prematureStreamEndIsExplicit() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(local: Self.vcsLocal(files: ["pending.swift"]), remote: nil)
+        )
+        #expect(accumulator.isComplete == false)
 
-        do {
-            try accumulator.validateEnd()
-            Issue.record("Expected the incomplete stream to report a protocol error.")
-        } catch let error as RPCError {
-            #expect(
-                error.errorDescription
-                    == "The source-control status stream ended before completion."
+        #expect(throws: RPCError.self) { try accumulator.validateEnd() }
+    }
+
+    @Test("A completed stream ends without error")
+    func completedStreamEndIsAccepted() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(),
+                remote: Self.vcsRemote(aheadCount: 1)
             )
-        } catch {
-            Issue.record("Unexpected stream error: \(error)")
-        }
+        )
+
+        try accumulator.validateEnd()
     }
 
     @Test
