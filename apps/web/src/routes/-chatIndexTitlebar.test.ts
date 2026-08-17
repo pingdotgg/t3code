@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - Regression coverage compares the onboarding header with the shared titlebar contract.
+// @effect-diagnostics nodeBuiltinImport:off
+// Regression coverage compares the onboarding header with the shared titlebar contract.
 import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
@@ -14,7 +15,9 @@ describe("hosted static onboarding header", () => {
 
     const onboardingHeader = routeSource.slice(onboardingStart, onboardingEnd);
 
-    expect(onboardingHeader).toContain("workspace-topbar");
+    expect(onboardingHeader).toContain("h-[var(--workspace-topbar-height)]");
+    expect(onboardingHeader).toContain("min-h-[var(--workspace-topbar-height)]");
+    expect(onboardingHeader).toContain("COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS");
     expect(onboardingHeader).not.toMatch(/(?:^|\s)(?:[\w-]+:)*py-/);
   });
 });

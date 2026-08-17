@@ -1,0 +1,33 @@
+<svg width="1080" height="760" viewBox="0 0 540 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="latest-surface" x1="0" y1="0" x2="540" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FAFAF9"/>
+      <stop offset="1" stop-color="#F5F5F4"/>
+    </linearGradient>
+    <radialGradient id="latest-light" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(430 0) rotate(152) scale(320 150)">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="540" height="380" fill="url(#latest-surface)"/>
+  <rect width="540" height="112" fill="#EFEFED"/>
+  <rect width="540" height="112" fill="url(#latest-light)"/>
+  <path d="M0 111.5H540" stroke="#18181B" stroke-opacity="0.08"/>
+  <path d="M32 28H64" stroke="#18181B" stroke-width="2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, sans-serif" fill="#18181B">
+    <text x="32" y="50" font-size="12" font-weight="600" letter-spacing="1.4">T3 CODE</text>
+    <text x="32" y="82" font-size="22" font-weight="600" letter-spacing="-0.45">Desktop</text>
+    <text x="508" y="50" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="8.5" font-weight="600" letter-spacing="1.2" fill="#71717A">LATEST RELEASE</text>
+  </g>
+
+  <path d="M196 224C242 239 307 201 362 220" stroke="#71717A" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="1 7" opacity="0.42"/>
+  <circle cx="362" cy="220" r="2" fill="#71717A" opacity="0.55"/>
+  <path d="M176 204V227L182 221L187.5 232L192 229.8L186.5 219H194L176 204Z" fill="#71717A" stroke="#F7F7F5" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, sans-serif" text-anchor="middle">
+    <text x="270" y="322" font-size="13" font-weight="600" letter-spacing="-0.1" fill="#18181B">Drag T3 Code to Applications</text>
+    <text x="270" y="345" font-size="9.5" fill="#71717A">Open it from Applications when the copy finishes.</text>
+  </g>
+</svg>

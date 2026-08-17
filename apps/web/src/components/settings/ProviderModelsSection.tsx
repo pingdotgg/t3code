@@ -266,9 +266,9 @@ export function ProviderModelsSection({
                     <TooltipTrigger
                       render={
                         <Button
-                          size="icon-xs"
+                          size="icon-micro"
                           variant="ghost"
-                          className="size-5 rounded-sm p-0 text-muted-foreground/60 hover:text-muted-foreground"
+                          className="text-muted-foreground/60 hover:text-muted-foreground"
                           aria-label={`Details for ${model.name}`}
                         />
                       }
@@ -306,12 +306,9 @@ export function ProviderModelsSection({
                   <TooltipTrigger
                     render={
                       <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        className={cn(
-                          "size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground",
-                          isFavorite && "text-yellow-500 hover:text-yellow-600",
-                        )}
+                        size="icon-micro"
+                        variant="ghost-muted"
+                        className={cn(isFavorite && "text-yellow-500 hover:text-yellow-600")}
                         onClick={() => handleToggleFavorite(model.slug)}
                         aria-label={`${isFavorite ? "Remove" : "Add"} ${model.name} ${
                           isFavorite ? "from" : "to"
@@ -329,9 +326,8 @@ export function ProviderModelsSection({
                   <TooltipTrigger
                     render={
                       <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                        size="icon-micro"
+                        variant="ghost-muted"
                         disabled={!canMoveUp}
                         onClick={() => handleMove(model.slug, -1)}
                         aria-label={`Move ${model.name} up`}
@@ -346,9 +342,8 @@ export function ProviderModelsSection({
                   <TooltipTrigger
                     render={
                       <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                        size="icon-micro"
+                        variant="ghost-muted"
                         disabled={!canMoveDown}
                         onClick={() => handleMove(model.slug, 1)}
                         aria-label={`Move ${model.name} down`}
@@ -364,9 +359,8 @@ export function ProviderModelsSection({
                     <TooltipTrigger
                       render={
                         <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                          size="icon-micro"
+                          variant="ghost-muted"
                           onClick={() => handleToggleHidden(model.slug)}
                           aria-label={`${isHidden ? "Show" : "Hide"} ${model.name}`}
                         />
@@ -388,9 +382,8 @@ export function ProviderModelsSection({
                     <TooltipTrigger
                       render={
                         <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                          size="icon-micro"
+                          variant="ghost-muted"
                           aria-label={`Remove ${model.slug}`}
                           onClick={() => handleRemove(model.slug)}
                         />
