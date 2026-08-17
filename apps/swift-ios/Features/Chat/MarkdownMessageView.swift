@@ -303,6 +303,9 @@ private struct MarkdownBlockView: View, Equatable {
                 selectionContext: selectionContext
             )
 
+        case let .image(source, alt):
+            MarkdownWorkspaceImageView(source: source, alt: alt)
+
         case .thematicBreak:
             Rectangle()
                 .fill(T3Colors.separator)

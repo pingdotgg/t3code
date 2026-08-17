@@ -26,7 +26,92 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case blockquote(MarkdownDocument)
     case table(MarkdownTable)
     case codeBlock(language: String?, code: String)
+    case image(source: String, alt: String)
     case thematicBreak
+}
+
+/// A Markdown image reference that stands alone on its line. Foundation's inline
+/// parser keeps only the alternative text, so images need their own block to be
+/// rendered rather than silently flattened into the surrounding prose.
+struct MarkdownImageReference: Equatable, Sendable {
+    let source: String
+    let alt: String
+
+    static func parse(_ line: String) -> Self? {
+        // Every line of every message reaches this check, so reject the common
+        // case before materializing the line.
+        let trimmed = line.markdownTrimmed
+        guard trimmed.hasPrefix("!["), trimmed.hasSuffix(")") else { return nil }
+
+        let characters = Array(trimmed)
+        guard characters.count > 4 else { return nil }
+        guard let altEnd = matchingDelimiter(
+            in: characters,
+            from: 1,
+            open: "[",
+            close: "]"
+        ) else {
+            return nil
+        }
+
+        let destinationStart = altEnd + 1
+        guard destinationStart < characters.count,
+              characters[destinationStart] == "(",
+              let destinationEnd = matchingDelimiter(
+                  in: characters,
+                  from: destinationStart,
+                  open: "(",
+                  close: ")"
+              ),
+              // Only a line that is nothing but the image becomes a block; an
+              // image inside a sentence stays inline text.
+              destinationEnd == characters.count - 1 else {
+            return nil
+        }
+
+        let destination = String(characters[(destinationStart + 1)..<destinationEnd])
+        guard let source = self.source(in: destination), !source.isEmpty else { return nil }
+        return Self(source: source, alt: String(characters[2..<altEnd]))
+    }
+
+    /// Drops the optional title and the optional angle-bracket wrapper that
+    /// CommonMark allows around a link destination.
+    private static func source(in destination: String) -> String? {
+        let trimmed = destination.markdownTrimmed
+        if trimmed.first == "<" {
+            guard let closing = trimmed.firstIndex(of: ">") else { return nil }
+            return String(trimmed[trimmed.index(after: trimmed.startIndex)..<closing])
+        }
+        return trimmed
+            .split(whereSeparator: { $0.isMarkdownWhitespace })
+            .first
+            .map(String.init)
+    }
+
+    private static func matchingDelimiter(
+        in characters: [Character],
+        from start: Int,
+        open: Character,
+        close: Character
+    ) -> Int? {
+        var depth = 0
+        var cursor = start
+        while cursor < characters.count {
+            let character = characters[cursor]
+            if character == "\\" {
+                cursor += 2
+                continue
+            }
+            if character == open {
+                depth += 1
+            } else if character == close {
+                depth -= 1
+                if depth == 0 { return cursor }
+            }
+            cursor += 1
+        }
+        return nil
+    }
 }
 
 struct MarkdownTable: Equatable, Sendable {
@@ -106,6 +191,12 @@ private struct MarkdownBlockParser {
 
             if isThematicBreak(lines[index]) {
                 blocks.append(.thematicBreak)
+                index += 1
+                continue
+            }
+
+            if let image = MarkdownImageReference.parse(lines[index]) {
+                blocks.append(.image(source: image.source, alt: image.alt))
                 index += 1
                 continue
             }
@@ -262,7 +353,9 @@ private struct MarkdownBlockParser {
 
         while index < lines.count, !lines[index].isMarkdownBlank {
             if !paragraphLines.isEmpty,
-               (isBlockStarter(lines[index]) || tableOpening(at: index) != nil) {
+               isBlockStarter(lines[index])
+                   || tableOpening(at: index) != nil
+                   || MarkdownImageReference.parse(lines[index]) != nil {
                 break
             }
             paragraphLines.append(lines[index].markdownTrimmedTrailing)

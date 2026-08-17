@@ -427,6 +427,55 @@ struct MarkdownDocumentTests {
         )
     }
 
+    @Test
+    func liftsStandaloneImageReferencesIntoTheirOwnBlock() {
+        let document = MarkdownDocument(
+            parsing: """
+            Here is the render:
+            ![Generated image](out/render.png)
+
+            ![](docs/diagram.svg "Architecture")
+
+            - ![Icon](assets/icon.png)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .paragraph("Here is the render:"),
+                .image(source: "out/render.png", alt: "Generated image"),
+                .image(source: "docs/diagram.svg", alt: ""),
+                .unorderedList([
+                    MarkdownListItem(
+                        task: nil,
+                        blocks: [.image(source: "assets/icon.png", alt: "Icon")]
+                    ),
+                ]),
+            ]
+        )
+    }
+
+    @Test
+    func keepsImagesInsideProseAsParagraphText() {
+        let document = MarkdownDocument(
+            parsing: """
+            See ![inline](a.png) here.
+
+            ![unterminated](a.png
+
+            [Not an image](b.png)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .paragraph("See ![inline](a.png) here."),
+                .paragraph("![unterminated](a.png"),
+                .paragraph("[Not an image](b.png)"),
+            ]
+        )
+    }
+
     private func index(of substring: String, in text: NSString) -> Int? {
         let range = text.range(of: substring)
         return range.location == NSNotFound ? nil : range.location

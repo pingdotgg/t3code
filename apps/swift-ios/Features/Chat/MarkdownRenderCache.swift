@@ -152,6 +152,7 @@ indirect enum MarkdownRenderedBlock: Equatable, @unchecked Sendable {
     case blockquote([MarkdownRenderedBlock])
     case table(MarkdownRenderedTable)
     case codeBlock(language: String?, code: String, inline: MarkdownRenderedInline)
+    case image(source: String, alt: String)
     case thematicBreak
 }
 
@@ -387,6 +388,12 @@ final class MarkdownRenderCache: @unchecked Sendable {
             case let .codeBlock(language, code):
                 guard let inline = renderInline(code, style: .code) else { return nil }
                 rendered = .codeBlock(language: language, code: code, inline: inline)
+
+            case let .image(source, alt):
+                // Images carry no inline runs; the destination stays a plain
+                // reference so a rendered document is independent of the thread
+                // that later resolves it.
+                rendered = .image(source: source, alt: alt)
 
             case .thematicBreak:
                 rendered = .thematicBreak
