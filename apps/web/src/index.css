@@ -398,60 +398,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--app-scrollbar-width) 100%;
 }
 
-/* The branch's slim chat chrome sizes every titlebar row off one variable so
-   web, desktop, and the no-thread state stay in lockstep. */
-@utility workspace-topbar {
-  display: flex;
-  height: var(--workspace-topbar-height);
-  min-height: var(--workspace-topbar-height);
-  flex-shrink: 0;
-  align-items: center;
-}
-
-/* Fade timeline rows as they pass beneath the transparent top chrome. The
-   third mask column keeps the scrollbar visible for the full height, and the
-   long ramp reads as depth rather than a hard clip when the header and
-   timeline share a background. */
-@utility chat-timeline-scroll-fade {
-  --topbar-scroll-fade-height: 2.5rem;
-  -webkit-mask-image:
-    linear-gradient(
-      to bottom,
-      transparent 0%,
-      rgb(0 0 0 / 10%) 10%,
-      rgb(0 0 0 / 30%) 24%,
-      rgb(0 0 0 / 58%) 42%,
-      rgb(0 0 0 / 82%) 62%,
-      rgb(0 0 0 / 96%) 82%,
-      black 100%
-    ),
-    linear-gradient(black, black), linear-gradient(black, black);
-  -webkit-mask-position: top, bottom, right;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size:
-    100% var(--topbar-scroll-fade-height),
-    100% calc(100% - var(--topbar-scroll-fade-height)),
-    var(--app-scrollbar-width) 100%;
-  mask-image:
-    linear-gradient(
-      to bottom,
-      transparent 0%,
-      rgb(0 0 0 / 10%) 10%,
-      rgb(0 0 0 / 30%) 24%,
-      rgb(0 0 0 / 58%) 42%,
-      rgb(0 0 0 / 82%) 62%,
-      rgb(0 0 0 / 96%) 82%,
-      black 100%
-    ),
-    linear-gradient(black, black), linear-gradient(black, black);
-  mask-position: top, bottom, right;
-  mask-repeat: no-repeat;
-  mask-size:
-    100% var(--topbar-scroll-fade-height),
-    100% calc(100% - var(--topbar-scroll-fade-height)),
-    var(--app-scrollbar-width) 100%;
-}
-
 /* Stage-channel art needs a mask and pseudo-element gradient, so keep the
    behavior composable without tying it to the global components layer. */
 @utility sidebar-stage-backdrop {
@@ -736,16 +682,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
-  .workspace-titlebar-controls {
-    position: absolute;
-    top: var(--workspace-controls-top);
-    right: var(--workspace-controls-right);
-    display: flex;
-    height: var(--workspace-topbar-height);
-    align-items: center;
-    -webkit-app-region: no-drag;
-  }
-
   .surface-subheader {
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
   }
@@ -866,6 +802,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   .chat-composer-glass-host {
     position: relative;
     box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+
+    @variant dark {
+      box-shadow: none;
+
+      &::after {
+        box-shadow: inset 0 1px var(--chat-composer-highlight);
+      }
+    }
   }
 
   .chat-composer-glass-host::after {
@@ -894,6 +838,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   .chat-composer-context-strip {
     position: relative;
     isolation: isolate;
+
+    @variant dark {
+      &::before {
+        border-color: rgb(255 255 255 / 7%);
+        background:
+          linear-gradient(
+            to bottom,
+            transparent 0 1rem,
+            rgb(0 0 0 / 18%) 1rem,
+            transparent calc(1rem + 10px)
+          ),
+          rgb(255 255 255 / 2%);
+        box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+      }
+    }
   }
 
   .chat-composer-queue-strip {
@@ -901,6 +860,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --chat-composer-queue-surface: var(--card);
 
     isolation: isolate;
+
+    @variant dark {
+      --chat-composer-queue-outline: rgb(255 255 255 / 7%);
+      --chat-composer-queue-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+
+      &::before {
+        box-shadow:
+          inset 0 1px rgb(255 255 255 / 3%),
+          0 -12px 28px -24px rgb(0 0 0 / 80%);
+      }
+    }
   }
 
   .chat-composer-queue-strip::before {
@@ -933,44 +903,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     content: "";
   }
 
-  .dark .chat-composer-glass-shell {
-    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
-    --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
-    --chat-composer-highlight: rgb(255 255 255 / 3%);
-  }
-
-  .dark .chat-composer-queue-strip {
-    --chat-composer-queue-outline: rgb(255 255 255 / 7%);
-    --chat-composer-queue-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
-  }
-
-  .dark .chat-composer-queue-strip::before {
-    box-shadow:
-      inset 0 1px rgb(255 255 255 / 3%),
-      0 -12px 28px -24px rgb(0 0 0 / 80%);
-  }
-
-  .dark .chat-composer-glass-host {
-    box-shadow: none;
-  }
-
-  .dark .chat-composer-glass-host::after {
-    box-shadow: inset 0 1px var(--chat-composer-highlight);
-  }
-
-  .dark .chat-composer-context-strip::before {
-    border-color: rgb(255 255 255 / 7%);
-    background:
-      linear-gradient(
-        to bottom,
-        transparent 0 1rem,
-        rgb(0 0 0 / 18%) 1rem,
-        transparent calc(1rem + 10px)
-      ),
-      rgb(255 255 255 / 2%);
-    box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
-  }
-
   @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
     .chat-composer-glass-shell-with-context::before {
       inset-block-end: var(--chat-composer-context-extension);
@@ -988,16 +920,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
     }
 
-    .dark .chat-composer-context-strip::before {
-      background:
-        linear-gradient(
-          to bottom,
-          transparent 0 1rem,
-          rgb(0 0 0 / 18%) 1rem,
-          transparent calc(1rem + 10px)
-        ),
-        linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
-        color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+    .chat-composer-context-strip {
+      @variant dark {
+        &::before {
+          background:
+            linear-gradient(
+              to bottom,
+              transparent 0 1rem,
+              rgb(0 0 0 / 18%) 1rem,
+              transparent calc(1rem + 10px)
+            ),
+            linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+            color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+        }
+      }
     }
   }
 
@@ -1028,64 +964,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .alert-glass[data-variant="warning"] {
     --alert-glass-tint: var(--warning);
-  }
-
-  .dialog-glass {
-    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  }
-
-  .dialog-backdrop {
-    background: color-mix(in srgb, var(--background) 60%, transparent);
-    -webkit-backdrop-filter: blur(4px);
-    backdrop-filter: blur(4px);
-  }
-
-  .dropdown-glass {
-    /*
-     * Elevated glass needs a denser tint than broad ambient surfaces. Nesting
-     * the user-controlled mix inside an 18% popover tint preserves the full
-     * opacity setting range (40% -> 51%, 80% -> 84%, 100% -> 100%) while
-     * keeping high-contrast page content from blooming through menus.
-     */
-    background: color-mix(
-      in srgb,
-      var(--popover) 18%,
-      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
-    );
-    -webkit-backdrop-filter: blur(var(--glass-blur));
-    backdrop-filter: blur(var(--glass-blur));
-    border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
-    box-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
-  }
-
-  .dialog-glass {
-    border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
-    box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
-  }
-
-  .dark .dropdown-glass {
-    box-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
-  }
-
-  .dark .model-picker-surface.model-picker-surface {
-    background: color-mix(
-      in srgb,
-      var(--popover) 18%,
-      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
-    );
-  }
-
-  .dark .dialog-glass {
-    border-color: color-mix(in srgb, var(--color-white) 8%, transparent);
-    box-shadow:
-      inset 0 1px rgb(255 255 255 / 4%),
-      0 24px 72px -20px rgb(0 0 0 / 90%);
-  }
-
-  .dark .dialog-backdrop {
-    background: color-mix(in srgb, var(--background) 64%, transparent);
   }
 
   .glass-opacity-slider {
@@ -1429,10 +1307,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 40rem) {
-    .chat-timeline-scroll-fade {
-      --topbar-scroll-fade-height: 3rem;
-    }
-
     .messages-timeline-row-frame {
       padding-inline-start: 1.25rem;
       padding-inline-end: calc(1.25rem + var(--thread-details-panel-inset));
