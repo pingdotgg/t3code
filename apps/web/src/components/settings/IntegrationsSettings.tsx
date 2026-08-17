@@ -657,6 +657,17 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     sourceProfileDirectory: string,
     target: "new" | { readonly id: string; readonly name: string },
   ) => {
+    // Checked before creating anything. `runImport` bails on the same
+    // condition, so creating first left an empty profile named after the
+    // source browser behind, with no toast to explain it.
+    if (!environmentId || !previewBridge) {
+      toastManager.add({
+        type: "error",
+        title: `Could not import from ${source.name}`,
+        description: "No environment is connected yet.",
+      });
+      return;
+    }
     if (target === "new") {
       const created = createProfile(source.name);
       runImport(source, sourceProfileDirectory, created.id, created.name);
