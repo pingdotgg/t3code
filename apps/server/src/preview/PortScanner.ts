@@ -749,7 +749,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const releaseRetention = Effect.fn("PortDiscovery.releaseRetention")(function* (
     configuredUrls: ReadonlyArray<string>,
   ) {
-    const becameIdle = yield* Ref.modify(stateRef, (state) => {
+    const updateRetention = Ref.modify(stateRef, (state) => {
       const retainCount = Math.max(0, state.retainCount - 1);
       const retainedConfiguredUrls = new Map(state.retainedConfiguredUrls);
       for (const configuredUrl of configuredUrls) {
@@ -777,6 +777,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         },
       ] as const;
     });
+    const becameIdle = yield* scanLock.withPermit(updateRetention);
     if (becameIdle) yield* wakePollSchedule;
   });
 
@@ -821,13 +822,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   ) {
     let replayFailed = false;
     while (true) {
-      const notification = yield* Queue.take(registration.notifications);
-      if (replayFailed) {
-        yield* Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore);
-        continue;
-      }
-      const delivery = yield* Effect.uninterruptibleMask((restore) =>
+      const result = yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
+          const notification = yield* restore(Queue.take(registration.notifications));
+          if (replayFailed) {
+            yield* Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore);
+            return undefined;
+          }
           const delivery = yield* Effect.exit(
             restore(
               registration
@@ -836,15 +837,16 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             ),
           );
           yield* Deferred.succeed(notification.deliveryResult, delivery).pipe(Effect.ignore);
-          return delivery;
+          return { delivery, isReplay: notification.isReplay };
         }),
       );
-      if (notification.isReplay) {
-        replayFailed = Exit.isFailure(delivery);
-      } else if (Exit.isFailure(delivery)) {
+      if (result === undefined) continue;
+      if (result.isReplay) {
+        replayFailed = Exit.isFailure(result.delivery);
+      } else if (Exit.isFailure(result.delivery)) {
         yield* Effect.logWarning(
           "preview port snapshot listener failed",
-          Cause.pretty(delivery.cause),
+          Cause.pretty(result.delivery.cause),
         );
       }
     }

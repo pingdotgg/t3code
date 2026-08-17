@@ -1099,6 +1099,63 @@ effectIt("does not replay an earlier retained snapshot when the next retain scan
   }).pipe(Effect.provide(layer));
 });
 
+effectIt("serializes final-retainer invalidation with an in-flight scan", () => {
+  const secondProbeStarted = Deferred.makeUnsafe<void>();
+  const releaseSecondProbe = Deferred.makeUnsafe<void>();
+  const replayedPorts: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.gen(function* () {
+      probeCount += 1;
+      if (probeCount === 2) {
+        yield* Deferred.succeed(secondProbeStarted, undefined).pipe(Effect.ignore);
+        yield* Deferred.await(releaseSecondProbe);
+      }
+      return {
+        stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const retentionScope = yield* Scope.make();
+    yield* scanner.retain().pipe(Effect.provideService(Scope.Scope, retentionScope));
+
+    const scanFiber = yield* scanner
+      .registerTerminalProcesses({
+        threadId: "thread-1",
+        terminalId: "terminal-1",
+        processIds: [101],
+      })
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(secondProbeStarted);
+
+    const releaseFiber = yield* Scope.close(retentionScope, Exit.void).pipe(Effect.forkScoped);
+    yield* Effect.yieldNow;
+    expect(releaseFiber.pollUnsafe()).toBeUndefined();
+
+    yield* Deferred.succeed(releaseSecondProbe, undefined);
+    yield* Fiber.join(scanFiber);
+    yield* Fiber.join(releaseFiber);
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        replayedPorts.push(servers.map((server) => server.port));
+      }),
+    );
+
+    expect(probeCount).toBe(2);
+    expect(replayedPorts).toEqual([[]]);
+  }).pipe(Effect.provide(layer));
+});
+
 effectIt("removes listeners when initial snapshot replay fails", () => {
   const defect = new Error("snapshot replay failed");
   const healthyDeliveries: Array<ReadonlyArray<number>> = [];
