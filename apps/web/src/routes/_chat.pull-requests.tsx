@@ -78,6 +78,7 @@ import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { Button } from "../components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../components/ui/menu";
 import { SidebarInset } from "../components/ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import {
   selectActiveRightPanelSurface,
@@ -971,7 +972,6 @@ function PullRequestsRouteView() {
   useLiveRefresh(
     () => {
       refreshList();
-      baselineQuery.refresh();
       authoredQuery.refresh();
       reviewingQuery.refresh();
     },
@@ -1639,22 +1639,33 @@ function CompactFilterMenu<Value extends string>({
       </MenuTrigger>
       <MenuPopup align="start" side="bottom" className="min-w-40">
         <MenuRadioGroup value={value} onValueChange={(next) => onChange(next as Value)}>
-          {options.map((option) => (
-            <MenuRadioItem
-              key={option.value}
-              value={option.value}
-              // A host the server has already said it cannot read is not a choice here either.
-              // The pills disable it; a menu that offers it would answer the press by replacing
-              // a working list with the same failure the pill row exists to explain.
-              disabled={option.unavailable !== undefined}
-              title={option.unavailable}
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <option.Icon aria-hidden className="size-3.5" />
-                {option.label}
-              </span>
-            </MenuRadioItem>
-          ))}
+          {options.map((option) => {
+            // A host the server has already said it cannot read is not a choice here either.
+            // The pills disable it; a menu that offers it would answer the press by replacing
+            // a working list with the same failure the pill row exists to explain.
+            const item = (
+              <MenuRadioItem
+                key={option.value}
+                value={option.value}
+                className={option.unavailable ? "data-disabled:pointer-events-auto" : undefined}
+                disabled={option.unavailable !== undefined}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <option.Icon aria-hidden className="size-3.5" />
+                  {option.label}
+                </span>
+              </MenuRadioItem>
+            );
+            if (!option.unavailable) return item;
+            return (
+              <Tooltip key={option.value}>
+                <TooltipTrigger render={item} />
+                <TooltipPopup side="top" className="max-w-80">
+                  {option.unavailable}
+                </TooltipPopup>
+              </Tooltip>
+            );
+          })}
         </MenuRadioGroup>
       </MenuPopup>
     </Menu>

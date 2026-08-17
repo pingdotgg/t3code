@@ -537,15 +537,21 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               {props.projectTitle}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
-              <button
-                type="button"
-                aria-label="Discard draft"
-                title="Discard draft"
-                onClick={handleDiscard}
-                className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
-              >
-                <XIcon className="size-3" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Discard draft"
+                      onClick={handleDiscard}
+                      className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  }
+                />
+                <TooltipPopup side="top">Discard draft</TooltipPopup>
+              </Tooltip>
             </span>
           </div>
           <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
@@ -1247,16 +1253,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ) : isWoke ? (
                   // A wake can land straight in the settled tail (e.g. PR
                   // merged while snoozed); the signal must survive the trip.
-                  <button
-                    type="button"
-                    aria-label="Dismiss Woke notification"
-                    title="Dismiss Woke notification"
-                    onClick={handleAcknowledgeWokeClick}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-amber-700 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-300"
-                  >
-                    <AlarmClockIcon aria-hidden className="size-3" />
-                    <span role="status">Woke</span>
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label="Dismiss Woke notification"
+                          onClick={handleAcknowledgeWokeClick}
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-amber-700 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-300"
+                        >
+                          <AlarmClockIcon aria-hidden className="size-3" />
+                          <span role="status">Woke</span>
+                        </button>
+                      }
+                    />
+                    <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+                  </Tooltip>
                 ) : (
                   <span className="text-xs">
                     {variantAction === "unsettle"
@@ -1414,19 +1426,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 >
                   {topStatus ? (
                     isWokeStatus ? (
-                      <button
-                        type="button"
-                        aria-label="Dismiss Woke notification"
-                        title="Dismiss Woke notification"
-                        onClick={handleAcknowledgeWokeClick}
-                        className={cn(
-                          "inline-flex cursor-pointer items-center gap-1 rounded-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
-                          topStatus.className,
-                        )}
-                      >
-                        <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                        <span role="status">{topStatus.label}</span>
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              aria-label="Dismiss Woke notification"
+                              onClick={handleAcknowledgeWokeClick}
+                              className={cn(
+                                "inline-flex cursor-pointer items-center gap-1 rounded-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+                                topStatus.className,
+                              )}
+                            >
+                              <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                              <span role="status">{topStatus.label}</span>
+                            </button>
+                          }
+                        />
+                        <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+                      </Tooltip>
                     ) : (
                       <span
                         className={cn(
