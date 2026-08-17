@@ -529,6 +529,50 @@ describe("runSourceControlServerMetadataUpdate", () => {
     ]);
   });
 
+  it("unlocks a successful guard observed while its request is pending", async () => {
+    const queue = createSourceControlServerMetadataUpdateQueue();
+    const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
+    let releaseFirst: (() => void) | undefined;
+    const updateThreadMetadata = async (
+      input: Parameters<Parameters<typeof queue.enqueue>[0]["updateThreadMetadata"]>[0],
+    ) => {
+      calls.push({
+        expectedBranch: input.input.expectedBranch ?? null,
+        branch: input.input.branch ?? null,
+      });
+      if (calls.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return AsyncResult.success(undefined);
+    };
+
+    const first = queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/one", worktreePath: null },
+      updateThreadMetadata,
+    });
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "feature/one");
+    releaseFirst?.();
+    await first;
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "external/branch");
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "external/branch",
+      metadata: { branch: "feature/two", worktreePath: null },
+      updateThreadMetadata,
+    });
+
+    expect(calls).toEqual([
+      { expectedBranch: "main", branch: "feature/one" },
+      { expectedBranch: "external/branch", branch: "feature/two" },
+    ]);
+  });
+
   it("drops stale thrown errors after a newer server-thread metadata request", async () => {
     const result = await runSourceControlServerMetadataUpdate({
       activeThreadRef,

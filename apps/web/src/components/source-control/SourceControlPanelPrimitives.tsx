@@ -642,7 +642,8 @@ export function IconButton({
             disabled={disabled || loading}
             className={cn(
               "size-6",
-              destructive && "text-destructive-foreground hover:text-destructive-foreground",
+              destructive &&
+                "[--control-icon-color:currentColor] text-destructive-foreground hover:text-destructive-foreground",
             )}
             onClick={onClick}
           >
