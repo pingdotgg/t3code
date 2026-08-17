@@ -19,6 +19,7 @@ import {
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
+  terminalCursorViewportPoint,
   terminalSelectionAutoscrollRate,
   terminalSelectionKeyMove,
   terminalSelectionKeyTarget,
@@ -482,6 +483,20 @@ describe("terminalSelectionKeyMove", () => {
     expect(terminalSelectionKeyMove(event({ ctrlKey: true }), 24)).toBeNull();
     expect(terminalSelectionKeyMove(event({ altKey: true }), 24)).toBeNull();
     expect(terminalSelectionKeyMove(event({ key: "x" }), 24)).toBeNull();
+  });
+});
+
+describe("terminalCursorViewportPoint", () => {
+  it("reports the cursor cell while it is on screen", () => {
+    expect(terminalCursorViewportPoint({ cursorX: 12, cursorY: 3 })).toEqual({ x: 12, y: 3 });
+    expect(terminalCursorViewportPoint({ cursorX: 0, cursorY: 0 })).toEqual({ x: 0, y: 0 });
+  });
+
+  it("has no point for a cursor scrolled out of the viewport", () => {
+    // Ghostty encodes that state as -1; clamping it would silently anchor a
+    // keyboard selection at the top left of the viewport instead.
+    expect(terminalCursorViewportPoint({ cursorX: -1, cursorY: -1 })).toBeNull();
+    expect(terminalCursorViewportPoint(null)).toBeNull();
   });
 });
 

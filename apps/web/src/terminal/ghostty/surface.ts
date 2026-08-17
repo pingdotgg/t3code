@@ -3,6 +3,7 @@ import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../term
 import {
   GhosttyTerminalCore,
   type GhosttyScrollbar,
+  type GhosttySelectionRange,
   type GhosttySnapshot,
   type GhosttyTheme,
 } from "./core";
@@ -408,6 +409,19 @@ export function terminalSelectionKeyMove(
     default:
       return null;
   }
+}
+
+/**
+ * The cursor's viewport cell, or null when it has none. Ghostty reports a
+ * cursor scrolled out of the viewport as -1, and grid refs clamp negatives to
+ * zero — so a caller that forwards it unchecked silently anchors at the top
+ * left of the viewport instead of at the cursor.
+ */
+export function terminalCursorViewportPoint(
+  snapshot: { readonly cursorX: number; readonly cursorY: number } | null,
+): { readonly x: number; readonly y: number } | null {
+  if (snapshot === null || snapshot.cursorX < 0 || snapshot.cursorY < 0) return null;
+  return { x: snapshot.cursorX, y: snapshot.cursorY };
 }
 
 /** Where a keyboard move lands, clamped to the grid and the scrollback. */
@@ -995,30 +1009,32 @@ export class GhosttyTerminalSurface {
   }
 
   /**
-   * Whether the cell under these client coordinates belongs to command output
-   * Ghostty can bound. Requires OSC 133 marks from the shell, so an unmarked
-   * shell reports false everywhere and callers can hide the affordance.
+   * The bounds of the command output under these client coordinates, or null
+   * when there is none. Requires OSC 133 marks from the shell, so an unmarked
+   * shell reports null everywhere and callers can hide the affordance.
+   *
+   * Callers that act on this later must keep the returned range rather than the
+   * coordinates: a menu takes time to answer, and streaming output or a scroll
+   * puts a different command under the same point by the time it does. Screen
+   * coordinates stay pinned to their content, so the range survives that.
    */
-  hasCommandOutputAt(clientX: number, clientY: number): boolean {
+  commandOutputRangeAt(clientX: number, clientY: number): GhosttySelectionRange["screen"] | null {
     const cell = this.cellAt(clientX, clientY);
-    return this.core.outputRangeAt(cell.x, cell.y) !== null;
+    return this.core.outputRangeAt(cell.x, cell.y);
   }
 
-  /** Selects the full output of the command that produced this cell. */
-  selectCommandOutputAt(clientX: number, clientY: number): boolean {
-    const cell = this.cellAt(clientX, clientY);
-    const screen = this.core.selectOutput(cell.x, cell.y);
-    if (screen === null) return false;
+  /** Selects a command output range captured earlier by `commandOutputRangeAt`. */
+  selectCommandOutputRange(range: GhosttySelectionRange["screen"]): void {
     this.selectionEnd = null;
     this.selectionMode = "cell";
     this.selectionBase = null;
     this.selectionRectangle = false;
-    this.selectionAnchorScreen = screen.start;
-    this.selectionEndScreen = screen.end;
+    this.selectionAnchorScreen = range.start;
+    this.selectionEndScreen = range.end;
+    this.core.setSelection({ ...range.start, tag: 2 }, { ...range.end, tag: 2 });
     this.options.onSelectionChange();
     this.forceFullRender = true;
     this.requestRender();
-    return true;
   }
 
   clearSelection(): void {
@@ -1448,11 +1464,12 @@ export class GhosttyTerminalSurface {
    */
   private extendSelectionByKey(move: TerminalSelectionKeyMove): void {
     const state = this.readScrollbarState();
+    const cursor = terminalCursorViewportPoint(this.snapshot);
+    // No selection and no on-screen cursor means there is nothing to extend
+    // from; anchoring anywhere else would select a region the user never chose.
     const origin =
       this.selectionEndScreen ??
-      (this.snapshot === null
-        ? null
-        : this.core.viewportPointToScreen(this.snapshot.cursorX, this.snapshot.cursorY));
+      (cursor === null ? null : this.core.viewportPointToScreen(cursor.x, cursor.y));
     if (origin === null) return;
     if (this.selectionAnchorScreen === null) {
       this.selectionAnchorScreen = origin;

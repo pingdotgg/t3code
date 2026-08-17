@@ -644,13 +644,17 @@ export function TerminalViewport({
         clearSelectionAction();
         const selectionAction = readSelectionAction();
         const requestId = selectionActionRequestIdRef.current;
+        // Resolve the command under the pointer now and act on that range, not
+        // on the coordinates: the menu is asynchronous, and output arriving
+        // while it is open would put a different command under the same point.
+        const commandOutput =
+          terminalRef.current?.commandOutputRangeAt(event.clientX, event.clientY) ?? null;
         let clicked: TerminalContextMenuAction | null;
         try {
           clicked = await localApi.contextMenu.show(
             terminalContextMenuItems({
               hasSelection: selectionAction !== null,
-              hasCommandOutput:
-                terminalRef.current?.hasCommandOutputAt(event.clientX, event.clientY) === true,
+              hasCommandOutput: commandOutput !== null,
             }),
             { x: event.clientX, y: event.clientY },
           );
@@ -674,7 +678,7 @@ export function TerminalViewport({
             focusIfCurrent(requestId);
             return;
           case "select-output":
-            terminalRef.current?.selectCommandOutputAt(event.clientX, event.clientY);
+            if (commandOutput) terminalRef.current?.selectCommandOutputRange(commandOutput);
             focusIfCurrent(requestId);
             return;
           case "paste":
