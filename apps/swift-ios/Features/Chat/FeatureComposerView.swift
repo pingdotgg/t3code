@@ -293,7 +293,19 @@ struct FeatureComposerView: View {
                 materializesDefaultSelection: materializesDefaultSelection
             )
             .frame(maxWidth: 220, alignment: .leading)
-            .layoutPriority(2)
+            .layoutPriority(1)
+
+            if let reasoningSummary {
+                Text(reasoningSummary)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 28, maxWidth: 96, alignment: .trailing)
+                    .layoutPriority(2)
+                    .accessibilityLabel("Reasoning level")
+                    .accessibilityValue(reasoningSummary)
+            }
 
             Spacer(minLength: 0)
 
@@ -374,6 +386,15 @@ struct FeatureComposerView: View {
         DailyUXModelOptions.supportsImages(
             selection: selection ?? threadSelection,
             providers: providers
+        )
+    }
+
+    private var reasoningSummary: String? {
+        FeatureComposerReasoningSummary.resolve(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
         )
     }
 

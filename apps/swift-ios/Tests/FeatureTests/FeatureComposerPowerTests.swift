@@ -167,6 +167,71 @@ struct FeatureComposerPowerTests {
         #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
     }
 
+    @Test(
+        "Reasoning label follows the effective composer selection",
+        .bug("https://github.com/saphid/t3code-personal/issues/106")
+    )
+    func reasoningLabelFollowsEffectiveSelectionAndHidesInvalidModels() {
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "sol",
+                        name: "A deliberately long model name that must truncate",
+                        options: [
+                            .init(
+                                id: "reasoningEffort",
+                                label: "Reasoning effort",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "low", label: "Low"),
+                                    .init(id: "high", label: "High"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+        let inherited = FeatureSelection(
+            providerID: "codex",
+            modelID: "sol",
+            options: [.init(id: "reasoningEffort", value: .string("low"))]
+        )
+        let current = FeatureSelection(
+            providerID: "codex",
+            modelID: "sol",
+            options: [.init(id: "reasoningEffort", value: .string("high"))]
+        )
+
+        #expect(
+            FeatureComposerReasoningSummary.resolve(
+                explicit: current,
+                inherited: inherited,
+                providers: providers,
+                materializesDefaultSelection: false
+            ) == "High"
+        )
+        #expect(
+            FeatureComposerReasoningSummary.resolve(
+                explicit: nil,
+                inherited: inherited,
+                providers: providers,
+                materializesDefaultSelection: false
+            ) == "Low"
+        )
+        #expect(
+            FeatureComposerReasoningSummary.resolve(
+                explicit: .init(providerID: "codex", modelID: "missing"),
+                inherited: nil,
+                providers: providers,
+                materializesDefaultSelection: true
+            ) == nil
+        )
+    }
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
