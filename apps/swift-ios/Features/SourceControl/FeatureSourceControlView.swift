@@ -1,5 +1,20 @@
 import SwiftUI
 
+@MainActor
+func runFeatureSourceControlAction<Value>(
+    setRunning: (Bool) -> Void,
+    operation: () async throws -> Value
+) async -> Result<Value, Error> {
+    setRunning(true)
+    defer { setRunning(false) }
+
+    do {
+        return .success(try await operation())
+    } catch {
+        return .failure(error)
+    }
+}
+
 public struct FeatureSourceControlView: View {
     let client: any FeatureClient
     let threadID: String
@@ -9,6 +24,9 @@ public struct FeatureSourceControlView: View {
     @State private var isRunningAction = false
     @State private var runState = FeatureToolRunState<FeatureSourceControlOperation>()
     @State private var recovery = FeatureToolFailureState<FeatureSourceControlOperation>()
+    @State private var errorMessage: String?
+    @State private var loadGeneration = 0
+    @State private var statusGeneration = 0
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
     @AccessibilityFocusState private var recoveryFocus: FeatureToolRecoveryFocus?
@@ -48,9 +66,15 @@ public struct FeatureSourceControlView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
-                    .disabled(isLoading || runState.isBusy)
-                    .accessibilityLabel("Reload source control")
+                Button { Task { await reload() } } label: {
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(runState.isBusy)
+                .accessibilityLabel("Reload source control")
             }
         }
         .alert("Commit changes", isPresented: Binding(
@@ -140,19 +164,41 @@ public struct FeatureSourceControlView: View {
 
     private func statusList(_ status: FeatureSourceControlStatus) -> some View {
         List {
+            // Once a status is on screen the unavailable-state view is
+            // unreachable, so a later failure needs its own inline surface.
+            if let errorMessage {
+                Section {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(.orange)
+                }
+            }
+
             Section("Repository") {
                 LabeledContent("Branch", value: status.branch ?? "Detached HEAD")
                     .accessibilityFocused($recoveryFocus, equals: .recoveredContent)
                 if let upstream = status.upstream {
                     LabeledContent("Upstream", value: upstream)
                 }
-                HStack {
-                    Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
-                    Spacer()
-                    Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                if status.isRemoteKnown {
+                    HStack {
+                        Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
+                        Spacer()
+                        Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                    }
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                } else {
+                    // Only claim to be checking while something actually is.
+                    Label(
+                        isLoading ? "Checking remote…" : "Remote status unavailable",
+                        systemImage: isLoading
+                            ? "arrow.triangle.2.circlepath"
+                            : "exclamationmark.triangle"
+                    )
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
                 }
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
                 if let pullRequest = status.pullRequest {
                     if let url = pullRequest.url {
                         Link(destination: url) {
@@ -207,7 +253,7 @@ public struct FeatureSourceControlView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .refreshable { await load() }
+        .refreshable { await reload() }
         .overlay {
             if isRunningAction {
                 ProgressView()
@@ -226,8 +272,69 @@ public struct FeatureSourceControlView: View {
         }
     }
 
+    /// Cached loading can be replaced by an action or an explicit refresh.
     private func load() async {
-        await run(.load)
+        await load(force: false)
+    }
+
+    private func reload() async {
+        await load(force: true)
+    }
+
+    private func load(force: Bool) async {
+        guard !runState.isBusy else { return }
+        if force, !runState.begin(.load) { return }
+        loadGeneration += 1
+        statusGeneration += 1
+        let loadID = loadGeneration
+        let statusID = statusGeneration
+        isLoading = true
+        recovery.begin(.load)
+        defer {
+            if loadID == loadGeneration { isLoading = false }
+            if force { runState.finish(.load) }
+        }
+        do {
+            try Task.checkCancellation()
+            if force {
+                let refreshed = try await client.sourceControlStatus(threadID: threadID)
+                guard statusID == statusGeneration else { return }
+                status = refreshed
+                errorMessage = nil
+                recovery.recordSuccess(.load)
+            } else {
+                let statuses = try await client.sourceControlStatuses(threadID: threadID)
+                for try await nextStatus in statuses {
+                    guard statusID == statusGeneration else { return }
+                    status = nextStatus
+                    errorMessage = nil
+                    if nextStatus.isRemoteKnown { recovery.recordSuccess(.load) }
+                }
+            }
+        } catch {
+            guard statusID == statusGeneration else { return }
+            if FeatureToolFailureState<FeatureSourceControlOperation>.isCancellation(error) {
+                recovery.recordFailure(.load, error: error)
+                return
+            }
+            // An unrelated status failure must not discard a failed action's retry.
+            if let retained = recovery.retryOperation, !retained.isLoad {
+                errorMessage = error.localizedDescription
+            } else {
+                recovery.recordFailure(.load, error: error)
+            }
+            guard !force, status?.isRemoteKnown == false else { return }
+            if loadID == loadGeneration { isLoading = false }
+            for await recoveredStatus in client.sourceControlStatusEvents(threadID: threadID) {
+                guard statusID == statusGeneration else { return }
+                status = recoveredStatus
+                if recoveredStatus.isRemoteKnown {
+                    errorMessage = nil
+                    recovery.recordSuccess(.load)
+                    return
+                }
+            }
+        }
     }
 
     private func perform(_ action: FeatureSourceControlAction, message: String?) async {
@@ -236,48 +343,48 @@ public struct FeatureSourceControlView: View {
         )
     }
 
-    /// Single entry point for every source control request, so a retry replays the exact failed
-    /// operation — commit message included — instead of falling back to a plain reload.
+    /// Mutations finish before refresh so Retry cannot repeat completed work.
     private func run(_ operation: FeatureSourceControlOperation) async {
+        guard case let .action(action, message) = operation else {
+            await reload()
+            return
+        }
         guard runState.begin(operation) else { return }
+        loadGeneration += 1
+        statusGeneration += 1
+        isLoading = false
         recovery.begin(operation)
-        if operation.isLoad {
-            isLoading = true
-        } else {
-            isRunningAction = true
+        let result = await runFeatureSourceControlAction(
+            setRunning: { isRunningAction = $0 }
+        ) {
+            try await client.performSourceControlAction(
+                threadID: threadID,
+                action: action,
+                message: message
+            )
         }
-        defer {
-            runState.finish(operation)
-            if operation.isLoad {
-                isLoading = false
-            } else {
-                isRunningAction = false
-            }
-        }
-        do {
-            switch operation {
-            case .load:
+        var shouldRecoverStatus = false
+        switch result {
+        case .success:
+            do {
                 status = try await client.sourceControlStatus(threadID: threadID)
-                recovery.recordSuccess(operation)
-            case .action(let action, let message):
-                try await client.performSourceControlAction(
-                    threadID: threadID,
-                    action: action,
-                    message: message
+                errorMessage = nil
+                recovery.recordSuccess(operation, .load)
+            } catch {
+                recovery.recordFollowUpFailure(
+                    .load,
+                    afterCompletionOf: operation,
+                    error: error
                 )
-                do {
-                    status = try await client.sourceControlStatus(threadID: threadID)
-                    recovery.recordSuccess(operation, .load)
-                } catch {
-                    recovery.recordFollowUpFailure(
-                        .load,
-                        afterCompletionOf: operation,
-                        error: error
-                    )
-                }
             }
-        } catch {
+        case let .failure(error):
             recovery.recordFailure(operation, error: error)
+            shouldRecoverStatus = !FeatureToolFailureState<FeatureSourceControlOperation>
+                .isCancellation(error)
+        }
+        runState.finish(operation)
+        if shouldRecoverStatus {
+            await load(force: false)
         }
     }
 }
