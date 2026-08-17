@@ -422,14 +422,14 @@ export function useSourceControlPanelActions(
     const target = createBranchCommitTarget;
     const branchName = createBranchName.trim();
     if (!target || !branchName) return;
-    setCreateBranchCommitTarget(null);
-    setCreateBranchName("");
     await runAction(`commit-create-branch:${target.sha}`, async () => {
       await api?.vcs.createBranchFromCommit({
         cwd,
         sha: target.sha,
         branchName,
       });
+      setCreateBranchCommitTarget(null);
+      setCreateBranchName("");
     });
   }, [api, createBranchCommitTarget, createBranchName, cwd, runAction]);
 
@@ -526,7 +526,7 @@ export function useSourceControlPanelActions(
         }
         const { aheadCount, behindCount } = branchSyncCounts(branch, syncSnapshot);
         if (aheadCount > 0) {
-          await api.vcs.pushBranch({ cwd: targetCwd, branchName: branch.name });
+          await api.vcs.pushBranch({ cwd: targetCwd, branchName: branch.name, force });
           return;
         }
         if (behindCount > 0) {

@@ -495,6 +495,40 @@ describe("runSourceControlServerMetadataUpdate", () => {
     await expect(second).resolves.toEqual({ _tag: "Success" });
   });
 
+  it("keeps the last successful branch guard until the server state observes it", async () => {
+    const queue = createSourceControlServerMetadataUpdateQueue();
+    const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
+    const updateThreadMetadata = async (
+      input: Parameters<Parameters<typeof queue.enqueue>[0]["updateThreadMetadata"]>[0],
+    ) => {
+      calls.push({
+        expectedBranch: input.input.expectedBranch ?? null,
+        branch: input.input.branch ?? null,
+      });
+      return AsyncResult.success(undefined);
+    };
+
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/one", worktreePath: null },
+      updateThreadMetadata,
+    });
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "main");
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/two", worktreePath: null },
+      updateThreadMetadata,
+    });
+
+    expect(calls).toEqual([
+      { expectedBranch: "main", branch: "feature/one" },
+      { expectedBranch: "feature/one", branch: "feature/two" },
+    ]);
+  });
+
   it("drops stale thrown errors after a newer server-thread metadata request", async () => {
     const result = await runSourceControlServerMetadataUpdate({
       activeThreadRef,

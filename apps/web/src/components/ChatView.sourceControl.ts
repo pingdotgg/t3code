@@ -292,31 +292,56 @@ export async function runSourceControlServerMetadataUpdate(
 }
 
 export function createSourceControlServerMetadataUpdateQueue() {
-  const expectedBranchByThreadKey = new Map<string, string | null>();
+  const expectedBranchByThreadKey = new Map<
+    string,
+    { branch: string | null; awaitingObservation: boolean }
+  >();
   const pendingByThreadKey = new Map<string, Promise<void>>();
   const sequenceByThreadKey = new Map<string, number>();
 
+  const observe = (activeThreadRef: ScopedThreadRef, expectedBranch: string | null) => {
+    const targetThreadKey = scopedThreadKey(activeThreadRef);
+    if (pendingByThreadKey.has(targetThreadKey)) return;
+    const expected = expectedBranchByThreadKey.get(targetThreadKey);
+    if (!expected) {
+      expectedBranchByThreadKey.set(targetThreadKey, {
+        branch: expectedBranch,
+        awaitingObservation: false,
+      });
+      return;
+    }
+    if (expected.branch === expectedBranch) {
+      expected.awaitingObservation = false;
+      return;
+    }
+    if (!expected.awaitingObservation) {
+      expected.branch = expectedBranch;
+    }
+  };
+
   return {
+    observe,
     enqueue(input: QueuedSourceControlServerMetadataUpdateInput) {
       const targetThreadKey = scopedThreadKey(input.activeThreadRef);
       const previous = pendingByThreadKey.get(targetThreadKey);
-      if (!previous) {
-        expectedBranchByThreadKey.set(targetThreadKey, input.expectedBranch);
-      }
+      observe(input.activeThreadRef, input.expectedBranch);
 
       const result = (previous ?? Promise.resolve()).then(async () => {
         const requestSequence = (sequenceByThreadKey.get(targetThreadKey) ?? 0) + 1;
         sequenceByThreadKey.set(targetThreadKey, requestSequence);
         const updateResult = await runSourceControlServerMetadataUpdate({
           activeThreadRef: input.activeThreadRef,
-          expectedBranch: expectedBranchByThreadKey.get(targetThreadKey) ?? null,
+          expectedBranch: expectedBranchByThreadKey.get(targetThreadKey)?.branch ?? null,
           getCurrentSequence: () => sequenceByThreadKey.get(targetThreadKey),
           metadata: input.metadata,
           requestSequence,
           updateThreadMetadata: input.updateThreadMetadata,
         });
         if (updateResult._tag === "Success") {
-          expectedBranchByThreadKey.set(targetThreadKey, input.metadata.branch);
+          expectedBranchByThreadKey.set(targetThreadKey, {
+            branch: input.metadata.branch,
+            awaitingObservation: true,
+          });
         }
         return updateResult;
       });
@@ -409,6 +434,11 @@ export function useSourceControlThreadMetadataRouting(
   useEffect(() => {
     setMetadataErrorsByThreadKey((existing) => retainThreadKeyRecord(existing, existingThreadKeys));
   }, [existingThreadKeys]);
+
+  useEffect(() => {
+    if (!activeThreadMetadataRef) return;
+    metadataUpdateQueue.observe(activeThreadMetadataRef, expectedBranch);
+  }, [activeThreadMetadataRef, expectedBranch, metadataUpdateQueue]);
 
   const clearActiveSourceControlMetadataError = useCallback(() => {
     // Draft metadata changes are local store updates and do not create dismissible metadata errors.
