@@ -215,19 +215,9 @@ export function useThreadActionMenu(input: {
           case "pin":
             await reportFailure("Failed to pin thread", () => pinThread(threadRef));
             return;
-          case "unpin": {
-            const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(
-                [
-                  `Unpin thread "${thread.title}"?`,
-                  "This will move the thread out of your pinned section.",
-                ].join("\n"),
-              ),
-            );
-            if (confirmed._tag === "Failure" || !confirmed.value) return;
+          case "unpin":
             await reportFailure("Failed to unpin thread", () => unpinThread(threadRef));
             return;
-          }
           case "rename":
             onStartRename();
             return;

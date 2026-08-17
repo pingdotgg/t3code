@@ -2640,6 +2640,20 @@ export default function Sidebar() {
   const attemptUnpin = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
+        const api = readLocalApi();
+        const threadKey = scopedThreadKey(threadRef);
+        const thread = threadByKeyRef.current.get(threadKey);
+        if (api && thread) {
+          const confirmed = await settlePromise(() =>
+            api.dialogs.confirm(
+              [
+                `Unpin thread "${thread.title}"?`,
+                "This will move the thread out of your pinned section.",
+              ].join("\n"),
+            ),
+          );
+          if (confirmed._tag === "Failure" || !confirmed.value) return;
+        }
         const result = await unpinThread(threadRef);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
@@ -3124,19 +3138,9 @@ export default function Sidebar() {
           case "pin":
             attemptPin(threadRef);
             return;
-          case "unpin": {
-            const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(
-                [
-                  `Unpin thread "${thread.title}"?`,
-                  "This will move the thread out of your pinned section.",
-                ].join("\n"),
-              ),
-            );
-            if (confirmed._tag === "Failure" || !confirmed.value) return;
+          case "unpin":
             attemptUnpin(threadRef);
             return;
-          }
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
