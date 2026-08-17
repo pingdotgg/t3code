@@ -52,9 +52,13 @@ export function SidebarSettledLifecycleControls({
                   ? "Archive unavailable while work is still active"
                   : "Archive thread"
               }
-              disabled={archiveDisabled}
-              onClick={onArchive}
-              className={cn(SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "disabled:opacity-50")}
+              aria-disabled={archiveDisabled || undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!archiveDisabled) onArchive(event);
+              }}
+              className={cn(SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "aria-disabled:opacity-50")}
             >
               <ArchiveIcon aria-hidden className="size-3.5" />
             </button>
