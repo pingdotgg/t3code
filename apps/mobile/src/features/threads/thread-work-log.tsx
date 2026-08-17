@@ -7,13 +7,15 @@ import { LayoutAnimation, Pressable, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { T3_CODE_BRAND_MARK_SOURCE } from "../../components/brandAssets";
-import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
-import type { ThreadFeedActivity } from "../../lib/threadActivity";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { threadFeedActivityIsVisible, type ThreadFeedActivity } from "../../lib/threadActivity";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import { ThreadActivityInspector } from "./ThreadActivityInspector";
+import {
+  resolveThreadActivityMetadata,
+  resolveThreadActivityStatus,
+} from "./thread-activity-row-presentation";
 import { threadWorkLogOverflowNoun } from "./thread-work-log-labels";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -109,7 +111,7 @@ function WorkRowIcon(props: {
   );
 }
 
-function ThreadActivityThreadLink(props: {
+function ThreadActivityThreadRow(props: {
   readonly activity: ThreadFeedActivity;
   readonly environmentId: EnvironmentId;
   readonly iconColor: import("react-native").ColorValue;
@@ -124,13 +126,21 @@ function ThreadActivityThreadLink(props: {
   const item = row.item;
   let targetThreadId: ThreadId | null = null;
   let label = "Open related thread";
+  let providerDriver = support.providerSession?.driver ?? null;
+  let providerInstanceId = support.providerSession?.providerInstanceId ?? null;
+  let model = support.providerSession?.model ?? null;
 
   if (item.type === "thread_created") {
     targetThreadId = item.targetThreadId;
     label = "Open created thread";
+    providerInstanceId = item.targetProviderInstanceId;
+    model = item.targetModel;
   } else if (item.type === "subagent") {
     targetThreadId = support.subagent?.childThreadId ?? item.childThreadId;
     label = "Open subagent thread";
+    providerDriver = support.subagent?.driver ?? item.driver;
+    providerInstanceId = support.subagent?.providerInstanceId ?? item.providerInstanceId;
+    model = support.subagent?.model ?? model;
   } else if (item.type === "fork") {
     targetThreadId =
       item.targetThreadId === row.sourceThreadId && item.source.type === "run"
@@ -139,24 +149,50 @@ function ThreadActivityThreadLink(props: {
     label = targetThreadId === item.targetThreadId ? "Open forked thread" : "Open parent thread";
   }
 
-  if (targetThreadId === null) return null;
+  const metadata = resolveThreadActivityMetadata({ providerDriver, providerInstanceId, model });
+  const status = resolveThreadActivityStatus(item.status);
+  const statusDotClassName =
+    status.tone === "success"
+      ? "bg-emerald-500"
+      : status.tone === "danger"
+        ? "bg-rose-500"
+        : status.tone === "warning"
+          ? "bg-amber-500"
+          : "bg-sky-500";
 
   return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={label}
-      onPress={() => {
-        void Haptics.selectionAsync();
-        navigation.navigate("Thread", {
-          environmentId: props.environmentId,
-          threadId: targetThreadId,
-        });
-      }}
-      className="mx-2 mb-2 min-h-9 flex-row items-center justify-center gap-1.5 rounded-lg border border-neutral-300/50 px-2 dark:border-white/[0.08]"
-    >
-      <Text className="font-t3-medium text-2xs text-foreground">{label}</Text>
-      <SymbolView name="arrow.right" size={11} tintColor={props.iconColor} type="monochrome" />
-    </Pressable>
+    <View className="mb-2 min-h-11 flex-row items-center gap-2 rounded-xl border border-continuous border-neutral-950/10 bg-card px-2.5 py-1.5 dark:border-white/10">
+      <View
+        accessible
+        accessibilityRole="text"
+        accessibilityLabel={status.label}
+        className={cn("size-2 shrink-0 rounded-full", statusDotClassName)}
+      />
+
+      <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
+        <Text className="font-t3-medium text-foreground">{props.activity.summary}</Text>
+        {metadata ? <Text className="text-foreground-muted opacity-60"> · {metadata}</Text> : null}
+      </Text>
+
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={label}
+        disabled={targetThreadId === null}
+        hitSlop={10}
+        onPress={() => {
+          if (targetThreadId === null) return;
+          void Haptics.selectionAsync();
+          navigation.navigate("Thread", {
+            environmentId: props.environmentId,
+            threadId: targetThreadId,
+          });
+        }}
+        className="h-8 shrink-0 flex-row items-center gap-1 rounded-lg bg-neutral-950/5 py-1.5 pl-2.5 pr-1.5 active:bg-neutral-950/10 disabled:opacity-40 dark:bg-white/5 dark:active:bg-white/10"
+      >
+        <Text className="font-t3-medium text-sm text-foreground">Open</Text>
+        <SymbolView name="arrow.right" size={11} tintColor={props.iconColor} type="monochrome" />
+      </Pressable>
+    </View>
   );
 }
 
@@ -168,44 +204,12 @@ function isFreshRow(createdAt: string): boolean {
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
 }
 
-// Tool-like activities with a neutral status carry no signal worth a row.
+// Routine neutral tool activity carries no signal worth a row. Prominent
+// linked activity stays visible so its live status and thread affordance do.
 export function visibleWorkLogActivities(
   activities: ReadonlyArray<ThreadFeedActivity>,
 ): ReadonlyArray<ThreadFeedActivity> {
-  return activities.filter((activity) => !(activity.toolLike && activity.status === "neutral"));
-}
-
-// Pre-measurement heights for the feed's getFixedItemSize. Collapsed work-log
-// rows are single-line (numberOfLines={1}) inside a min-height that stays
-// taller than the text at every supported base font size (text-xs reaches
-// 23px at the 22pt maximum, under the 32px min-h-8), so row height is
-// deterministic. The "work log" label has no such clamp — its height follows
-// the scaled text-2xs line height. Values mirror the classNames below — keep
-// them in sync; a mismatch only costs a one-time correction on measure.
-const WORK_ROW_HEIGHT = 32; // min-h-8
-const WORK_ROW_GAP = 1; // gap-px
-const WORK_LOG_HEADER_PADDING = 2; // pb-0.5 under the "work log" label
-const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
-
-export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
-
-export function collapsedWorkLogHeight(
-  activities: ReadonlyArray<ThreadFeedActivity>,
-  baseFontSize: number,
-): number {
-  const rows = visibleWorkLogActivities(activities);
-  if (rows.length === 0) {
-    return 0;
-  }
-  const onlyToolRows = rows.every((row) => row.toolLike);
-  const headerHeight =
-    scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.caption, baseFontSize) + WORK_LOG_HEADER_PADDING;
-  return (
-    WORK_LOG_BOTTOM_MARGIN +
-    (onlyToolRows ? 0 : headerHeight) +
-    rows.length * WORK_ROW_HEIGHT +
-    (rows.length - 1) * WORK_ROW_GAP
-  );
+  return activities.filter(threadFeedActivityIsVisible);
 }
 
 export function ThreadWorkLog(props: {
@@ -255,14 +259,25 @@ export function ThreadWorkLog(props: {
           const displayText = detail ? `${row.summary} ${detail}` : row.summary;
           const textIsDestructive = row.icon === "alert" || row.icon === "warning";
 
+          if (row.prominent) {
+            return (
+              <Animated.View
+                key={row.id}
+                {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
+              >
+                <ThreadActivityThreadRow
+                  activity={row}
+                  environmentId={props.environmentId}
+                  iconColor={props.iconSubtleColor}
+                />
+              </Animated.View>
+            );
+          }
+
           return (
             <Animated.View
               key={row.id}
               {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
-              className={cn(
-                row.prominent &&
-                  "mb-2 overflow-hidden rounded-xl border border-neutral-300/60 bg-card dark:border-white/[0.1]",
-              )}
             >
               <Pressable
                 accessibilityRole={canExpand ? "button" : undefined}
@@ -355,13 +370,6 @@ export function ThreadWorkLog(props: {
                     workspaceRoot={props.workspaceRoot}
                   />
                 </View>
-              ) : null}
-              {row.prominent ? (
-                <ThreadActivityThreadLink
-                  activity={row}
-                  environmentId={props.environmentId}
-                  iconColor={props.iconSubtleColor}
-                />
               ) : null}
             </Animated.View>
           );
