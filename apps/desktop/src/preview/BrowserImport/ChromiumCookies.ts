@@ -236,6 +236,16 @@ const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): strin
   }
 };
 
+/**
+ * What a reader produces: the cookies it could recover, and how many stored
+ * rows it could not. The count reaches the user as part of the skipped total
+ * rather than disappearing.
+ */
+export interface CookieReadResult {
+  readonly cookies: ReadonlyArray<ChromiumCookie>;
+  readonly undecryptable: number;
+}
+
 export interface ChromiumCookieSource {
   readonly cookieDatabasePath: string;
   readonly keychainService: string;
@@ -302,9 +312,16 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
   );
 
   const cookies: ChromiumCookie[] = [];
+  // Counted, not swallowed. A row we hold no usable key for is a cookie the
+  // user does not get, and reporting an import that quietly dropped most of
+  // its rows as a clean success is the worst of the options.
+  let undecryptable = 0;
   for (const row of rows) {
     const value = decryptValue(row.encrypted_value, key, row.host_key);
-    if (value === null) continue;
+    if (value === null) {
+      undecryptable += 1;
+      continue;
+    }
     const secure = row.is_secure === 1;
     const scope = cookieScope(row.host_key, row.path, secure);
     cookies.push({
@@ -319,5 +336,5 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
       sameSite: sameSiteFromColumn(row.samesite),
     });
   }
-  return cookies satisfies ReadonlyArray<ChromiumCookie>;
+  return { cookies, undecryptable } satisfies CookieReadResult;
 });
