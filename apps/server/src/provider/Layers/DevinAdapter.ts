@@ -867,7 +867,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.mapError(
             (cause) =>
-              new ProviderAdapterProcessError({
+                detail: "Failed to start the Devin ACP session.",
                 provider: PROVIDER,
                 threadId: input.threadId,
                 detail: "Failed to start the Devin ACP session process.",
