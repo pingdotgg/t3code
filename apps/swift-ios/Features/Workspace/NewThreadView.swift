@@ -63,7 +63,7 @@ public struct NewThreadView: View {
                     hero
                         .padding(.top, 82)
                 }
-                Spacer(minLength: 140)
+                Spacer(minLength: 0)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
