@@ -1674,7 +1674,7 @@ function ChatMarkdown({
           </li>
         );
       },
-      img({ node: _node, src, alt, ...props }) {
+      img({ node: _node, src, alt, title: _title, ...props }) {
         if (
           renderLocalImage &&
           typeof src === "string" &&
@@ -1799,9 +1799,6 @@ function ChatMarkdown({
           `[${fileLinkMeta.basename}](${normalizedHref})`,
           props.className,
         );
-      },
-      img({ node: _node, title: _title, ...props }) {
-        return <img {...props} />;
       },
       code({ node, children, className, ...props }) {
         if (node?.properties?.dataInlineCode != null) {
