@@ -12,7 +12,7 @@
  *
  * @module BrowserImport
  */
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 

@@ -696,9 +696,17 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   };
 
   const clearProfileData = (id: string, name: string) => {
+    if (!previewBridge || !environmentsReady || environments.length === 0) {
+      toastManager.add({
+        type: "error",
+        title: `Could not clear ${name}'s data`,
+        description: "No environment is connected yet.",
+      });
+      return;
+    }
     void clearBrowserProfileData(
       previewBridge,
-      environmentsReady ? environments.map((environment) => environment.environmentId) : [],
+      environments.map((environment) => environment.environmentId),
       id,
     )
       .then(() => {
@@ -907,17 +915,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       }
     >
       {/*
-        Dimmed as a whole when the section is unavailable. The built-in rows
-        are a plain span and a badge rather than `h3`/`p` or disabled controls,
-        so the block's own dimming does not reach them and they would be the
-        only full-contrast content inside "only available in the desktop app".
+        The bordered container groups rows unambiguously at any width, and
+        carries the bottom spacing `SettingsRow` leaves to its children
+        (`pt-3 pb-1`).
       */}
-      <div
-        className={cn(
-          "mt-2 overflow-hidden rounded-lg border border-border/60",
-          disabled && "opacity-64",
-        )}
-      >
+      <div className="mt-2 mb-2 overflow-hidden rounded-lg border border-border/60">
         {listedProfiles.map((profile, index) => {
           const builtIn = isBuiltInBrowserProfileId(profile.id);
           const isDefault = profile.id === resolvedDefaultId;
@@ -931,7 +933,15 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             >
               <span className="flex min-w-0 flex-1 items-center gap-2">
                 {builtIn ? (
-                  <span className="truncate text-sm text-foreground">{profile.name}</span>
+                  // Dimmed here rather than on the table: a wrapper-level dim
+                  // stacks with the rename field's and the row menu button's
+                  // own, landing them near 0.41 while every other disabled
+                  // control in the block sits at 0.64.
+                  <span
+                    className={cn("truncate text-sm text-foreground", disabled && "opacity-64")}
+                  >
+                    {profile.name}
+                  </span>
                 ) : (
                   <DraftInput
                     nativeInput
