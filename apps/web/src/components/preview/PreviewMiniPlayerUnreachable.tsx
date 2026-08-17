@@ -19,7 +19,9 @@ export function PreviewMiniPlayerUnreachable({ url, description, onRetry, onClos
       <p className="min-w-0 max-w-full truncate text-xs font-medium text-foreground">
         Can&apos;t reach {host}
       </p>
-      <p className="min-w-0 max-w-full text-[11px] leading-snug text-muted-foreground">{friendly}</p>
+      <p className="min-w-0 max-w-full text-[11px] leading-snug text-muted-foreground">
+        {friendly}
+      </p>
       <div className="flex items-center gap-2">
         <Button type="button" size="sm" onClick={onRetry}>
           Retry
