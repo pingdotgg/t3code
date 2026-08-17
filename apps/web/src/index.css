@@ -398,6 +398,60 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--app-scrollbar-width) 100%;
 }
 
+/* The branch's slim chat chrome sizes every titlebar row off one variable so
+   web, desktop, and the no-thread state stay in lockstep. */
+@utility workspace-topbar {
+  display: flex;
+  height: var(--workspace-topbar-height);
+  min-height: var(--workspace-topbar-height);
+  flex-shrink: 0;
+  align-items: center;
+}
+
+/* Fade timeline rows as they pass beneath the transparent top chrome. The
+   third mask column keeps the scrollbar visible for the full height, and the
+   long ramp reads as depth rather than a hard clip when the header and
+   timeline share a background. */
+@utility chat-timeline-scroll-fade {
+  --topbar-scroll-fade-height: 2.5rem;
+  -webkit-mask-image:
+    linear-gradient(
+      to bottom,
+      transparent 0%,
+      rgb(0 0 0 / 10%) 10%,
+      rgb(0 0 0 / 30%) 24%,
+      rgb(0 0 0 / 58%) 42%,
+      rgb(0 0 0 / 82%) 62%,
+      rgb(0 0 0 / 96%) 82%,
+      black 100%
+    ),
+    linear-gradient(black, black), linear-gradient(black, black);
+  -webkit-mask-position: top, bottom, right;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size:
+    100% var(--topbar-scroll-fade-height),
+    100% calc(100% - var(--topbar-scroll-fade-height)),
+    var(--app-scrollbar-width) 100%;
+  mask-image:
+    linear-gradient(
+      to bottom,
+      transparent 0%,
+      rgb(0 0 0 / 10%) 10%,
+      rgb(0 0 0 / 30%) 24%,
+      rgb(0 0 0 / 58%) 42%,
+      rgb(0 0 0 / 82%) 62%,
+      rgb(0 0 0 / 96%) 82%,
+      black 100%
+    ),
+    linear-gradient(black, black), linear-gradient(black, black);
+  mask-position: top, bottom, right;
+  mask-repeat: no-repeat;
+  mask-size:
+    100% var(--topbar-scroll-fade-height),
+    100% calc(100% - var(--topbar-scroll-fade-height)),
+    var(--app-scrollbar-width) 100%;
+}
+
 /* Stage-channel art needs a mask and pseudo-element gradient, so keep the
    behavior composable without tying it to the global components layer. */
 @utility sidebar-stage-backdrop {
@@ -1375,19 +1429,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 40rem) {
-    .chat-timeline-scroll-fade,
-    .settings-page-scroll-fade {
+    .chat-timeline-scroll-fade {
       --topbar-scroll-fade-height: 3rem;
     }
 
     .messages-timeline-row-frame {
       padding-inline-start: 1.25rem;
       padding-inline-end: calc(1.25rem + var(--thread-details-panel-inset));
-    }
-
-    .chat-timeline-scroll-fade,
-    .settings-page-scroll-fade {
-      --topbar-scroll-fade-height: 3rem;
     }
 
     .chat-composer-horizontal-inset {
