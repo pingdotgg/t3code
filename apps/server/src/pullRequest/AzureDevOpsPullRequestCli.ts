@@ -112,6 +112,14 @@ export type AzureDevOpsPullRequestCliError =
 /** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
 
+/**
+ * The application `az rest` has to ask for a token for. Azure DevOps is not the resource az
+ * defaults to, and it does not refuse the wrong token: it answers the sign-in page, as HTML, with
+ * a status the CLI reports as success. So a call without this reads as a decode failure on a
+ * response nobody asked for rather than as the unauthenticated call it is.
+ */
+const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
+
 export class AzureDevOpsPullRequestCli extends Context.Service<
   AzureDevOpsPullRequestCli,
   {
@@ -172,6 +180,28 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
   }
 >()("t3/pullRequest/AzureDevOpsPullRequestCli") {}
+
+/**
+ * The repository name `az` wants. The service names a repository the way its remote does — below
+ * an Azure host that is the whole path, `{organization}/{project}/_git/{repository}` — but
+ * `--repository` takes a name or an id, and az interpolates whatever it is given straight into the
+ * REST route it builds. A path there does not narrow the listing to the wrong repository; it
+ * addresses a route that does not exist, and Azure answers 404.
+ *
+ * The last segment is the name. It is unescaped because the path carries it as the remote spells
+ * it: a project or a repository named with a space reaches this as `%20`, which Azure would look
+ * up literally. A name recorded without a path is already a name and survives both steps.
+ */
+function repositoryNameOf(repository: string): string {
+  const name = repository.split("/").findLast((segment) => segment.length > 0);
+  if (name === undefined) return repository.trim();
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    // A stray `%` is not an escape, so the name is whatever the remote spelled.
+    return name;
+  }
+}
 
 function statusArgs(state: PullRequestListState): ReadonlyArray<string> {
   switch (state) {
@@ -365,7 +395,8 @@ export const make = Effect.gen(function* () {
     listPullRequests: (input) =>
       listPullRequestPage({
         cwd: input.cwd,
-        repository: input.repository,
+        // Translated once, here, so every page of the walk asks for the same repository.
+        repository: repositoryNameOf(input.repository),
         state: input.state,
         involvement: input.involvement,
         viewer: input.viewer,
@@ -419,6 +450,8 @@ export const make = Effect.gen(function* () {
           "rest",
           "--method",
           "get",
+          "--resource",
+          AZURE_DEVOPS_RESOURCE_ID,
           "--url",
           `${input.threadsUrl}?api-version=${REST_API_VERSION}`,
         ],
