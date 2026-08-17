@@ -194,55 +194,47 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 return nil
             }
 
-            let delete = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, finish in
-                self?.parent.onDelete(thread)
-                finish(true)
-            }
-            delete.image = UIImage(systemName: "trash")
-
-            let primaryAction: UIContextualAction
-            if isArchived {
-                primaryAction = UIContextualAction(style: .normal, title: "Restore") {
-                    [weak self] _, _, finish in
-                    self?.parent.onArchive(thread, false)
-                    finish(true)
-                }
-                primaryAction.image = UIImage(systemName: "arrow.uturn.backward")
-                primaryAction.backgroundColor = .systemBlue
-            } else if thread.pinnedAt != nil, thread.canTogglePin {
-                primaryAction = UIContextualAction(style: .normal, title: "Unpin") {
-                    [weak self] _, _, finish in
-                    self?.parent.onPin(thread, false)
-                    finish(true)
-                }
-                primaryAction.image = UIImage(systemName: "pin.slash")
-                primaryAction.backgroundColor = .systemBlue
-            } else if thread.canToggleSettlement {
-                let isSettled = thread.isEffectivelySettled(at: .now)
-                primaryAction = UIContextualAction(
-                    style: .normal,
-                    title: isSettled ? "Reopen" : "Settle"
-                ) { [weak self] _, _, finish in
-                    self?.parent.onSettle(thread, !isSettled)
-                    finish(true)
-                }
-                primaryAction.image = UIImage(
-                    systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
-                )
-                primaryAction.backgroundColor = isSettled ? .systemBlue : .systemGreen
-            } else {
-                primaryAction = UIContextualAction(style: .normal, title: "Archive") {
-                    [weak self] _, _, finish in
-                    self?.parent.onArchive(thread, true)
-                    finish(true)
-                }
-                primaryAction.image = UIImage(systemName: "archivebox")
-                primaryAction.backgroundColor = .systemGray
-            }
-
-            let configuration = UISwipeActionsConfiguration(actions: [delete, primaryAction])
+            let actions = HomeThreadSwipeAction
+                .trailingActions(for: thread, isArchived: isArchived, at: .now)
+                .map { contextualAction($0, for: thread) }
+            let configuration = UISwipeActionsConfiguration(actions: actions)
+            // A full swipe never fires the first action: the leading slot is
+            // destructive, and pinned rows now carry a settlement action too.
             configuration.performsFirstActionWithFullSwipe = false
             return configuration
+        }
+
+        private func contextualAction(
+            _ action: HomeThreadSwipeAction,
+            for thread: FeatureThread
+        ) -> UIContextualAction {
+            let contextualAction = UIContextualAction(
+                style: action.style,
+                title: action.title
+            ) { [weak self] _, _, finish in
+                self?.perform(action.intent, for: thread)
+                finish(true)
+            }
+            contextualAction.image = UIImage(systemName: action.systemImage)
+            if let backgroundColor = action.backgroundColor {
+                contextualAction.backgroundColor = backgroundColor
+            }
+            return contextualAction
+        }
+
+        /// Swipe actions reuse the same closures the context menu does, so a
+        /// settle from either surface takes the one real settlement path.
+        private func perform(_ intent: HomeThreadSwipeAction.Intent, for thread: FeatureThread) {
+            switch intent {
+            case .delete:
+                parent.onDelete(thread)
+            case let .setArchived(archived):
+                parent.onArchive(thread, archived)
+            case let .setPinned(pinned):
+                parent.onPin(thread, pinned)
+            case let .setSettled(settled):
+                parent.onSettle(thread, settled)
+            }
         }
 
         private func configure(
@@ -601,6 +593,106 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
         return items
+    }
+}
+
+/// The trailing swipe actions a Home row offers, resolved as data so the row's
+/// gesture semantics stay deterministic and testable without hosting a
+/// collection view. Order is outermost-first, matching
+/// `UISwipeActionsConfiguration`, which lays trailing actions out from the
+/// trailing edge inward.
+enum HomeThreadSwipeAction: Equatable {
+    case delete
+    case restore
+    case unpin
+    case settle
+    case reopen
+    case archive
+
+    /// The lifecycle mutation an action requests. Keeping it separate from the
+    /// action keeps the swipe wiring verifiable and forces every case through
+    /// the row's existing callbacks instead of a second settlement path.
+    enum Intent: Equatable {
+        case delete
+        case setArchived(Bool)
+        case setPinned(Bool)
+        case setSettled(Bool)
+    }
+
+    /// Archived rows stay restore-only. A pinned row keeps Delete and Unpin
+    /// where they already were and gains its settlement action beside them, in
+    /// the same Unpin-before-Settle order the row's context menu uses: the
+    /// pinned shelf also holds settled threads, so before this a pinned task
+    /// could only be settled or reopened by unpinning it first or by opening
+    /// the context menu.
+    static func trailingActions(
+        for thread: FeatureThread,
+        isArchived: Bool,
+        at now: Date
+    ) -> [HomeThreadSwipeAction] {
+        guard !isArchived else { return [.delete, .restore] }
+
+        let settlement: HomeThreadSwipeAction? = thread.canToggleSettlement
+            ? (thread.isEffectivelySettled(at: now) ? .reopen : .settle)
+            : nil
+
+        var actions: [HomeThreadSwipeAction] = [.delete]
+        if thread.pinnedAt != nil, thread.canTogglePin {
+            actions.append(.unpin)
+            if let settlement {
+                actions.append(settlement)
+            }
+        } else {
+            actions.append(settlement ?? .archive)
+        }
+        return actions
+    }
+
+    var intent: Intent {
+        switch self {
+        case .delete: .delete
+        case .restore: .setArchived(false)
+        case .archive: .setArchived(true)
+        case .unpin: .setPinned(false)
+        case .settle: .setSettled(true)
+        case .reopen: .setSettled(false)
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .delete: "Delete"
+        case .restore: "Restore"
+        case .unpin: "Unpin"
+        case .settle: "Settle"
+        case .reopen: "Reopen"
+        case .archive: "Archive"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .delete: "trash"
+        case .restore: "arrow.uturn.backward"
+        case .unpin: "pin.slash"
+        case .settle: "checkmark"
+        case .reopen: "arrow.counterclockwise"
+        case .archive: "archivebox"
+        }
+    }
+
+    var style: UIContextualAction.Style {
+        self == .delete ? .destructive : .normal
+    }
+
+    /// Destructive actions keep UIKit's own tint.
+    var backgroundColor: UIColor? {
+        switch self {
+        case .delete: nil
+        case .restore, .unpin, .reopen: .systemBlue
+        case .settle: .systemGreen
+        case .archive: .systemGray
+        }
     }
 }
 
