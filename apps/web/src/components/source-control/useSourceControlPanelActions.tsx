@@ -791,6 +791,7 @@ export function useSourceControlPanelActions(
   return {
     checkoutCommitDetached,
     commitSelectedInCwd,
+    confirm,
     copyText,
     createBranchFromCommit,
     createStash,

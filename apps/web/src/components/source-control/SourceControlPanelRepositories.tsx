@@ -116,6 +116,7 @@ export function makeSourceControlPanelRepositoryRenderers(
 ) {
   const {
     api,
+    confirm,
     copyText,
     cwd,
     expandedTree,

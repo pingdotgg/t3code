@@ -114,6 +114,7 @@ export function makeSourceControlPanelWorkingTreeRenderers(
     api,
     changedFiles,
     commitSelectedInCwd,
+    confirm,
     copyText,
     cwd,
     displayedChangeGroups,
