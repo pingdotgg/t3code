@@ -87,15 +87,17 @@ export function SourceControlPanel({
           worktreePath: target.worktreePath,
         });
         const environmentHeaderContents = (
-          <>
-            <EnvironmentIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 truncate text-xs font-medium text-foreground">
-              {target.label}
-            </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <EnvironmentIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate text-xs font-medium text-foreground">
+                {target.label}
+              </span>
+            </div>
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="ml-auto min-w-0 truncate font-mono text-[10px] text-muted-foreground/70" />
+                  <span className="block min-w-0 truncate font-mono text-[10px] text-muted-foreground/70" />
                 }
               >
                 {target.cwd}
@@ -108,7 +110,7 @@ export function SourceControlPanel({
                 {target.cwd}
               </TooltipPopup>
             </Tooltip>
-          </>
+          </div>
         );
         return (
           <section
@@ -121,13 +123,13 @@ export function SourceControlPanel({
             )}
           >
             {target.active ? (
-              <div className="surface-subheader min-h-8 shrink-0 gap-2 border-b border-border/70 px-3">
+              <div className="flex min-h-8 shrink-0 items-center border-b border-border/70 px-3">
                 {environmentHeaderContents}
               </div>
             ) : (
               <button
                 type="button"
-                className="surface-subheader min-h-8 w-full shrink-0 gap-2 border-b border-border/70 px-3 text-left hover:bg-muted/40"
+                className="flex min-h-8 w-full shrink-0 items-center border-b border-border/70 px-3 text-left hover:bg-muted/40"
                 aria-expanded={expanded}
                 aria-label={`${expanded ? "Collapse" : "Expand"} ${target.label} version control`}
                 onClick={() =>
