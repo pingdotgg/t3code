@@ -732,13 +732,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         <Globe2 />
                         Browser
                       </MenuSubTrigger>
-                      <MenuSubPopup className="min-w-40">
+                      {/*
+                        Capped and truncated: profile names are user-supplied
+                        and run to 48 characters, which would otherwise widen
+                        the popup to fit-content and wrap.
+                      */}
+                      <MenuSubPopup className="min-w-40 max-w-56">
                         {browserProfiles.map((profile) => (
                           <MenuItem
                             key={profile.id}
                             onClick={() => props.onAddBrowserInProfile(profile.id)}
                           >
-                            {profile.name}
+                            <span className="min-w-0 truncate">{profile.name}</span>
                           </MenuItem>
                         ))}
                       </MenuSubPopup>
