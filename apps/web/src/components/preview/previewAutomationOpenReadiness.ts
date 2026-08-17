@@ -46,7 +46,7 @@ export function resolvePreviewAutomationOpenWaitPolicy(
   input: PreviewAutomationOpenInput,
   snapshot: PreviewSessionSnapshot,
   reusedExistingTab: boolean,
-  autoShowFloatingPreview = true,
+  shouldPresentPreview: boolean,
 ): PreviewAutomationOpenWaitPolicy {
   if (!reusedExistingTab) {
     return {
@@ -62,8 +62,7 @@ export function resolvePreviewAutomationOpenWaitPolicy(
   return {
     acknowledgeAfterCreation: false,
     waitForOverlay: previewAutomationOpenNeedsOverlay(input, snapshot),
-    waitForVisibility:
-      shouldOpenPreviewMiniPlayer(input, autoShowFloatingPreview) && canPresentBrowserSurface,
+    waitForVisibility: shouldPresentPreview && canPresentBrowserSurface,
   };
 }
 

@@ -50,6 +50,7 @@ describe("preview automation open readiness", () => {
           title: "",
         }),
         false,
+        true,
       ),
     ).toEqual({
       acknowledgeAfterCreation: true,
@@ -68,6 +69,7 @@ describe("preview automation open readiness", () => {
           title: "",
         }),
         false,
+        false,
       ),
     ).toEqual({
       acknowledgeAfterCreation: true,
@@ -81,6 +83,7 @@ describe("preview automation open readiness", () => {
       resolvePreviewAutomationOpenWaitPolicy(
         { url: "https://example.com" } as PreviewAutomationOpenInput,
         snapshot({ _tag: "Idle" }),
+        true,
         true,
       ),
     ).toEqual({
@@ -100,6 +103,7 @@ describe("preview automation open readiness", () => {
           title: "Example",
         }),
         true,
+        false,
       ),
     ).toEqual({
       acknowledgeAfterCreation: false,
@@ -113,6 +117,7 @@ describe("preview automation open readiness", () => {
       resolvePreviewAutomationOpenWaitPolicy(
         {} as PreviewAutomationOpenInput,
         snapshot({ _tag: "Idle" }),
+        true,
         true,
       ),
     ).toEqual({
@@ -134,6 +139,7 @@ describe("preview automation open readiness", () => {
           description: "Failed",
         }),
         true,
+        true,
       ),
     ).toEqual({
       acknowledgeAfterCreation: false,
@@ -152,7 +158,7 @@ describe("preview automation open readiness", () => {
           title: "Example",
         }),
         true,
-        false,
+        shouldOpenPreviewMiniPlayer({}, false),
       ),
     ).toEqual({
       acknowledgeAfterCreation: false,
@@ -190,5 +196,33 @@ describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () 
     expect(shouldOpenPreviewMiniPlayer({ open: true }, false)).toBe(true);
     expect(shouldOpenPreviewMiniPlayer({ open: false }, true)).toBe(false);
     expect(shouldOpenPreviewMiniPlayer({ show: true }, false)).toBe(true);
+  });
+
+  it("shares the resolved explicit-over-default policy with reused-tab readiness", () => {
+    const renderedSnapshot = snapshot({
+      _tag: "Success",
+      url: "https://example.com/",
+      title: "Example",
+    });
+
+    const explicitShow = { open: true } as PreviewAutomationOpenInput;
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        explicitShow,
+        renderedSnapshot,
+        true,
+        shouldOpenPreviewMiniPlayer(explicitShow, false),
+      ).waitForVisibility,
+    ).toBe(true);
+
+    const explicitBackground = { open: false } as PreviewAutomationOpenInput;
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        explicitBackground,
+        renderedSnapshot,
+        true,
+        shouldOpenPreviewMiniPlayer(explicitBackground, true),
+      ).waitForVisibility,
+    ).toBe(false);
   });
 });

@@ -347,6 +347,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return await currentStatus(threadRef, tabId);
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
+            const browserDefaults = await resolveBrowserDefaults();
+            const shouldPresentPreview = shouldOpenPreviewMiniPlayer(
+              input,
+              browserDefaults.autoShowFloatingPreview,
+            );
             const resolvedInputUrl = input.url
               ? resolveBrowserNavigationTarget(environmentId, {
                   kind: "url",
@@ -371,7 +376,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
                   // An agent that didn't state a size gets the user's
                   // configured default, same as a hand-opened tab.
-                  viewport: browserDefaultOpenViewport(await resolveBrowserDefaults()),
+                  viewport: browserDefaultOpenViewport(browserDefaults),
                 },
               });
               if (result._tag === "Failure") {
@@ -420,12 +425,6 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 updatePreviewServerSnapshot(threadRef, resizeResult.value);
               }
             }
-            const autoShowFloatingPreview = (await resolveBrowserDefaults())
-              .autoShowFloatingPreview;
-            const shouldPresentPreview = shouldOpenPreviewMiniPlayer(
-              input,
-              autoShowFloatingPreview,
-            );
             if (shouldPresentPreview) {
               revealPreviewAutomationTab(threadRef, activeTabId);
             }
@@ -434,7 +433,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   input,
                   activeSnapshot,
                   reusedExistingTab,
-                  autoShowFloatingPreview,
+                  shouldPresentPreview,
                 )
               : null;
             if (waitPolicy?.acknowledgeAfterCreation) {
