@@ -256,7 +256,12 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
-export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+export type TerminalContextMenuAction =
+  | "add-to-chat"
+  | "copy"
+  | "paste"
+  | "select-all"
+  | "select-output";
 
 /** Post-selection popup: just the two selection actions, always enabled. */
 export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
@@ -268,18 +273,27 @@ export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "c
 
 /**
  * Right-click menu for the terminal canvas: the selection actions (disabled
- * until a selection exists) plus Paste. Paste is always offered: the browser
- * (and Electron's default editing menu) can only paste into an editable
- * element, so a canvas terminal never gets a usable entry from them.
+ * until a selection exists) plus Select All and Paste. Both are always offered:
+ * the browser (and Electron's default editing menu) only act on an editable
+ * element, so a canvas terminal never gets usable entries from them.
+ *
+ * "Select command output" only appears over output Ghostty can bound, which
+ * needs OSC 133 marks from the shell. Offering it on an unmarked shell would be
+ * an entry that never does anything.
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  hasCommandOutput?: boolean;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
   return [
     ...terminalSelectionMenuItems().map((item) => ({
       ...item,
       disabled: !options.hasSelection,
     })),
+    ...(options.hasCommandOutput === true
+      ? [{ id: "select-output" as const, label: "Select command output" }]
+      : []),
+    { id: "select-all", label: "Select all" },
     { id: "paste", label: "Paste" },
   ];
 }
@@ -633,7 +647,11 @@ export function TerminalViewport({
         let clicked: TerminalContextMenuAction | null;
         try {
           clicked = await localApi.contextMenu.show(
-            terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+            terminalContextMenuItems({
+              hasSelection: selectionAction !== null,
+              hasCommandOutput:
+                terminalRef.current?.hasCommandOutputAt(event.clientX, event.clientY) === true,
+            }),
             { x: event.clientX, y: event.clientY },
           );
         } catch (error) {
@@ -650,6 +668,14 @@ export function TerminalViewport({
             return;
           case "copy":
             if (selectionAction) await copySelection(selectionAction.clipboardText, requestId);
+            return;
+          case "select-all":
+            terminalRef.current?.selectAll();
+            focusIfCurrent(requestId);
+            return;
+          case "select-output":
+            terminalRef.current?.selectCommandOutputAt(event.clientX, event.clientY);
+            focusIfCurrent(requestId);
             return;
           case "paste":
             await pasteFromClipboard(requestId);

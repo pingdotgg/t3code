@@ -11,6 +11,7 @@ import {
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  isTerminalSelectAllShortcut,
   loadTerminalFontFamily,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
@@ -18,6 +19,10 @@ import {
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
+  terminalSelectionAutoscrollRate,
+  terminalSelectionKeyMove,
+  terminalSelectionKeyTarget,
+  terminalSelectionOvershoot,
   terminalLinkAtColumn,
   terminalLinkAtPosition,
   terminalLinkAtPositionWithRange,
@@ -233,6 +238,33 @@ describe("isTerminalCopyShortcut", () => {
   });
 });
 
+describe("isTerminalSelectAllShortcut", () => {
+  const event = (overrides: Partial<Parameters<typeof isTerminalSelectAllShortcut>[0]> = {}) => ({
+    ctrlKey: false,
+    key: "a",
+    metaKey: false,
+    shiftKey: false,
+    ...overrides,
+  });
+
+  it("uses Cmd+A on macOS", () => {
+    expect(isTerminalSelectAllShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
+    expect(isTerminalSelectAllShortcut(event({ ctrlKey: true }), "MacIntel")).toBe(false);
+  });
+
+  it("leaves Ctrl+A to the shell and uses Ctrl+Shift+A elsewhere", () => {
+    // A bare Ctrl+A is readline's beginning-of-line and tmux's prefix.
+    expect(isTerminalSelectAllShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
+    expect(
+      isTerminalSelectAllShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64"),
+    ).toBe(true);
+  });
+
+  it("ignores other keys", () => {
+    expect(isTerminalSelectAllShortcut(event({ key: "s", metaKey: true }), "MacIntel")).toBe(false);
+  });
+});
+
 describe("isTerminalPasteShortcut", () => {
   const event = (overrides: Partial<Parameters<typeof isTerminalPasteShortcut>[0]> = {}) => ({
     ctrlKey: false,
@@ -416,6 +448,120 @@ describe("terminalWheelDeltaRows", () => {
     const result = terminalWheelDeltaRows({ deltaY: -1, deltaMode: 2 }, 16, 24, 0);
     expect(result.rows).toBe(-24);
     expect(result.remainder).toBe(0);
+  });
+});
+
+describe("terminalSelectionKeyMove", () => {
+  const event = (overrides: Partial<Parameters<typeof terminalSelectionKeyMove>[0]> = {}) => ({
+    key: "ArrowDown",
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    ...overrides,
+  });
+
+  it("maps the shifted arrows to single steps", () => {
+    expect(terminalSelectionKeyMove(event({ key: "ArrowLeft" }), 24)).toEqual({
+      columns: -1,
+      rows: 0,
+    });
+    expect(terminalSelectionKeyMove(event({ key: "ArrowUp" }), 24)).toEqual({
+      columns: 0,
+      rows: -1,
+    });
+  });
+
+  it("pages by the viewport height", () => {
+    expect(terminalSelectionKeyMove(event({ key: "PageUp" }), 24)?.rows).toBe(-24);
+    expect(terminalSelectionKeyMove(event({ key: "PageDown" }), 24)?.rows).toBe(24);
+  });
+
+  it("ignores presses without Shift or carrying another modifier", () => {
+    expect(terminalSelectionKeyMove(event({ shiftKey: false }), 24)).toBeNull();
+    expect(terminalSelectionKeyMove(event({ ctrlKey: true }), 24)).toBeNull();
+    expect(terminalSelectionKeyMove(event({ altKey: true }), 24)).toBeNull();
+    expect(terminalSelectionKeyMove(event({ key: "x" }), 24)).toBeNull();
+  });
+});
+
+describe("terminalSelectionKeyTarget", () => {
+  const bounds = { cols: 80, maxRow: 500 };
+
+  it("clamps to the grid instead of running past its edges", () => {
+    expect(terminalSelectionKeyTarget({ x: 0, y: 0 }, { columns: -1, rows: -1 }, bounds)).toEqual({
+      x: 0,
+      y: 0,
+    });
+    expect(terminalSelectionKeyTarget({ x: 79, y: 500 }, { columns: 1, rows: 1 }, bounds)).toEqual({
+      x: 79,
+      y: 500,
+    });
+  });
+
+  it("jumps to the row edges for Home and End", () => {
+    expect(
+      terminalSelectionKeyTarget(
+        { x: 40, y: 12 },
+        { columns: 0, rows: 0, toLineStart: true },
+        bounds,
+      ),
+    ).toEqual({ x: 0, y: 12 });
+    expect(
+      terminalSelectionKeyTarget(
+        { x: 40, y: 12 },
+        { columns: 0, rows: 0, toLineEnd: true },
+        bounds,
+      ),
+    ).toEqual({ x: 79, y: 12 });
+  });
+
+  it("clamps a page jump to the top of the scrollback", () => {
+    expect(terminalSelectionKeyTarget({ x: 5, y: 10 }, { columns: 0, rows: -24 }, bounds).y).toBe(
+      0,
+    );
+  });
+});
+
+describe("terminalSelectionOvershoot", () => {
+  const bounds = { top: 100, bottom: 400 };
+
+  it("is zero inside the grid", () => {
+    expect(terminalSelectionOvershoot(100, bounds)).toBe(0);
+    expect(terminalSelectionOvershoot(250, bounds)).toBe(0);
+    expect(terminalSelectionOvershoot(400, bounds)).toBe(0);
+  });
+
+  it("signs the distance past each edge", () => {
+    expect(terminalSelectionOvershoot(60, bounds)).toBe(-40);
+    expect(terminalSelectionOvershoot(475, bounds)).toBe(75);
+  });
+});
+
+describe("terminalSelectionAutoscrollRate", () => {
+  it("does not scroll while the pointer is inside the grid", () => {
+    expect(terminalSelectionAutoscrollRate(0, 16)).toBe(0);
+  });
+
+  it("speeds up the further the drag goes past the edge", () => {
+    const near = terminalSelectionAutoscrollRate(8, 16);
+    const far = terminalSelectionAutoscrollRate(160, 16);
+    expect(near).toBeGreaterThan(0);
+    expect(far).toBeGreaterThan(near * 5);
+  });
+
+  it("caps the rate so a far drag stays steerable", () => {
+    expect(terminalSelectionAutoscrollRate(100_000, 16)).toBe(400);
+  });
+
+  it("scrolls upward for a drag above the grid", () => {
+    expect(terminalSelectionAutoscrollRate(-160, 16)).toBe(
+      -terminalSelectionAutoscrollRate(160, 16),
+    );
+  });
+
+  it("ignores an unmeasured cell height", () => {
+    expect(terminalSelectionAutoscrollRate(160, 0)).toBe(0);
   });
 });
 

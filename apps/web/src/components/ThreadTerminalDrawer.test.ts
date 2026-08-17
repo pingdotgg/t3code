@@ -2,11 +2,37 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveTerminalSelectionActionPosition,
+  terminalContextMenuItems,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
 } from "./ThreadTerminalDrawer";
+
+describe("terminalContextMenuItems", () => {
+  it("keeps Select All and Paste usable with no selection", () => {
+    const items = terminalContextMenuItems({ hasSelection: false });
+    const enabled = items.filter((item) => item.disabled !== true).map((item) => item.id);
+    expect(enabled).toEqual(["select-all", "paste"]);
+  });
+
+  it("enables the selection actions once a selection exists", () => {
+    const items = terminalContextMenuItems({ hasSelection: true });
+    expect(items.some((item) => item.disabled === true)).toBe(false);
+    expect(items.map((item) => item.id)).toEqual(["add-to-chat", "copy", "select-all", "paste"]);
+  });
+
+  it("omits Select command output unless the click lands on bounded output", () => {
+    expect(terminalContextMenuItems({ hasSelection: false }).map((item) => item.id)).not.toContain(
+      "select-output",
+    );
+    expect(
+      terminalContextMenuItems({ hasSelection: false, hasCommandOutput: true }).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["add-to-chat", "copy", "select-output", "select-all", "paste"]);
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {
