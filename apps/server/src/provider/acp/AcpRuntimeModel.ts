@@ -337,18 +337,21 @@ function extractTextContentFromToolCallContent(
     return { text: joined, content };
   }
   const bounded = boundToolCallOutputText(joined);
-  // Collapse the text entries into a single bounded one, in place, and leave every other
-  // entry kind (diffs, images, resource links) alone so non-terminal tool calls from other
-  // ACP agents keep rendering everything they sent.
-  let collapsed = false;
-  const boundedContent = content.flatMap((entry) => {
+  // Collapse the text entries into a single bounded one at the final contributing text entry,
+  // and leave every other entry kind (diffs, images, resource links) in its original relative
+  // order. The retained tail came from that text entry, so placing it there also preserves its
+  // ordering relative to interleaved non-text content and ignores later blank text entries.
+  const lastContributingTextIndex = content.reduce(
+    (lastIndex, entry, index) => (toolCallContentText(entry)?.trim() ? index : lastIndex),
+    -1,
+  );
+  const boundedContent = content.flatMap((entry, index) => {
     if (toolCallContentText(entry) === undefined) {
       return [entry];
     }
-    if (collapsed) {
+    if (index !== lastContributingTextIndex) {
       return [];
     }
-    collapsed = true;
     return [{ type: "content", content: { type: "text", text: bounded } } as const];
   });
   return { text: bounded, content: boundedContent };

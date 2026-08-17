@@ -496,8 +496,9 @@ describe("AcpRuntimeModel", () => {
     expect(finalDetail?.endsWith(`frame 999: ${"#".repeat(50)}`)).toBe(true);
   });
 
-  it("keeps non-text tool call content entries when bounding an oversized text entry", () => {
-    const hugeText = "y".repeat(50_000);
+  it("keeps non-text tool call content entries in order when bounding oversized text", () => {
+    const hugePrefix = "x".repeat(25_000);
+    const hugeTail = "y".repeat(25_000);
     const { events } = parseSessionUpdateEvent({
       sessionId: "session-1",
       update: {
@@ -506,8 +507,11 @@ describe("AcpRuntimeModel", () => {
         kind: "edit",
         status: "in_progress",
         content: [
-          { type: "content", content: { type: "text", text: hugeText } },
+          { type: "content", content: { type: "text", text: hugePrefix } },
           { type: "diff", path: "/repo/file.ts", oldText: "before", newText: "after" },
+          { type: "content", content: { type: "text", text: hugeTail } },
+          { type: "diff", path: "/repo/other.ts", oldText: "old", newText: "new" },
+          { type: "content", content: { type: "text", text: "   " } },
         ],
       },
     } satisfies EffectAcpSchema.SessionNotification);
@@ -517,18 +521,25 @@ describe("AcpRuntimeModel", () => {
       throw new Error("expected a ToolCallUpdated event");
     }
     const content = event.toolCall.data.content as ReadonlyArray<EffectAcpSchema.ToolCallContent>;
-    expect(content).toHaveLength(2);
-    expect(content[1]).toEqual({
+    expect(content).toHaveLength(3);
+    expect(content[0]).toEqual({
       type: "diff",
       path: "/repo/file.ts",
       oldText: "before",
       newText: "after",
     });
-    const firstEntry = content[0];
-    if (firstEntry?.type !== "content" || firstEntry.content.type !== "text") {
+    const lastEntry = content[1];
+    if (lastEntry?.type !== "content" || lastEntry.content.type !== "text") {
       throw new Error("expected a bounded text entry");
     }
-    expect(firstEntry.content.text.length).toBeLessThan(8_100);
+    expect(lastEntry.content.text.length).toBeLessThan(8_100);
+    expect(lastEntry.content.text.endsWith(hugeTail.slice(-100))).toBe(true);
+    expect(content[2]).toEqual({
+      type: "diff",
+      path: "/repo/other.ts",
+      oldText: "old",
+      newText: "new",
+    });
   });
 
   describe("decideToolCallUpdateEmission", () => {
@@ -610,6 +621,36 @@ describe("AcpRuntimeModel", () => {
       // growth should be coalesced until the coalesce limit forces a periodic emission.
       const emittedIndices = emissions.flatMap((emitted, index) => (emitted ? [index + 1] : []));
       expect(emittedIndices).toEqual([1, 11]);
+    });
+
+    it("retains the latest replacement snapshot when equal-length updates are coalesced", () => {
+      let previous: AcpToolCallState = toolCall("frame-a", "inProgress");
+      const lastEmittedDetailLength = previous.detail?.length;
+      let skippedSinceEmit = 0;
+
+      for (const detail of ["frame-b", "frame-c"]) {
+        const next = mergeToolCallState(previous, toolCall(detail, "inProgress"));
+        const decision = decideToolCallUpdateEmission({
+          previous,
+          next,
+          lastEmittedDetailLength,
+          skippedSinceEmit,
+        });
+        expect(decision.emit).toBe(false);
+        skippedSinceEmit = decision.skippedSinceEmit;
+        previous = next;
+      }
+
+      const completed = mergeToolCallState(previous, toolCall(undefined, "completed"));
+      expect(completed.detail).toBe("frame-c");
+      expect(
+        decideToolCallUpdateEmission({
+          previous,
+          next: completed,
+          lastEmittedDetailLength,
+          skippedSinceEmit,
+        }),
+      ).toEqual({ emit: true, skippedSinceEmit: 0 });
     });
   });
 });
