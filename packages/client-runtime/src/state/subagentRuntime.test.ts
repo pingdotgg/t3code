@@ -426,7 +426,7 @@ describe("deriveAgentPanelModel", () => {
     expect(model.liveCount).toBe(0);
   });
 
-  it("keeps direct spawns in first-seen order as their activity changes", () => {
+  it("shows newest direct spawns first without reordering them on activity", () => {
     const directRoster = fold([
       activity("task.started", { taskId: "direct-a", title: "First" }, "2026-08-01T11:00:00.000Z"),
       activity("task.started", { taskId: "direct-b", title: "Second" }, "2026-08-01T11:00:01.000Z"),
@@ -439,10 +439,10 @@ describe("deriveAgentPanelModel", () => {
 
     expect(
       deriveAgentPanelModel({ agents: directRoster }).directAgents.map((agent) => agent.id),
-    ).toEqual(["direct-a", "direct-b"]);
+    ).toEqual(["direct-b", "direct-a"]);
   });
 
-  it("keeps first-seen order after the roster retention ranking runs", () => {
+  it("keeps newest-first order after the roster retention ranking runs", () => {
     const starts = Array.from({ length: 101 }, (_, index) =>
       activity(
         "task.started",
@@ -465,8 +465,8 @@ describe("deriveAgentPanelModel", () => {
       (agent) => agent.id,
     );
     expect(ids).toHaveLength(100);
-    expect(ids.slice(0, 3)).toEqual(["capped-0", "capped-2", "capped-3"]);
-    expect(ids.at(-1)).toBe("capped-100");
+    expect(ids.slice(0, 3)).toEqual(["capped-100", "capped-99", "capped-98"]);
+    expect(ids.at(-1)).toBe("capped-0");
   });
 
   it("a phase with only pending members never reads as running", () => {

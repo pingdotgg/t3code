@@ -844,7 +844,7 @@ export function deriveAgentPanelModel({
     // that remain visible.
     directAgents: direct
       .slice()
-      .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id)),
+      .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt) || a.id.localeCompare(b.id)),
     runningCount,
     waitingCount,
     idleCount,
