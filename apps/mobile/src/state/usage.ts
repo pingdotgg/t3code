@@ -10,6 +10,7 @@
  * @module state/usage
  */
 import { useAtomValue } from "@effect/atom-react";
+import { connectionPhaseCanAnswer } from "@t3tools/client-runtime/connection";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
@@ -48,12 +49,20 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      const label = presentation.entry.target.label;
+      const summary = Option.getOrNull(AsyncResult.value(result));
+      const canAnswer = connectionPhaseCanAnswer(presentation.connection.phase);
       statuses.push({
         environmentId,
-        label: presentation.entry.target.label,
-        isPending: result.waiting,
-        error: result._tag === "Failure" ? "This environment could not report usage." : null,
-        summary: Option.getOrNull(AsyncResult.value(result)),
+        label,
+        isPending: result.waiting && canAnswer,
+        error:
+          result._tag === "Failure"
+            ? `${label} could not report usage.`
+            : summary === null && !canAnswer
+              ? `${label} is not reachable and is left out of these totals.`
+              : null,
+        summary,
       });
     }
     return statuses;

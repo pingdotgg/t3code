@@ -481,7 +481,7 @@ function UsageCoverageNotice(props: {
       ) : null}
       {failed.map((environment) => (
         <Text key={environment.environmentId} className="text-sm text-foreground-muted">
-          {environment.label} could not report usage.
+          {environment.error}
         </Text>
       ))}
       {stale.map((environment) => (

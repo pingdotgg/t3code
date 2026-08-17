@@ -55,6 +55,10 @@ export function presentConnectionState(
   }
 }
 
+export function connectionPhaseCanAnswer(phase: EnvironmentConnectionPhase): boolean {
+  return phase === "available" || phase === "connecting" || phase === "connected";
+}
+
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
   switch (connection.phase) {
     case "available":

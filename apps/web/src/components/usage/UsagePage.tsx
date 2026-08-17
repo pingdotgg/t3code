@@ -496,7 +496,7 @@ function UsageCoverageNotice({
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
-        <span key={environment.label}>{environment.label} could not report usage.</span>
+        <span key={environment.label}>{environment.error}</span>
       ))}
       {stale.map((environment) => (
         <span key={environment.label}>
