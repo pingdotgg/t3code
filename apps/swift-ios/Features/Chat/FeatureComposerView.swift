@@ -200,7 +200,7 @@ struct FeatureComposerView: View {
                 axis: .vertical
             )
                 .font(T3Typography.composer)
-                .lineLimit(1...7)
+                .modifier(FeatureComposerGrowingTextInput())
                 .focused(focused)
                 // Return is always editing input. Sending is deliberately button-only.
                 .submitLabel(.return)
@@ -447,6 +447,14 @@ struct FeatureComposerView: View {
                   canSend {
             onSend()
         }
+    }
+}
+
+struct FeatureComposerGrowingTextInput: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .lineLimit(1...)
+            .layoutPriority(1)
     }
 }
 

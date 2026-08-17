@@ -1,8 +1,52 @@
+import SwiftUI
 import Testing
+import UIKit
 @testable import T3Code
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
+    @MainActor
+    @Test(
+        "Composer input grows past the former seven-line cap",
+        .bug("https://github.com/saphid/t3code-personal/issues/105")
+    )
+    func composerTextInputGrowsBeyondSevenLines() {
+        let sevenLineHeight = composerTextInputHeight(lineCount: 7)
+        let thirtyLineHeight = composerTextInputHeight(lineCount: 30)
+
+        #expect(thirtyLineHeight > sevenLineHeight + 300)
+    }
+
+    @MainActor
+    @Test(
+        "A very tall composer input yields to its viewport",
+        .bug("https://github.com/saphid/t3code-personal/issues/105")
+    )
+    func composerTextInputYieldsToAvailableViewport() {
+        let viewportHeight: CGFloat = 500
+
+        #expect(composerTextInputHeight(lineCount: 100, maximumHeight: viewportHeight) <= viewportHeight)
+    }
+
+    @MainActor
+    private func composerTextInputHeight(
+        lineCount: Int,
+        maximumHeight: CGFloat = .greatestFiniteMagnitude
+    ) -> CGFloat {
+        let text = Array(repeating: "A full visible prompt line", count: lineCount)
+            .joined(separator: "\n")
+        let controller = UIHostingController(
+            rootView: TextField("Ask anything…", text: .constant(text), axis: .vertical)
+                .font(T3Typography.composer)
+                .modifier(FeatureComposerGrowingTextInput())
+                .frame(width: 320)
+        )
+
+        return controller.sizeThatFits(
+            in: CGSize(width: 320, height: maximumHeight)
+        ).height
+    }
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
