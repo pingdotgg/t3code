@@ -473,6 +473,12 @@ export function threadFeedRunIsUnsettled(
   );
 }
 
+export function threadFeedActivityIsVisible(
+  activity: Pick<ThreadFeedActivity, "prominent" | "status" | "toolLike">,
+): boolean {
+  return activity.prominent || !(activity.toolLike && activity.status === "neutral");
+}
+
 interface ThreadFeedRunFold {
   readonly runId: RunId;
   readonly createdAt: string;
@@ -632,9 +638,7 @@ function appendPresentedFeedEntry(
     return;
   }
 
-  const activities = entry.activities.filter(
-    (activity) => !(activity.toolLike && activity.status === "neutral"),
-  );
+  const activities = entry.activities.filter(threadFeedActivityIsVisible);
   if (activities.length === 0) {
     return;
   }
