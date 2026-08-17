@@ -10,7 +10,10 @@ public struct FeatureSourceControlView: View {
     @State private var errorMessage: String?
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
+    /// Owns the loading indicator; only a newer load supersedes it.
     @State private var loadGeneration = 0
+    /// Invalidates status writes; a running action supersedes them too.
+    @State private var statusGeneration = 0
 
     public init(client: any FeatureClient, threadID: String) {
         self.client = client
@@ -195,25 +198,28 @@ public struct FeatureSourceControlView: View {
 
     private func load(force: Bool) async {
         loadGeneration += 1
-        let generation = loadGeneration
+        statusGeneration += 1
+        let loadID = loadGeneration
+        let statusID = statusGeneration
         isLoading = true
-        defer { if generation == loadGeneration { isLoading = false } }
+        // Only a newer *load* takes over the indicator. An action supersedes
+        // this load's writes without taking ownership of the indicator, so
+        // this must still be the one to clear it.
+        defer { if loadID == loadGeneration { isLoading = false } }
         do {
             if force {
                 let refreshed = try await client.sourceControlStatus(threadID: threadID)
-                guard generation == loadGeneration else { return }
+                guard statusID == statusGeneration else { return }
                 status = refreshed
                 errorMessage = nil
             } else {
                 let statuses = try await client.sourceControlStatuses(threadID: threadID)
                 var didClearError = false
                 for try await nextStatus in statuses {
-                    guard generation == loadGeneration else { return }
+                    guard statusID == statusGeneration else { return }
                     status = nextStatus
-                    // Only the first status clears the error. The screen stays
-                    // interactive for the rest of the stream, and clearing on
-                    // every element would wipe a failure message raised by an
-                    // action the user ran meanwhile.
+                    // Only the first status clears the error: the screen stays
+                    // interactive for the rest of the stream.
                     if !didClearError {
                         errorMessage = nil
                         didClearError = true
@@ -223,12 +229,17 @@ public struct FeatureSourceControlView: View {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == loadGeneration else { return }
+            guard statusID == statusGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }
 
     private func perform(_ action: FeatureSourceControlAction, message: String?) async {
+        // Supersede any open stream. Its accumulator still holds the local half
+        // from before this action, so a late event would fold that stale half
+        // into a status that overwrites this action's result — and a late
+        // stream error would mask this action's failure message.
+        statusGeneration += 1
         isRunningAction = true
         defer { isRunningAction = false }
         do {
