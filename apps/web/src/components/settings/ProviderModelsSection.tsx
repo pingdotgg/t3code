@@ -204,6 +204,7 @@ export function ProviderModelsSection({
         value={searchQuery}
         onChange={(event) => setSearchQuery(event.target.value)}
         placeholder="Search models..."
+        aria-label="Search models"
         className="mt-2"
         spellCheck={false}
       />
