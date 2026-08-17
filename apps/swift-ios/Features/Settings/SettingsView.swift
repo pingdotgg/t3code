@@ -6,9 +6,17 @@ public struct SettingsView: View {
     @State private var settings: FeatureSettings
     @State private var isSaving = false
     @State private var saveErrorMessage: String?
+    private let sourceThread: BuildSourceThread?
+    private let openThread: (String) -> Void
 
-    public init(model: FeatureRootModel) {
+    public init(
+        model: FeatureRootModel,
+        sourceThread: BuildSourceThread? = BuildSourceThread.recorded(),
+        openThread: @escaping (String) -> Void = { _ in }
+    ) {
         self.model = model
+        self.sourceThread = sourceThread
+        self.openThread = openThread
         _settings = State(initialValue: model.snapshot.settings)
     }
 
@@ -187,6 +195,8 @@ public struct SettingsView: View {
                     SettingsValueRow(title: "Commit", value: appCommit)
                 }
                 settingsDivider
+                sourceThreadRow
+                settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
                     SettingsNavigationRow(
                         title: "Open source",
@@ -196,6 +206,37 @@ public struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    /// Hands off to the thread this build came from, or says plainly that it cannot.
+    @ViewBuilder
+    private var sourceThreadRow: some View {
+        let presentation = BuildSourceThreadResolver.presentation(
+            for: sourceThread,
+            in: model.snapshot
+        )
+
+        switch presentation {
+        case let .openable(threadID, title):
+            Button {
+                openThread(threadID)
+            } label: {
+                SettingsNavigationRow(
+                    title: "Source thread",
+                    value: title,
+                    systemImage: "bubble.left.and.text.bubble.right",
+                    trailingSystemImage: "arrow.up.right",
+                    valueLineLimit: 3
+                )
+            }
+            .buttonStyle(.plain)
+        case .notRecorded, .unresolved:
+            SettingsValueRow(
+                title: "Source thread",
+                value: presentation.title,
+                detail: presentation.detail
+            )
         }
     }
 
@@ -298,6 +339,8 @@ private struct SettingsNavigationRow: View {
     var value: String? = nil
     let systemImage: String
     var trailingSystemImage = "chevron.right"
+    /// Thread titles are sentences, so the source-thread row needs more than one line.
+    var valueLineLimit = 1
 
     var body: some View {
         HStack(spacing: 12) {
@@ -305,12 +348,14 @@ private struct SettingsNavigationRow: View {
             Text(title)
                 .font(T3Typography.threadBody)
                 .foregroundStyle(T3Colors.textPrimary)
+                .layoutPriority(1)
             Spacer(minLength: 8)
             if let value {
                 Text(value)
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textSecondary)
-                    .lineLimit(1)
+                    .lineLimit(valueLineLimit)
+                    .multilineTextAlignment(.trailing)
             }
             Image(systemName: trailingSystemImage)
                 .font(T3Typography.supportingStrong)
@@ -345,6 +390,7 @@ private struct SettingsActionRow: View {
 private struct SettingsValueRow: View {
     let title: String
     let value: String
+    var detail: String? = nil
     var systemImage: String? = nil
 
     var body: some View {
@@ -356,10 +402,19 @@ private struct SettingsValueRow: View {
                 .font(T3Typography.threadBody)
                 .foregroundStyle(T3Colors.textPrimary)
             Spacer(minLength: 12)
-            Text(value)
-                .font(T3Typography.threadBody)
-                .foregroundStyle(T3Colors.textSecondary)
-                .lineLimit(1)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(value)
+                    .font(T3Typography.threadBody)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .lineLimit(1)
+                if let detail {
+                    Text(detail)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
         }
         .padding(.horizontal, 20)
         .frame(minHeight: 52)

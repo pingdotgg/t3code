@@ -42,6 +42,12 @@
     <string>$(T3CODE_CLERK_PUBLISHABLE_KEY)</string>
     <key>T3ConnectRelayHTTPURL</key>
     <string>$(T3CODE_RELAY_URL)</string>
+    <key>T3SourceThreadEnvironmentID</key>
+    <string>$(T3CODE_SOURCE_THREAD_ENVIRONMENT_ID)</string>
+    <key>T3SourceThreadID</key>
+    <string>$(T3CODE_SOURCE_THREAD_ID)</string>
+    <key>T3SourceThreadTitle</key>
+    <string>$(T3CODE_SOURCE_THREAD_TITLE)</string>
     <key>UIBackgroundModes</key>
     <array>
         <string>fetch</string>
