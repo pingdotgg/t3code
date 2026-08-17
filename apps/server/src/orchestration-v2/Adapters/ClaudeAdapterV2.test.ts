@@ -1353,7 +1353,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
-  it.effect("projects API retries and resolves the same item after recovery", () =>
+  it.effect("resolves API retries on resumed assistant activity", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -1403,17 +1403,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         yield* Queue.offer(
           harness.sdkMessages,
-          makeResultFrame({
+          makeAssistantTextFrame({
             uuid: "00000000-0000-4000-8000-000000000202",
-            result: "Opened GitHub.",
+            text: "Opening GitHub.",
           }),
         );
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "recovered Claude turn");
         yield* awaitUntil(() => retryItems().length === 2, "resolved Claude retry item");
+        assert.lengthOf(harness.terminalEvents(), 0);
         const recoveredRetry = retryItems()[1];
         assert.equal(recoveredRetry?.id, runningRetry?.id);
         assert.equal(recoveredRetry?.status, "completed");
         assert.equal(recoveredRetry?.title, "Provider recovered");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000203",
+            result: "Opened GitHub.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "recovered Claude turn");
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );
