@@ -369,10 +369,11 @@ enum NativeWorkspaceMapper {
     }
 }
 
-/// Folds `vcs.subscribeStatus` events into successive UI statuses, mirroring
-/// `applyGitStatusStreamEvent` in packages/shared: a snapshot replaces both
+/// Folds `vcs.subscribeStatus` events into successive UI statuses. Modelled on
+/// `applyGitStatusStreamEvent` in packages/shared — a snapshot replaces both
 /// halves, while the last known remote half is carried across local-only
-/// updates instead of being dropped.
+/// updates instead of being dropped — but with an explicit pending state, which
+/// the reference has no need for because it never reports a partial status.
 struct NativeSourceControlStatusAccumulator {
     private var local: VCSLocalStatus?
     private var remote: VCSRemoteStatus?

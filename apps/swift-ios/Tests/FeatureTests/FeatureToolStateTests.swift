@@ -223,6 +223,9 @@ struct FeatureToolStateTests {
 
         #expect(replaced.aheadCount == 0)
         #expect(replaced.isRemoteKnown == false)
+        // The latch holds even though this event alone would not set it:
+        // without it the stream would report a spurious protocol violation.
+        #expect(accumulator.isComplete)
     }
 
     @Test("Completion never regresses across a long mixed sequence")
@@ -234,6 +237,9 @@ struct FeatureToolStateTests {
             .remoteUpdated(Self.vcsRemote(aheadCount: 1)),
             .localUpdated(Self.vcsLocal(refName: "feature/seq", files: ["a.swift", "b.swift"])),
             .remoteUpdated(nil),
+            // Drives the latch: on its own this snapshot leaves the remote half
+            // unresolved again, so completion would regress without it.
+            .snapshot(local: Self.vcsLocal(refName: "feature/seq"), remote: nil),
             .localUpdated(Self.vcsLocal(refName: "feature/seq")),
         ]
 

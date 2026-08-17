@@ -6039,7 +6039,7 @@ private enum NativeFeatureClientError: LocalizedError {
         case .missingScope: "This connection does not have permission to manage devices."
         case .tooManyAttachments: "You can attach up to 8 images per message."
         case .remoteStatusUnavailable:
-            "Couldn't check the remote status. Pull to refresh."
+            "Couldn't check the remote status. Try reloading."
         }
     }
 }
