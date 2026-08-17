@@ -277,7 +277,14 @@ export const make = Effect.gen(function* BrowserImportMake() {
       Effect.provide(platformServices),
       Effect.mapError(
         (cause) =>
-          new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
+          new BrowserImportFailedError({
+            sourceId: definition.id,
+            // Firefox has one failure mode — its plaintext database would not
+            // open — so its error carries no reason of its own and the
+            // user-facing one is supplied here.
+            reason: cause._tag === "FirefoxCookieReadError" ? "readFailed" : cause.reason,
+            cause,
+          }),
       ),
     );
 

@@ -22,30 +22,30 @@ import { cookieScope, snapshotCookieDatabase, type ImportedCookie } from "./Cook
  * that is the modern default, and guessing "none" would widen a cookie's scope
  * on import.
  */
-export const FirefoxCookieReadReason = Schema.Literals(["readFailed"]);
-export type FirefoxCookieReadReason = typeof FirefoxCookieReadReason.Type;
-
 /**
  * Mirrors `ChromiumCookieReadError` so both engines fail with a tagged error
  * the service can tell apart, rather than one of them widening the channel to
  * an anonymous shape.
+ *
+ * No `reason` field: unlike Chromium there is only one way this fails — the
+ * plaintext database would not open — and the tag already says which engine it
+ * was. `BrowserImport` supplies the user-facing reason when it maps the union.
  */
 export class FirefoxCookieReadError extends Schema.TaggedErrorClass<FirefoxCookieReadError>()(
   "FirefoxCookieReadError",
   {
-    reason: FirefoxCookieReadReason,
     /**
      * Which database the read was for. Firefox keeps one per profile, so
      * without it a failure cannot be traced back to the profile that caused
      * it.
      */
     cookieDatabasePath: Schema.String,
-    /** Kept for the log; never surfaced to the user. */
-    cause: Schema.optional(Schema.Defect()),
+    /** Always present: every construction site wraps a real failure. */
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Could not read Firefox cookies at ${this.cookieDatabasePath}: ${this.reason}.`;
+    return `Could not read Firefox cookies at ${this.cookieDatabasePath}.`;
   }
 }
 
@@ -73,9 +73,7 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
   cookieDatabasePath: string,
 ) {
   const snapshotPath = yield* snapshotCookieDatabase(cookieDatabasePath).pipe(
-    Effect.mapError(
-      (cause) => new FirefoxCookieReadError({ reason: "readFailed", cookieDatabasePath, cause }),
-    ),
+    Effect.mapError((cause) => new FirefoxCookieReadError({ cookieDatabasePath, cause })),
   );
 
   const rows = yield* Effect.gen(function* () {
@@ -93,9 +91,7 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
     return yield* decodeCookieRows(raw);
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
-    Effect.mapError(
-      (cause) => new FirefoxCookieReadError({ reason: "readFailed", cookieDatabasePath, cause }),
-    ),
+    Effect.mapError((cause) => new FirefoxCookieReadError({ cookieDatabasePath, cause })),
   );
 
   return rows.map((row) => {
