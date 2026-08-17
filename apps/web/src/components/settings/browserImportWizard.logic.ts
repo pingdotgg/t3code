@@ -58,6 +58,7 @@ export type ImportOutcome =
  */
 export type WizardStep =
   | { readonly step: "quit" }
+  | { readonly step: "fullDiskAccess" }
   | { readonly step: "configure" }
   | { readonly step: "checking" }
   | { readonly step: "importing" }
@@ -102,6 +103,7 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
   // other failure surfaces on the blocked screen, which offers a retry when
   // one could help.
   if (outcome.reason === "browserRunning") return { step: "quit" };
+  if (outcome.reason === "needsFullDiskAccess") return { step: "fullDiskAccess" };
   return { step: "blocked", reason: outcome.reason };
 }
 

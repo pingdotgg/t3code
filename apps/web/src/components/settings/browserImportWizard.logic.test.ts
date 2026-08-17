@@ -103,6 +103,12 @@ describe("outcomeToStep", () => {
     expect(outcomeToStep({ kind: "blocked", reason: "browserRunning" })).toEqual({ step: "quit" });
   });
 
+  it("routes a Full Disk Access refusal to its own screen", () => {
+    expect(outcomeToStep({ kind: "blocked", reason: "needsFullDiskAccess" })).toEqual({
+      step: "fullDiskAccess",
+    });
+  });
+
   it("surfaces every other failure on the blocked screen", () => {
     expect(outcomeToStep({ kind: "blocked", reason: "readFailed" })).toEqual({
       step: "blocked",

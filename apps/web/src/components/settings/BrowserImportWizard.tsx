@@ -55,6 +55,8 @@ interface BrowserImportWizardProps {
   }) => Promise<ImportOutcome>;
   /** Re-checks the source's availability after the user quits the browser. */
   readonly onRefreshSource: () => Promise<BrowserImportSource | undefined>;
+  /** Opens the OS setting that grants access to a protected cookie store. */
+  readonly onOpenFullDiskAccessSettings: () => void;
   readonly onClose: () => void;
 }
 
@@ -72,6 +74,7 @@ export function BrowserImportWizard({
   canCreateProfile,
   onImport,
   onRefreshSource,
+  onOpenFullDiskAccessSettings,
   onClose,
 }: BrowserImportWizardProps) {
   const [source, setSource] = useState(initialSource);
@@ -131,6 +134,13 @@ export function BrowserImportWizard({
       <DialogPopup className="max-w-lg" showCloseButton={canCloseWizard(step)}>
         {step.step === "quit" ? (
           <QuitStep source={source} onCancel={onClose} onRechecked={recheckAfterQuit} />
+        ) : step.step === "fullDiskAccess" ? (
+          <FullDiskAccessStep
+            source={source}
+            onCancel={onClose}
+            onOpenSettings={onOpenFullDiskAccessSettings}
+            onGranted={runImport}
+          />
         ) : step.step === "importing" ? (
           <ImportingStep />
         ) : step.step === "checking" ? (
@@ -223,6 +233,38 @@ type ConfigureStepProps = {
   readonly onImport: () => void;
 };
 
+function FullDiskAccessStep({
+  source,
+  onCancel,
+  onOpenSettings,
+  onGranted,
+}: {
+  readonly source: BrowserImportSource;
+  readonly onCancel: () => void;
+  readonly onOpenSettings: () => void;
+  readonly onGranted: () => void;
+}) {
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Let T3 Code read {source.name}&rsquo;s cookies</DialogTitle>
+        <DialogDescription>
+          {source.name} keeps its cookies somewhere only apps with Full Disk Access can reach. Turn
+          that on for T3 Code in System Settings, then come back and finish the import.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="outline" onClick={onOpenSettings}>
+          Open System Settings
+        </Button>
+        <Button onClick={onGranted}>I&rsquo;ve turned it on</Button>
+      </DialogFooter>
+    </>
+  );
+}
 function ConfigureStep({
   source,
   destinationEnvironmentName,

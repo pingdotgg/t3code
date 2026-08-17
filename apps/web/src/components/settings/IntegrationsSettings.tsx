@@ -55,6 +55,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { readLocalApi } from "~/localApi";
+
 import { toastManager } from "../ui/toast";
 import {
   AlertDialog,
@@ -664,6 +666,14 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
  * files, and the answer changes while the app is running (quitting the browser
  * clears `browserRunning`), so a value cached at mount would go stale.
  */
+/**
+ * Opens System Settings → Privacy & Security → Full Disk Access. The scheme is
+ * unchanged from the old System Preferences and still resolves on Ventura and
+ * later.
+ */
+const FULL_DISK_ACCESS_SETTINGS_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFilesAccess";
+
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1168,6 +1178,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             runWizardImport(importSession.source, importSession.environmentId, input)
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
+          onOpenFullDiskAccessSettings={() =>
+            void readLocalApi()
+              ?.shell.openExternal(FULL_DISK_ACCESS_SETTINGS_URL)
+              .catch(() => undefined)
+          }
           onClose={() => setImportSession(null)}
         />
       ) : null}
