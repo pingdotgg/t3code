@@ -8,6 +8,7 @@ import type {
   PullRequestRef,
   PullRequestReviewPosition,
   PullRequestReviewThread,
+  PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -334,6 +335,9 @@ export function PullRequestCodeTab({
     reportFailure: false,
   });
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
+    reportFailure: false,
+  });
+  const loadThreadComments = useAtomCommand(pullRequestEnvironment.threadComments, {
     reportFailure: false,
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
@@ -798,6 +802,20 @@ export function PullRequestCodeTab({
         fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
         fixLabel={fixFindingLabel}
         {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
+        onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
+          const result = await loadThreadComments({
+            environmentId,
+            input: { ...reference, threadId: thread.id, cursor },
+          });
+          if (result._tag === "Failure") {
+            toastManager.add({
+              type: "error",
+              title: "More comments could not be loaded",
+            });
+            return null;
+          }
+          return result.value;
+        }}
         onReply={(body) =>
           runThreadCommand("Reply could not be posted", () =>
             replyToThread({
@@ -833,6 +851,7 @@ export function PullRequestCodeTab({
       detail,
       environmentId,
       fixFindingLabel,
+      loadThreadComments,
       onRefresh,
       onFixFinding,
       pendingFinding,
