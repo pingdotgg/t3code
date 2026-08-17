@@ -18,6 +18,7 @@ import { useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatMessage } from "../../types";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function QueuedRunsControl(props: {
   readonly environmentId: EnvironmentId;
@@ -201,9 +202,14 @@ export function QueuedRunsControl(props: {
                 </>
               ) : (
                 <>
-                  <span className="min-w-0 flex-1 truncate text-xs" title={item.text}>
-                    {item.text}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-xs" />}>
+                      {item.text}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top" className="max-w-96 break-words">
+                      {item.text}
+                    </TooltipPopup>
+                  </Tooltip>
                   <Button
                     size="icon-xs"
                     variant="ghost"
