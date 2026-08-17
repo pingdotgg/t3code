@@ -296,6 +296,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       };
       let tabId = request.tabId ?? null;
       try {
+        const openBrowserDefaults =
+          request.operation === "open" ? await resolveBrowserDefaults() : undefined;
         let state = readThreadPreviewState(threadRef);
         const needsSessionSync = needsPreviewAutomationSessionSync(state, request.tabId);
         if (needsSessionSync) {
@@ -347,10 +349,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return await currentStatus(threadRef, tabId);
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
-            const browserDefaults = await resolveBrowserDefaults();
+            if (!openBrowserDefaults) {
+              throw new Error("Browser defaults were not resolved for preview open");
+            }
             const shouldPresentPreview = shouldOpenPreviewMiniPlayer(
               input,
-              browserDefaults.autoShowFloatingPreview,
+              openBrowserDefaults.autoShowFloatingPreview,
             );
             const resolvedInputUrl = input.url
               ? resolveBrowserNavigationTarget(environmentId, {
@@ -376,7 +380,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
                   // An agent that didn't state a size gets the user's
                   // configured default, same as a hand-opened tab.
-                  viewport: browserDefaultOpenViewport(browserDefaults),
+                  viewport: browserDefaultOpenViewport(openBrowserDefaults),
                 },
               });
               if (result._tag === "Failure") {
