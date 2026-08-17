@@ -392,6 +392,149 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test(
+        "The selector drops the two ultra tiers and keeps the descriptor's order",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func reasoningSelectorExcludesUltraTiersAndOffersTheRestLowestFirst() {
+        let providers = [Self.claudeProvider]
+        let selection = FeatureSelection(
+            providerID: "claudeAgent",
+            modelID: "claude-opus-5",
+            options: [.init(id: "effort", value: .string("high"))]
+        )
+
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: selection,
+            inherited: nil,
+            providers: providers,
+            materializesDefaultSelection: true
+        )
+
+        // Lowest first, in the descriptor's own order, with exactly the two
+        // excluded tiers missing and nothing else dropped or reordered.
+        #expect(control?.choices.map(\.id) == ["low", "medium", "high", "xhigh", "max"])
+        #expect(
+            control?.choices.map(\.label) == ["Low", "Medium", "High", "Extra High", "Max"]
+        )
+        #expect(control?.choices.contains { $0.id == "ultracode" } == false)
+        #expect(control?.choices.contains { $0.id == "ultrathink" } == false)
+        #expect(control?.isInteractive == true)
+        #expect(control?.currentChoiceID == "high")
+        #expect(FeatureComposerReasoningControl.excludedChoiceIDs == ["ultracode", "ultrathink"])
+
+        // Codex's separate `ultra` level was not part of the verdict and is a
+        // different descriptor id, so it must survive untouched.
+        let codexControl = FeatureComposerReasoningControl.resolve(
+            explicit: .init(
+                providerID: "codex",
+                modelID: "gpt-5.6-sol",
+                options: [.init(id: "reasoningEffort", value: .string("low"))]
+            ),
+            inherited: nil,
+            providers: [Self.solProvider],
+            materializesDefaultSelection: true
+        )
+        #expect(codexControl?.choices.map(\.id).contains("ultra") == true)
+    }
+
+    @Test(
+        "An excluded level stays visible when it is already the effective one",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func excludedLevelIsStillReportedButNeverOfferedOrChecked() {
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: .init(
+                providerID: "claudeAgent",
+                modelID: "claude-opus-5",
+                options: [.init(id: "effort", value: .string("ultrathink"))]
+            ),
+            inherited: nil,
+            providers: [Self.claudeProvider],
+            materializesDefaultSelection: true
+        )
+
+        // The composer must not lie about the current setting, but it also must
+        // not offer it or mark a row that is no longer in the menu.
+        #expect(control?.value == "Ultrathink")
+        #expect(control?.currentChoiceID == nil)
+        #expect(control?.choices.contains { $0.id == "ultrathink" } == false)
+
+        // Choosing an offered level still replaces the excluded one cleanly.
+        let written = control?.selection(choosing: "max")
+        #expect(written?.options.first(where: { $0.id == "effort" })?.value == .string("max"))
+        #expect(written?.options.filter { $0.id == "effort" }.count == 1)
+    }
+
+    @Test(
+        "A descriptor offering only excluded tiers becomes read-only",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func aDescriptorOfOnlyExcludedTiersLeavesAReadOnlyLabel() {
+        let provider = FeatureProvider(
+            id: "claudeAgent",
+            name: "Claude",
+            models: [
+                FeatureModel(
+                    id: "ultra-only",
+                    name: "Ultra only",
+                    options: [
+                        .init(
+                            id: "effort",
+                            label: "Reasoning",
+                            kind: .select,
+                            choices: [
+                                .init(id: "ultracode", label: "Ultracode", isDefault: true),
+                                .init(id: "ultrathink", label: "Ultrathink"),
+                            ]
+                        ),
+                    ]
+                ),
+            ]
+        )
+
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: .init(providerID: "claudeAgent", modelID: "ultra-only"),
+            inherited: nil,
+            providers: [provider],
+            materializesDefaultSelection: true
+        )
+
+        #expect(control?.value == "Ultracode")
+        #expect(control?.choices.isEmpty == true)
+        #expect(control?.isInteractive == false)
+    }
+
+    /// Mirrors the `effort` descriptor the Claude provider advertises, which is
+    /// where the two excluded tiers actually come from.
+    private static let claudeProvider = FeatureProvider(
+        id: "claudeAgent",
+        name: "Claude",
+        models: [
+            FeatureModel(
+                id: "claude-opus-5",
+                name: "Claude Opus 5",
+                isDefault: true,
+                options: [
+                    .init(
+                        id: "effort",
+                        label: "Reasoning",
+                        kind: .select,
+                        choices: [
+                            .init(id: "low", label: "Low"),
+                            .init(id: "medium", label: "Medium"),
+                            .init(id: "high", label: "High", isDefault: true),
+                            .init(id: "xhigh", label: "Extra High"),
+                            .init(id: "max", label: "Max"),
+                            .init(id: "ultracode", label: "Ultracode"),
+                            .init(id: "ultrathink", label: "Ultrathink"),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+    )
+
     /// Mirrors the descriptor the Codex provider actually advertises for
     /// `gpt-5.6-sol`, including the neighbouring option the selector must not
     /// disturb.

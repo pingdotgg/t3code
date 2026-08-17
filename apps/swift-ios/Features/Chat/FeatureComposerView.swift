@@ -341,6 +341,10 @@ struct FeatureComposerView: View {
             } label: {
                 reasoningLevelLabel(control.value, showsChevron: true)
             }
+            // The composer sits at the bottom of the screen, so an adaptive menu
+            // would flip the descriptor's lowest-first order and put the highest
+            // level under the finger. Read the levels in their declared order.
+            .menuOrder(.fixed)
             .buttonStyle(.plain)
             .accessibilityLabel("Reasoning level")
             .accessibilityValue(control.value)
