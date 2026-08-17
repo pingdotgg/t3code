@@ -544,11 +544,23 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         </Button>
       }
     >
-      <div className="mt-1 space-y-1">
+      {/*
+        Each profile is its own bounded row, and the list carries the bottom
+        spacing `SettingsRow` leaves to its children (`pt-3 pb-1`). Bare rows
+        stack on narrow viewports with a larger gap inside a row than between
+        rows, which reads as the remove button belonging to the profile below.
+      */}
+      <div className="mt-2 space-y-1 pb-2">
         {resolveBrowserProfiles(userProfiles).map((profile) => {
           const builtIn = isBuiltInBrowserProfileId(profile.id);
           return (
-            <div key={profile.id} className={ITEM_ROW_INNER_CLASSNAME}>
+            <div
+              key={profile.id}
+              className={cn(
+                ITEM_ROW_INNER_CLASSNAME,
+                "rounded-lg border border-border/60 px-3 py-2",
+              )}
+            >
               {builtIn ? (
                 // Dimmed here rather than on the list, which is the only
                 // content in the row without a disabled treatment of its own:
