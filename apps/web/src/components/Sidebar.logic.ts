@@ -17,6 +17,7 @@ export {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   filterArchivableSidebarThreads,
+  formatArchiveSkippedDescription,
   isThreadArchiveBlocked,
 } from "./SidebarArchiveControls.logic";
 

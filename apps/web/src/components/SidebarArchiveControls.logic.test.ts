@@ -112,15 +112,17 @@ describe("archiveSelectedThreadEntries", () => {
     expect(onArchived).toHaveBeenCalledWith(entries[0]);
   });
 
-  it("re-checks eligibility before each batch mutation", async () => {
-    const archive = vi.fn(async (_entry, markArchived: () => void) => {
+  it("continues when an entry becomes ineligible during the batch", async () => {
+    const blockedThreadKeys = new Set<string>();
+    const archive = vi.fn(async (entry, markArchived: () => void) => {
       markArchived();
+      if (entry.threadKey === "one") blockedThreadKeys.add("two");
       return success;
     });
     const outcome = await archiveSelectedThreadEntries({
       entries,
       archive,
-      canArchive: (entry) => entry.threadKey !== "two",
+      canArchive: (entry) => !blockedThreadKeys.has(entry.threadKey),
     });
 
     expect(archive).toHaveBeenCalledTimes(2);

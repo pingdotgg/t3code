@@ -171,6 +171,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  formatArchiveSkippedDescription,
   getSidebarThreadIdsToPrewarm,
   isThreadArchiveBlocked,
   resolveAdjacentThreadId,
@@ -1820,6 +1821,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const archiveOutcome = await archiveSelectedThreadEntries({
           entries: selectedThreadEntries,
           archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+          canArchive: ({ threadRef }) => !isThreadArchiveBlocked(readThreadShell(threadRef)),
         });
         for (const failure of archiveOutcome.followupFailures) {
           if (isAtomCommandInterrupted(failure)) continue;
@@ -1832,8 +1834,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }),
           );
         }
+        removeFromSelection(archiveOutcome.archivedThreadKeys);
         if (archiveOutcome.mutationFailure) {
-          removeFromSelection(archiveOutcome.archivedThreadKeys);
           if (!isAtomCommandInterrupted(archiveOutcome.mutationFailure)) {
             const error = squashAtomCommandFailure(archiveOutcome.mutationFailure);
             toastManager.add(
@@ -1844,9 +1846,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }),
             );
           }
-          return;
         }
-        removeFromSelection(threadKeys);
+        if (archiveOutcome.skippedThreadKeys.length > 0) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title:
+                archiveOutcome.archivedThreadKeys.length === 0
+                  ? "No threads archived"
+                  : "Some threads were not archived",
+              description: formatArchiveSkippedDescription(archiveOutcome.skippedThreadKeys.length),
+            }),
+          );
+        }
         return;
       }
 
