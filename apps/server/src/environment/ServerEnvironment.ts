@@ -9,6 +9,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
@@ -66,6 +68,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
@@ -156,13 +159,22 @@ export const make = Effect.gen(function* () {
 
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
-    getDescriptor: Effect.succeed(descriptor),
+    // The publish opt-in and relay link change at runtime (`t3 connect
+    // publish`, the client settings toggle), so the capability is read per
+    // descriptor request rather than baked in at startup.
+    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
+      Effect.map((agentActivityPublishing) => ({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
+      })),
+    ),
   });
 });
 
 /**
  * ServerEnvironment is acquired from persisted filesystem and host-process
  * state. It intentionally has no fallback Layer.succeed value: callers must
- * provide the external platform services and a ServerConfig.
+ * provide the external platform services, a ServerConfig, and the
+ * ServerSecretStore backing the descriptor's publishing capability.
  */
 export const layer = Layer.effect(ServerEnvironment, make).pipe(Layer.provide(ProcessRunner.layer));
