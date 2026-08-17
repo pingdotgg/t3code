@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./Array": {
+      "types": "./src/Array.ts",
+      "import": "./src/Array.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
@@ -79,6 +83,10 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
+    "./t3McpToolPresentation": {
+      "types": "./src/t3McpToolPresentation.ts",
+      "import": "./src/t3McpToolPresentation.ts"
+    },
     "./Struct": {
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"
@@ -110,6 +118,14 @@
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
+    },
+    "./orchestrationV2Timeline": {
+      "types": "./src/orchestrationV2Timeline.ts",
+      "import": "./src/orchestrationV2Timeline.ts"
+    },
+    "./orchestrationV2PendingBackgroundWork": {
+      "types": "./src/orchestrationV2PendingBackgroundWork.ts",
+      "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
     "./remote": {
       "types": "./src/remote.ts",

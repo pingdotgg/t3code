@@ -1,6 +1,8 @@
 import type { StatusTone } from "../../components/StatusPill";
-import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
-import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 
 export function threadSortValue(thread: EnvironmentThreadShell): number {
   const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
@@ -31,14 +33,10 @@ export const THREAD_STATUS_NEUTRAL_ICON = {
   iconBackground: "rgba(142,142,147,0.22)",
 } as const;
 
-function isLatestTurnSettled(
-  latestTurn: OrchestrationLatestTurn | null,
-  session: OrchestrationSession | null,
-): boolean {
-  if (!latestTurn?.startedAt) return false;
-  if (!latestTurn.completedAt) return false;
-  if (!session) return true;
-  return session.status !== "running";
+function isLatestRunSettled(thread: EnvironmentThreadShell): boolean {
+  if (!thread.latestRun?.startedAt) return false;
+  if (!thread.latestRun.completedAt) return false;
+  return !threadRuntimeIsActive(thread.runtime);
 }
 
 /**
@@ -73,7 +71,9 @@ export function resolveThreadStatus(
     };
   }
 
-  if (thread.session?.status === "running") {
+  const runtimeStatus = thread.runtime?.status;
+
+  if (runtimeStatus === "running" || runtimeStatus === "waiting") {
     return {
       kind: "working",
       label: "Working",
@@ -85,7 +85,7 @@ export function resolveThreadStatus(
     };
   }
 
-  if (thread.session?.status === "starting") {
+  if (runtimeStatus === "preparing" || runtimeStatus === "queued" || runtimeStatus === "starting") {
     return {
       kind: "connecting",
       label: "Connecting",
@@ -97,7 +97,7 @@ export function resolveThreadStatus(
     };
   }
 
-  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
+  if (runtimeStatus === "failed" || thread.latestRun?.status === "failed") {
     return {
       kind: "error",
       label: "Error",
@@ -111,7 +111,7 @@ export function resolveThreadStatus(
 
   const hasPlanReadyPrompt =
     thread.interactionMode === "plan" &&
-    isLatestTurnSettled(thread.latestTurn, thread.session) &&
+    isLatestRunSettled(thread) &&
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
     return {

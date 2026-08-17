@@ -17,6 +17,7 @@
  * folding (completion can create an agent; a late start only fills
  * metadata).
  */
+import * as DateTime from "effect/DateTime";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
 export type RuntimeSubagentStatus =
@@ -715,6 +716,69 @@ const EMPTY_PANEL_MODEL: AgentPanelModel = {
 
 export function emptyAgentPanelModel(): AgentPanelModel {
   return EMPTY_PANEL_MODEL;
+}
+
+/**
+ * The v2 leg of the mapper swap (#5219 spec): project orchestration-v2
+ * subagent entities into the same runtime shape the native fold produced.
+ * The panel/CTA components never see which source fed them.
+ */
+export function projectedSubagentsToRuntime(
+  subagents: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string | null;
+    readonly prompt: string;
+    readonly model: string | null;
+    readonly status:
+      | "pending"
+      | "running"
+      | "waiting"
+      | "completed"
+      | "failed"
+      | "cancelled"
+      | "interrupted";
+    readonly progress?: string | undefined;
+    readonly result: string | null;
+    readonly startedAt: DateTime.Utc | null;
+    readonly completedAt: DateTime.Utc | null;
+    readonly updatedAt: DateTime.Utc;
+  }>,
+): ReadonlyArray<RuntimeSubagent> {
+  return subagents.map((subagent) => {
+    const updatedAt = DateTime.formatIso(subagent.updatedAt);
+    const startedAt = subagent.startedAt === null ? null : DateTime.formatIso(subagent.startedAt);
+    return {
+      id: subagent.id,
+      kind: "subagent" as const,
+      title:
+        subagent.title ??
+        (subagent.prompt.length > 80 ? `${subagent.prompt.slice(0, 77)}...` : subagent.prompt),
+      role: null,
+      model: subagent.model,
+      effort: null,
+      status: subagent.status,
+      activationCount: 1,
+      usage: null,
+      progress: subagent.progress ?? null,
+      lastToolName: null,
+      result: subagent.result,
+      error: subagent.status === "failed" ? (subagent.result ?? null) : null,
+      outputFile: null,
+      parentAgentId: null,
+      agentIndex: null,
+      phaseIndex: null,
+      phaseTitle: null,
+      attempt: null,
+      workflowName: null,
+      phases: [],
+      runHandles: null,
+      recentActivity: [],
+      firstSeenAt: startedAt ?? updatedAt,
+      startedAt,
+      completedAt: subagent.completedAt === null ? null : DateTime.formatIso(subagent.completedAt),
+      updatedAt,
+    } satisfies RuntimeSubagent;
+  });
 }
 
 /**

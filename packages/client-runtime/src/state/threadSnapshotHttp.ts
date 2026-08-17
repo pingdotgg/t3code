@@ -1,4 +1,4 @@
-import type { OrchestrationThreadDetailSnapshot, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadDetailSnapshot, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -21,21 +21,35 @@ import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./envir
 // delays the transition to live data on the first open, not the initial paint.
 const DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
 
+/** Progressive history metadata returned by a bounded snapshot loader. */
+export type ThreadSnapshotHistoryMeta = {
+  readonly historyCursor: string | null;
+  readonly hasMoreHistory: boolean;
+  /** Max local turn ordinal from the full projection; optional on older servers. */
+  readonly latestLocalTurnOrdinal?: number | null;
+};
+
+/**
+ * Outcome of an HTTP thread-detail snapshot load.
+ *
+ * - `present`: snapshot body is available (seed projection, resume via socket).
+ * - `missing`: server definitively reported the thread does not exist (404).
+ * - `unavailable`: transport/timeout/5xx/etc.; fall back to the socket path.
+ */
+export type ThreadSnapshotLoadResult =
+  | {
+      readonly _tag: "present";
+      readonly snapshot: OrchestrationV2ThreadDetailSnapshot;
+      readonly history?: ThreadSnapshotHistoryMeta;
+    }
+  | { readonly _tag: "missing" }
+  | { readonly _tag: "unavailable" };
+
 /**
  * Load a thread's detail snapshot over HTTP instead of embedding it in the
  * WebSocket subscription's first frame. The response is gzip-compressible by
  * the transport and keeps the (potentially multi-KB) snapshot off the socket.
  */
-/**
- * Optional turn window for a snapshot fetch. Only send a window to servers
- * that advertise `threadSnapshotPagination`; older servers reject unknown
- * query parameters.
- */
-export interface ThreadSnapshotWindow {
-  readonly turnLimit: number;
-  readonly beforeCursor?: string;
-}
-
 export const fetchEnvironmentThreadSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentThreadSnapshot",
 )(function* (input: {
@@ -43,7 +57,6 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
   readonly threadId: ThreadId;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly timeoutMs?: number;
-  readonly window?: ThreadSnapshotWindow;
 }) {
   const requestUrl = environmentEndpointUrl(
     input.prepared.httpBaseUrl,
@@ -63,12 +76,6 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadSnapshot({
         params: { threadId: input.threadId },
-        payload: {
-          ...(input.window !== undefined ? { turnLimit: input.window.turnLimit } : {}),
-          ...(input.window?.beforeCursor !== undefined
-            ? { beforeCursor: input.window.beforeCursor }
-            : {}),
-        },
         headers,
       }),
     ),
@@ -78,10 +85,12 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
 export type FetchEnvironmentThreadSnapshotError = RemoteEnvironmentRequestError;
 
 /**
- * Loads a thread's detail snapshot over HTTP, returning `Option.none()` when it
- * cannot be loaded (so the caller falls back to the socket-embedded snapshot).
- * Decouples the thread state machine from the underlying HTTP + DPoP details and
- * keeps them out of test contexts.
+ * Loads a thread's detail snapshot over HTTP.
+ *
+ * Distinguishes a definitive missing thread (HTTP 404) from transient snapshot
+ * unavailability so the thread state machine can mark the thread deleted without
+ * opening a socket subscription, while still falling back to the socket when the
+ * HTTP path is merely unavailable.
  */
 export class ThreadSnapshotLoader extends Context.Service<
   ThreadSnapshotLoader,
@@ -89,8 +98,7 @@ export class ThreadSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
       threadId: ThreadId,
-      window?: ThreadSnapshotWindow,
-    ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
+    ) => Effect.Effect<ThreadSnapshotLoadResult>;
   }
 >()("@t3tools/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}
 
@@ -107,26 +115,24 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     // connections work without one).
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
     return ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId, window?: ThreadSnapshotWindow) =>
-        fetchEnvironmentThreadSnapshot({
-          prepared,
-          threadId,
-          signer,
-          ...(window !== undefined ? { window } : {}),
-        }).pipe(
-          Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
+      load: (prepared: PreparedConnection, threadId: ThreadId) =>
+        fetchEnvironmentThreadSnapshot({ prepared, threadId, signer }).pipe(
+          Effect.map(
+            (snapshot): ThreadSnapshotLoadResult => ({
+              _tag: "present",
+              snapshot,
+            }),
+          ),
           Effect.provideService(HttpClient.HttpClient, httpClient),
-          // A genuinely missing thread (404) is expected — the socket
-          // subscription is the source of truth for thread existence and will
-          // surface the deletion — so don't treat it as an error worth warning
-          // about; just defer to the socket path.
+          // A genuinely missing thread (404) is definitive: do not fall back to
+          // the socket or retry. Callers mark the thread deleted and clear cache.
           Effect.catchTags({
             EnvironmentResourceNotFoundError: () =>
               Effect.logDebug(
-                "Thread snapshot not found over HTTP; deferring to the socket subscription.",
+                "Thread snapshot not found over HTTP; treating the thread as deleted.",
               ).pipe(
                 Effect.annotateLogs({ threadId }),
-                Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+                Effect.as({ _tag: "missing" } satisfies ThreadSnapshotLoadResult),
               ),
           }),
           Effect.catchCause((cause) =>
@@ -134,7 +140,7 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
               "Could not load the thread snapshot over HTTP; using the socket snapshot instead.",
             ).pipe(
               Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+              Effect.as({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
             ),
           ),
         ),

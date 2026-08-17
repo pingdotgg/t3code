@@ -40,7 +40,9 @@ import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistr
 import {
   haveProvidersChanged,
   mergeProviderSnapshot,
+  mergeProviderSnapshots,
   ProviderRegistryLive,
+  selectProvidersByKind,
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
@@ -856,7 +858,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
               streamChanges: Stream.empty,
             },
-            adapter: {} as ProviderInstance["adapter"],
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -890,6 +892,70 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
+
+      it("persists merged provider snapshots for the providers that were refreshed", () => {
+        const previousProviders = [
+          {
+            instanceId: ProviderInstanceId.make("cursor"),
+            driver: ProviderDriverKind.make("cursor"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-14T00:00:00.000Z",
+            version: "2026.04.09-f2b0fcd",
+            models: [
+              {
+                slug: "claude-opus-4-6",
+                name: "Opus 4.6",
+                isCustom: false,
+                capabilities: createModelCapabilities({
+                  optionDescriptors: [
+                    selectDescriptor("reasoning", "Reasoning", [
+                      { id: "high", label: "High", isDefault: true },
+                    ]),
+                    booleanDescriptor("fastMode", "Fast Mode"),
+                    booleanDescriptor("thinking", "Thinking"),
+                  ],
+                }),
+              },
+            ],
+            slashCommands: [],
+            skills: [],
+          },
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: ProviderDriverKind.make("codex"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-14T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ] as const satisfies ReadonlyArray<ServerProvider>;
+        const refreshedCursor = {
+          ...previousProviders[0],
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [],
+        } satisfies ServerProvider;
+
+        const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedCursor]);
+        const persistedProviders = selectProvidersByKind(
+          mergedProviders,
+          new Set([ProviderDriverKind.make("cursor")]),
+        );
+
+        assert.deepStrictEqual(persistedProviders, [
+          {
+            ...refreshedCursor,
+            models: [...previousProviders[0].models],
+          },
+        ]);
+      });
 
       it.effect("persists the merged snapshot when a live update has empty models", () =>
         Effect.gen(function* () {
@@ -945,7 +1011,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.succeed(refreshedProvider),
               streamChanges: Stream.fromPubSub(changes),
             },
-            adapter: {} as ProviderInstance["adapter"],
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1074,7 +1140,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 refresh: Effect.succeed(authoritativeProvider),
                 streamChanges: Stream.fromPubSub(changes),
               },
-              adapter: {} as ProviderInstance["adapter"],
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const instanceRegistryLayer = Layer.succeed(
@@ -1181,7 +1247,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
             },
-            adapter: {} as ProviderInstance["adapter"],
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1274,7 +1340,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,
             },
-            adapter: {} as ProviderInstance["adapter"],
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           });
           const codexInstance = makeInstance(codexProvider);

@@ -1,12 +1,12 @@
-type LatestTurnTiming = {
-  readonly turnId: string | null;
+type LatestRunTiming = {
+  readonly runId: string | null;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
 };
 
-type SessionActivityState = {
+type RuntimeActivityState = {
   readonly orchestrationStatus: string;
-  readonly activeTurnId?: string | null;
+  readonly activeRunId?: string | null;
 };
 
 export function formatDuration(durationMs: number): string {
@@ -31,24 +31,24 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
-export function isLatestTurnSettled(
-  latestTurn: LatestTurnTiming | null,
-  session: SessionActivityState | null,
+export function isLatestRunSettled(
+  latestRun: LatestRunTiming | null,
+  runtime: RuntimeActivityState | null,
 ): boolean {
-  if (!latestTurn?.startedAt) return false;
-  if (!latestTurn.completedAt) return false;
-  if (!session) return true;
-  if (session.orchestrationStatus === "running") return false;
+  if (!latestRun?.startedAt) return false;
+  if (!latestRun.completedAt) return false;
+  if (!runtime) return true;
+  if (runtime.orchestrationStatus === "running") return false;
   return true;
 }
 
 export function deriveActiveWorkStartedAt(
-  latestTurn: LatestTurnTiming | null,
-  session: SessionActivityState | null,
+  latestRun: LatestRunTiming | null,
+  runtime: RuntimeActivityState | null,
   sendStartedAt: string | null,
 ): string | null {
-  if (!isLatestTurnSettled(latestTurn, session)) {
-    return latestTurn?.startedAt ?? sendStartedAt;
+  if (!isLatestRunSettled(latestRun, runtime)) {
+    return latestRun?.startedAt ?? sendStartedAt;
   }
   return sendStartedAt;
 }

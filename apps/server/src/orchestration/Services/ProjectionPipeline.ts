@@ -6,7 +6,7 @@
  *
  * @module OrchestrationProjectionPipeline
  */
-import type { OrchestrationEvent } from "@t3tools/contracts";
+import type { OrchestrationEvent } from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 

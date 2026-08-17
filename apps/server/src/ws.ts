@@ -1,45 +1,47 @@
-import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Encoding from "effect/Encoding";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  type ApplicationStoredEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
   type DiscoveredLocalServerList,
-  EventId,
-  type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
-  OrchestrationDispatchCommandError,
-  type OrchestrationEvent,
-  type OrchestrationShellStreamEvent,
-  type OrchestrationShellStreamItem,
-  type OrchestrationThreadStreamItem,
+  type MessageId,
   OrchestrationGetFullThreadDiffError,
-  OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
-  ORCHESTRATION_WS_METHODS,
-  type ProjectId,
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2DispatchCommandError,
+  OrchestrationV2GetShellSnapshotError,
+  OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2ThreadLaunchError,
+  type OrchestrationProjectShell,
+  type OrchestrationV2ShellSnapshot,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  type ProjectMutation,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectMutationError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
@@ -48,6 +50,8 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  ChatAttachmentId,
+  PersistChatAttachmentsError,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -61,18 +65,39 @@ import {
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
-  projectActivityEvent,
-  projectThreadDetailSnapshot,
-} from "./orchestration/ActivityPayloadProjection.ts";
-import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
-import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+  archivedShellStreamItemFromThreadShell,
+  buildActiveShellSnapshot,
+  coalesceShellApplicationEvents,
+  coalesceStoredThreadEvents,
+  composeShellStreamWithEnrichment,
+  shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemFromThreadShell,
+  shellStreamItemsFromInitialSnapshot,
+  shellStreamItemsFromResumeSnapshot,
+} from "./orchestration-v2/ShellStream.ts";
+import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
+import {
+  decideThreadResume,
+  threadReplayEncodedBytes,
+  THREAD_RESUME_MAX_REPLAY_EVENTS,
+} from "./orchestration-v2/ThreadStream.ts";
+import {
+  projectDomainEventForWire,
+  projectThreadProjectionForWire,
+} from "./orchestration-v2/WireProjection.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
+import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -88,6 +113,8 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
+import { parseBase64DataUrl } from "./imageMime.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -97,7 +124,8 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
-import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
+import * as ProjectService from "./project/ProjectService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -124,9 +152,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
-const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
-const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
 
 export const resolveAvailableEditorsForConfig = <A, E, R>(
@@ -141,18 +167,72 @@ function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
 
-/** Preserve the setup runner's broader pre-refactor message normalization. */
-function legacySetupFailureDescription(cause: unknown): string {
-  if (
-    typeof cause === "object" &&
-    cause !== null &&
-    "message" in cause &&
-    typeof cause.message === "string"
-  ) {
-    return cause.message;
-  }
-  return String(cause);
-}
+const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly attachments: ReadonlyArray<{
+    readonly type: "image";
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+    readonly dataUrl: string;
+  }>;
+}) {
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* Effect.forEach(
+    input.attachments.map((attachment, index) => ({ attachment, index })),
+    Effect.fn("ws.assets.persistChatAttachment")(function* ({ attachment, index }) {
+      const parsed = parseBase64DataUrl(attachment.dataUrl);
+      if (parsed === null || parsed.mimeType !== attachment.mimeType.toLowerCase()) {
+        return yield* new PersistChatAttachmentsError({
+          message: `Attachment ${attachment.name} has an invalid image payload.`,
+        });
+      }
+      const bytes = yield* Effect.fromResult(Encoding.decodeBase64(parsed.base64)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PersistChatAttachmentsError({
+              message: `Attachment ${attachment.name} is not valid base64.`,
+              cause,
+            }),
+        ),
+      );
+      if (bytes.byteLength !== attachment.sizeBytes) {
+        return yield* new PersistChatAttachmentsError({
+          message: `Attachment ${attachment.name} size does not match its payload.`,
+        });
+      }
+      const rawId = createDeterministicAttachmentId(input.threadId, `${input.messageId}:${index}`);
+      if (rawId === null) {
+        return yield* new PersistChatAttachmentsError({
+          message: "Could not allocate an attachment identifier.",
+        });
+      }
+      const persisted = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(rawId),
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      };
+      yield* fileSystem
+        .writeFile(path.join(config.attachmentsDir, attachmentRelativePath(persisted)), bytes)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PersistChatAttachmentsError({
+                message: `Could not persist attachment ${attachment.name}.`,
+                cause,
+              }),
+          ),
+        );
+      return persisted;
+    }),
+    { concurrency: 2 },
+  );
+});
 
 function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
   readonly failure: ProjectEntriesFailure;
@@ -258,56 +338,15 @@ function projectFileFailureContext(
   }
 }
 
-function projectSetupScriptCompatibilityDetail(
-  error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError,
-): string {
-  switch (error._tag) {
-    case "ProjectSetupScriptOperationError":
-      return legacySetupFailureDescription(error.cause);
-    case "ProjectSetupScriptProjectNotFoundError":
-      return "Project was not found for setup script execution.";
-    default:
-      return unexpectedCompatibilityError(error);
-  }
-}
-
-export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
-
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+const ServerWsRpcGroup = WsRpcGroup;
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
 // past this gap a single O(active-threads) snapshot is cheaper and bounded.
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
-
-// Same bound for thread resume. The replay reads the *global* event range and
-// filters per-thread afterwards, so a stale cursor far behind the head would
-// otherwise decode every intervening event's payload — reconnects with cursors
-// hundreds of thousands of events behind have OOM-killed servers on large
-// databases. Past this gap the client is reset with a fresh thread snapshot.
-const THREAD_RESUME_MAX_GAP = 1_000;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -353,12 +392,48 @@ const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
 ) =>
-  WsRpcGroup.toLayer(
+  ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
-      const crypto = yield* Crypto.Crypto;
+      const sql = yield* SqlClient.SqlClient;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-      const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
+        (projects: ReadonlyArray<OrchestrationProjectShell>) =>
+          Effect.forEach(
+            projects,
+            (project) =>
+              // Non-blocking: emit with cached identity (or null) and schedule
+              // background resolution. subscribeChanges is attached before
+              // loadSnapshot, so later identity completions push refreshed
+              // shells for multi-env grouping without blocking the initial
+              // snapshot or completion marker on slow git probes.
+              projectEnrichment.getAvailable(project.workspaceRoot).pipe(
+                Effect.map((enrichment) => ({
+                  project: {
+                    ...project,
+                    repositoryIdentity: enrichment.repositoryIdentity,
+                  },
+                  repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
+                })),
+              ),
+            { concurrency: 16 },
+          ).pipe(
+            Effect.map((enriched) => ({
+              projects: enriched.map((entry) => entry.project),
+              resolvedRepositoryIdentityRoots: enriched
+                .filter((entry) => entry.repositoryIdentityResolved)
+                .map((entry) => entry.project.workspaceRoot),
+            })),
+          ),
+      );
+      const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const pullRequests = yield* PullRequestService.PullRequestService;
+      const usage = yield* UsageService.UsageService;
+      const projectService = yield* ProjectService.ProjectService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -379,7 +454,6 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-      const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -411,13 +485,11 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      const pullRequests = yield* PullRequestService.PullRequestService;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
-      const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -472,22 +544,6 @@ const makeWsRpcLayer = (
           authorizeEffect(requiredScopeForRpcMethod(method), effect),
           traceAttributes,
         );
-      const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
-        isOrchestrationDispatchCommandError(cause)
-          ? cause
-          : new OrchestrationDispatchCommandError({
-              message: cause instanceof Error ? cause.message : fallbackMessage,
-              cause,
-            });
-      const randomUUID = crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) =>
-          toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
-        ),
-      );
-      const serverEventId = randomUUID.pipe(Effect.map(EventId.make));
-      const serverCommandId = (tag: string) =>
-        randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
-
       const loadAuthAccessSnapshot = () =>
         Effect.all({
           pairingLinks: serverAuth.listPairingLinks(),
@@ -500,497 +556,6 @@ const makeWsRpcLayer = (
               }),
           ),
         );
-
-      const appendSetupScriptActivity = (input: {
-        readonly threadId: ThreadId;
-        readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
-        readonly summary: string;
-        readonly createdAt: string;
-        readonly payload: Record<string, unknown>;
-        readonly tone: "info" | "error";
-      }) =>
-        Effect.all({
-          commandId: serverCommandId("setup-script-activity"),
-          activityId: serverEventId,
-        }).pipe(
-          Effect.flatMap(({ commandId, activityId }) =>
-            orchestrationEngine.dispatch({
-              type: "thread.activity.append",
-              commandId,
-              threadId: input.threadId,
-              activity: {
-                id: activityId,
-                tone: input.tone,
-                kind: input.kind,
-                summary: input.summary,
-                payload: input.payload,
-                turnId: null,
-                createdAt: input.createdAt,
-              },
-              createdAt: input.createdAt,
-            }),
-          ),
-        );
-
-      const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
-        const error = Cause.squash(cause);
-        return isOrchestrationDispatchCommandError(error)
-          ? error
-          : new OrchestrationDispatchCommandError({
-              message:
-                error instanceof Error ? error.message : "Failed to bootstrap thread turn start.",
-              cause,
-            });
-      };
-
-      const toShellStreamEvent = (
-        event: OrchestrationEvent,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
-        switch (event.type) {
-          case "project.created":
-          case "project.meta-updated":
-            return projectUpsertOrRemove(event.payload.projectId, event.sequence);
-          case "project.deleted":
-            return Effect.succeed(
-              Option.some({
-                kind: "project-removed" as const,
-                sequence: event.sequence,
-                projectId: event.payload.projectId,
-              }),
-            );
-          case "thread.deleted":
-          case "thread.archived":
-            return Effect.succeed(
-              Option.some({
-                kind: "thread-removed" as const,
-                sequence: event.sequence,
-                threadId: event.payload.threadId,
-              }),
-            );
-          case "thread.unarchived":
-            return threadUpsertOrRemove(event.payload.threadId, event.sequence);
-          default:
-            if (event.aggregateKind !== "thread") {
-              return Effect.succeed(Option.none());
-            }
-            return threadUpsertOrRemove(ThreadId.make(event.aggregateId), event.sequence);
-        }
-      };
-
-      // Coalescing makes each projection read represent every event for that
-      // aggregate in the current window. Retry a typed persistence failure once
-      // so a brief read failure cannot strand the shell at its previous state.
-      // If both attempts fail, log and drop the stream item; treating an error as
-      // a missing row would incorrectly remove a still-active aggregate.
-      const retryShellProjectionRead = <A, E>(
-        aggregateKind: "project" | "thread",
-        aggregateId: string,
-        read: Effect.Effect<A, E>,
-      ): Effect.Effect<Option.Option<A>, never, never> =>
-        read.pipe(
-          Effect.retry({ times: 1 }),
-          Effect.map(Option.some),
-          Effect.tapError((error) =>
-            Effect.logWarning("orchestration shell projection refetch failed", {
-              aggregateKind,
-              aggregateId,
-              error,
-            }),
-          ),
-          Effect.orElseSucceed(() => Option.none()),
-        );
-
-      const projectUpsertOrRemove = (
-        projectId: ProjectId,
-        sequence: number,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
-        retryShellProjectionRead(
-          "project",
-          projectId,
-          projectionSnapshotQuery.getProjectShellById(projectId),
-        ).pipe(
-          Effect.map(
-            Option.flatMap((project) =>
-              Option.match(project, {
-                onNone: () =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "project-removed" as const,
-                    sequence,
-                    projectId,
-                  }),
-                onSome: (nextProject) =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "project-upserted" as const,
-                    sequence,
-                    project: nextProject,
-                  }),
-              }),
-            ),
-          ),
-        );
-
-      // Refetch a thread's shell and emit an upsert if it is still active, or a
-      // `thread-removed` if the projection has no active row for it. Emitting a
-      // removal on a `none` (rather than dropping the event) is what keeps
-      // coalescing correct: when a burst collapses a `thread.deleted`/`archived`
-      // into a later refetchable event for the same thread, the refetch returns
-      // `none` for the now-inactive row and this still tells the sidebar to drop
-      // it. A `thread-removed` the client does not have is a harmless no-op. The
-      // projection commits in the same transaction before the event publishes,
-      // so a `none` reliably means the thread is deleted or archived, not
-      // not-yet-persisted.
-      const threadUpsertOrRemove = (
-        threadId: ThreadId,
-        sequence: number,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
-        retryShellProjectionRead(
-          "thread",
-          threadId,
-          projectionSnapshotQuery.getThreadShellById(threadId),
-        ).pipe(
-          Effect.map(
-            Option.flatMap((thread) =>
-              Option.match(thread, {
-                onNone: () =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "thread-removed" as const,
-                    sequence,
-                    threadId,
-                  }),
-                onSome: (nextThread) =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "thread-upserted" as const,
-                    sequence,
-                    thread: nextThread,
-                  }),
-              }),
-            ),
-          ),
-        );
-
-      // Turn a batch of domain events into shell stream items, coalescing by
-      // aggregate first. `toShellStreamEvent` re-reads the *current* projected
-      // shell for an aggregate, so within a batch only the latest event per
-      // aggregate matters: a burst of streaming `thread.message-sent` deltas for
-      // one thread collapses into a single shell refetch, and an unrelated
-      // `thread.created` in the same batch is never stuck behind those DB reads.
-      //
-      // Input events arrive in ascending sequence; we keep the last (highest
-      // sequence) event per aggregate, then re-sort ascending before emitting so
-      // the client — which applies shell items strictly by increasing sequence
-      // and drops any `sequence <= snapshotSequence` — never skips a coalesced
-      // item. The refetch runs with bounded concurrency (order-preserving).
-      const SHELL_REFETCH_CONCURRENCY = 8;
-      const coalesceShellEvents = (
-        events: ReadonlyArray<OrchestrationEvent>,
-      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>, never, never> =>
-        Effect.gen(function* () {
-          if (events.length === 0) {
-            return [];
-          }
-          const latestByAggregate = new Map<string, OrchestrationEvent>();
-          for (const event of events) {
-            latestByAggregate.set(`${event.aggregateKind}:${event.aggregateId}`, event);
-          }
-          const survivors = Array.from(latestByAggregate.values()).sort(
-            (left, right) => left.sequence - right.sequence,
-          );
-          const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvent, {
-            concurrency: SHELL_REFETCH_CONCURRENCY,
-          });
-          return shellEvents.flatMap((option) => (Option.isSome(option) ? [option.value] : []));
-        });
-
-      // Small time/size window over which to coalesce shell events. The window
-      // bounds the worst-case added latency for a brand-new thread to appear in
-      // the sidebar (imperceptible), while collapsing high-frequency streaming
-      // traffic so it can't serialize the shell stream behind per-event DB reads.
-      const SHELL_COALESCE_WINDOW = Duration.millis(50);
-      const SHELL_COALESCE_MAX_CHUNK = 512;
-      const coalesceShellStream = <E, R>(
-        stream: Stream.Stream<OrchestrationEvent, E, R>,
-      ): Stream.Stream<OrchestrationShellStreamEvent, E, R> =>
-        stream.pipe(
-          Stream.groupedWithin(SHELL_COALESCE_MAX_CHUNK, SHELL_COALESCE_WINDOW),
-          Stream.mapEffect(coalesceShellEvents),
-          Stream.flatMap((items) => Stream.fromIterable(items)),
-        );
-
-      type ShellLiveInput =
-        | { readonly kind: "event"; readonly event: OrchestrationEvent }
-        | { readonly kind: "synchronized" };
-
-      // A completion marker is queued alongside raw live events so it cannot
-      // overtake an event still waiting in the coalescing window. Split each
-      // batch at markers and coalesce only the event segments on either side.
-      const coalesceShellLiveInputs = (
-        inputs: ReadonlyArray<ShellLiveInput>,
-      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamItem>, never, never> =>
-        Effect.gen(function* () {
-          const output: Array<OrchestrationShellStreamItem> = [];
-          let pendingEvents: Array<OrchestrationEvent> = [];
-
-          for (const input of inputs) {
-            if (input.kind === "event") {
-              pendingEvents.push(input.event);
-              continue;
-            }
-
-            output.push(...(yield* coalesceShellEvents(pendingEvents)));
-            pendingEvents = [];
-            output.push({ kind: "synchronized" });
-          }
-
-          output.push(...(yield* coalesceShellEvents(pendingEvents)));
-          return output;
-        });
-
-      const coalesceShellLiveStream = <E, R>(
-        stream: Stream.Stream<ShellLiveInput, E, R>,
-      ): Stream.Stream<OrchestrationShellStreamItem, E, R> =>
-        stream.pipe(
-          Stream.groupedWithin(SHELL_COALESCE_MAX_CHUNK, SHELL_COALESCE_WINDOW),
-          Stream.mapEffect(coalesceShellLiveInputs),
-          Stream.flatMap((items) => Stream.fromIterable(items)),
-        );
-
-      const dispatchBootstrapTurnStart = (
-        command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
-        Effect.gen(function* () {
-          const bootstrap = command.bootstrap;
-          const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
-          let createdThread = false;
-          let targetProjectId = bootstrap?.createThread?.projectId;
-          let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
-          let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
-
-          const cleanupCreatedThread = () =>
-            createdThread
-              ? serverCommandId("bootstrap-thread-delete").pipe(
-                  Effect.flatMap((commandId) =>
-                    orchestrationEngine.dispatch({
-                      type: "thread.delete",
-                      commandId,
-                      threadId: command.threadId,
-                    }),
-                  ),
-                  Effect.ignoreCause({ log: true }),
-                )
-              : Effect.void;
-
-          const recordSetupScriptLaunchFailure = (input: {
-            readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
-            readonly requestedAt: string;
-            readonly worktreePath: string;
-          }) => {
-            const detail = projectSetupScriptCompatibilityDetail(input.error);
-            return appendSetupScriptActivity({
-              threadId: command.threadId,
-              kind: "setup-script.failed",
-              summary: "Setup script failed to start",
-              createdAt: input.requestedAt,
-              payload: {
-                detail,
-                worktreePath: input.worktreePath,
-              },
-              tone: "error",
-            }).pipe(
-              Effect.ignoreCause({ log: false }),
-              Effect.flatMap(() =>
-                Effect.logWarning("bootstrap turn start failed to launch setup script", {
-                  threadId: command.threadId,
-                  worktreePath: input.worktreePath,
-                  detail,
-                }),
-              ),
-            );
-          };
-
-          const recordSetupScriptStarted = (input: {
-            readonly requestedAt: string;
-            readonly worktreePath: string;
-            readonly scriptId: string;
-            readonly scriptName: string;
-            readonly terminalId: string;
-          }) =>
-            Effect.gen(function* () {
-              const startedAt = yield* nowIso;
-              const payload = {
-                scriptId: input.scriptId,
-                scriptName: input.scriptName,
-                terminalId: input.terminalId,
-                worktreePath: input.worktreePath,
-              };
-              yield* Effect.all([
-                appendSetupScriptActivity({
-                  threadId: command.threadId,
-                  kind: "setup-script.requested",
-                  summary: "Starting setup script",
-                  createdAt: input.requestedAt,
-                  payload,
-                  tone: "info",
-                }),
-                appendSetupScriptActivity({
-                  threadId: command.threadId,
-                  kind: "setup-script.started",
-                  summary: "Setup script started",
-                  createdAt: startedAt,
-                  payload,
-                  tone: "info",
-                }),
-              ]).pipe(
-                Effect.asVoid,
-                Effect.catch((error) =>
-                  Effect.logWarning(
-                    "bootstrap turn start launched setup script but failed to record setup activity",
-                    {
-                      threadId: command.threadId,
-                      worktreePath: input.worktreePath,
-                      scriptId: input.scriptId,
-                      terminalId: input.terminalId,
-                      detail: error.message,
-                    },
-                  ),
-                ),
-              );
-            });
-
-          const runSetupProgram = () =>
-            Effect.gen(function* () {
-              if (!bootstrap?.runSetupScript || !targetWorktreePath) {
-                return;
-              }
-              const worktreePath = targetWorktreePath;
-              const requestedAt = yield* nowIso;
-              yield* projectSetupScriptRunner
-                .runForThread({
-                  threadId: command.threadId,
-                  ...(targetProjectId ? { projectId: targetProjectId } : {}),
-                  ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
-                  worktreePath,
-                })
-                .pipe(
-                  Effect.matchEffect({
-                    onFailure: (error) =>
-                      recordSetupScriptLaunchFailure({
-                        error,
-                        requestedAt,
-                        worktreePath,
-                      }),
-                    onSuccess: (setupResult) => {
-                      if (setupResult.status !== "started") {
-                        return Effect.void;
-                      }
-                      return recordSetupScriptStarted({
-                        requestedAt,
-                        worktreePath,
-                        scriptId: setupResult.scriptId,
-                        scriptName: setupResult.scriptName,
-                        terminalId: setupResult.terminalId,
-                      });
-                    },
-                  }),
-                );
-            });
-
-          const bootstrapProgram = Effect.gen(function* () {
-            if (bootstrap?.createThread) {
-              yield* orchestrationEngine.dispatch({
-                type: "thread.create",
-                commandId: yield* serverCommandId("bootstrap-thread-create"),
-                threadId: command.threadId,
-                projectId: bootstrap.createThread.projectId,
-                title: bootstrap.createThread.title,
-                modelSelection: bootstrap.createThread.modelSelection,
-                runtimeMode: bootstrap.createThread.runtimeMode,
-                interactionMode: bootstrap.createThread.interactionMode,
-                branch: bootstrap.createThread.branch,
-                worktreePath: bootstrap.createThread.worktreePath,
-                createdAt: bootstrap.createThread.createdAt,
-              });
-              createdThread = true;
-            }
-
-            if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
-              }
-              const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
-                path: null,
-              });
-              targetWorktreePath = worktree.worktree.path;
-              yield* orchestrationEngine.dispatch({
-                type: "thread.meta.update",
-                commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
-                threadId: command.threadId,
-                branch: worktree.worktree.refName,
-                worktreePath: targetWorktreePath,
-              });
-              yield* refreshGitStatus(targetWorktreePath);
-            }
-
-            yield* runSetupProgram();
-
-            return yield* orchestrationEngine.dispatch(finalTurnStartCommand);
-          });
-
-          return yield* bootstrapProgram.pipe(
-            Effect.catchCause((cause) => {
-              const dispatchError = toBootstrapDispatchCommandCauseError(cause);
-              if (Cause.hasInterruptsOnly(cause)) {
-                return Effect.fail(dispatchError);
-              }
-              return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
-            }),
-          );
-        });
-
-      const dispatchNormalizedCommand = (
-        normalizedCommand: OrchestrationCommand,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
-        const dispatchEffect =
-          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
-            : orchestrationEngine
-                .dispatch(normalizedCommand)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-                  ),
-                );
-
-        return startup
-          .enqueueCommand(dispatchEffect)
-          .pipe(
-            Effect.mapError((cause) =>
-              toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-            ),
-          );
-      };
 
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -1039,112 +604,535 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      return WsRpcGroup.of({
-        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
-          observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.dispatchCommand,
-            Effect.gen(function* () {
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
-              // Archive and settle both mean "done with this thread", so a
-              // live provider session must not keep running background work
-              // (PR monitors, dev servers, subagent fleets) after either
-              // lands. The decider rejects settling a starting/running
-              // session, so for settle this only ever stops an idle one; a
-              // stopped session-set does not count as activity, so the stop
-              // cannot un-settle the thread it follows.
-              const parkingCommand =
-                normalizedCommand.type === "thread.archive" ||
-                normalizedCommand.type === "thread.settle"
-                  ? normalizedCommand
-                  : undefined;
-              // Best-effort on purpose: the user's archive/settle must not
-              // fail because this cleanup read blipped, so a failed read
-              // logs and skips the stop instead of propagating.
-              const shouldStopSessionAfterCommand = parkingCommand
-                ? yield* projectionSnapshotQuery.getThreadShellById(parkingCommand.threadId).pipe(
-                    Effect.map(
-                      Option.match({
-                        onNone: () => false,
-                        onSome: (thread) =>
-                          thread.session !== null && thread.session.status !== "stopped",
-                      }),
-                    ),
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(
-                        "failed to read thread session state before session-stop check",
-                        { threadId: parkingCommand.threadId, cause },
-                      ).pipe(Effect.as(false)),
-                    ),
-                  )
-                : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand);
-              if (parkingCommand) {
-                const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
-                if (shouldStopSessionAfterCommand) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-${parkingKind}:${parkingCommand.commandId}`,
-                      ),
-                      threadId: parkingCommand.threadId,
-                      createdAt: yield* nowIso,
-                      // A settled thread can be re-engaged before this stop is
-                      // decided; the decider then drops the stop instead of
-                      // killing the new session. Archive stops stay
-                      // unconditional: turn starts on archived threads are
-                      // rejected, so there is no new session to protect.
-                      ...(parkingKind === "settle" ? { onlyIfSettled: true } : {}),
-                    });
+      const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subscribeThread")(
+        function* (input: {
+          readonly threadId: ThreadId;
+          readonly afterSequence?: number;
+          readonly requestCompletionMarker?: boolean;
+        }) {
+          yield* Effect.annotateCurrentSpan({
+            "orchestration_v2.thread_id": input.threadId,
+          });
+          yield* threadManagement.ensureLegacyTranscript(input.threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: `Failed to hydrate migrated thread ${input.threadId}`,
+                  cause,
+                }),
+            ),
+          );
 
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(`failed to stop provider session during ${parkingKind}`, {
-                        threadId: parkingCommand.threadId,
-                        cause,
-                      }),
-                    ),
-                  );
-                }
-
-                // Terminals are user-opened panes, not thread background
-                // work: archive removes the thread from view so they close
-                // with it, but a settled thread stays reachable and may be
-                // un-settled, so its terminals stay up.
-                if (parkingCommand.type === "thread.archive") {
-                  yield* terminalManager.close({ threadId: parkingCommand.threadId }).pipe(
-                    Effect.catch((error) =>
-                      Effect.logWarning("failed to close thread terminals after archive", {
-                        threadId: parkingCommand.threadId,
-                        error: error.message,
-                      }),
-                    ),
-                  );
-                }
-              }
-              return result;
-            }).pipe(
-              Effect.mapError((cause) =>
-                isOrchestrationDispatchCommandError(cause)
-                  ? cause
-                  : new OrchestrationDispatchCommandError({
-                      message: "Failed to dispatch orchestration command",
+          const eventStreamFrom = (afterSequence: number) =>
+            threadManagement
+              .streamStoredEventsFrom({
+                threadId: input.threadId,
+                afterSequence,
+              })
+              .pipe(
+                Stream.map((stored) => ({
+                  kind: "event" as const,
+                  sequence: stored.sequence,
+                  event: projectDomainEventForWire(stored.event),
+                })),
+                Stream.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed while streaming orchestration V2 thread ${input.threadId}`,
                       cause,
                     }),
+                ),
+              );
+
+          const loadReplayThrough = (afterSequence: number, throughSequence: number) =>
+            applicationEvents
+              .readAgentEvents({
+                threadId: input.threadId,
+                afterSequence,
+                throughSequence,
+                limit: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
+              })
+              .pipe(
+                Stream.map((stored) => ({
+                  kind: "event" as const,
+                  sequence: stored.sequence,
+                  event: projectDomainEventForWire(stored.event),
+                })),
+                Stream.runCollect,
+                Effect.map((items) => Array.from(items)),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed while replaying orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              );
+
+          const completionMarker =
+            input.requestCompletionMarker === true
+              ? Stream.make({ kind: "synchronized" as const })
+              : Stream.empty;
+
+          const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(
+            function* () {
+              const snapshot = yield* threadManagement.getThreadSnapshot(input.threadId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              );
+              const { snapshotSequence } = snapshot;
+              const projection = projectThreadProjectionForWire(snapshot.projection);
+              return Stream.concat(
+                Stream.concat(
+                  Stream.make({
+                    kind: "snapshot" as const,
+                    snapshotSequence,
+                    projection,
+                  }),
+                  completionMarker,
+                ),
+                eventStreamFrom(snapshotSequence),
+              );
+            },
+          );
+
+          // When the client already holds the projection (cached, or loaded over
+          // HTTP) it passes that snapshot's sequence, and we resume by replaying
+          // persisted events after it instead of re-sending the (potentially
+          // multi-KB) snapshot frame over the socket. The event sink subscribes
+          // to live events before reading the persisted tail, so no event
+          // published during the replay window is lost; overlapping events are
+          // deduped by sequence on the client.
+          if (input.afterSequence !== undefined) {
+            const highWater = yield* applicationEvents.latestAgentSequence(input.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed to prepare orchestration V2 thread ${input.threadId} replay`,
+                    cause,
+                  }),
+              ),
+            );
+            const replay = yield* loadReplayThrough(input.afterSequence, highWater);
+            const plan = decideThreadResume({
+              afterSequence: input.afterSequence,
+              highWater,
+              replayEventCount: replay.length,
+              replayEncodedBytes: threadReplayEncodedBytes(replay),
+            });
+            if (plan.mode === "snapshot") {
+              return yield* snapshotThenLive();
+            }
+            return Stream.concat(
+              Stream.concat(Stream.fromIterable(replay), completionMarker),
+              eventStreamFrom(highWater),
+            );
+          }
+
+          return yield* snapshotThenLive();
+        },
+      );
+
+      const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subscribeShell")(
+        function* (input: {
+          readonly afterSequence?: number;
+          readonly requestCompletionMarker?: boolean;
+        }) {
+          const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
+          const loadProjectMetadataSnapshot = Effect.fn(
+            "ws.orchestrationV2.loadProjectMetadataSnapshot",
+          )(function* (snapshotSequence: number) {
+            const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
+            const enriched = yield* enrichProjectShells(projects);
+            return {
+              snapshot: {
+                schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+                snapshotSequence,
+                projects: enriched.projects,
+                threads: [],
+                archivedThreads: [],
+              } as OrchestrationV2ShellSnapshot,
+              resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
+            };
+          });
+          const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
+            const base = yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
+                const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+                return buildActiveShellSnapshot({
+                  projects,
+                  threads,
+                  snapshotSequence: yield* applicationEvents.latestApplicationSequence,
+                });
+              }),
+            );
+            const enriched = yield* enrichProjectShells(base.projects);
+            return {
+              snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
+              resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
+            };
+          });
+          const projectItem = Effect.fn("ws.orchestrationV2.projectShellItem")(function* (
+            stored: Extract<ApplicationStoredEvent, { readonly aggregateKind: "project" }>,
+          ) {
+            if (stored.type === "project.deleted") {
+              return {
+                kind: "project.removed" as const,
+                sequence: stored.sequence,
+                projectId: stored.payload.projectId,
+              };
+            }
+            const project = yield* projectionSnapshotQuery.getProjectShellById(
+              stored.payload.projectId,
+            );
+            return Option.match(project, {
+              onNone: () => ({
+                kind: "project.removed" as const,
+                sequence: stored.sequence,
+                projectId: stored.payload.projectId,
+              }),
+              onSome: (value) => ({
+                kind: "project.updated" as const,
+                sequence: stored.sequence,
+                project: value,
+              }),
+            });
+          });
+
+          // Coalescing makes each per-thread shell read represent every event
+          // for that thread in the current window; reading only the affected
+          // threads keeps the cost of a busy stream independent of how many
+          // threads exist overall.
+          const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
+            events: ReadonlyArray<ApplicationStoredEvent>,
+          ) {
+            return yield* Effect.forEach(
+              coalesceShellApplicationEvents(events),
+              (stored) =>
+                Effect.gen(function* () {
+                  if ("aggregateKind" in stored) {
+                    return yield* projectItem(stored);
+                  }
+                  const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
+                  return shellStreamItemFromThreadShell({ stored, shell });
+                }),
+              { concurrency: 8 },
+            );
+          });
+
+          const toShellStream = <E, R>(stream: Stream.Stream<ApplicationStoredEvent, E, R>) =>
+            stream.pipe(
+              Stream.groupedWithin(512, Duration.millis(50)),
+              Stream.mapEffect((events) => projectShellItems(Array.from(events))),
+              Stream.flatMap(Stream.fromIterable),
+            );
+
+          const liveFrom = (afterSequence: number) =>
+            toShellStream(applicationEvents.streamApplicationEvents({ afterSequence }));
+
+          const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
+            Stream.filter((change) => change.repositoryIdentityResolved),
+            Stream.groupedWithin(64, Duration.millis(25)),
+            Stream.mapEffect((changes) =>
+              applicationEvents.latestApplicationSequence.pipe(
+                Effect.flatMap(loadProjectMetadataSnapshot),
+                Effect.map(({ snapshot }) =>
+                  shellStreamItemFromEnrichmentRefresh({
+                    snapshot,
+                    changes: Array.from(changes),
+                  }),
+                ),
               ),
             ),
-            { "rpc.aggregate": "orchestration" },
+          );
+
+          // Always attach the enrichment subscription before the first load so
+          // completions that race HTTP snapshot fetch still push a refresh.
+          // When the client already holds a shell snapshot (cached, or loaded
+          // over HTTP) it passes that snapshot's sequence. We still emit one
+          // compact metadata refresh up front: getAvailable may have been cold on the
+          // HTTP path (null identity), and enrichment PubSub events published
+          // before this subscribe attached are dropped. Rehydrating here fills
+          // repositoryIdentity for cross-environment project grouping even on
+          // afterSequence resumes. Application events after the sequence still
+          // stream as deltas; overlapping events are deduped by sequence on the
+          // client.
+          //
+          // After the unmarked authoritative frame, emit a same-sequence
+          // metadata-only frame for roots that already resolved successfully
+          // (including cached null). Cold/failed roots stay unmarked and use
+          // the PubSub enrichment path when they complete later.
+          const completionMarker =
+            input.requestCompletionMarker === true
+              ? Stream.make({ kind: "synchronized" as const })
+              : Stream.empty;
+          const initialSnapshotItems = (loaded: {
+            readonly snapshot: OrchestrationV2ShellSnapshot;
+            readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
+          }) =>
+            Stream.fromIterable(
+              shellStreamItemsFromInitialSnapshot({
+                snapshot: loaded.snapshot,
+                resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
+              }),
+            );
+          const initialEnrichmentItems = (loaded: {
+            readonly snapshot: OrchestrationV2ShellSnapshot;
+            readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
+          }) =>
+            Stream.fromIterable(
+              shellStreamItemsFromResumeSnapshot({
+                snapshot: loaded.snapshot,
+                resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
+              }),
+            );
+          // Initial unmarked (+ optional same-load marked) always drains first.
+          // Enrichment merges only with the post-prefix tail so a ready marked
+          // refresh cannot interleave before the authoritative initial frame.
+          const completionThenLive = (afterSequence: number) =>
+            Stream.concat(completionMarker, liveFrom(afterSequence));
+
+          const stream = yield* Effect.gen(function* () {
+            if (input.afterSequence === undefined) {
+              const loaded = yield* loadSnapshot();
+              return composeShellStreamWithEnrichment({
+                initial: initialSnapshotItems(loaded),
+                tail: completionThenLive(loaded.snapshot.snapshotSequence),
+                enrichment: enrichmentRefreshes,
+              });
+            }
+
+            const highWater = yield* applicationEvents.latestApplicationSequence;
+            const replayGap = highWater - input.afterSequence;
+            if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
+              const loaded = yield* loadSnapshot();
+              return composeShellStreamWithEnrichment({
+                initial: initialSnapshotItems(loaded),
+                tail: completionThenLive(loaded.snapshot.snapshotSequence),
+                enrichment: enrichmentRefreshes,
+              });
+            }
+
+            const loaded = yield* loadProjectMetadataSnapshot(highWater);
+            const replay = toShellStream(
+              applicationEvents.readApplicationEvents({
+                afterSequence: input.afterSequence,
+                throughSequence: highWater,
+              }),
+            );
+            return composeShellStreamWithEnrichment({
+              initial: initialEnrichmentItems(loaded),
+              tail: Stream.concat(Stream.concat(replay, completionMarker), liveFrom(highWater)),
+              enrichment: enrichmentRefreshes,
+            });
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to prepare the application shell stream",
+                  cause,
+                }),
+            ),
+          );
+
+          return stream.pipe(
+            Stream.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed while streaming the application shell",
+                  cause,
+                }),
+            ),
+          );
+        },
+      );
+
+      const getOrchestrationV2ArchivedShellSnapshot = sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
+            const threads = yield* threadManagement.getShellSnapshot({ location: "archive" });
+            return {
+              schemaVersion: threads.schemaVersion,
+              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
+              projects,
+              threads: threads.archivedThreads,
+            } as const;
+          }),
+        )
+        .pipe(
+          Effect.flatMap((snapshot) =>
+            enrichProjectShells(snapshot.projects).pipe(
+              Effect.map(({ projects }) => ({ ...snapshot, projects })),
+            ),
           ),
-        [ORCHESTRATION_WS_METHODS.getWorkflowScript]: (input) =>
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2GetShellSnapshotError({
+                message: "Failed to load archived thread snapshot",
+                cause,
+              }),
+          ),
+        );
+
+      const subscribeOrchestrationV2ArchivedShell = Effect.fn(
+        "ws.orchestrationV2.subscribeArchivedShell",
+      )(function* () {
+        const snapshot = yield* getOrchestrationV2ArchivedShellSnapshot;
+        const live = threadManagement
+          .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
+          .pipe(
+            Stream.groupedWithin(512, Duration.millis(50)),
+            Stream.mapEffect((events) =>
+              Effect.forEach(
+                coalesceStoredThreadEvents(Array.from(events)),
+                (stored) =>
+                  threadManagement
+                    .getThreadShell(stored.event.threadId)
+                    .pipe(
+                      Effect.map((shell) =>
+                        archivedShellStreamItemFromThreadShell({ stored, shell }),
+                      ),
+                    ),
+                { concurrency: 8 },
+              ),
+            ),
+            Stream.flatMap(Stream.fromIterable),
+            Stream.filterMap((item) => (item === null ? Result.failVoid : Result.succeed(item))),
+            Stream.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed while streaming archived threads",
+                  cause,
+                }),
+            ),
+          );
+        return Stream.concat(Stream.make({ kind: "snapshot" as const, snapshot }), live);
+      });
+
+      const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
+        switch (mutation.type) {
+          case "project.create":
+            return yield* projectService.create({
+              commandId: mutation.commandId,
+              projectId: mutation.projectId,
+              title: mutation.title,
+              workspaceRoot: mutation.workspaceRoot,
+              ...(mutation.createWorkspaceRootIfMissing === undefined
+                ? {}
+                : { createWorkspaceRootIfMissing: mutation.createWorkspaceRootIfMissing }),
+              ...(mutation.defaultModelSelection === undefined
+                ? {}
+                : { defaultModelSelection: mutation.defaultModelSelection }),
+              ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
+            });
+          case "project.update":
+            return yield* projectService.update({
+              commandId: mutation.commandId,
+              projectId: mutation.projectId,
+              ...(mutation.title === undefined ? {} : { title: mutation.title }),
+              ...(mutation.workspaceRoot === undefined
+                ? {}
+                : { workspaceRoot: mutation.workspaceRoot }),
+              ...(mutation.defaultModelSelection === undefined
+                ? {}
+                : { defaultModelSelection: mutation.defaultModelSelection }),
+              ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
+            });
+          case "project.delete": {
+            const snapshot = yield* threadManagement.getShellSnapshot();
+            const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].filter(
+              (thread) => thread.projectId === mutation.projectId,
+            );
+            if (projectThreads.length > 0 && mutation.force !== true) {
+              return yield* new ProjectMutationError({
+                commandId: mutation.commandId,
+                message: `Project ${mutation.projectId} is not empty.`,
+              });
+            }
+            yield* Effect.forEach(
+              projectThreads,
+              (thread) =>
+                threadManagement.dispatch({
+                  type: "thread.delete",
+                  commandId: CommandId.make(`${mutation.commandId}:delete-thread:${thread.id}`),
+                  threadId: thread.id,
+                }),
+              { concurrency: 1, discard: true },
+            );
+            return yield* projectService.delete({
+              commandId: mutation.commandId,
+              projectId: mutation.projectId,
+            });
+          }
+        }
+      });
+
+      const handlers = ServerWsRpcGroup.of({
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.getWorkflowScript,
+            ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+            startup
+              .enqueueCommand(
+                threadManagement.dispatch(
+                  ThreadManagementService.withCreationProvenance(command, {
+                    createdBy: "user",
+                    creationSource: "creationSource" in command ? command.creationSource : "web",
+                  }),
+                ),
+              )
+              .pipe(
+                Effect.map((result) => ({ sequence: result.sequence })),
+                Effect.mapError((cause) => {
+                  const detail = userFacingDispatchErrorMessage(cause);
+                  return new OrchestrationV2DispatchCommandError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    message: detail ?? "Failed to dispatch orchestration V2 command",
+                    ...(detail === undefined ? {} : { detail }),
+                    cause,
+                  });
+                }),
+              ),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.command_id": command.commandId,
+              "orchestration_v2.command_type": command.type,
+              "orchestration_v2.thread_id":
+                command.type === "thread.fork" || command.type === "thread.merge_back"
+                  ? command.targetThreadId
+                  : command.type === "delegated_task.request" ||
+                      command.type === "delegated_task.wake-policy" ||
+                      command.type === "delegated_task.completion-delivery.acknowledge" ||
+                      command.type === "delegated_task.completion-delivery.dispose" ||
+                      command.type === "thread.created.record"
+                    ? command.parentThreadId
+                    : command.threadId,
+              ...(command.type === "thread.fork" || command.type === "thread.merge_back"
+                ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
+                : {}),
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
             readWorkflowScript({ scriptPath: input.scriptPath }),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
+        [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (input) =>
           observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.getTurnDiff,
+            ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
             checkpointDiffQuery.getTurnDiff(input).pipe(
               Effect.mapError(
                 (cause) =>
@@ -1156,9 +1144,9 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: (input) =>
+        [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: (input) =>
           observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.getFullThreadDiff,
+            ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
             checkpointDiffQuery.getFullThreadDiff(input).pipe(
               Effect.mapError(
                 (cause) =>
@@ -1170,9 +1158,9 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.searchThreads]: (input) =>
+        [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
           observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.searchThreads,
+            ORCHESTRATION_V2_WS_METHODS.searchThreads,
             projectionSnapshotQuery.searchThreads(input).pipe(
               Effect.mapError(
                 (cause) =>
@@ -1184,259 +1172,137 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
-          observeRpcStreamEffect(
-            ORCHESTRATION_WS_METHODS.subscribeShell,
-            Effect.gen(function* () {
-              // Coalesce the live shell stream per aggregate over a small window
-              // so bursts of high-frequency events (streaming message deltas,
-              // activity appends) collapse into a single shell refetch and never
-              // serialize a brand-new thread's `thread.created` behind hundreds
-              // of per-event DB reads. See coalesceShellStream.
-              // Attach live delivery into a scope-bound buffer BEFORE loading any
-              // snapshot or draining catch-up, otherwise an event published while
-              // the snapshot query is in flight is lost (it is past the snapshot's
-              // sequence but the live subscription is not attached yet). Every
-              // path below emits from this same buffered live tail. Overlapping
-              // events are deduped by sequence on the client.
-              const liveBuffer = yield* Queue.unbounded<ShellLiveInput>();
-              yield* Effect.forkScoped(
-                orchestrationEngine.streamDomainEvents.pipe(
-                  Stream.runForEach((event) =>
-                    Queue.offer(liveBuffer, { kind: "event" as const, event }),
-                  ),
-                ),
-                { startImmediately: true },
-              );
-              const bufferedLiveStream = coalesceShellLiveStream(Stream.fromQueue(liveBuffer));
-
-              const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
-                Effect.tapError((cause) =>
-                  Effect.logError("orchestration shell snapshot load failed", { cause }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationGetSnapshotError({
-                      message: "Failed to load orchestration shell snapshot",
-                      cause,
-                    }),
-                ),
-              );
-
-              // Offer the completion marker into the same queue as live events.
-              // Anything buffered while snapshot/replay work was in flight is
-              // therefore delivered before the client is told it is synchronized.
-              const synchronizedThenLive =
-                input.requestCompletionMarker === true
-                  ? Stream.concat(
-                      Stream.fromEffect(
-                        Queue.offer(liveBuffer, { kind: "synchronized" as const }).pipe(
-                          Effect.andThen(Queue.takeAll(liveBuffer)),
-                          Effect.flatMap(coalesceShellLiveInputs),
-                        ),
-                      ).pipe(Stream.flatMap((items) => Stream.fromIterable(items))),
-                      bufferedLiveStream,
-                    )
-                  : bufferedLiveStream;
-
-              // When the client already holds a shell snapshot (cached, or loaded
-              // over HTTP) it passes that snapshot's sequence, and we resume by
-              // replaying shell events after it instead of re-sending the whole
-              // projects/threads list over the socket. If the client is too far
-              // behind, we fall back to a fresh snapshot instead of an unbounded
-              // replay (see below).
-              if (input.afterSequence !== undefined) {
-                const afterSequence = input.afterSequence;
-                const headSequence = yield* orchestrationEngine.latestSequence;
-                const replayGap = headSequence - afterSequence;
-                // Gap too large: replaying every intervening event (each a shell
-                // refetch) is far more expensive than a single O(active-threads)
-                // snapshot. A cursor ahead of this engine's authoritative state
-                // is also invalid, so reset it with a snapshot. Send the snapshot
-                // followed by the buffered live tail, exactly as the
-                // no-afterSequence path does.
-                if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
-                  const snapshot = yield* loadSnapshot;
-                  return Stream.concat(
-                    Stream.make({ kind: "snapshot" as const, snapshot }),
-                    synchronizedThenLive,
-                  );
-                }
-                const catchUpStream = coalesceShellStream(
-                  // Replay only through the head captured above. Newer events
-                  // are already covered by the live subscription, so this bound
-                  // cannot chase a moving event-store head or grow the live
-                  // buffer indefinitely while waiting for an empty page.
-                  orchestrationEngine.readEvents(afterSequence, replayGap),
-                ).pipe(
-                  Stream.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: "Failed to replay orchestration shell events",
-                        cause,
-                      }),
-                  ),
-                );
-                return Stream.concat(catchUpStream, synchronizedThenLive);
-              }
-
-              const snapshot = yield* loadSnapshot;
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshot,
-                }),
-                synchronizedThenLive,
-              );
-            }),
+        [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+            getOrchestrationV2ArchivedShellSnapshot,
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+        [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
-            projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
-              Effect.tapError((cause) =>
-                Effect.logError("orchestration archived shell snapshot load failed", { cause }),
-              ),
+            ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+            threadManagement.getThreadProjection(input.threadId).pipe(
+              Effect.map(projectThreadProjectionForWire),
               Effect.mapError(
                 (cause) =>
-                  new OrchestrationGetSnapshotError({
-                    message: "Failed to load archived orchestration shell snapshot",
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed to load orchestration V2 thread ${input.threadId}`,
                     cause,
                   }),
               ),
             ),
-            { "rpc.aggregate": "orchestration" },
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
           ),
-        [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
-          observeRpcStreamEffect(
-            ORCHESTRATION_WS_METHODS.subscribeThread,
-            Effect.gen(function* () {
-              const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
-                event.aggregateKind === "thread" &&
-                event.aggregateId === input.threadId &&
-                isThreadDetailEvent(event);
-
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(isThisThreadDetailEvent),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event: projectActivityEvent(event),
-                })),
-              );
-
-              // Attach live delivery before reading either replay or snapshot state.
-              // Otherwise an event published while the snapshot is loading is lost.
-              const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
-              yield* Effect.forkScoped(
-                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
-              );
-              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
-
-              // When the client already loaded the snapshot over HTTP it passes
-              // that snapshot's sequence, and we resume the live subscription by
-              // replaying persisted events after it instead of re-sending the
-              // (potentially multi-KB) snapshot frame over the socket.
-              //
-              // The live PubSub subscription must be attached *before* draining
-              // the catch-up replay, otherwise events published during the replay
-              // window are dropped (they are past the persisted tail the replay
-              // read, but the live stream is not yet subscribed). So fork the
-              // live stream into a buffer bound to this stream's scope, then emit
-              // catch-up followed by the buffered/ongoing live events. Overlapping
-              // events are deduped by sequence on the client.
-              //
-              // The replay is bounded to the projection head captured below. The
-              // catch-up range is normally tiny (a fresh HTTP snapshot sequence),
-              // but a stale cached cursor can sit hundreds of thousands of global
-              // events behind — replaying that decodes every intervening event
-              // (including every other thread's tool payloads) only to discard
-              // almost all of them, which has OOM-killed servers on large
-              // databases. A truncated replay would silently drop this thread's
-              // events, so past the gap cap we reset the client with a fresh
-              // thread snapshot instead, exactly like subscribeShell above.
-              if (input.afterSequence !== undefined) {
-                const afterSequence = input.afterSequence;
-                const headSequence = yield* orchestrationEngine.latestSequence;
-                const replayGap = headSequence - afterSequence;
-                if (replayGap >= 0 && replayGap <= THREAD_RESUME_MAX_GAP) {
-                  const catchUpStream = orchestrationEngine
-                    .readEvents(afterSequence, replayGap)
-                    .pipe(
-                      Stream.filter(isThisThreadDetailEvent),
-                      Stream.map((event) => ({
-                        kind: "event" as const,
-                        event: projectActivityEvent(event),
-                      })),
-                      Stream.mapError(
-                        (cause) =>
-                          new OrchestrationGetSnapshotError({
-                            message: `Failed to replay thread ${input.threadId} events`,
-                            cause,
-                          }),
-                      ),
-                    );
-                  const afterCatchUp =
-                    input.requestCompletionMarker === true
-                      ? Stream.concat(
-                          Stream.fromEffect(
-                            Queue.offer(liveBuffer, { kind: "synchronized" as const }),
-                          ).pipe(Stream.drain),
-                          bufferedLiveStream,
-                        )
-                      : bufferedLiveStream;
-                  return Stream.concat(catchUpStream, afterCatchUp);
-                }
-                // Gap too large (or cursor ahead of authoritative state): fall
-                // through to the snapshot path so the client converges from a
-                // fresh thread detail instead of an unbounded replay.
-              }
-
-              const snapshot = yield* projectionSnapshotQuery
-                .getThreadDetailSnapshot(
-                  input.threadId,
-                  // Windowing the fallback snapshot is opt-in per subscription:
-                  // clients that don't send turnLimit (including all
-                  // pre-pagination clients) get the full thread, since they
-                  // have no way to load older pages.
-                  input.turnLimit === undefined ? undefined : { turnLimit: input.turnLimit },
-                )
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: `Failed to load thread ${input.threadId}`,
-                        cause,
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.launchThread,
+            startup
+              .enqueueCommand(
+                threadLaunch.launch({
+                  commandId: input.commandId,
+                  ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                  ...(input.reuseExistingThread === undefined
+                    ? {}
+                    : { reuseExistingThread: input.reuseExistingThread }),
+                  projectId: input.projectId,
+                  title: input.title,
+                  ...(input.generateTitle === undefined
+                    ? {}
+                    : { generateTitle: input.generateTitle }),
+                  modelSelection: input.modelSelection,
+                  runtimeMode: input.runtimeMode,
+                  interactionMode: input.interactionMode,
+                  workspaceStrategy: input.workspaceStrategy,
+                  ...(input.initialMessage === undefined
+                    ? {}
+                    : {
+                        initialMessage: {
+                          ...(input.initialMessage.messageId === undefined
+                            ? {}
+                            : { messageId: input.initialMessage.messageId }),
+                          text: input.initialMessage.text,
+                          attachments: input.initialMessage.attachments,
+                        },
                       }),
-                  ),
-                );
-
-              if (Option.isNone(snapshot)) {
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
-                });
-              }
-
-              const afterSnapshot =
-                input.requestCompletionMarker === true
-                  ? Stream.concat(
-                      Stream.fromEffect(
-                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
-                      ).pipe(Stream.drain),
-                      bufferedLiveStream,
-                    )
-                  : bufferedLiveStream;
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshot: projectThreadDetailSnapshot(snapshot.value),
+                  createdBy: "user",
+                  creationSource: input.creationSource ?? "web",
                 }),
-                afterSnapshot,
-              );
-            }),
+              )
+              .pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  projection: projectThreadProjectionForWire(result.projection),
+                })),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: "Failed to launch thread",
+                      cause,
+                    }),
+                ),
+              ),
+            {
+              "rpc.aggregate": "orchestration",
+              "orchestration_v2.command_id": input.commandId,
+              "orchestration_v2.project_id": input.projectId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
+            subscribeOrchestrationV2ArchivedShell(),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+            subscribeOrchestrationV2Shell(input),
+            {
+              "rpc.aggregate": "orchestrationV2",
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+            subscribeOrchestrationV2Thread(input),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [WS_METHODS.scheduledTasksList]: (_input) =>
+          observeRpcEffect(WS_METHODS.scheduledTasksList, scheduledTasks.list(), {
+            "rpc.aggregate": "scheduledTasks",
+          }),
+        [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
+          observeRpcStream(WS_METHODS.scheduledTasksSubscribe, scheduledTasks.subscribeList(), {
+            "rpc.aggregate": "scheduledTasks",
+          }),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          observeRpcEffect(WS_METHODS.scheduledTasksUpsert, scheduledTasks.upsert(input), {
+            "rpc.aggregate": "scheduledTasks",
+          }),
+        [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
+          observeRpcEffect(WS_METHODS.scheduledTasksSetEnabled, scheduledTasks.setEnabled(input), {
+            "rpc.aggregate": "scheduledTasks",
+            "scheduled_task.id": input.id,
+          }),
+        [WS_METHODS.scheduledTasksDelete]: (input) =>
+          observeRpcEffect(WS_METHODS.scheduledTasksDelete, scheduledTasks.delete(input), {
+            "rpc.aggregate": "scheduledTasks",
+            "scheduled_task.id": input.id,
+          }),
+        [WS_METHODS.scheduledTasksRunNow]: (input) =>
+          observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {
+            "rpc.aggregate": "scheduledTasks",
+            "scheduled_task.id": input.id,
+          }),
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",
@@ -1835,6 +1701,22 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsMutate]: (mutation) =>
+          observeRpcEffect(
+            WS_METHODS.projectsMutate,
+            startup.enqueueCommand(mutateProject(mutation)).pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "ProjectMutationError"
+                  ? cause
+                  : new ProjectMutationError({
+                      commandId: mutation.commandId,
+                      message: "Failed to mutate project.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
@@ -1885,8 +1767,8 @@ const makeWsRpcLayer = (
                     : {}),
                 });
               }
-              const thread = yield* projectionSnapshotQuery
-                .getThreadShellById(input.resource.threadId)
+              const thread = yield* threadManagement
+                .getThreadProjection(input.resource.threadId)
                 .pipe(
                   Effect.mapError(
                     (cause) =>
@@ -1896,22 +1778,15 @@ const makeWsRpcLayer = (
                       }),
                   ),
                 );
-              if (Option.isNone(thread)) {
-                return yield* new AssetWorkspaceContextNotFoundError({
-                  resource: input.resource,
-                });
-              }
-              const project = yield* projectionSnapshotQuery
-                .getProjectShellById(thread.value.projectId)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AssetWorkspaceContextResolutionError({
-                        resource: input.resource,
-                        cause,
-                      }),
-                  ),
-                );
+              const project = yield* projectService.getById(thread.thread.projectId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AssetWorkspaceContextResolutionError({
+                      resource: input.resource,
+                      cause,
+                    }),
+                ),
+              );
               if (Option.isNone(project)) {
                 return yield* new AssetWorkspaceContextNotFoundError({
                   resource: input.resource,
@@ -1919,10 +1794,16 @@ const makeWsRpcLayer = (
               }
               return yield* issueAssetUrl({
                 resource: input.resource,
-                workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+                workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
               });
             }),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.assetsPersistChatAttachments]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.assetsPersistChatAttachments,
+            persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
+            { "rpc.aggregate": "orchestration" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
@@ -2295,6 +2176,7 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
       });
+      return handlers;
     }),
   );
 
@@ -2318,7 +2200,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             failEnvironmentInternal("internal_error", error),
           ),
         );
-        const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+        const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(ServerWsRpcGroup, {
           disableTracing: true,
         }).pipe(
           Effect.provide(

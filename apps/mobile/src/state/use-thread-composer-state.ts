@@ -1,4 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import {
+  deriveThreadActivityRun,
+  deriveThreadRuntime,
+  threadRuntimeHasInterruptibleRun,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { useCallback, useEffect, useMemo } from "react";
 
 import {
@@ -37,7 +43,10 @@ import {
   useComposerDraft,
 } from "./use-composer-drafts";
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
-import { useSelectedThreadDetail } from "../state/use-thread-detail";
+import {
+  useSelectedThreadProjection,
+  useSelectedThreadVisibleTurnItems,
+} from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
@@ -75,7 +84,8 @@ export function useThreadDraftForThread(input: {
 
 export function useThreadComposerState() {
   const { selectedThread: selectedThreadShell } = useThreadSelection();
-  const selectedThreadDetail = useSelectedThreadDetail();
+  const selectedThreadProjection = useSelectedThreadProjection();
+  const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
 
@@ -91,43 +101,59 @@ export function useThreadComposerState() {
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
   const selectedThreadFeed = useMemo(
-    () => (selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : []),
-    [selectedThreadDetail],
+    () => buildThreadFeed(selectedThreadVisibleTurnItems),
+    [selectedThreadVisibleTurnItems],
   );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
-  const selectedThread = selectedThreadDetail ?? selectedThreadShell;
+  const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
+  const selectedThreadRuntime = useMemo(
+    () =>
+      selectedThreadProjection
+        ? deriveThreadRuntime(selectedThreadProjection.projection)
+        : (selectedThreadShell?.runtime ?? null),
+    [selectedThreadProjection, selectedThreadShell?.runtime],
+  );
+  const selectedThreadActivityRun = useMemo(
+    () =>
+      selectedThreadProjection
+        ? deriveThreadActivityRun(selectedThreadProjection.projection)
+        : (selectedThreadShell?.latestRun ?? null),
+    [selectedThreadProjection, selectedThreadShell?.latestRun],
+  );
 
   const selectedThreadSessionActivity = useMemo(() => {
-    const selectedThread = selectedThreadDetail ?? selectedThreadShell;
-    if (!selectedThread?.session) {
+    if (!selectedThreadRuntime) {
       return null;
     }
 
     return {
-      orchestrationStatus: selectedThread.session.status,
-      activeTurnId: selectedThread.session.activeTurnId ?? undefined,
+      orchestrationStatus: selectedThreadRuntime.status,
+      activeRunId: selectedThreadRuntime.activeRunId ?? undefined,
     };
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [selectedThreadRuntime]);
 
   const activeWorkStartedAt = useMemo(() => {
-    const selectedThread = selectedThreadDetail ?? selectedThreadShell;
-    if (!selectedThread) {
+    if (!selectedThreadShell) {
       return null;
     }
-
     return deriveActiveWorkStartedAt(
-      selectedThread.latestTurn,
+      selectedThreadActivityRun,
       selectedThreadSessionActivity,
       null,
     );
-  }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
+  }, [selectedThreadActivityRun, selectedThreadSessionActivity, selectedThreadShell]);
+
+  const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
+  const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
+    ? (selectedThreadRuntime?.activeRunId ?? null)
+    : null;
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {
@@ -136,7 +162,7 @@ export function useThreadComposerState() {
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
-    const thread = selectedThreadDetail ?? selectedThreadShell;
+    const thread = selectedThreadShell;
     const text = draft.text.trim();
     const attachments = draft.attachments;
     if (text.length === 0 && attachments.length === 0) {
@@ -175,7 +201,7 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
@@ -297,6 +323,7 @@ export function useThreadComposerState() {
 
   return {
     selectedThreadFeed,
+    selectedThreadActivityRun,
     selectedThreadQueueCount,
     activeWorkStartedAt,
     draftMessage,
@@ -304,6 +331,8 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
+    activeThreadBusy,
+    interruptibleRunId,
     onChangeDraftMessage,
     onPickDraftImages,
     onPasteIntoDraft,

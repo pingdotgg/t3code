@@ -4,7 +4,7 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import {
@@ -46,6 +46,15 @@ import {
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
+import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
+} from "./threadDetailsPanelStyles";
 
 type OpenInOption = {
   label: string;
@@ -202,6 +211,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   openInCwd,
   compact = false,
   enableShortcut = true,
+  displayMode = "toolbar",
 }: {
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
@@ -209,7 +219,11 @@ export const OpenInPicker = memo(function OpenInPicker({
   openInCwd: string | null;
   compact?: boolean;
   enableShortcut?: boolean;
+  displayMode?: "toolbar" | "panel";
 }) {
+  const isPanel = displayMode === "panel";
+  const ActionGroup = isPanel ? "div" : Group;
+  const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const remoteCapableEditors = useRemoteCapableEditors();
@@ -286,47 +300,70 @@ export const OpenInPicker = memo(function OpenInPicker({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
+  const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
 
   return (
-    <Group aria-label="Open in editor">
+    <ActionGroup
+      aria-label="Open in editor"
+      role="group"
+      {...(isPanel
+        ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
+        : {})}
+    >
       <Button
-        aria-label={compact ? "Open file in preferred editor" : undefined}
-        className="ps-[8.5px]"
-        size="xs"
-        variant="outline"
+        aria-label={compact ? "Open file in preferred editor" : primaryLabel}
+        size={isPanel ? "sm" : "xs"}
+        variant={isPanel ? "ghost" : "outline"}
+        className={isPanel ? THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS : "ps-[8.5px]"}
         disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
         onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon && (
           <primaryOption.Icon
             aria-hidden="true"
-            className={cn("size-3.5", getOpenInIconClass(primaryOption.kind))}
+            className={cn(
+              isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
+              getOpenInIconClass(primaryOption.kind),
+            )}
           />
         )}
         <span
-          className={
+          className={cn(
             compact
               ? "sr-only"
-              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
-          }
+              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+            isPanel && "not-sr-only ml-0.5 min-w-0 truncate",
+          )}
         >
-          Open
+          {primaryLabel}
         </span>
       </Button>
-      <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
+      {isPanel ? (
+        <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+      ) : (
+        <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
+      )}
       <Menu>
         <MenuTrigger
           render={
             <Button
-              aria-label={compact ? "Choose editor" : "Copy options"}
-              size="icon-xs"
-              variant="outline"
+              aria-label="Choose editor"
+              size={isPanel ? "sm" : "icon-xs"}
+              variant={isPanel ? "ghost" : "outline"}
+              className={isPanel ? THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS : undefined}
             />
           }
         >
-          <ChevronDownIcon aria-hidden="true" className="size-4" />
+          <ChevronDownIcon
+            aria-hidden="true"
+            className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+          />
         </MenuTrigger>
-        <MenuPopup align="end">
+        <MenuPopup
+          align="end"
+          {...(isPanel ? { anchor: panelAnchorRef } : {})}
+          className={isPanel ? THREAD_DETAILS_PANEL_ROW_POPUP_CLASS : undefined}
+        >
           {remote.mode === "remote-unavailable" ? (
             <MenuItem disabled>No SSH route to {environmentLabel}</MenuItem>
           ) : (
@@ -348,6 +385,6 @@ export const OpenInPicker = memo(function OpenInPicker({
           )}
         </MenuPopup>
       </Menu>
-    </Group>
+    </ActionGroup>
   );
 });

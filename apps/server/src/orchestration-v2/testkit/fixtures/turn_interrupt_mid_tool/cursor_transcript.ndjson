@@ -1,0 +1,43 @@
+{"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"turn_interrupt_mid_tool","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-e4dcb030-b82a-4526-9b30-3db02142c1bb"}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":true,"enableAgentRetries":true}}}}
+{"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-e4dcb030-b82a-4526-9b30-3db02142c1bb"}}
+{"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
+{"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","agentId":"agent-e4dcb030-b82a-4526-9b30-3db02142c1bb"}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"thinking-delta","text":"Running the Node.js "}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"thinking-delta","text":"command now. Waiting"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"thinking-delta","text":" for it to complete "}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"thinking-delta","text":"before responding."}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"thinking-completed","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"thinking-completed","thinkingDurationMs":697}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":"Running"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" the"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" command"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" and"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" waiting"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" for"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" it"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" to"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":" finish"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"text-delta","text":".\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":22}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":9}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"tool-call-started","frame":{"type":"interaction.update","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","update":{"type":"tool-call-started","callId":"tool_6ecf0e02-3c15-448d-8994-2d041457475","toolCall":{"type":"shell","args":{"command":"node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"","timeout":35000}},"modelCallId":"d7f78da1-7ccd-45fc-a021-a0f7c333bd1d-0-kteu"}}}
+{"type":"expect_outbound","label":"run.cancel:1","frame":{"type":"run.cancel","runId":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2"}}
+{"type":"emit_inbound","label":"run.completed:1","frame":{"type":"run.completed","result":{"id":"run-3735f72d-3c3a-40b3-ae4a-caed784e6ea2","requestId":"d7f78da1-7ccd-45fc-a021-a0f7c333bd1d","status":"cancelled","model":{"id":"composer-2.5"},"durationMs":4496}}}
+{"type":"expect_outbound","label":"agent.close","frame":{"type":"agent.close","agentId":"agent-e4dcb030-b82a-4526-9b30-3db02142c1bb"}}

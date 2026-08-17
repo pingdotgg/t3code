@@ -1,4 +1,5 @@
-import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
+import type { RuntimeRequestId } from "@t3tools/contracts";
+import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -55,14 +56,14 @@ export interface PendingUserInputCardProps {
   readonly onInputFocusChange?: (focused: boolean) => void;
   readonly drafts: Record<string, PendingUserInputDraftAnswer>;
   readonly answers: Record<string, string | ReadonlyArray<string>> | null;
-  readonly respondingUserInputId: ApprovalRequestId | null;
+  readonly respondingUserInputId: RuntimeRequestId | null;
   readonly onSelectOption: (
-    requestId: ApprovalRequestId,
-    question: UserInputQuestion,
+    requestId: RuntimeRequestId,
+    question: ThreadUserInputQuestion,
     label: string,
   ) => void;
   readonly onChangeCustomAnswer: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     questionId: string,
     customAnswer: string,
   ) => void;
@@ -89,6 +90,9 @@ const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const iconSubtle = useThemeColor("--color-icon-subtle");
   const questionCount = props.pendingUserInput.questions.length;
+  // V2 runtime requests carry response capability: a dead provider process
+  // cannot accept answers, so the card reads-only until the run restarts.
+  const canRespond = props.pendingUserInput.responseCapability === "live";
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -247,6 +251,12 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         showsVerticalScrollIndicator
         style={{ flexShrink: 1 }}
       >
+        {!canRespond ? (
+          <Text className="font-sans text-sm leading-5 text-neutral-600 dark:text-neutral-400">
+            The provider process for this request is no longer available. Interrupt or restart the
+            run to continue.
+          </Text>
+        ) : null}
         {props.pendingUserInput.questions.map((question) => {
           const draft = props.drafts[question.id];
           return (
@@ -263,6 +273,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   return (
                     <Pressable
                       key={option.label}
+                      disabled={!canRespond}
                       className={cn(
                         "rounded-full border px-3 py-2.5 ",
                         selected
@@ -292,6 +303,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 })}
               </View>
               <TextInput
+                editable={canRespond}
                 value={draft?.customAnswer ?? ""}
                 onChangeText={(value) =>
                   props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
@@ -311,7 +323,9 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           props.answers ? "bg-blue-500" : "bg-neutral-200 dark:bg-neutral-700/60",
         )}
         disabled={
-          props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId
+          !canRespond ||
+          props.answers === null ||
+          props.respondingUserInputId === props.pendingUserInput.requestId
         }
         onPress={() => void props.onSubmit()}
       >

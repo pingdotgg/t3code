@@ -1,3 +1,4 @@
+import type { MenuAction } from "@react-native-menu/menu";
 import type {
   ModelCapabilities,
   ModelSelection,
@@ -186,4 +187,54 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerLabel: group.providerLabel,
     models: group.models,
   }));
+}
+
+function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
+  return {
+    id: `model:${option.key}`,
+    title: option.label,
+    state:
+      option.selection.instanceId === selectedModel?.instanceId &&
+      option.selection.model === selectedModel.model
+        ? "on"
+        : undefined,
+  };
+}
+
+export function buildModelMenuActions(
+  groups: ReadonlyArray<ProviderGroup>,
+  selectedModel: ModelSelection | null,
+): MenuAction[] {
+  return groups.flatMap((group) => {
+    const currentModels = group.models.filter((model) => !model.isLegacy);
+    const legacyModels = group.models.filter((model) => model.isLegacy);
+    const selected = group.models.find(
+      (model) =>
+        model.selection.instanceId === selectedModel?.instanceId &&
+        model.selection.model === selectedModel.model,
+    );
+
+    return [
+      ...(currentModels.length > 0
+        ? [
+            {
+              id: `provider:${group.providerKey}`,
+              title: group.providerLabel,
+              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
+              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
+            },
+          ]
+        : []),
+      ...(legacyModels.length > 0
+        ? [
+            {
+              id: `legacy-models:${group.providerKey}`,
+              title: `${group.providerLabel} legacy models`,
+              subtitle: selected?.isLegacy ? selected.label : undefined,
+              subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
+            },
+          ]
+        : []),
+    ];
+  });
 }

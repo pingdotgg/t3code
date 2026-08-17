@@ -7,12 +7,13 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { makeThreadShellFixture } from "../../test-fixtures";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -29,27 +30,10 @@ const environmentId = EnvironmentId.make("environment-1");
 function makeThread(
   input: Partial<EnvironmentThreadShell> & Pick<EnvironmentThreadShell, "id" | "title">,
 ): EnvironmentThreadShell {
-  return {
+  return makeThreadShellFixture({
     environmentId,
-    projectId: ProjectId.make("project-1"),
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    createdAt: "2026-06-01T00:00:00.000Z",
-    updatedAt: "2026-06-01T00:00:00.000Z",
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    session: null,
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
     ...input,
-  };
+  });
 }
 
 const NOW = "2026-06-02T00:00:00.000Z";
@@ -126,23 +110,41 @@ describe("resolveThreadListV2Enabled", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
-  it("prioritizes approval over a running session", () => {
+  it("prioritizes approval over a running runtime", () => {
     const thread = makeThread({
       id: ThreadId.make("t"),
       title: "t",
       hasPendingApprovals: true,
-      session: {
-        threadId: ThreadId.make("t"),
+      runtime: {
         status: "running",
+        activeRunId: RunId.make("run-t"),
         providerName: "Codex",
         providerInstanceId: ProviderInstanceId.make("codex"),
-        runtimeMode: "full-access",
-        activeTurnId: null,
         lastError: null,
         updatedAt: NOW,
       },
     });
     expect(resolveThreadListV2Status(thread)).toBe("approval");
+  });
+
+  it("reports waiting when presentation parks runtime idle for background tasks", () => {
+    expect(
+      resolveThreadListV2Status(
+        makeThread({
+          id: ThreadId.make("t"),
+          title: "t",
+          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+          runtime: {
+            status: "idle",
+            activeRunId: null,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerName: "Codex",
+            lastError: null,
+            updatedAt: NOW,
+          },
+        }),
+      ),
+    ).toBe("waiting");
   });
 
   it("resolves ready for quiescent threads", () => {
@@ -263,6 +265,68 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("excludes subagent child threads from top-level rows and counts", () => {
+    const rootThreadId = ThreadId.make("root");
+    const activeChildId = ThreadId.make("active-child");
+    const forkId = ThreadId.make("fork");
+    const settledChildId = ThreadId.make("settled-child");
+    const snoozedChildId = ThreadId.make("snoozed-child");
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: rootThreadId, title: "Root" }),
+        makeThread({
+          id: forkId,
+          title: "Fork",
+          lineage: {
+            rootThreadId,
+            parentThreadId: rootThreadId,
+            relationshipToParent: "fork",
+          },
+        }),
+        makeThread({
+          id: activeChildId,
+          title: "Active child",
+          lineage: {
+            rootThreadId,
+            parentThreadId: rootThreadId,
+            relationshipToParent: "subagent",
+          },
+        }),
+        makeThread({
+          id: settledChildId,
+          title: "Settled child",
+          lineage: {
+            rootThreadId,
+            parentThreadId: rootThreadId,
+            relationshipToParent: "subagent",
+          },
+          settledOverride: "settled",
+          settledAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: snoozedChildId,
+          title: "Snoozed child",
+          lineage: {
+            rootThreadId,
+            parentThreadId: rootThreadId,
+            relationshipToParent: "subagent",
+          },
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      settledLimit: 0,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual([forkId, rootThreadId]);
+    expect(layout.hiddenSettledCount).toBe(0);
+    expect(layout.snoozedCount).toBe(0);
+    expect(layout.nextSnoozeWakeAt).toBeNull();
+  });
+
   it("keeps a merged thread active when auto-settle on merge is off", () => {
     const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
     const layout = buildThreadListV2Items({
@@ -645,10 +709,11 @@ describe("buildThreadListV2Items", () => {
   });
 
   it("scopes the flat list to one project", () => {
+    const projectId = ProjectId.make("project-1");
     const otherProjectId = ProjectId.make("project-2");
     const { items } = buildThreadListV2Items({
       threads: [
-        makeThread({ id: ThreadId.make("included"), title: "Included" }),
+        makeThread({ id: ThreadId.make("included"), projectId, title: "Included" }),
         makeThread({
           id: ThreadId.make("excluded"),
           projectId: otherProjectId,
@@ -656,7 +721,7 @@ describe("buildThreadListV2Items", () => {
         }),
       ],
       environmentId: null,
-      projectRefs: [{ environmentId, projectId: ProjectId.make("project-1") }],
+      projectRefs: [{ environmentId, projectId }],
       searchQuery: "",
       now: NOW,
     });
@@ -666,19 +731,21 @@ describe("buildThreadListV2Items", () => {
 
   it("scopes the flat list to every environment member of a logical project", () => {
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const projectId = ProjectId.make("project-1");
     const { items } = buildThreadListV2Items({
       threads: [
-        makeThread({ id: ThreadId.make("local"), title: "Local" }),
+        makeThread({ id: ThreadId.make("local"), projectId, title: "Local" }),
         makeThread({
           environmentId: remoteEnvironmentId,
           id: ThreadId.make("remote"),
+          projectId,
           title: "Remote",
         }),
       ],
       environmentId: null,
       projectRefs: [
-        { environmentId, projectId: ProjectId.make("project-1") },
-        { environmentId: remoteEnvironmentId, projectId: ProjectId.make("project-1") },
+        { environmentId, projectId },
+        { environmentId: remoteEnvironmentId, projectId },
       ],
       searchQuery: "",
       now: NOW,
@@ -701,9 +768,9 @@ describe("buildThreadListV2Items settled paging", () => {
           latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
           // A turn adopted the message (same requestedAt): without it the
           // thread reads as a queued turn start, which never settles.
-          latestTurn: {
-            turnId: TurnId.make(`turn-${index}`),
-            state: "completed",
+          latestRun: {
+            runId: RunId.make(`run-${index}`),
+            status: "completed",
             requestedAt: `2026-06-01T0${index}:00:00.000Z`,
             startedAt: `2026-06-01T0${index}:00:00.000Z`,
             completedAt: `2026-06-01T0${index}:10:00.000Z`,

@@ -24,6 +24,27 @@ export function clampPreviewMiniPlayerSize(
   };
 }
 
+/**
+ * Default spot for a freshly opened mini player. Normally the top-right CSS
+ * placement stands (`fallback`), but when the inline thread-details panel is
+ * open its card occupies that corner — slide the player underneath the card,
+ * right edges aligned, so neither surface covers the other. The result still
+ * goes through `clampPreviewMiniPlayerPosition`, which pulls the player back
+ * up when a tall card would push it into the composer.
+ */
+export function defaultPreviewMiniPlayerPosition(input: {
+  readonly fallback: PreviewMiniPlayerPosition;
+  readonly parentRect: { readonly left: number; readonly top: number };
+  readonly playerWidth: number;
+  readonly detailsCardRect: { readonly right: number; readonly bottom: number } | null;
+}): PreviewMiniPlayerPosition {
+  if (input.detailsCardRect === null) return input.fallback;
+  return {
+    x: input.detailsCardRect.right - input.parentRect.left - input.playerWidth,
+    y: input.detailsCardRect.bottom - input.parentRect.top + PREVIEW_MINI_PLAYER_EDGE_GAP,
+  };
+}
+
 export function clampPreviewMiniPlayerPosition(
   position: PreviewMiniPlayerPosition,
   container: PreviewMiniPlayerSize,

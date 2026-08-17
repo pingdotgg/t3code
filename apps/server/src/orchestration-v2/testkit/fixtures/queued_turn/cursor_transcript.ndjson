@@ -1,0 +1,30 @@
+{"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"queued_turn","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-2c1578fc-9bfb-4db9-91c2-8d6744a8cb4c"}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":false,"enableAgentRetries":true}}}}
+{"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-2c1578fc-9bfb-4db9-91c2-8d6744a8cb4c"}}
+{"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Respond with exactly: first fixture turn complete","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
+{"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","agentId":"agent-2c1578fc-9bfb-4db9-91c2-8d6744a8cb4c"}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"text-delta","text":"first"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"text-delta","text":" fixture"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"text-delta","text":" turn"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"text-delta","text":" complete"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"step-completed","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"step-completed","stepId":1,"stepDurationMs":884}}}
+{"type":"emit_inbound","label":"turn-ended","frame":{"type":"interaction.update","runId":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","update":{"type":"turn-ended","usage":{"inputTokens":10397,"outputTokens":41,"cacheReadTokens":448,"cacheWriteTokens":0}}}}
+{"type":"emit_inbound","label":"run.completed:1","frame":{"type":"run.completed","result":{"id":"run-e8e94512-2578-458e-8fcd-3d2c232ed00a","requestId":"b0ca1b65-cdfd-4f50-8698-1924b0521b15","status":"finished","result":"first fixture turn complete","model":{"id":"composer-2.5"},"durationMs":3685}}}
+{"type":"expect_outbound","label":"run.start:2","frame":{"type":"run.start","message":"Respond with exactly: second fixture turn complete","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
+{"type":"emit_inbound","label":"run.started:2","frame":{"type":"run.started","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","agentId":"agent-2c1578fc-9bfb-4db9-91c2-8d6744a8cb4c"}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"text-delta","text":"second"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"text-delta","text":" fixture"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"text-delta","text":" turn"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"text-delta","text":" complete"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"step-completed","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"step-completed","stepId":1,"stepDurationMs":830}}}
+{"type":"emit_inbound","label":"turn-ended","frame":{"type":"interaction.update","runId":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","update":{"type":"turn-ended","usage":{"inputTokens":10458,"outputTokens":29,"cacheReadTokens":10432,"cacheWriteTokens":0}}}}
+{"type":"emit_inbound","label":"run.completed:2","frame":{"type":"run.completed","result":{"id":"run-28ee8e5c-e5b0-4da3-a793-6ac182da167f","requestId":"9e7ec735-db7c-4bdc-b75d-dce82a288678","status":"finished","result":"second fixture turn complete","model":{"id":"composer-2.5"},"durationMs":2467}}}
+{"type":"expect_outbound","label":"agent.close","frame":{"type":"agent.close","agentId":"agent-2c1578fc-9bfb-4db9-91c2-8d6744a8cb4c"}}

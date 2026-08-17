@@ -21,6 +21,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -52,7 +53,7 @@ import {
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { resolveSelectableModelSelection } from "../../lib/modelOptions";
+import { buildModelMenuActions, resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
@@ -720,7 +721,10 @@ export function NewTaskDraftScreen(props: {
     // finds no work and ends the card within seconds.
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: selectedProject.environmentId,
-      threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
+      threadTitle: deriveThreadTitleSeed({
+        text: initialMessageText,
+        attachments: draft.attachments,
+      }),
       projectTitle: selectedProject.title,
     });
     const creationBranch = resolveProjectThreadCreationBranch({

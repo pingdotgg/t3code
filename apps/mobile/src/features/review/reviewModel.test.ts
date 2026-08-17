@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  MessageId,
-  TurnId,
-  type OrchestrationCheckpointSummary,
-  type ReviewDiffPreviewSource,
-} from "@t3tools/contracts";
+import { MessageId, RunId, type ReviewDiffPreviewSource } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 
 import {
   buildReviewListItems,
@@ -18,9 +14,9 @@ import {
 } from "./reviewModel";
 
 function makeCheckpoint(
-  input: Partial<OrchestrationCheckpointSummary> &
-    Pick<OrchestrationCheckpointSummary, "turnId" | "checkpointTurnCount" | "completedAt">,
-): OrchestrationCheckpointSummary {
+  input: Partial<ThreadCheckpointSummary> &
+    Pick<ThreadCheckpointSummary, "runId" | "checkpointTurnCount" | "completedAt">,
+): ThreadCheckpointSummary {
   return {
     checkpointRef: `refs/t3/checkpoints/thread/${input.checkpointTurnCount}` as any,
     status: "ready",
@@ -52,12 +48,12 @@ describe("buildReviewSectionItems", () => {
   it("keeps one chip per checkpoint and appends git sources", () => {
     const checkpoints = [
       makeCheckpoint({
-        turnId: TurnId.make("turn-1"),
+        runId: RunId.make("run-1"),
         checkpointTurnCount: 1,
         completedAt: "2026-04-01T00:00:00.000Z",
       }),
       makeCheckpoint({
-        turnId: TurnId.make("turn-2"),
+        runId: RunId.make("run-2"),
         checkpointTurnCount: 2,
         completedAt: "2026-04-02T00:00:00.000Z",
       }),

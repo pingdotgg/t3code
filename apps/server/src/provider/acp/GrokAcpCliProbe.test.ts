@@ -66,4 +66,26 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
       yield* runtime.setSessionModel(currentModelId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("switches when another model is advertised and completes a prompt", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeProbeRuntime;
+      const started = yield* runtime.start();
+      const models = started.sessionSetupResult.models;
+      const targetModel = models?.availableModels.find(
+        ({ modelId }) => modelId !== models.currentModelId,
+      )?.modelId;
+
+      // Model availability is account-dependent. Exercise a real switch when
+      // possible, but a single-model catalog is valid and must still reach the
+      // prompt check below.
+      if (targetModel !== undefined) {
+        yield* runtime.setSessionModel(targetModel).pipe(Effect.timeout("20 seconds"));
+      }
+      const result = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "Respond with exactly: grok switch ok" }] })
+        .pipe(Effect.timeout("60 seconds"));
+      expect(result.stopReason).toBe("end_turn");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

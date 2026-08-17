@@ -96,6 +96,8 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(environment.userDataDirName, "t3code");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha)");
     }),
   );
 

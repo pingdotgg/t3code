@@ -17,9 +17,30 @@ import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
   clampPreviewMiniPlayerSize,
+  defaultPreviewMiniPlayerPosition,
   PREVIEW_MINI_PLAYER_DEFAULT_SIZE,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
 } from "./previewMiniPlayerLayout";
+
+/**
+ * Where a freshly opened player should land: under the inline thread-details
+ * card when that panel is open (it owns the top-right corner), otherwise the
+ * top-right CSS placement the element already has.
+ */
+function initialPreviewMiniPlayerPosition(root: HTMLElement, parent: HTMLElement) {
+  const fallback = { x: root.offsetLeft, y: root.offsetTop };
+  const card = root
+    .closest('[data-thread-details-inline-reserved="true"]')
+    ?.querySelector('[data-thread-details-panel="inline"] [data-thread-details-card]');
+  if (!(card instanceof HTMLElement)) return fallback;
+  const cardRect = card.getBoundingClientRect();
+  return defaultPreviewMiniPlayerPosition({
+    fallback,
+    parentRect: parent.getBoundingClientRect(),
+    playerWidth: root.offsetWidth,
+    detailsCardRect: { right: cardRect.right, bottom: cardRect.bottom },
+  });
+}
 
 interface DragState {
   readonly pointerId: number;

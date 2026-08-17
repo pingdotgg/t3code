@@ -64,6 +64,24 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
+export type ProviderCatalogAvailability = "loading" | "ready" | "unavailable" | "unconfigured";
+
+/**
+ * Keep a provider catalogue that has not arrived yet distinct from a loaded
+ * catalogue with no usable entries. Environment config streams are reactive:
+ * treating their initial `null` as a final empty list strands otherwise
+ * recoverable threads behind a misleading "no providers" state.
+ */
+export function resolveProviderCatalogAvailability(input: {
+  readonly catalogLoaded: boolean;
+  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly selectedEntry: ProviderInstanceEntry | undefined;
+}): ProviderCatalogAvailability {
+  if (!input.catalogLoaded) return "loading";
+  if (input.selectedEntry !== undefined) return "ready";
+  return input.entries.length === 0 ? "unconfigured" : "unavailable";
+}
+
 /**
  * Whether an instance can currently contribute models to an interactive picker.
  *
