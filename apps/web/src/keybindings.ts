@@ -288,6 +288,14 @@ export function threadTraversalDirectionFromCommand(
   return null;
 }
 
+export function recentThreadsDirectionFromCommand(
+  command: string | null,
+): "previous" | "next" | null {
+  if (command === "recentThreads.previous") return "previous";
+  if (command === "recentThreads.next") return "next";
+  return null;
+}
+
 export function shouldShowThreadJumpHints(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

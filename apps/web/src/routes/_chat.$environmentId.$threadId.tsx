@@ -1,9 +1,11 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
+import { useRecentThreadsStore } from "../recentThreadsStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -73,6 +75,14 @@ function ChatThreadRouteView() {
     }
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
+
+  const serverThreadShellExists = serverThreadShell !== null;
+  useEffect(() => {
+    if (!threadRef || !serverThreadShellExists) {
+      return;
+    }
+    useRecentThreadsStore.getState().recordThreadVisit(scopedThreadKey(threadRef));
+  }, [serverThreadShellExists, threadRef]);
 
   if (!threadRef) {
     return null;

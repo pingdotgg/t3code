@@ -27,6 +27,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
   threadJumpCommandForIndex,
+  recentThreadsDirectionFromCommand,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
   type ShortcutEventLike,
@@ -142,6 +143,30 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
+  {
+    shortcut: {
+      key: "tab",
+      metaKey: false,
+      ctrlKey: true,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    },
+    command: "recentThreads.next",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: {
+      key: "tab",
+      metaKey: false,
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+      modKey: false,
+    },
+    command: "recentThreads.previous",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
@@ -432,6 +457,34 @@ describe("thread navigation helpers", () => {
     assert.strictEqual(threadTraversalDirectionFromCommand("thread.next"), "next");
     assert.isNull(threadTraversalDirectionFromCommand("thread.jump.1"));
     assert.isNull(threadTraversalDirectionFromCommand(null));
+  });
+
+  it("maps recent-thread commands to directions", () => {
+    assert.strictEqual(recentThreadsDirectionFromCommand("recentThreads.next"), "next");
+    assert.strictEqual(recentThreadsDirectionFromCommand("recentThreads.previous"), "previous");
+    assert.isNull(recentThreadsDirectionFromCommand("thread.next"));
+    assert.isNull(recentThreadsDirectionFromCommand(null));
+  });
+
+  it("resolves ctrl+tab to recent-thread cycling on every platform", () => {
+    const forward = event({ key: "Tab", ctrlKey: true });
+    const backward = event({ key: "Tab", ctrlKey: true, shiftKey: true });
+    for (const platform of ["MacIntel", "Win32"]) {
+      assert.strictEqual(
+        resolveShortcutCommand(forward, DEFAULT_BINDINGS, { platform }),
+        "recentThreads.next",
+      );
+      assert.strictEqual(
+        resolveShortcutCommand(backward, DEFAULT_BINDINGS, { platform }),
+        "recentThreads.previous",
+      );
+    }
+    assert.isNull(
+      resolveShortcutCommand(forward, DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
   });
 
   it("shows jump hints only when configured modifiers match", () => {
