@@ -463,9 +463,10 @@ function normalizeShellCommand(
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
 
-  if (platform === "win32") {
-    return trimmed.replace(/^(["'])(.*)\1$/u, "$2");
-  }
+  const quotedExecutable = trimmed.match(/^(["'])(.*?)\1(?:\s|$)/u)?.[2];
+  if (quotedExecutable) return quotedExecutable;
+
+  if (platform === "win32") return trimmed;
 
   const firstToken = trimmed.split(/\s+/g)[0]?.trim();
   if (!firstToken) return null;
