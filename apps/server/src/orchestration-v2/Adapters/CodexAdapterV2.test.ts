@@ -1128,7 +1128,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "message.updated" && event.message.role === "assistant",
     );
 
-  it.effect("projects retryable app-server errors and resolves the same item after recovery", () =>
+  it.effect("resolves retryable app-server errors on resumed provider activity", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const scenario = "codex-provider-api-retry";
@@ -1157,6 +1157,56 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     codexErrorInfo: {
                       responseStreamDisconnected: { httpStatusCode: 529 },
                     },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/started/after-retry",
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622445000,
+                  item: {
+                    type: "commandExecution",
+                    id: "command-after-provider-retry",
+                    command: "pwd",
+                    cwd: "/workspace",
+                    processId: "42",
+                    source: "unifiedExecStartup",
+                    status: "inProgress",
+                    commandActions: [{ type: "unknown", command: "pwd" }],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/completed/after-retry",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  completedAtMs: 1782622445010,
+                  item: {
+                    type: "commandExecution",
+                    id: "command-after-provider-retry",
+                    command: "pwd",
+                    cwd: "/workspace",
+                    processId: "42",
+                    source: "unifiedExecStartup",
+                    status: "completed",
+                    commandActions: [{ type: "unknown", command: "pwd" }],
+                    aggregatedOutput: "/workspace\n",
+                    exitCode: 0,
+                    durationMs: 10,
                   },
                 },
               },
@@ -1205,6 +1255,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(retryItems[1]?.id, retryItems[0]?.id);
         assert.equal(retryItems[1]?.status, "completed");
         assert.equal(retryItems[1]?.title, "Provider recovered");
+
+        const recoveredIndex = harness.events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.status === "completed",
+        );
+        const resumedCommandIndex = harness.events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.input === "pwd",
+        );
+        const terminalIndex = harness.events.findIndex((event) => event.type === "turn.terminal");
+        assert.isAtLeast(recoveredIndex, 0);
+        assert.isAbove(resumedCommandIndex, recoveredIndex);
+        assert.isAbove(terminalIndex, resumedCommandIndex);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );

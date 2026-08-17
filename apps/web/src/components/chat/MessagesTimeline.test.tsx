@@ -1579,55 +1579,82 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
   });
 
-  it("renders V2 provider failures as standalone error rows", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
+  it("renders V2 provider retries in the normal work log", () => {
+    const retryItem = {
+      id: "provider-error",
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: null,
+      providerThreadId: "provider-thread-1",
+      providerTurnId: "provider-turn-1",
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 99,
+      status: "running",
+      title: "Provider retry",
+      startedAt: {},
+      completedAt: null,
+      updatedAt: {},
+      type: "error",
+      failure: {
+        class: "transport_error",
+        message: "The response stream disconnected.",
+        code: "responseStreamDisconnected",
+        retryable: true,
+      },
+      retry: {
+        attempt: 2,
+        maxAttempts: 5,
+        retryDelayMs: null,
+      },
+    } as const;
+    const projectedItem = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: "thread-1",
+      sourceItemId: retryItem.id,
+      item: retryItem,
+    } as const;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        timelineEntries={[
-          {
-            id: "provider-error",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "provider-error",
-              item: {
-                id: "provider-error",
-                threadId: "thread-1",
+        isWorking
+        activeTurnInProgress
+        latestRun={{
+          runId: RunId.make("run-1"),
+          status: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        timelineEntries={
+          [
+            {
+              id: "provider-error",
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: retryItem.id,
+                createdAt: MESSAGE_CREATED_AT,
                 runId: "run-1",
-                nodeId: null,
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 99,
-                status: "failed",
-                title: null,
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "error",
-                failure: {
-                  class: "validation_error",
-                  message: "Invalid reasoning effort.",
-                  code: "invalid_request",
-                  retryable: false,
-                },
+                label: "Retrying provider (2/5)",
+                detail: retryItem.failure.message,
+                tone: "info",
+                itemType: "error",
+                toolLifecycleStatus: "inProgress",
+                structuredPayload: retryItem,
+                projectedItem,
               },
-            } as never,
-          },
-        ]}
+            },
+          ] as never
+        }
       />,
     );
 
     expect(markup).toContain('data-v2-item-type="error"');
-    expect(markup).toContain('data-v2-event-disclosure="true"');
-    expect(markup).toContain("<summary");
-    expect(markup).toContain("Provider error");
-    expect(markup).toContain("Invalid reasoning effort.");
+    expect(markup).toContain("Work Log");
+    expect(markup).toContain("Retrying provider (2/5)");
+    expect(markup).toContain("The response stream disconnected.");
+    expect(markup).not.toContain('data-v2-event-disclosure="true"');
   });
 
   it("keeps inherited V2 work provenance on the rendered row", async () => {
