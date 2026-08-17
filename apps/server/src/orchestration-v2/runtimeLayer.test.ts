@@ -36,6 +36,7 @@ import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceR
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { layerNoop as worktreeRevivalTestLayer } from "../vcs/WorktreeRevivalService.testkit.ts";
 import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
 import {
   OrchestratorDispatchError,
@@ -102,6 +103,7 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
 });
 
 const TestLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
@@ -112,6 +114,7 @@ const TestLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSink
 );
 
 const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
@@ -125,6 +128,7 @@ const SharedApplicationDataPlaneTestLayer = Layer.merge(
   OrchestrationLayerLive,
   OrchestrationV2LayerLive,
 ).pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService, {
       peek: () =>

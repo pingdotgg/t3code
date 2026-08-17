@@ -241,6 +241,14 @@ export function readEnvironmentSupportsVisitedTracking(environmentId: Environmen
   );
 }
 
+/** Whether the server owns worktree inventory, pruning, and orphan cleanup. */
+export function readEnvironmentSupportsWorktreeManagement(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .worktreeManagement === true
+  );
+}
+
 export function readEnvironmentThreadRefs(
   environmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {

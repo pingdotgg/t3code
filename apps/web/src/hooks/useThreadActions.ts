@@ -27,6 +27,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsVisitedTracking,
+  readEnvironmentSupportsWorktreeManagement,
   readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
@@ -316,10 +317,15 @@ export function useThreadActions() {
         const shell = readThreadShell(ref);
         return shell === null ? [] : [shell];
       });
-      const threadProject = readProject({
-        environmentId: threadRef.environmentId,
-        projectId: thread.projectId,
-      });
+      const needsLegacyWorktreeCleanup = !readEnvironmentSupportsWorktreeManagement(
+        threadRef.environmentId,
+      );
+      const threadProject = needsLegacyWorktreeCleanup
+        ? readProject({
+            environmentId: threadRef.environmentId,
+            projectId: thread.projectId,
+          })
+        : null;
       const deletedIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
@@ -333,10 +339,9 @@ export function useThreadActions() {
         deletedIds && deletedIds.size > 0
           ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
           : threads;
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
-        threadRef.threadId,
-      );
+      const orphanedWorktreePath = needsLegacyWorktreeCleanup
+        ? getOrphanedWorktreePathForThread(survivingThreads, threadRef.threadId)
+        : null;
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
@@ -476,8 +481,11 @@ export function useThreadActions() {
             description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
           }),
         );
-        return cleanupFailure;
+        // The thread deletion succeeded. Cleanup reports its own error above,
+        // but must not abort a caller deleting several threads.
+        return deleteResult;
       }
+
       return deleteResult;
     },
     [

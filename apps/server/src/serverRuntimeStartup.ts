@@ -37,6 +37,8 @@ import * as ProjectService from "./project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as WorktreeDeletionCleanup from "./vcs/WorktreeDeletionCleanup.ts";
+import * as WorktreeReaper from "./vcs/WorktreeReaper.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -371,6 +373,8 @@ export const make = (options?: StartupOptions) =>
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const worktreeDeletionCleanup = yield* WorktreeDeletionCleanup.WorktreeDeletionCleanup;
+    const worktreeReaper = yield* WorktreeReaper.WorktreeReaper;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -494,7 +498,10 @@ export const make = (options?: StartupOptions) =>
             runWorker: EffectWorker.runDaemon,
             startRelay: agentAwarenessRelay.start(),
             workerFiberRef: effectWorkerFiber,
-          }),
+          }).pipe(
+            Effect.andThen(worktreeDeletionCleanup.start()),
+            Effect.andThen(worktreeReaper.start()),
+          ),
         ),
         autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
           ? runStartupPhase(
