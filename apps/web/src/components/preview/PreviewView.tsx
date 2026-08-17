@@ -3,6 +3,7 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
   type PreviewViewportSetting,
@@ -146,10 +147,13 @@ export function PreviewView({
   const loadProgress = useLoadingProgress(loading);
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  // A tab created before profiles existed carries no profile of its own, so it
-  // runs in — and must clear — the configured default. Passing the snapshot's
-  // raw `undefined` through would reach the IPC layer as "every profile".
-  const activeProfileId = snapshot?.profileId ?? browserDefaults.profileId;
+  // A tab created before profiles existed carries no profile of its own. It
+  // runs in the built-in `default` partition — the scope the browser used
+  // before profiles — not in whatever profile is configured as the default
+  // now, so that is what its label names and its clear actions target.
+  // Passing the snapshot's raw `undefined` through would reach the IPC layer
+  // as "every profile".
+  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
   const activeProfile = browserDefaults.profiles.find((profile) => profile.id === activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
