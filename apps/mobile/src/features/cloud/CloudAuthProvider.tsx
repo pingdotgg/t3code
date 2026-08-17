@@ -7,7 +7,17 @@ import {
   settlePromise,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
-import { type ReactNode, useEffect, useRef } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { AppState } from "react-native";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { runtime } from "../../lib/runtime";
@@ -18,6 +28,12 @@ import {
   setAgentAwarenessRelayTokenProvider,
   unregisterAgentAwarenessDeviceForCurrentUser,
 } from "../agent-awareness/remoteRegistration";
+import {
+  CLERK_LOAD_TIMEOUT_MS,
+  type ClerkLoadRecoveryEvent,
+  initialClerkLoadRecoveryState,
+  reduceClerkLoadRecovery,
+} from "./clerkLoadRecovery";
 import { clearConnectOnboardingRequest, requestConnectOnboarding } from "./connectOnboarding";
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
 
@@ -57,6 +73,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   } | null>(null);
   const observedAccountRef = useRef<string | null | undefined>(undefined);
   const accountTransitionRef = useRef<Promise<void> | null>(null);
+  const cleanupEpochRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,8 +104,12 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         readonly provider: () => Promise<string | null>;
       } | null,
     ) => {
+      const epoch = cleanupEpochRef.current;
       const previousTransition = accountTransitionRef.current ?? Promise.resolve();
       accountTransitionRef.current = previousTransition.then(async () => {
+        if (cleanupEpochRef.current !== epoch) {
+          return;
+        }
         const cleanup = [
           resetManagedRelayTokenCache(),
           removeRelayEnvironments(),
@@ -103,6 +124,9 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
             : []),
         ];
         const results = await Promise.all(cleanup);
+        if (cleanupEpochRef.current !== epoch) {
+          return;
+        }
         for (const result of results) {
           reportAtomCommandResult(result, { label: "cloud account cleanup" });
         }
@@ -160,6 +184,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
 
   useEffect(
     () => () => {
+      cleanupEpochRef.current += 1;
       previousTokenProviderRef.current = null;
       // Unmounting is not a sign-out: the user is usually still signed in, so
       // detach the provider without ending lock-screen activities or wiping the
@@ -173,10 +198,60 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   return props.children;
 }
 
+export interface CloudAuthLoadState {
+  readonly remount: (reason: "auto" | "manual") => void;
+  readonly timedOut: boolean;
+}
+
+const idleCloudAuthLoadState: CloudAuthLoadState = {
+  remount: () => undefined,
+  timedOut: false,
+};
+
+const CloudAuthLoadContext = createContext<CloudAuthLoadState>(idleCloudAuthLoadState);
+
+export function useCloudAuthLoadState(): CloudAuthLoadState {
+  return useContext(CloudAuthLoadContext);
+}
+
+function CloudAuthLoadWatchdog(props: {
+  readonly onEvent: (event: ClerkLoadRecoveryEvent) => void;
+  readonly onLoadedChange: (isLoaded: boolean) => void;
+  readonly resumeEpoch: number;
+}) {
+  const { isLoaded } = useAuth({ treatPendingAsSignedOut: false });
+  const isLoadedRef = useRef(isLoaded);
+  isLoadedRef.current = isLoaded;
+
+  useEffect(() => {
+    props.onLoadedChange(isLoaded);
+  }, [isLoaded, props.onLoadedChange]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      props.onEvent({ type: "loaded" });
+      return;
+    }
+    const handle = setTimeout(() => {
+      props.onEvent({
+        type: "timeout",
+        isActive: AppState.currentState === "active",
+        isLoaded: isLoadedRef.current,
+      });
+    }, CLERK_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(handle);
+  }, [isLoaded, props.onEvent, props.resumeEpoch]);
+
+  return null;
+}
+
 export function CloudAuthProvider(props: { readonly children: ReactNode }) {
   const config = resolveCloudPublicConfig();
   const publishableKey = config.clerk.publishableKey;
   const relayUrl = config.relay.url;
+  const [recovery, setRecovery] = useState(initialClerkLoadRecoveryState);
+  const [resumeEpoch, setResumeEpoch] = useState(0);
+  const isLoadedRef = useRef(false);
 
   useEffect(() => {
     if (!publishableKey || !relayUrl) {
@@ -184,13 +259,64 @@ export function CloudAuthProvider(props: { readonly children: ReactNode }) {
     }
   }, [publishableKey, relayUrl]);
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active" && !isLoadedRef.current) {
+        setResumeEpoch((current) => current + 1);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
+  const applyRecoveryEvent = useCallback((event: ClerkLoadRecoveryEvent) => {
+    setRecovery((current) => reduceClerkLoadRecovery(current, event));
+  }, []);
+
+  const remount = useCallback(
+    (reason: "auto" | "manual") => {
+      if (reason === "manual") {
+        applyRecoveryEvent({ type: "manual-remount" });
+        return;
+      }
+      applyRecoveryEvent({
+        type: "timeout",
+        isActive: true,
+        isLoaded: false,
+      });
+    },
+    [applyRecoveryEvent],
+  );
+
+  const markLoadedChange = useCallback((isLoaded: boolean) => {
+    isLoadedRef.current = isLoaded;
+  }, []);
+
+  const loadState = useMemo(
+    () => ({
+      remount,
+      timedOut: recovery.timedOut,
+    }),
+    [recovery.timedOut, remount],
+  );
+
   if (!publishableKey || !relayUrl) {
     return props.children;
   }
 
   return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <CloudAuthBridge>{props.children}</CloudAuthBridge>
-    </ClerkProvider>
+    <CloudAuthLoadContext.Provider value={loadState}>
+      <ClerkProvider
+        key={recovery.generation}
+        publishableKey={publishableKey}
+        tokenCache={tokenCache}
+      >
+        <CloudAuthLoadWatchdog
+          onEvent={applyRecoveryEvent}
+          onLoadedChange={markLoadedChange}
+          resumeEpoch={resumeEpoch}
+        />
+        <CloudAuthBridge>{props.children}</CloudAuthBridge>
+      </ClerkProvider>
+    </CloudAuthLoadContext.Provider>
   );
 }

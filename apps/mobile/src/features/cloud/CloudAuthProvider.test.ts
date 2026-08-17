@@ -5,6 +5,13 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { activateCloudRelayAccount, deactivateCloudRelayAccount } from "./CloudAuthProvider";
 import { setAgentAwarenessRelayTokenProvider } from "../agent-awareness/remoteRegistration";
 
+vi.mock("react-native", () => ({
+  AppState: {
+    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    currentState: "active",
+  },
+}));
+
 vi.mock("@clerk/expo", () => ({
   ClerkProvider: vi.fn(),
   useAuth: vi.fn(),
