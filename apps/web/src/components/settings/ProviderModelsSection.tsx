@@ -120,6 +120,8 @@ export function ProviderModelsSection({
     );
   }, [orderedModels, searchQuery]);
 
+  const isFiltering = searchQuery.trim().length > 0;
+
   const handleAdd = () => {
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
@@ -209,7 +211,10 @@ export function ProviderModelsSection({
         spellCheck={false}
       />
       <div ref={listRef} className="mt-2 max-h-40 overflow-y-auto pb-1">
-        {filteredModels.map((model, index) => {
+        {filteredModels.length === 0 ? (
+          <div className="py-1 text-xs text-muted-foreground">No models match your search.</div>
+        ) : null}
+        {filteredModels.map((model) => {
           const caps = model.capabilities;
           const capLabels: string[] = [];
           const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
@@ -218,9 +223,13 @@ export function ProviderModelsSection({
           const previousModel = orderedModels[orderedIndex - 1];
           const nextModel = orderedModels[orderedIndex + 1];
           const canMoveUp =
-            previousModel !== undefined && favoriteModelSet.has(previousModel.slug) === isFavorite;
+            !isFiltering &&
+            previousModel !== undefined &&
+            favoriteModelSet.has(previousModel.slug) === isFavorite;
           const canMoveDown =
-            nextModel !== undefined && favoriteModelSet.has(nextModel.slug) === isFavorite;
+            !isFiltering &&
+            nextModel !== undefined &&
+            favoriteModelSet.has(nextModel.slug) === isFavorite;
           const descriptors = caps?.optionDescriptors ?? [];
           if (descriptors.some((descriptor) => descriptor.id === "fastMode")) {
             capLabels.push("Fast mode");
