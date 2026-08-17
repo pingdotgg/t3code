@@ -295,16 +295,10 @@ struct FeatureComposerView: View {
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(1)
 
-            if let reasoningSummary {
-                Text(reasoningSummary)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 28, maxWidth: 96, alignment: .trailing)
+            if let reasoningControl {
+                reasoningLevelControl(reasoningControl)
+                    .frame(minWidth: 28, maxWidth: 104, alignment: .trailing)
                     .layoutPriority(2)
-                    .accessibilityLabel("Reasoning level")
-                    .accessibilityValue(reasoningSummary)
             }
 
             Spacer(minLength: 0)
@@ -319,6 +313,60 @@ struct FeatureComposerView: View {
         .padding(.horizontal, 7)
         .padding(.top, 2)
         .padding(.bottom, 8)
+    }
+
+    /// Levels come from the model descriptor and are written back through the
+    /// composer's existing selection binding, which is the same value the model
+    /// picker configures.
+    @ViewBuilder
+    private func reasoningLevelControl(
+        _ control: FeatureComposerReasoningControl
+    ) -> some View {
+        if control.isInteractive {
+            Menu {
+                Section(control.descriptorLabel) {
+                    ForEach(control.choices) { choice in
+                        Button {
+                            selection = control.selection(choosing: choice.id)
+                        } label: {
+                            if choice.id == control.currentChoiceID {
+                                Label(choice.label, systemImage: "checkmark")
+                            } else {
+                                Text(choice.label)
+                            }
+                        }
+                        .accessibilityIdentifier("composer-reasoning-choice-\(choice.id)")
+                    }
+                }
+            } label: {
+                reasoningLevelLabel(control.value, showsChevron: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Reasoning level")
+            .accessibilityValue(control.value)
+            .accessibilityIdentifier("composer-reasoning-level")
+        } else {
+            reasoningLevelLabel(control.value, showsChevron: false)
+                .accessibilityLabel("Reasoning level")
+                .accessibilityValue(control.value)
+                .accessibilityIdentifier("composer-reasoning-level")
+        }
+    }
+
+    private func reasoningLevelLabel(_ value: String, showsChevron: Bool) -> some View {
+        HStack(spacing: 3) {
+            Text(value)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if showsChevron {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .fixedSize()
+            }
+        }
+        .font(T3Typography.supporting)
+        .foregroundStyle(T3Colors.textSecondary)
+        .contentShape(Rectangle())
     }
 
     private var submitButton: some View {
@@ -389,8 +437,8 @@ struct FeatureComposerView: View {
         )
     }
 
-    private var reasoningSummary: String? {
-        FeatureComposerReasoningSummary.resolve(
+    private var reasoningControl: FeatureComposerReasoningControl? {
+        FeatureComposerReasoningControl.resolve(
             explicit: selection,
             inherited: threadSelection,
             providers: providers,

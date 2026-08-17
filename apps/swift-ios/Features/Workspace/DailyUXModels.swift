@@ -1099,19 +1099,26 @@ enum DailyUXModelOptions {
         return labels.isEmpty ? nil : labels.joined(separator: " · ")
     }
 
-    /// The compact composer gives reasoning its own non-compressible label so
-    /// a long model name cannot hide the setting users change most often.
-    static func reasoningSummary(
-        for model: FeatureModel,
-        selections: [FeatureModelOptionSelection]
-    ) -> String? {
-        guard let descriptor = model.options.first(where: { descriptor in
+    /// The compact composer gives reasoning its own non-compressible control,
+    /// so a long model name cannot hide the setting users change most often.
+    /// Only the model's own descriptor decides whether it exists and which
+    /// levels it offers.
+    static func reasoningDescriptor(for model: FeatureModel) -> FeatureModelOptionDescriptor? {
+        model.options.first { descriptor in
             let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
             return searchable.contains("reason")
                 || searchable.contains("effort")
                 || searchable.contains("thinking")
                 || searchable.contains("thought")
-        }), let value = value(for: descriptor, in: selections) else {
+        }
+    }
+
+    static func reasoningSummary(
+        for model: FeatureModel,
+        selections: [FeatureModelOptionSelection]
+    ) -> String? {
+        guard let descriptor = reasoningDescriptor(for: model),
+              let value = value(for: descriptor, in: selections) else {
             return nil
         }
 
