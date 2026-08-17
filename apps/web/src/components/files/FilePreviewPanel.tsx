@@ -42,6 +42,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import FileBrowserPanel from "./FileBrowserPanel";
+import { FileBreadcrumbMenu } from "./FileBreadcrumbMenu";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -878,27 +879,27 @@ export default function FilePreviewPanel({
                   data-current-file-crumb={crumb.kind === "file"}
                 >
                   {index > 0 ? (
-                    <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+                    <ChevronRight className="mx-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
                   ) : null}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          className={cn(
-                            "max-w-40 truncate",
-                            crumb.kind === "file"
-                              ? "font-medium text-foreground"
-                              : "text-muted-foreground",
-                          )}
-                        />
-                      }
-                    >
-                      {crumb.label}
-                    </TooltipTrigger>
-                    <TooltipPopup side="top" className="max-w-80">
-                      {crumb.path || projectName}
-                    </TooltipPopup>
-                  </Tooltip>
+                  <FileBreadcrumbMenu
+                    environmentId={environmentId}
+                    cwd={cwd}
+                    // A file crumb browses the directory that contains it, so
+                    // the last crumb offers the sibling files of what's open.
+                    directoryPath={
+                      crumb.kind === "file"
+                        ? crumb.path.slice(0, Math.max(0, crumb.path.lastIndexOf("/")))
+                        : crumb.path
+                    }
+                    label={crumb.label}
+                    title={crumb.path || projectName}
+                    className={
+                      crumb.kind === "file"
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground"
+                    }
+                    onOpenFile={onOpenFile}
+                  />
                 </div>
               ))}
             </div>
