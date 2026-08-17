@@ -620,7 +620,8 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
       if (entries !== null) {
         const names = new Map(entries.map((entry) => [entry.toUpperCase(), entry]));
         candidates = commandCandidates.flatMap((candidate) => {
-          const match = names.get(candidate.toUpperCase());
+          const exactMatch = entries.find((entry) => entry === candidate);
+          const match = exactMatch ?? names.get(candidate.toUpperCase());
           return match === undefined ? [] : [match];
         });
       }
