@@ -33,6 +33,7 @@ export function ConnectionsNewRouteScreen({
   const insets = useSafeAreaInsets();
   const [hostInput, setHostInput] = useState("");
   const [codeInput, setCodeInput] = useState("");
+  const [nameInput, setNameInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -121,7 +122,7 @@ export function ConnectionsNewRouteScreen({
 
     const pairingUrl = buildPairingUrl(hostInput, codeInput);
     onChangeConnectionPairingUrl(pairingUrl);
-    const result = await onConnectPress(pairingUrl);
+    const result = await onConnectPress(pairingUrl, nameInput);
     if (AsyncResult.isSuccess(result)) {
       if (navigation.canGoBack()) {
         navigation.goBack();
@@ -131,7 +132,7 @@ export function ConnectionsNewRouteScreen({
     } else {
       setIsSubmitting(false);
     }
-  }, [codeInput, hostInput, onChangeConnectionPairingUrl, onConnectPress, navigation]);
+  }, [codeInput, hostInput, nameInput, onChangeConnectionPairingUrl, onConnectPress, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -215,6 +216,21 @@ export function ConnectionsNewRouteScreen({
             )
           ) : (
             <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
+              <View collapsable={false} className="gap-1.5">
+                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
+                  Name (optional)
+                </Text>
+                <TextInput
+                  accessibilityLabel="Environment name (optional)"
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  placeholder="Studio Mac"
+                  value={nameInput}
+                  onChangeText={setNameInput}
+                  className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"
+                />
+              </View>
+
               <View collapsable={false} className="gap-1.5">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
                   Host

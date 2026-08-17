@@ -14,6 +14,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
+  BearerConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
   type PlatformConnectionRegistration,
@@ -36,6 +37,60 @@ import * as ConnectionDriver from "./driver.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
+const isBearerConnectionProfile = Schema.is(BearerConnectionProfile);
+
+function isMetadataOnlyEntryUpdate(
+  previous: ConnectionCatalogEntry | undefined,
+  next: ConnectionCatalogEntry,
+): boolean {
+  if (previous === undefined || previous.target._tag !== next.target._tag) {
+    return false;
+  }
+
+  switch (previous.target._tag) {
+    case "PrimaryConnectionTarget":
+      return false;
+    case "RelayConnectionTarget":
+      return previous.target.environmentId === next.target.environmentId;
+    case "BearerConnectionTarget": {
+      if (
+        next.target._tag !== "BearerConnectionTarget" ||
+        previous.target.environmentId !== next.target.environmentId ||
+        previous.target.connectionId !== next.target.connectionId ||
+        Option.isNone(previous.profile) ||
+        Option.isNone(next.profile) ||
+        !isBearerConnectionProfile(previous.profile.value) ||
+        !isBearerConnectionProfile(next.profile.value)
+      ) {
+        return false;
+      }
+      return (
+        previous.profile.value.connectionId === next.profile.value.connectionId &&
+        previous.profile.value.environmentId === next.profile.value.environmentId &&
+        previous.profile.value.httpBaseUrl === next.profile.value.httpBaseUrl &&
+        previous.profile.value.wsBaseUrl === next.profile.value.wsBaseUrl
+      );
+    }
+    case "SshConnectionTarget": {
+      if (
+        next.target._tag !== "SshConnectionTarget" ||
+        previous.target.environmentId !== next.target.environmentId ||
+        previous.target.connectionId !== next.target.connectionId ||
+        Option.isNone(previous.profile) ||
+        Option.isNone(next.profile) ||
+        !isSshConnectionProfile(previous.profile.value) ||
+        !isSshConnectionProfile(next.profile.value)
+      ) {
+        return false;
+      }
+      return (
+        previous.profile.value.connectionId === next.profile.value.connectionId &&
+        previous.profile.value.environmentId === next.profile.value.environmentId &&
+        Equal.equals(previous.profile.value.target, next.profile.value.target)
+      );
+    }
+  }
+}
 
 export class EnvironmentNotRegisteredError extends Schema.TaggedErrorClass<EnvironmentNotRegisteredError>()(
   "EnvironmentNotRegisteredError",
@@ -70,6 +125,9 @@ export class EnvironmentRegistry extends Context.Service<
     readonly register: (
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly updateMetadata: (
+      registration: ConnectionRegistration,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError | ConnectionAttemptError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -408,6 +466,51 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const updateMetadata = Effect.fn("EnvironmentRegistry.updateMetadata")(function* (
+    registration: ConnectionRegistration,
+  ) {
+    const entry = connectionRegistrationCatalogEntry(registration);
+    const environmentId = entry.target.environmentId;
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          return;
+        }
+        const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        const credentialUnchanged =
+          registration._tag !== "BearerConnectionRegistration" ||
+          Equal.equals(
+            yield* credentials.get(registration.target.connectionId),
+            Option.some(registration.credential),
+          );
+        const canRetainRuntime = credentialUnchanged && isMetadataOnlyEntryUpdate(previous, entry);
+        yield* registrations.register(registration);
+        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+          const next = new Map(current);
+          next.set(environmentId, registration.target);
+          return next;
+        });
+
+        const existingScope = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+        if (existingScope === undefined || !canRetainRuntime) {
+          yield* installEntryLocked(entry);
+          return;
+        }
+        yield* SubscriptionRef.update(entries, (current) => {
+          const next = new Map(current);
+          next.set(environmentId, entry);
+          return next;
+        });
+        yield* SubscriptionRef.update(serviceScopes, (current) => {
+          const next = new Map(current);
+          next.set(environmentId, { ...existingScope, entry });
+          return next;
+        });
+      }),
+    );
+  });
+
   const installPlatformRegistration = Effect.fn("EnvironmentRegistry.installPlatformRegistration")(
     function* (registration: PlatformConnectionRegistration) {
       const entry = connectionRegistrationCatalogEntry(registration);
@@ -662,6 +765,7 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
+    updateMetadata,
     registerPlatform,
     reconcilePlatform,
     remove,

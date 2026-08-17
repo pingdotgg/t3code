@@ -6,11 +6,16 @@ import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
-import { BearerConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  SshConnectionProfile,
+} from "./catalog.ts";
+import { BearerConnectionTarget, SshConnectionTarget } from "./model.ts";
 import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
+  prepareSavedConnectionRename,
   prepareSshRegistration,
 } from "./onboarding.ts";
 
@@ -93,6 +98,7 @@ describe("connection onboarding", () => {
         profile: {
           environmentId: "environment-paired",
           label: "Paired environment",
+          reportedLabel: "Paired environment",
           connectionId: "bearer:environment-paired",
           httpBaseUrl: "https://remote.example.test/",
           wsBaseUrl: "wss://remote.example.test/",
@@ -115,6 +121,22 @@ describe("connection onboarding", () => {
       expect(tokenParams.get("subject_token")).toBe("pairing-token");
       expect(tokenParams.get("scope")).toBe(AuthStandardClientScopes.join(" "));
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
+    }),
+  );
+
+  it.effect("stores a custom client name beside the machine-reported name", () =>
+    Effect.gen(function* () {
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+        label: "  Studio Mac  ",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer([]))));
+
+      expect(registration.target.label).toBe("Studio Mac");
+      expect(registration.profile).toMatchObject({
+        label: "Studio Mac",
+        reportedLabel: "Paired environment",
+      });
     }),
   );
 
@@ -181,6 +203,7 @@ describe("connection onboarding", () => {
               connectionId: "bearer:environment-paired",
               environmentId,
               label: "Old label",
+              reportedLabel: "archv",
               httpBaseUrl: "http://old.example.test/",
               wsBaseUrl: "ws://old.example.test/",
             }),
@@ -198,12 +221,86 @@ describe("connection onboarding", () => {
         profile: {
           environmentId,
           label: "Renamed environment",
+          reportedLabel: "archv",
           httpBaseUrl: "http://100.65.180.100:3773/",
           wsBaseUrl: "ws://100.65.180.100:3773/",
         },
         credential: { token: "bearer-token" },
       });
     }),
+  );
+
+  it.effect(
+    "renames saved bearer and SSH environments without changing their connection data",
+    () =>
+      Effect.gen(function* () {
+        const bearerEnvironmentId = EnvironmentId.make("environment-bearer");
+        const bearer = yield* prepareSavedConnectionRename({
+          input: { environmentId: bearerEnvironmentId, label: "Desk Mac" },
+          entry: Option.some({
+            target: new BearerConnectionTarget({
+              environmentId: bearerEnvironmentId,
+              label: "macbook.local",
+              connectionId: "bearer:environment-bearer",
+            }),
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: "bearer:environment-bearer",
+                environmentId: bearerEnvironmentId,
+                label: "macbook.local",
+                httpBaseUrl: "https://macbook.example.test/",
+                wsBaseUrl: "wss://macbook.example.test/",
+              }),
+            ),
+          }),
+          credential: Option.some(new BearerConnectionCredential({ token: "bearer-token" })),
+        });
+
+        const sshEnvironmentId = EnvironmentId.make("environment-ssh-rename");
+        const sshTarget = {
+          alias: "archv",
+          hostname: "archv.example.test",
+          username: "developer",
+          port: 22,
+        };
+        const ssh = yield* prepareSavedConnectionRename({
+          input: { environmentId: sshEnvironmentId, label: "Linux workstation" },
+          entry: Option.some({
+            target: new SshConnectionTarget({
+              environmentId: sshEnvironmentId,
+              label: "archv",
+              connectionId: "ssh:environment-ssh-rename",
+            }),
+            profile: Option.some(
+              new SshConnectionProfile({
+                connectionId: "ssh:environment-ssh-rename",
+                environmentId: sshEnvironmentId,
+                label: "archv",
+                target: sshTarget,
+              }),
+            ),
+          }),
+          credential: Option.none(),
+        });
+
+        expect(bearer).toMatchObject({
+          target: { label: "Desk Mac" },
+          profile: {
+            label: "Desk Mac",
+            reportedLabel: "macbook.local",
+            httpBaseUrl: "https://macbook.example.test/",
+          },
+          credential: { token: "bearer-token" },
+        });
+        expect(ssh).toMatchObject({
+          target: { label: "Linux workstation" },
+          profile: {
+            label: "Linux workstation",
+            reportedLabel: "archv",
+            target: sshTarget,
+          },
+        });
+      }),
   );
 
   it.effect("prepares an SSH registration from the provisioned platform environment", () =>

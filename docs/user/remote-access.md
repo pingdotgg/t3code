@@ -58,7 +58,13 @@ available. You can set another endpoint as the default from the expanded endpoin
 
 If the copied link points directly at `http://192.168.x.y:3773`, open it from a client that can reach that LAN address. If it points at `https://app.t3.codes/pair?...`, the hosted web app will save the environment and connect directly to the backend URL in the link.
 
-In the mobile app's **Add Environment** form, a numeric IP address without a scheme uses HTTP. Include `https://` explicitly when the backend is served over HTTPS.
+In the **Add Environment** form, you can optionally give the environment a name that is only used
+on that client. Leave it blank to use the name reported by the machine. Saved direct and
+SSH-managed environments can also be renamed later from the environment list without changing the
+machine's own name or reconnecting it.
+
+In the mobile app's **Add Environment** form, a numeric IP address without a scheme uses HTTP.
+Include `https://` explicitly when the backend is served over HTTPS.
 
 ### Tailscale Endpoints
 

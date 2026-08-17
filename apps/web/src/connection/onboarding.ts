@@ -3,7 +3,7 @@ import {
   createAtomCommandScheduler,
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "./runtime";
@@ -22,8 +22,20 @@ export const connectPairing = createRuntimeCommand(connectionAtomRuntime, {
     readonly pairingUrl?: string;
     readonly host?: string;
     readonly pairingCode?: string;
+    readonly label?: string;
   }) =>
     ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerPairing(input))),
+});
+
+export const renameSavedEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:rename-saved-environment",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly environmentId: EnvironmentId }) => input.environmentId,
+  },
+  execute: (input: { readonly environmentId: EnvironmentId; readonly label: string }) =>
+    ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.rename(input))),
 });
 
 export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime, {

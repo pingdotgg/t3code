@@ -63,6 +63,10 @@ separate target kind. A Tailscale URL is paired through the ordinary bearer path
 host plus pairing code. Tailscale is an endpoint provider and transport, not a distinct runtime
 concept.
 
+Bearer and SSH profiles keep the client-facing label separately from the optional label reported by
+the remote machine. Renaming a saved environment updates only that persisted metadata, so the
+machine identity remains available and the active connection is not restarted.
+
 ### AdvertisedEndpoint
 
 A server- or desktop-authored candidate endpoint for an environment: a concrete HTTP and WebSocket
