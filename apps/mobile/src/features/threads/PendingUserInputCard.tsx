@@ -277,16 +277,23 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         )
                       }
                     >
-                      <Text
-                        className={cn(
-                          "font-t3-bold text-sm",
-                          selected
-                            ? "text-sky-700 dark:text-sky-300"
-                            : "text-neutral-600 dark:text-neutral-300",
-                        )}
-                      >
-                        {option.label}
-                      </Text>
+                      <View className="gap-0.5">
+                        <Text
+                          className={cn(
+                            "font-t3-bold text-sm",
+                            selected
+                              ? "text-sky-700 dark:text-sky-300"
+                              : "text-neutral-600 dark:text-neutral-300",
+                          )}
+                        >
+                          {option.label}
+                        </Text>
+                        {option.description && option.description !== option.label ? (
+                          <Text className="font-sans text-xs text-neutral-500 dark:text-neutral-400">
+                            {option.description}
+                          </Text>
+                        ) : null}
+                      </View>
                     </Pressable>
                   );
                 })}
