@@ -196,8 +196,7 @@ function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
     item.type === "approval_request" ||
     item.type === "user_input_request" ||
     item.type === "dynamic_tool" ||
-    item.type === "subagent" ||
-    item.type === "error"
+    item.type === "subagent"
   );
 }
 
@@ -206,8 +205,12 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
 }
 
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
+  if (item.type === "error") {
+    if (item.status === "failed") return "failure";
+    return item.status === "completed" ? "success" : "neutral";
+  }
   if (!itemIsToolLike(item)) return null;
-  if (item.type === "error" || item.status === "failed") return "failure";
+  if (item.status === "failed") return "failure";
   return item.status === "completed" ? "success" : "neutral";
 }
 

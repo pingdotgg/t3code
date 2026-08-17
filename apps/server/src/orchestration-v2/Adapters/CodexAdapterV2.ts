@@ -1499,6 +1499,45 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
+        // Call only for new model-output activity. A local item/completed can
+        // arrive while the upstream response stream is still retrying.
+        const completeProviderRetry = Effect.fn("CodexAdapterV2.completeProviderRetry")(function* (
+          context: ActiveCodexTurnContext,
+          updatedAt: DateTime.Utc,
+        ) {
+          const providerRetry = yield* Ref.modify(providerRetries, (current) => {
+            const retry = current.get(context.providerTurnId);
+            if (retry === undefined) {
+              return [undefined, current] as const;
+            }
+            const updated = new Map(current);
+            updated.delete(context.providerTurnId);
+            return [retry, updated] as const;
+          });
+          if (providerRetry === undefined) {
+            return;
+          }
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CODEX_PROVIDER,
+            turnItem: makeProviderRetryTurnItem({
+              idAllocator,
+              driver: CODEX_PROVIDER,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              nodeId: context.providerNodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              itemOrdinal: providerRetry.itemOrdinal,
+              failure: providerRetry.failure,
+              retry: providerRetry.retry,
+              status: "completed",
+              startedAt: providerRetry.startedAt,
+              updatedAt,
+            }),
+          });
+        });
+
         const registerRootTurn = (input: {
           readonly turnInput: ProviderAdapterV2TurnInput;
           readonly nativeTurnId: string;
@@ -3082,10 +3121,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           });
 
         yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
-          agentMessageDeltas.append({
-            turnId: payload.turnId,
-            itemId: payload.itemId,
-            delta: payload.delta,
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context !== undefined) {
+              yield* completeProviderRetry(context, yield* DateTime.now);
+            }
+            yield* agentMessageDeltas.append({
+              turnId: payload.turnId,
+              itemId: payload.itemId,
+              delta: payload.delta,
+            });
           }),
         );
 
@@ -3095,6 +3140,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (context === undefined) {
               return;
             }
+            yield* completeProviderRetry(context, yield* DateTime.now);
             const markdown = yield* Ref.modify(planDeltas, (current) => {
               const updated = new Map(current);
               const next = `${updated.get(payload.itemId) ?? ""}${payload.delta}`;
@@ -3131,6 +3177,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (context === undefined) {
               return;
             }
+            yield* completeProviderRetry(context, yield* DateTime.now);
             const steps = payload.plan.map((step, index) => ({
               id: `step-${index + 1}`,
               text: nonEmptyText(step.step, `Step ${index + 1}`),
@@ -3265,9 +3312,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "userMessage") {
-              if (yield* emitSubagentUserMessage(context, payload.item)) {
-                return;
-              }
+              yield* emitSubagentUserMessage(context, payload.item);
+              return;
             }
 
             if (payload.item.type === "subAgentActivity") {
@@ -3277,6 +3323,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               });
               return;
             }
+
+            yield* completeProviderRetry(context, yield* DateTime.now);
 
             if (payload.item.type === "agentMessage") {
               if (payload.item.phase !== "commentary") {

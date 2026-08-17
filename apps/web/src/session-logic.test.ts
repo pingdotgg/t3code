@@ -220,7 +220,7 @@ describe("V2 session presentation", () => {
     expect(targets.has(steerMessageId)).toBe(false);
   });
 
-  it("uses visible turn item order and keeps lifecycle resource entries standalone", () => {
+  it("uses visible turn item order and keeps provider errors in the work log", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-visible");
     const runId = RunId.make("run-visible");
@@ -333,7 +333,7 @@ describe("V2 session presentation", () => {
       ["work", commandItem.id],
       ["event", resultItem.id],
       ["work", todoItem.id],
-      ["event", errorItem.id],
+      ["work", errorItem.id],
       ["event", threadCreatedItem.id],
     ]);
     const commandEntry = entries[2];
@@ -357,13 +357,13 @@ describe("V2 session presentation", () => {
       expect(todoEntry.entry.detail).toBe("1/2 completed");
     }
     const errorEntry = entries[5];
-    expect(errorEntry?.kind).toBe("event");
-    if (errorEntry?.kind === "event") {
-      expect(errorEntry.projectedItem).toBe(visibleTurnItems[5]);
-      expect(errorEntry.projectedItem.item.type).toBe("error");
-      if (errorEntry.projectedItem.item.type === "error") {
-        expect(errorEntry.projectedItem.item.failure.message).toBe("Invalid reasoning effort.");
-      }
+    expect(errorEntry?.kind).toBe("work");
+    if (errorEntry?.kind === "work") {
+      expect(errorEntry.entry.projectedItem).toBe(visibleTurnItems[5]);
+      expect(errorEntry.entry.label).toBe("Provider error");
+      expect(errorEntry.entry.detail).toBe("Invalid reasoning effort.");
+      expect(errorEntry.entry.tone).toBe("info");
+      expect(errorEntry.entry.toolLifecycleStatus).toBe("failed");
     }
     const threadCreatedEntry = entries[6];
     expect(threadCreatedEntry?.kind).toBe("event");
