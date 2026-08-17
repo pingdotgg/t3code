@@ -206,9 +206,10 @@ export function PreviewMoreMenu({
             each one drove the popup far past its width.
           */}
           {profileName ? (
-            <MenuGroupLabel>
-              <span className="min-w-0 truncate">Profile: {profileName}</span>
-            </MenuGroupLabel>
+            // Truncation sits on the label itself: it renders a block box, so
+            // `text-overflow` on an inline child inside it never applies and a
+            // long name would push the popup past its width instead.
+            <MenuGroupLabel className="max-w-64 truncate">Profile: {profileName}</MenuGroupLabel>
           ) : null}
           <MenuItem
             onClick={() =>
