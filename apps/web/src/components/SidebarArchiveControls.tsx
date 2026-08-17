@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { shouldRenderSidebarArchiveAll } from "./SidebarArchiveControls.logic";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export const SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME =
   "cursor-pointer rounded-md bg-transparent text-muted-foreground hover:text-foreground";
@@ -41,18 +42,28 @@ export function SidebarSettledLifecycleControls({
           <Undo2Icon aria-hidden className="mb-px size-3.5" />
         </button>
       ) : null}
-      <button
-        type="button"
-        aria-label={
-          archiveDisabled ? "Archive unavailable while work is still active" : "Archive thread"
-        }
-        title={archiveDisabled ? "Cannot archive while work is still active" : undefined}
-        disabled={archiveDisabled}
-        onClick={onArchive}
-        className={cn(SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "disabled:opacity-50")}
-      >
-        <ArchiveIcon aria-hidden className="size-3.5" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={
+                archiveDisabled
+                  ? "Archive unavailable while work is still active"
+                  : "Archive thread"
+              }
+              disabled={archiveDisabled}
+              onClick={onArchive}
+              className={cn(SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "disabled:opacity-50")}
+            >
+              <ArchiveIcon aria-hidden className="size-3.5" />
+            </button>
+          }
+        />
+        <TooltipPopup side="top">
+          {archiveDisabled ? "Cannot archive while work is still active" : "Archive thread"}
+        </TooltipPopup>
+      </Tooltip>
     </span>
   );
 }

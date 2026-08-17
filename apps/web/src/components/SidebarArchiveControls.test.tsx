@@ -55,7 +55,8 @@ describe("SidebarSettledLifecycleControls", () => {
 
     expect(markup).not.toContain('aria-label="Un-settle thread"');
     expect(markup).toContain('aria-label="Archive unavailable while work is still active"');
-    expect(markup).toContain('title="Cannot archive while work is still active"');
+    expect(markup).not.toContain("title=");
+    expect(markup).toContain('data-slot="tooltip-trigger"');
     expect(markup).toContain("disabled");
     expect(markup).toContain("group-hover/sidebar-row:static");
   });
