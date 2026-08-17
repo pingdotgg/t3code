@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -363,6 +365,30 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
 
       expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("matches listed Windows commands case-insensitively", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-shell-resolution-" });
+
+      return yield* Effect.gen(function* () {
+        yield* fileSystem.makeDirectory(path.join(tempDir, "provider-tool.COM"));
+        const executable = path.join(tempDir, "provider-tool.eXe");
+        yield* fileSystem.writeFileString(executable, "MZ");
+
+        expect(
+          yield* resolveCommandPath("provider-tool", {
+            env: { PATH: tempDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+        ).toBe(executable);
+      }).pipe(
+        Effect.ensuring(
+          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.orDie),
+        ),
+      );
     }),
   );
 });
