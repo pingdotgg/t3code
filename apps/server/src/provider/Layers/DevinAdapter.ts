@@ -1203,7 +1203,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                       new ProviderAdapterRequestError({
                         provider: PROVIDER,
                         method: "session/prompt",
-                        detail: cause.message,
+                        detail: `Failed to read attachment '${attachment.id}'.`,
                         cause,
                       }),
                   ),
