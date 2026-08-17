@@ -127,6 +127,8 @@ interface DevinSessionContext {
   lastAcpUsage: EffectAcpSchema.Usage | undefined;
   /** Last usage that was actually persisted to the Devin usage transcript. */
   lastWrittenAcpUsage: EffectAcpSchema.Usage | undefined;
+  /** Next 1-based prompt index to write for each turn, for disambiguating steered prompts. */
+  promptIndexByTurn: Map<TurnId, number>;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -315,6 +317,8 @@ interface DevinUsageTranscriptRecord {
   readonly timestamp: string;
   readonly sessionId: string;
   readonly turnId: string;
+  /** 1-based index of this prompt within the steered turn. */
+  readonly promptIndex: number;
   readonly model: string;
   readonly totals: UsageTokenTotals;
   readonly reportedCostUsd: number | null;
@@ -377,11 +381,12 @@ export function makeDevinTokenUsageSnapshot(
   const contextUsedTokens = previous?.usedTokens ?? usedTokens;
   const contextMaxTokens = previous?.maxTokens;
   const previousTotalProcessed = previous?.totalProcessedTokens ?? 0;
+  const totalProcessedTokens = Math.max(previousTotalProcessed, usedTokens);
   const lastUsedTokens = Math.max(0, usedTokens - previousTotalProcessed);
 
   return {
     usedTokens: contextUsedTokens,
-    totalProcessedTokens: usedTokens,
+    totalProcessedTokens,
     ...(contextMaxTokens !== undefined ? { maxTokens: contextMaxTokens } : {}),
     lastUsedTokens,
     ...(inputTokens !== undefined && inputTokens > 0 ? { inputTokens } : {}),
@@ -994,6 +999,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
           lastKnownTokenUsage: undefined,
           lastAcpUsage: undefined,
           lastWrittenAcpUsage: undefined,
+          promptIndexByTurn: new Map(),
         };
 
         const nf = yield* Stream.runDrain(
@@ -1419,10 +1425,13 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
               if (totalDeltaTokens > 0) {
                 const observedAt = yield* nowIso;
                 const usageModel = prepared.displayModel ?? ctx.session.model ?? "adaptive";
+                const nextPromptIndex = (ctx.promptIndexByTurn.get(prepared.turnId) ?? 0) + 1;
+                ctx.promptIndexByTurn.set(prepared.turnId, nextPromptIndex);
                 const written = yield* writeDevinUsageTranscriptLine(devinSettings, {
                   timestamp: observedAt,
                   sessionId: ctx.acpSessionId,
                   turnId: prepared.turnId,
+                  promptIndex: nextPromptIndex,
                   model: usageModel,
                   totals: deltaTotals,
                   reportedCostUsd: null,

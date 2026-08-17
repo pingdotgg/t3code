@@ -381,6 +381,7 @@ const DevinUsageLineSchema = Schema.Struct({
   timestamp: Schema.String,
   sessionId: Schema.optional(Schema.String),
   turnId: Schema.optional(Schema.String),
+  promptIndex: Schema.optional(Schema.Number),
   model: Schema.String,
   totals: UsageTokenTotals,
   reportedCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -402,7 +403,8 @@ function displayDevinModelSlug(slug: string): string {
  * Parses one line from a Devin usage transcript written by T3 Code.
  *
  * Each line is an independent, delta-normalized record keyed by
- * `sessionId:turnId` so the aggregator can de-duplicate retries.
+ * `sessionId:turnId:promptIndex` so the aggregator can de-duplicate retries
+ * while still counting every prompt in a steered turn.
  */
 export function parseDevinLine(line: string): UsageRecord | null {
   let parsed: unknown;
@@ -421,6 +423,12 @@ export function parseDevinLine(line: string): UsageRecord | null {
 
   const sessionId = record.sessionId?.trim() ?? "";
   const turnId = record.turnId?.trim() ?? "";
+  const promptIndex =
+    record.promptIndex !== undefined &&
+    Number.isFinite(record.promptIndex) &&
+    record.promptIndex >= 0
+      ? Math.trunc(record.promptIndex)
+      : 0;
 
   return {
     provider: "devin",
@@ -434,7 +442,8 @@ export function parseDevinLine(line: string): UsageRecord | null {
       Number.isFinite(record.reportedCostUsd)
         ? record.reportedCostUsd
         : null,
-    dedupeKey: sessionId.length > 0 && turnId.length > 0 ? `${sessionId}:${turnId}` : null,
+    dedupeKey:
+      sessionId.length > 0 && turnId.length > 0 ? `${sessionId}:${turnId}:${promptIndex}` : null,
   };
 }
 

@@ -294,4 +294,26 @@ describe("makeDevinTokenUsageSnapshot", () => {
     });
     expect(snapshot?.maxTokens).toBeUndefined();
   });
+
+  it("does not shrink totalProcessedTokens when prompt totalTokens lags usage updates", () => {
+    const previous = {
+      usedTokens: 1_000,
+      totalProcessedTokens: 1_150,
+    } as const;
+
+    const usage = {
+      inputTokens: 9_000,
+      outputTokens: 500,
+      totalTokens: 1_000,
+      cachedReadTokens: null,
+      cachedWriteTokens: null,
+      thoughtTokens: null,
+    } satisfies EffectAcpSchema.Usage;
+
+    const snapshot = makeDevinTokenUsageSnapshot(usage, previous);
+
+    expect(snapshot?.usedTokens).toBe(1_000);
+    expect(snapshot?.totalProcessedTokens).toBe(1_150);
+    expect(snapshot?.lastUsedTokens).toBe(0);
+  });
 });

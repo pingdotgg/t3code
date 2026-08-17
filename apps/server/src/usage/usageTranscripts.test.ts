@@ -289,7 +289,49 @@ describe("parseDevinLine", () => {
       outputTokens: 89,
       reasoningTokens: 0,
     });
-    expect(record?.dedupeKey).toBe("aloud-lantana:af6deae3-30ba-42d4-aab7-c6908d04361d");
+    expect(record?.dedupeKey).toBe("aloud-lantana:af6deae3-30ba-42d4-aab7-c6908d04361d:0");
+  });
+
+  it("uses promptIndex to disambiguate steered prompts in the same turn", () => {
+    const line = JSON.stringify({
+      type: "devin_usage",
+      timestamp: "2026-08-11T16:44:06.637Z",
+      sessionId: "aloud-lantana",
+      turnId: "af6deae3-30ba-42d4-aab7-c6908d04361d",
+      promptIndex: 2,
+      model: "swe-1-7",
+      totals: {
+        uncachedInputTokens: 1,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 1,
+        reasoningTokens: 0,
+      },
+    });
+
+    const record = parseDevinLine(line);
+    expect(record?.dedupeKey).toBe("aloud-lantana:af6deae3-30ba-42d4-aab7-c6908d04361d:2");
+  });
+
+  it("treats steered prompts with distinct promptIndex as separate records", () => {
+    const base = {
+      type: "devin_usage",
+      timestamp: "2026-08-11T16:44:06.637Z",
+      sessionId: "aloud-lantana",
+      turnId: "af6deae3-30ba-42d4-aab7-c6908d04361d",
+      model: "swe-1-7",
+      totals: {
+        uncachedInputTokens: 1,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 1,
+        reasoningTokens: 0,
+      },
+    };
+
+    const first = parseDevinLine(JSON.stringify({ ...base, promptIndex: 1 }));
+    const second = parseDevinLine(JSON.stringify({ ...base, promptIndex: 2 }));
+    expect(first?.dedupeKey).not.toBe(second?.dedupeKey);
   });
 
   it("rehydrates version dots from dashed Devin model slugs", () => {
