@@ -23,6 +23,9 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     /// a `NavigationSplitView` in a `GeometryReader` changes how it resolves its
     /// own columns and safe areas, so the drawer never does that.
     @State private var openHeight: CGFloat = 0
+    /// Height the software keyboard currently covers, so the drawer can rest
+    /// exactly on top of it instead of hiding behind it.
+    @State private var keyboardHeight: CGFloat = 0
 
     var body: some View {
         content
@@ -49,14 +52,41 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                     }
                 )
             }
-            .onChange(of: state.isOpen) { _, isOpen in
-                if isOpen {
-                    dismissKeyboard()
-                } else {
-                    isQueryFocused = false
+            // Focus follows presentation: the keyboard rises with the drawer so
+            // typing is instant, and the drawer's open height already accounts
+            // for it before the drag is released.
+            .onChange(of: state.isVisible) { _, isVisible in
+                isQueryFocused = FeatureCommandDrawerFocus.searchIsFocused(for: state)
+                if !isVisible {
                     query = ""
+                    resignKeyboard()
                 }
             }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillChangeFrameNotification
+                )
+            ) { note in
+                applyKeyboardFrame(from: note)
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillHideNotification
+                )
+            ) { _ in
+                keyboardHeight = 0
+            }
+    }
+
+    /// The reported frame is in screen coordinates and can sit fully offscreen
+    /// while the keyboard is dismissing, so only its on-screen overlap counts.
+    private func applyKeyboardFrame(from note: Notification) {
+        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+              let screen = UIApplication.shared.connectedScenes
+                  .compactMap({ ($0 as? UIWindowScene)?.screen })
+                  .first
+        else { return }
+        keyboardHeight = max(0, screen.bounds.maxY - frame.minY)
     }
 
     private var progress: CGFloat {
@@ -72,7 +102,8 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             // still reaches the window's top edge because overlays do not clip.
             let topInset = proxy.safeAreaInsets.top
             let measured = FeatureCommandDrawerGeometry.openHeight(
-                availableHeight: proxy.size.height
+                availableHeight: proxy.size.height,
+                keyboardHeight: keyboardHeight
             )
 
             drawer(openHeight: measured, topInset: topInset)
@@ -199,7 +230,9 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                 }
                 .padding(.vertical, 4)
             }
-            .scrollDismissesKeyboard(.immediately)
+            // The keyboard is part of the open drawer's layout; dropping it
+            // while scrolling results would resize the drawer mid-scroll.
+            .scrollDismissesKeyboard(.never)
         }
     }
 
@@ -245,8 +278,9 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             .accessibilityHidden(true)
     }
 
-    private func dismissKeyboard() {
-        isQueryFocused = false
+    /// Closing the drawer takes the keyboard with it, even if something inside
+    /// the palette became first responder after the search field.
+    private func resignKeyboard() {
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder),
             to: nil,

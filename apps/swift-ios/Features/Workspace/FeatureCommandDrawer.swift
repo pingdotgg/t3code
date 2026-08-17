@@ -10,9 +10,7 @@ import Foundation
 /// automation, and so the drawer never borrows a bottom-sheet presentation
 /// whose animation would disagree with the direction of the finger.
 enum FeatureCommandDrawerGeometry {
-    /// Fraction of the workspace the open drawer covers before the cap applies.
-    static let openHeightFraction: CGFloat = 0.55
-    static let maximumOpenHeight: CGFloat = 420
+    /// Floor so an unusually tall keyboard cannot squeeze the drawer shut.
     static let minimumOpenHeight: CGFloat = 220
     /// Share of the drag that keeps travelling once the drawer is fully out.
     static let overshootResistance: CGFloat = 0.22
@@ -21,10 +19,17 @@ enum FeatureCommandDrawerGeometry {
     /// Points per second at which a flick decides the settle on its own.
     static let settleVelocity: CGFloat = 420
 
-    static func openHeight(availableHeight: CGFloat) -> CGFloat {
+    /// Fully open is every point the page can still show: the drawer runs from
+    /// the top edge down to wherever the software keyboard begins. The palette
+    /// exists to be typed into, so the keyboard is part of its resting layout
+    /// rather than something that later covers it.
+    static func openHeight(
+        availableHeight: CGFloat,
+        keyboardHeight: CGFloat = 0
+    ) -> CGFloat {
         guard availableHeight > 0 else { return 0 }
-        let proportional = min(availableHeight * openHeightFraction, maximumOpenHeight)
-        return max(proportional, min(minimumOpenHeight, availableHeight))
+        let exposed = availableHeight - max(0, keyboardHeight)
+        return max(exposed, min(minimumOpenHeight, availableHeight))
     }
 
     /// Drawer edge position for a drag, measured down from the closed edge.
@@ -175,6 +180,18 @@ struct FeatureCommandDrawerState: Equatable, Sendable {
         guard !isDragging else { return }
         reveal = isOpen ? openHeight : 0
         dragBaseline = reveal
+    }
+}
+
+/// When the palette's search field owns the keyboard.
+///
+/// The drawer is a typing surface, so focus follows presentation rather than a
+/// separate tap: the keyboard comes up as soon as the pull starts, which also
+/// means the drawer's fully-open height is already keyboard-constrained by the
+/// time the drag is released and the settle lands in one motion.
+enum FeatureCommandDrawerFocus {
+    static func searchIsFocused(for state: FeatureCommandDrawerState) -> Bool {
+        state.isVisible
     }
 }
 

@@ -8,14 +8,79 @@ struct FeatureCommandDrawerTests {
     // MARK: - Geometry
 
     @Test
-    func openHeightIsCappedOnTallScreensAndFitsShortOnes() {
-        #expect(FeatureCommandDrawerGeometry.openHeight(availableHeight: 874) == 420)
+    func fullyOpenFillsEveryPointAboveTheKeyboard() {
+        // With the keyboard up, the drawer stops exactly where the keyboard
+        // starts rather than settling at some fraction of the screen.
         #expect(
-            abs(FeatureCommandDrawerGeometry.openHeight(availableHeight: 600) - 330) < 0.0001
+            FeatureCommandDrawerGeometry.openHeight(
+                availableHeight: 778,
+                keyboardHeight: 336
+            ) == 442
         )
-        // Never taller than the space it has to live in.
-        #expect(FeatureCommandDrawerGeometry.openHeight(availableHeight: 180) == 180)
+        // Without a keyboard it simply takes the whole page.
+        #expect(FeatureCommandDrawerGeometry.openHeight(availableHeight: 778) == 778)
+        #expect(
+            FeatureCommandDrawerGeometry.openHeight(
+                availableHeight: 778,
+                keyboardHeight: 0
+            ) == 778
+        )
+    }
+
+    @Test
+    func anOversizedKeyboardCannotSqueezeTheDrawerShut() {
+        // Floor keeps the palette usable when the keyboard is unusually tall.
+        #expect(
+            FeatureCommandDrawerGeometry.openHeight(
+                availableHeight: 500,
+                keyboardHeight: 460
+            ) == FeatureCommandDrawerGeometry.minimumOpenHeight
+        )
+        // The floor never exceeds the space that actually exists.
+        #expect(
+            FeatureCommandDrawerGeometry.openHeight(
+                availableHeight: 180,
+                keyboardHeight: 170
+            ) == 180
+        )
         #expect(FeatureCommandDrawerGeometry.openHeight(availableHeight: 0) == 0)
+        // A negative or absent report is treated as no keyboard at all.
+        #expect(
+            FeatureCommandDrawerGeometry.openHeight(
+                availableHeight: 778,
+                keyboardHeight: -40
+            ) == 778
+        )
+    }
+
+    @Test
+    func presentingTheDrawerGivesTheSearchFieldTheKeyboard() {
+        var state = FeatureCommandDrawerState()
+        #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state) == false)
+
+        // The pull itself focuses, so the keyboard is already up — and already
+        // accounted for in the open height — by the time the drag is released.
+        state.beginDrag()
+        state.updateDrag(translation: 30, openHeight: 442)
+        #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state))
+
+        state.settle(open: true, openHeight: 442)
+        #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state))
+
+        state.close()
+        #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state) == false)
+    }
+
+    @Test
+    func anAbandonedPullTakesTheKeyboardBackDownWithIt() {
+        var state = FeatureCommandDrawerState()
+        state.beginDrag()
+        state.updateDrag(translation: 40, openHeight: 442)
+        #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state))
+
+        let opened = state.endDrag(velocity: 0, openHeight: 442)
+        #expect(opened == false)
+        #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state) == false)
     }
 
     @Test
