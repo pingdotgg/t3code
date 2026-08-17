@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  threadFeedActivityIsVisible,
   threadFeedRunIsUnsettled,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -93,6 +94,15 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps prominent activity visible while it is running", () => {
+    expect(
+      threadFeedActivityIsVisible({ prominent: true, status: "neutral", toolLike: true }),
+    ).toBe(true);
+    expect(
+      threadFeedActivityIsVisible({ prominent: false, status: "neutral", toolLike: true }),
+    ).toBe(false);
+  });
+
   it("hides synthetic workspace preparation activity", () => {
     const workspacePreparation = projected(
       {
