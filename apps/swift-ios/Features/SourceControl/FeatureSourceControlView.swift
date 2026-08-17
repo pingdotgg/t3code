@@ -204,7 +204,8 @@ public struct FeatureSourceControlView: View {
         isLoading = true
         // Only a newer *load* takes over the indicator. An action supersedes
         // this load's writes without taking ownership of the indicator, so
-        // this must still be the one to clear it.
+        // this must still be the one to clear it — at the cost of a superseded
+        // stream holding the toolbar spinner until its bound expires.
         defer { if loadID == loadGeneration { isLoading = false } }
         do {
             if force {
@@ -214,16 +215,10 @@ public struct FeatureSourceControlView: View {
                 errorMessage = nil
             } else {
                 let statuses = try await client.sourceControlStatuses(threadID: threadID)
-                var didClearError = false
                 for try await nextStatus in statuses {
                     guard statusID == statusGeneration else { return }
                     status = nextStatus
-                    // Only the first status clears the error: the screen stays
-                    // interactive for the rest of the stream.
-                    if !didClearError {
-                        errorMessage = nil
-                        didClearError = true
-                    }
+                    errorMessage = nil
                 }
             }
         } catch is CancellationError {
@@ -240,16 +235,22 @@ public struct FeatureSourceControlView: View {
         // into a status that overwrites this action's result — and a late
         // stream error would mask this action's failure message.
         statusGeneration += 1
+        let statusID = statusGeneration
         isRunningAction = true
         defer { isRunningAction = false }
         do {
-            status = try await client.performSourceControlAction(
+            let result = try await client.performSourceControlAction(
                 threadID: threadID,
                 action: action,
                 message: message?.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+            // Guarded like a load's: pull-to-refresh is not gated on a running
+            // action, so a refresh started after this one must win.
+            guard statusID == statusGeneration else { return }
+            status = result
             errorMessage = nil
         } catch {
+            guard statusID == statusGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }
