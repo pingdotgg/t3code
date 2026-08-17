@@ -86,7 +86,7 @@ export function retryAtFromHeader(value: string | undefined, now: number): numbe
 
 function providerHost(baseUrl: string, provider: SourceControlProviderKind): string {
   try {
-    const host = new URL(baseUrl).host.trim().toLowerCase();
+    const host = new URL(baseUrl).hostname.trim().toLowerCase();
     return host.length > 0 ? host : provider;
   } catch {
     return provider;

@@ -148,6 +148,12 @@ it.effect("shares provider backoff with best-effort panel reads", () =>
       }).pipe(Effect.andThen(Effect.fail(rateLimited))),
     }).pipe(Effect.exit);
 
+    assert.equal(
+      (yield* Effect.flip(limits.check({ provider: "bitbucket", host: "bitbucket.example.test" })))
+        .retryAt,
+      121_000,
+    );
+
     const paused = yield* SourceControlRateLimit.protectProviderRequest({
       limits,
       provider: "bitbucket",
@@ -161,7 +167,7 @@ it.effect("shares provider backoff with best-effort panel reads", () =>
     assert.deepInclude(paused, {
       _tag: "SourceControlRateLimitPausedError",
       provider: "bitbucket",
-      host: "bitbucket.example.test:8443",
+      host: "bitbucket.example.test",
       retryAt: 121_000,
     });
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
