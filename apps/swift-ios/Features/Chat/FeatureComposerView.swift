@@ -439,7 +439,19 @@ struct FeatureComposerView: View {
                 onPresentationChange: handleModelPickerPresentation
             )
             .frame(maxWidth: 220, alignment: .leading)
-            .layoutPriority(2)
+            .layoutPriority(1)
+
+            if let reasoningSummary {
+                Text(reasoningSummary)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 28, maxWidth: 96, alignment: .trailing)
+                    .layoutPriority(2)
+                    .accessibilityLabel("Reasoning level")
+                    .accessibilityValue(reasoningSummary)
+            }
 
             Spacer(minLength: 0)
 
@@ -708,6 +720,15 @@ struct FeatureComposerView: View {
         .padding(.horizontal, 15)
         .padding(.bottom, 4)
         .accessibilityIdentifier("attachment-upload-status")
+    }
+
+    private var reasoningSummary: String? {
+        FeatureComposerReasoningSummary.resolve(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        )
     }
 
     /// Trigger detection walks the whole draft with character indices and is
