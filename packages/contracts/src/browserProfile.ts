@@ -13,7 +13,7 @@
  *
  * @module BrowserProfile
  */
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const BROWSER_PROFILE_NAME_MAX_LENGTH = 48;

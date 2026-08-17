@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 
 import {
   BrowserProfileId,
