@@ -597,6 +597,95 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("updates saved metadata without restarting the active connection", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const renamedTarget = new BearerConnectionTarget({
+          ...BEARER_TARGET,
+          label: "Studio Mac",
+        });
+        const renamedProfile = new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          label: "Studio Mac",
+          reportedLabel: BEARER_TARGET.label,
+        });
+        yield* registry.updateMetadata(
+          new BearerConnectionRegistration({
+            target: renamedTarget,
+            profile: renamedProfile,
+            credential: BEARER_CREDENTIAL,
+          }),
+        );
+
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId),
+        ).toEqual({
+          target: renamedTarget,
+          profile: Option.some(renamedProfile),
+        });
+        expect((yield* Ref.get(harness.storedTargets)).get(BEARER_TARGET.environmentId)).toEqual(
+          renamedTarget,
+        );
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("restarts the active connection when a metadata update changes runtime config", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        yield* registry.updateMetadata(
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: new BearerConnectionProfile({
+              ...BEARER_PROFILE,
+              httpBaseUrl: "https://replacement.example.test",
+              wsBaseUrl: "wss://replacement.example.test",
+            }),
+            credential: BEARER_CREDENTIAL,
+          }),
+        );
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(2);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("moves durable streams to a replacement supervisor", () =>
     Effect.gen(function* () {
       const replacement = new RelayConnectionTarget({

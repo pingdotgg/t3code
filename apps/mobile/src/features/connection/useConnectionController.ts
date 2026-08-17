@@ -69,7 +69,7 @@ export function useConnectionController() {
   );
 
   const connectPairingUrl = useCallback(
-    (pairingUrl: string) => connectPairingUrlMutation(pairingUrl),
+    (pairingUrl: string, label?: string) => connectPairingUrlMutation({ pairingUrl, label }),
     [connectPairingUrlMutation],
   );
   const connectRelayEnvironment = useCallback(

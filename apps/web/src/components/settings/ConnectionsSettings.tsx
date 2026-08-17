@@ -1,5 +1,6 @@
 import {
   ChevronsLeftRightEllipsisIcon,
+  PencilIcon,
   PlusIcon,
   QrCodeIcon,
   RefreshCwIcon,
@@ -111,6 +112,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  renameSavedEnvironment as renameSavedEnvironmentAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -1336,6 +1338,7 @@ type SavedBackendListRowProps = {
   removingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
+  onRename: (environmentId: EnvironmentId, label: string) => Promise<boolean>;
 };
 
 function SavedBackendListRow({
@@ -1343,6 +1346,7 @@ function SavedBackendListRow({
   removingEnvironmentId,
   onConnect,
   onRemove,
+  onRename,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
   const connectionState = environment.connection.phase;
@@ -1393,7 +1397,10 @@ function SavedBackendListRow({
     environment.entry.profile.value._tag === "SshConnectionProfile"
       ? environment.entry.profile.value.target
       : null;
+  const profile = Option.getOrNull(environment.entry.profile);
+  const reportedLabel = profile?.reportedLabel;
   const metadataBits = [
+    reportedLabel && reportedLabel !== environment.label ? `Machine: ${reportedLabel}` : null,
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
     environment.relayManaged ? "T3 Connect" : null,
   ].filter((value): value is string => value !== null);
@@ -1402,7 +1409,23 @@ function SavedBackendListRow({
   // environment whose connection id is prefixed "local:"), not a remote
   // environment you connect to or remove here — its lifecycle is driven by the
   // WSL on/off + distro picker on this page.
+  const hasRenameableTarget =
+    environment.entry.target._tag === "BearerConnectionTarget" ||
+    environment.entry.target._tag === "SshConnectionTarget";
   const isWslEnvironment = isDesktopLocalConnectionTarget(environment.entry.target);
+  const canRename = hasRenameableTarget && !isWslEnvironment;
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameInput, setRenameInput] = useState(environment.label);
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  const handleRename = useCallback(async () => {
+    setIsRenaming(true);
+    const renamed = await onRename(environmentId, renameInput);
+    setIsRenaming(false);
+    if (renamed) {
+      setRenameDialogOpen(false);
+    }
+  }, [environmentId, onRename, renameInput]);
 
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -1486,6 +1509,19 @@ function SavedBackendListRow({
             </Tooltip>
           ) : (
             <>
+              {canRename ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => {
+                    setRenameInput(environment.label);
+                    setRenameDialogOpen(true);
+                  }}
+                >
+                  <PencilIcon className="size-3" />
+                  Rename
+                </Button>
+              ) : null}
               {!isConnected ? (
                 <Button
                   size="xs"
@@ -1516,6 +1552,50 @@ function SavedBackendListRow({
           )}
         </div>
       </div>
+      <Dialog
+        open={renameDialogOpen}
+        onOpenChange={(open) => {
+          if (!isRenaming) setRenameDialogOpen(open);
+        }}
+      >
+        <DialogPopup className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename Environment</DialogTitle>
+            <DialogDescription>
+              This name is only used on this client. The machine name stays unchanged.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <label className="block">
+              <span className="text-sm font-medium text-foreground">Name</span>
+              <Input
+                className="mt-2"
+                autoFocus
+                value={renameInput}
+                onChange={(event) => setRenameInput(event.target.value)}
+                disabled={isRenaming}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && renameInput.trim() !== "") {
+                    event.preventDefault();
+                    void handleRename();
+                  }
+                }}
+              />
+            </label>
+          </DialogPanel>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" disabled={isRenaming} />}>
+              Cancel
+            </DialogClose>
+            <Button
+              onClick={() => void handleRename()}
+              disabled={isRenaming || renameInput.trim() === ""}
+            >
+              {isRenaming ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
     </div>
   );
 }
@@ -1732,6 +1812,9 @@ export function ConnectionsSettings() {
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
+  const renameSavedEnvironment = useAtomCommand(renameSavedEnvironmentAtom, {
+    reportFailure: false,
+  });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
@@ -1802,6 +1885,7 @@ export function ConnectionsSettings() {
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
+  const [savedBackendName, setSavedBackendName] = useState("");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
@@ -2139,7 +2223,7 @@ export function ConnectionsSettings() {
         return;
       }
 
-      const result = await connectSshEnvironment({ target, label: "" });
+      const result = await connectSshEnvironment({ target, label: savedBackendName });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           setSavedBackendError(formatDesktopSshConnectionError(squashAtomCommandFailure(result)));
@@ -2150,6 +2234,7 @@ export function ConnectionsSettings() {
 
       setSavedBackendHost("");
       setSavedBackendPairingCode("");
+      setSavedBackendName("");
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
@@ -2185,7 +2270,7 @@ export function ConnectionsSettings() {
       return;
     }
 
-    const result = await connectPairing(remotePairingInput);
+    const result = await connectPairing({ ...remotePairingInput, label: savedBackendName });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -2205,6 +2290,7 @@ export function ConnectionsSettings() {
 
     setSavedBackendHost("");
     setSavedBackendPairingCode("");
+    setSavedBackendName("");
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");
@@ -2220,6 +2306,7 @@ export function ConnectionsSettings() {
     connectSshEnvironment,
     savedBackendHost,
     savedBackendMode,
+    savedBackendName,
     savedBackendPairingCode,
     savedBackendSshHost,
     savedBackendSshPort,
@@ -2266,6 +2353,35 @@ export function ConnectionsSettings() {
       }
     },
     [removeEnvironment],
+  );
+
+  const handleRenameSavedBackend = useCallback(
+    async (environmentId: EnvironmentId, label: string) => {
+      setSavedBackendError(null);
+      const result = await renameSavedEnvironment({ environmentId, label });
+      if (result._tag === "Success") {
+        toastManager.add({
+          type: "success",
+          title: "Environment renamed",
+          description: `${label.trim()} is now used on this client.`,
+        });
+        return true;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        const message = error instanceof Error ? error.message : "Failed to rename environment.";
+        setSavedBackendError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not rename environment",
+            description: message,
+          }),
+        );
+      }
+      return false;
+    },
+    [renameSavedEnvironment],
   );
 
   const handleConnectSshHost = useCallback(
@@ -3408,6 +3524,19 @@ export function ConnectionsSettings() {
                         })
                       : null}
                   </div>
+                  <label className="block">
+                    <span className="text-sm font-medium text-foreground">Name (optional)</span>
+                    <Input
+                      className="mt-2"
+                      placeholder="Studio Mac"
+                      value={savedBackendName}
+                      onChange={(event) => setSavedBackendName(event.target.value)}
+                      disabled={isAddingSavedBackend}
+                    />
+                    <span className="mt-1.5 block text-xs text-muted-foreground">
+                      Leave blank to use the name reported by the machine.
+                    </span>
+                  </label>
                   <AnimatedHeight>
                     {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
                   </AnimatedHeight>
@@ -3424,6 +3553,7 @@ export function ConnectionsSettings() {
             removingEnvironmentId={removingSavedEnvironmentId}
             onConnect={handleConnectSavedBackend}
             onRemove={handleRemoveSavedBackend}
+            onRename={handleRenameSavedBackend}
           />
         ))}
         <CloudRemoteEnvironmentRows

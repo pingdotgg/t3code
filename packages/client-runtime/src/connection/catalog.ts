@@ -14,6 +14,7 @@ const ConnectionProfileBase = {
   connectionId: Schema.String,
   environmentId: EnvironmentId,
   label: Schema.String,
+  reportedLabel: Schema.optional(Schema.String),
 };
 
 export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnectionProfile>()(

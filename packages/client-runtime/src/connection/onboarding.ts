@@ -36,6 +36,7 @@ export interface PairingConnectionInput {
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
+  readonly label?: string;
 }
 
 export interface SshConnectionInput {
@@ -47,6 +48,11 @@ export interface BearerConnectionUpdateInput {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly httpBaseUrl: string;
+}
+
+export interface SavedConnectionRenameInput {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
 }
 
 export class ConnectionOnboarding extends Context.Service<
@@ -66,6 +72,9 @@ export class ConnectionOnboarding extends Context.Service<
     >;
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
+    ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
+    readonly rename: (
+      input: SavedConnectionRenameInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
@@ -98,17 +107,19 @@ export const preparePairingRegistration = Effect.fn(
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = `bearer:${descriptor.environmentId}`;
+  const label = input.label?.trim() || descriptor.label;
 
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
       environmentId: descriptor.environmentId,
-      label: descriptor.label,
+      label,
       connectionId,
     }),
     profile: new BearerConnectionProfile({
       connectionId,
       environmentId: descriptor.environmentId,
-      label: descriptor.label,
+      label,
+      reportedLabel: descriptor.label,
       httpBaseUrl: target.httpBaseUrl,
       wsBaseUrl: target.wsBaseUrl,
     }),
@@ -203,6 +214,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       connectionId,
       environmentId: options.input.environmentId,
       label,
+      reportedLabel: entry.profile.value.reportedLabel ?? entry.target.label,
       httpBaseUrl,
       wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
     }),
@@ -216,7 +228,8 @@ export const prepareSshRegistration = Effect.fn(
   const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
   const provisioned = yield* gateway.provision(input.target);
   const connectionId = `ssh:${provisioned.environmentId}`;
-  const label = input.label?.trim() || provisioned.label || provisioned.bootstrap.target.alias;
+  const reportedLabel = provisioned.label || provisioned.bootstrap.target.alias;
+  const label = input.label?.trim() || reportedLabel;
 
   return new SshConnectionRegistration({
     target: new SshConnectionTarget({
@@ -228,6 +241,7 @@ export const prepareSshRegistration = Effect.fn(
       connectionId,
       environmentId: provisioned.environmentId,
       label,
+      reportedLabel,
       target: provisioned.bootstrap.target,
     }),
   });
@@ -240,6 +254,93 @@ export const registerSshConnection = Effect.fn(
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   yield* registry.register(registration);
   return registration.target.environmentId;
+});
+
+export const prepareSavedConnectionRename = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareSavedConnectionRename",
+)(function* (options: {
+  readonly input: SavedConnectionRenameInput;
+  readonly entry: Option.Option<ConnectionCatalogEntry>;
+  readonly credential: Option.Option<ConnectionCredential>;
+}) {
+  const label = options.input.label.trim();
+  if (label === "") {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Environment name cannot be empty.",
+    });
+  }
+
+  const entry = Option.getOrNull(options.entry);
+  if (entry === null || Option.isNone(entry.profile)) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Only saved remote environments can be renamed.",
+    });
+  }
+
+  const profile = entry.profile.value;
+  switch (entry.target._tag) {
+    case "BearerConnectionTarget": {
+      if (profile._tag !== "BearerConnectionProfile") {
+        break;
+      }
+      const credential = options.credential;
+      if (Option.isNone(credential) || !isBearerCredential(credential.value)) {
+        return yield* new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "The saved bearer credential is unavailable.",
+        });
+      }
+      return new BearerConnectionRegistration({
+        target: new BearerConnectionTarget({ ...entry.target, label }),
+        profile: new BearerConnectionProfile({
+          ...profile,
+          label,
+          reportedLabel: profile.reportedLabel ?? entry.target.label,
+        }),
+        credential: credential.value,
+      });
+    }
+    case "SshConnectionTarget":
+      if (profile._tag === "SshConnectionProfile") {
+        return new SshConnectionRegistration({
+          target: new SshConnectionTarget({ ...entry.target, label }),
+          profile: new SshConnectionProfile({
+            ...profile,
+            label,
+            reportedLabel: profile.reportedLabel ?? entry.target.label,
+          }),
+        });
+      }
+      break;
+    case "PrimaryConnectionTarget":
+    case "RelayConnectionTarget":
+      break;
+  }
+
+  return yield* new ConnectionBlockedError({
+    reason: "configuration",
+    detail: "Only saved remote environments can be renamed.",
+  });
+});
+
+export const renameSavedConnection = Effect.fn(
+  "clientRuntime.connection.onboarding.renameSavedConnection",
+)(function* (input: SavedConnectionRenameInput) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+  const credential =
+    entry?.target._tag === "BearerConnectionTarget"
+      ? yield* credentials.get(entry.target.connectionId)
+      : Option.none();
+  const registration = yield* prepareSavedConnectionRename({
+    input,
+    entry: Option.fromUndefinedOr(entry),
+    credential,
+  });
+  yield* registry.updateMetadata(registration);
 });
 
 export const make = Effect.gen(function* () {
@@ -263,6 +364,11 @@ export const make = Effect.gen(function* () {
       ),
     updateBearer: (input) =>
       updateBearerConnection(input).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+        Effect.provideService(ConnectionCredentialStore.ConnectionCredentialStore, credentials),
+      ),
+    rename: (input) =>
+      renameSavedConnection(input).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ConnectionCredentialStore.ConnectionCredentialStore, credentials),
       ),

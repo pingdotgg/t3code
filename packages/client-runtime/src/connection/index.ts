@@ -13,12 +13,15 @@ export {
   type BearerConnectionUpdateInput,
   ConnectionOnboarding,
   type PairingConnectionInput,
+  type SavedConnectionRenameInput,
   type SshConnectionInput,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
+  prepareSavedConnectionRename,
   prepareSshRegistration,
   registerPairingConnection,
   registerSshConnection,
+  renameSavedConnection,
   updateBearerConnection,
 } from "./onboarding.ts";
 export * from "./presentation.ts";
