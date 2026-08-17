@@ -200,18 +200,27 @@ export function PreviewMoreMenu({
           at open and nothing else in the chrome shows it.
         */}
         <MenuGroup>
-          {profileName ? <MenuGroupLabel>Profile: {profileName}</MenuGroupLabel> : null}
+          {/*
+            The heading carries the profile so the actions below can keep
+            fixed-length labels: repeating a name of up to 48 characters in
+            each one drove the popup far past its width.
+          */}
+          {profileName ? (
+            <MenuGroupLabel>
+              <span className="min-w-0 truncate">Profile: {profileName}</span>
+            </MenuGroupLabel>
+          ) : null}
           <MenuItem
             onClick={() =>
               void bridge.clearCookies(environmentId, profileId).catch(() => undefined)
             }
           >
-            {profileName ? `Clear cookies (${profileName})` : "Clear cookies"}
+            Clear cookies
           </MenuItem>
           <MenuItem
             onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
           >
-            {profileName ? `Clear cache (${profileName})` : "Clear cache"}
+            Clear cache
           </MenuItem>
         </MenuGroup>
       </MenuPopup>
