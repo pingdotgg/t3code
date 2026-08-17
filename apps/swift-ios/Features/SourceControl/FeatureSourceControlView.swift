@@ -42,9 +42,17 @@ public struct FeatureSourceControlView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await reload() } } label: { Image(systemName: "arrow.clockwise") }
-                    .disabled(isRunningAction)
-                    .accessibilityLabel("Reload source control")
+                Button { Task { await reload() } } label: {
+                    // Never disabled on a populated screen, so the spinner is
+                    // the only signal that a reload is under way.
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(isRunningAction)
+                .accessibilityLabel("Reload source control")
             }
         }
         .alert("Commit changes", isPresented: Binding(
@@ -90,9 +98,15 @@ public struct FeatureSourceControlView: View {
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textSecondary)
                 } else {
-                    Label("Checking remote…", systemImage: "arrow.triangle.2.circlepath")
-                        .font(T3Typography.supporting)
-                        .foregroundStyle(T3Colors.textSecondary)
+                    // Only claim to be checking while something actually is.
+                    Label(
+                        isLoading ? "Checking remote…" : "Remote status unavailable",
+                        systemImage: isLoading
+                            ? "arrow.triangle.2.circlepath"
+                            : "exclamationmark.triangle"
+                    )
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
                 }
                 if let pullRequest = status.pullRequest {
                     if let url = pullRequest.url {
@@ -192,10 +206,18 @@ public struct FeatureSourceControlView: View {
                 errorMessage = nil
             } else {
                 let statuses = try await client.sourceControlStatuses(threadID: threadID)
+                var didClearError = false
                 for try await nextStatus in statuses {
                     guard generation == loadGeneration else { return }
                     status = nextStatus
-                    errorMessage = nil
+                    // Only the first status clears the error. The screen stays
+                    // interactive for the rest of the stream, and clearing on
+                    // every element would wipe a failure message raised by an
+                    // action the user ran meanwhile.
+                    if !didClearError {
+                        errorMessage = nil
+                        didClearError = true
+                    }
                 }
             }
         } catch is CancellationError {

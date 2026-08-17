@@ -185,6 +185,72 @@ struct FeatureToolStateTests {
         #expect(throws: RPCError.self) { try accumulator.validateEnd() }
     }
 
+    @Test("An absent remote half resolves the status instead of leaving it pending")
+    func nilRemotePayloadResolvesTheRemoteHalf() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(.snapshot(local: Self.vcsLocal(), remote: nil))
+        #expect(accumulator.isComplete == false)
+
+        let consumed = accumulator.consume(.remoteUpdated(nil))
+        let resolved = try #require(consumed)
+
+        // "Known to be absent" is not "still pending": the stream is finished
+        // and the screen must stop claiming it is checking.
+        #expect(resolved.isRemoteKnown)
+        #expect(resolved.aheadCount == 0)
+        #expect(resolved.behindCount == 0)
+        #expect(resolved.pullRequest == nil)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("A later snapshot replaces the remote half rather than merging into it")
+    func snapshotReplacesKnownRemoteStatus() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(refName: "feature/one"),
+                remote: Self.vcsRemote(aheadCount: 7)
+            )
+        )
+
+        // Resubscribe after a reconnect: the server prepends a fresh snapshot
+        // carrying whatever its cache holds, so a stale ahead count must not
+        // survive and must not be reported as known.
+        let consumed = accumulator.consume(
+            .snapshot(local: Self.vcsLocal(refName: "feature/one"), remote: nil)
+        )
+        let replaced = try #require(consumed)
+
+        #expect(replaced.aheadCount == 0)
+        #expect(replaced.isRemoteKnown == false)
+    }
+
+    @Test("Completion never regresses across a long mixed sequence")
+    func completionLatchesAcrossMixedSequence() {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        let events: [VCSStatusEvent] = [
+            .snapshot(local: Self.vcsLocal(refName: "feature/seq"), remote: nil),
+            .localUpdated(Self.vcsLocal(refName: "feature/seq", files: ["a.swift"])),
+            .remoteUpdated(Self.vcsRemote(aheadCount: 1)),
+            .localUpdated(Self.vcsLocal(refName: "feature/seq", files: ["a.swift", "b.swift"])),
+            .remoteUpdated(nil),
+            .localUpdated(Self.vcsLocal(refName: "feature/seq")),
+        ]
+
+        var completedAt: Int?
+        for (index, event) in events.enumerated() {
+            _ = accumulator.consume(event)
+            if accumulator.isComplete, completedAt == nil {
+                completedAt = index
+            }
+            if completedAt != nil {
+                #expect(accumulator.isComplete)
+            }
+        }
+
+        #expect(completedAt == 2)
+    }
+
     @Test("A completed stream ends without error")
     func completedStreamEndIsAccepted() throws {
         var accumulator = NativeSourceControlStatusAccumulator()
