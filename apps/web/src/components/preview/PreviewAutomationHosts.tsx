@@ -99,9 +99,11 @@ const waitForDesktopOverlay = async (
       operation,
       requestId,
     });
-    if (state.desktopByTabId[tabId] && previewBridge) {
-      const status = await previewBridge.automation.status(runtimeTabId);
-      if (status.available) return;
+    // Attachment only. LoadFailed still has a live guest and must stay
+    // reachable so navigate/retry can recover. Page health is reported by
+    // preview_status, not this wait.
+    if (state.desktopByTabId[tabId]?.hasWebContents && previewBridge) {
+      return;
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }

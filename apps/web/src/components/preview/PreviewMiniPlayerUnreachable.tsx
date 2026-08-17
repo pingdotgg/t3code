@@ -15,9 +15,11 @@ export function PreviewMiniPlayerUnreachable({ url, description, onRetry, onClos
   const friendly = describePreviewError(description);
 
   return (
-    <div className="pointer-events-auto absolute inset-0 z-[32] flex flex-col items-center justify-center gap-3 rounded-xl bg-background px-4 text-center">
-      <p className="text-xs font-medium text-foreground">Can&apos;t reach {host}</p>
-      <p className="text-[11px] leading-snug text-muted-foreground">{friendly}</p>
+    <div className="pointer-events-auto absolute inset-0 z-[32] flex min-w-0 flex-col items-center justify-center gap-3 overflow-hidden rounded-xl bg-background px-4 text-center">
+      <p className="min-w-0 max-w-full truncate text-xs font-medium text-foreground">
+        Can&apos;t reach {host}
+      </p>
+      <p className="min-w-0 max-w-full text-[11px] leading-snug text-muted-foreground">{friendly}</p>
       <div className="flex items-center gap-2">
         <Button type="button" size="sm" onClick={onRetry}>
           Retry
@@ -32,7 +34,7 @@ export function PreviewMiniPlayerUnreachable({ url, description, onRetry, onClos
 
 function safeHost(url: string): string | null {
   try {
-    return new URL(url).host;
+    return new URL(url).host || null;
   } catch {
     return null;
   }
