@@ -43,7 +43,7 @@ import {
   commitBrowserViewportChange,
   subscribeBrowserViewportChange,
 } from "~/browser/browserViewportActions";
-import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
+import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
@@ -144,6 +144,7 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const loadProgress = useLoadingProgress(loading);
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
+  const browserDefaults = useBrowserDefaults();
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -249,12 +250,14 @@ export function PreviewView({
       return;
     }
 
-    const responsiveSize = panelRect
-      ? resolveResponsiveBrowserViewportSize(panelRect, desktopOverlay?.zoomFactor)
-      : { width: 1024, height: 768 };
-    void commitBrowserViewportChange(runtimeTabId, { _tag: "freeform", ...responsiveSize }).catch(
-      () => undefined,
-    );
+    void commitBrowserViewportChange(
+      runtimeTabId,
+      browserResponsiveViewportForToggle({
+        defaults: browserDefaults,
+        panelRect,
+        zoomFactor: desktopOverlay?.zoomFactor,
+      }),
+    ).catch(() => undefined);
   };
 
   useEffect(() => {

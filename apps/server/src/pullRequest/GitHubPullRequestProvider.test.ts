@@ -177,6 +177,39 @@ describe("getViewerPermissions", () => {
     ),
   );
 
+  it.effect("uses the GraphQL reserve for manual permission checks", () => {
+    let viewerAllowReserve: boolean | undefined;
+    let comparisonAllowReserve: boolean | undefined;
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      yield* provider.getViewerPermissions({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      expect(viewerAllowReserve).toBe(true);
+      expect(comparisonAllowReserve).toBe(true);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getPullRequestDetail: () => Effect.succeed(openDetail),
+          getPullRequestBaseComparison: (input) =>
+            Effect.sync(() => {
+              comparisonAllowReserve = input.allowReserve;
+              return { behindBy: 3, viewerCanUpdate: true };
+            }),
+          getViewerAccess: (input) =>
+            Effect.sync(() => {
+              viewerAllowReserve = input.allowReserve;
+              return { canWrite: true, canUpdate: true, didAuthor: false };
+            }),
+        }),
+      ),
+    );
+  });
+
   it.effect("withholds update-branch when the comparison cannot be read", () =>
     Effect.gen(function* () {
       const provider = yield* make;
