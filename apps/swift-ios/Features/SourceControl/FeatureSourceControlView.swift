@@ -7,9 +7,10 @@ public struct FeatureSourceControlView: View {
     @State private var status: FeatureSourceControlStatus?
     @State private var isLoading = true
     @State private var isRunningAction = false
-    @State private var errorMessage: String?
+    @State private var recovery = FeatureToolFailureState<FeatureSourceControlOperation>()
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
+    @AccessibilityFocusState private var recoveryFocus: FeatureToolRecoveryFocus?
 
     public init(client: any FeatureClient, threadID: String) {
         self.client = client
@@ -17,24 +18,29 @@ public struct FeatureSourceControlView: View {
     }
 
     public var body: some View {
-        Group {
-            if isLoading, status == nil {
-                ProgressView("Loading repository…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let status, status.isRepository {
-                statusList(status)
-            } else {
-                ContentUnavailableView(
-                    "Source control unavailable",
-                    systemImage: "arrow.triangle.branch",
-                    description: Text(
-                        errorMessage
-                            ?? (status?.isRepository == false
-                                ? "This workspace is not a Git repository."
-                                : "Repository status could not be loaded.")
-                    )
-                )
+        VStack(spacing: 0) {
+            if let failure = recovery.failure {
+                failureBanner(failure)
             }
+            Group {
+                if isLoading, status == nil {
+                    ProgressView("Loading repository…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let status, status.isRepository {
+                    statusList(status)
+                } else {
+                    ContentUnavailableView(
+                        "Source control unavailable",
+                        systemImage: "arrow.triangle.branch",
+                        description: Text(
+                            status?.isRepository == false
+                                ? "This workspace is not a Git repository."
+                                : "Repository status could not be loaded."
+                        )
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(T3Colors.background)
         .navigationTitle("Source Control")
@@ -60,13 +66,76 @@ public struct FeatureSourceControlView: View {
             }
             .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .onChange(of: recovery.failure?.id) { _, failureID in
+            guard failureID != nil else { return }
+            recoveryFocus = .failure
+        }
+        .onChange(of: recovery.recoveryAnnouncement) { _, _ in
+            guard let announcement = recovery.takeRecoveryAnnouncement() else { return }
+            recoveryFocus = .recoveredContent
+            AccessibilityNotification.Announcement(announcement).post()
+        }
         .task { await load() }
+    }
+
+    /// Keeps the failed output on screen — including while its retry runs — with a labelled
+    /// Retry control immediately after it in the accessibility order.
+    private func failureBanner(_ failure: FeatureToolFailure) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(failure.title, systemImage: "exclamationmark.triangle.fill")
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.danger)
+                Text(failure.message)
+                    .font(T3Typography.tool)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(failure.accessibilityLabel)
+            .accessibilityIdentifier("source-control-failure")
+            .accessibilityFocused($recoveryFocus, equals: .failure)
+
+            HStack(spacing: 10) {
+                Button {
+                    guard let operation = recovery.retryOperation else { return }
+                    Task { await run(operation) }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(T3Typography.control)
+                        .frame(minHeight: T3Metrics.minimumTapTarget)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(failure.isRetrying)
+                .accessibilityLabel(failure.retryAccessibilityLabel)
+                .accessibilityIdentifier("source-control-failure-retry")
+
+                if failure.isRetrying {
+                    ProgressView()
+                    Text("Retrying…")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(T3Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(T3Colors.danger.opacity(0.4), lineWidth: 1)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
     }
 
     private func statusList(_ status: FeatureSourceControlStatus) -> some View {
         List {
             Section("Repository") {
                 LabeledContent("Branch", value: status.branch ?? "Detached HEAD")
+                    .accessibilityFocused($recoveryFocus, equals: .recoveredContent)
                 if let upstream = status.upstream {
                     LabeledContent("Upstream", value: upstream)
                 }
@@ -151,28 +220,45 @@ public struct FeatureSourceControlView: View {
     }
 
     private func load() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            status = try await client.sourceControlStatus(threadID: threadID)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        await run(.load)
     }
 
     private func perform(_ action: FeatureSourceControlAction, message: String?) async {
-        isRunningAction = true
-        defer { isRunningAction = false }
+        await run(
+            .action(action, message: message?.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+    }
+
+    /// Single entry point for every source control request, so a retry replays the exact failed
+    /// operation — commit message included — instead of falling back to a plain reload.
+    private func run(_ operation: FeatureSourceControlOperation) async {
+        recovery.begin(operation)
+        if operation.isLoad {
+            isLoading = true
+        } else {
+            isRunningAction = true
+        }
+        defer {
+            if operation.isLoad {
+                isLoading = false
+            } else {
+                isRunningAction = false
+            }
+        }
         do {
-            status = try await client.performSourceControlAction(
-                threadID: threadID,
-                action: action,
-                message: message?.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            errorMessage = nil
+            switch operation {
+            case .load:
+                status = try await client.sourceControlStatus(threadID: threadID)
+            case .action(let action, let message):
+                status = try await client.performSourceControlAction(
+                    threadID: threadID,
+                    action: action,
+                    message: message
+                )
+            }
+            recovery.recordSuccess(operation)
         } catch {
-            errorMessage = error.localizedDescription
+            recovery.recordFailure(operation, error: error)
         }
     }
 }
@@ -182,17 +268,6 @@ private extension FeatureSourceControlAction {
         switch self {
         case .commit, .commitAndPush, .commitPushAndCreatePullRequest: true
         case .push, .pull, .createPullRequest: false
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .commit: "Commit changes"
-        case .push: "Push"
-        case .pull: "Pull latest"
-        case .createPullRequest: "Create pull request"
-        case .commitAndPush: "Commit and push"
-        case .commitPushAndCreatePullRequest: "Commit, push, and create PR"
         }
     }
 
