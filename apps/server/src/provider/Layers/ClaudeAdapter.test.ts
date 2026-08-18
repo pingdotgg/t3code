@@ -335,6 +335,79 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("maps Claude's nominal success API error result to a failed turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "continue the task",
+        attachments: [],
+      });
+
+      const errorMessage =
+        "API Error: Repeated 529 Overloaded errors. The API is at capacity. Try again in a moment.";
+      harness.query.emit({
+        type: "assistant",
+        message: {
+          id: "synthetic-api-error",
+          model: "<synthetic>",
+          role: "assistant",
+          content: [{ type: "text", text: errorMessage }],
+        },
+        parent_tool_use_id: null,
+        session_id: "sdk-session-api-error",
+        uuid: "assistant-api-error",
+        error: "server_error",
+        is_api_error_message: true,
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        terminal_reason: "api_error",
+        api_error_status: 529,
+        result: errorMessage,
+        session_id: "sdk-session-api-error",
+        uuid: "result-api-error",
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(runtimeError.payload.message, errorMessage);
+      }
+
+      const completed = events.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.equal(completed.payload.errorMessage, errorMessage);
+      }
+      assert.equal(
+        events.some(
+          (event) => event.type === "item.completed" && event.payload.detail === errorMessage,
+        ),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
