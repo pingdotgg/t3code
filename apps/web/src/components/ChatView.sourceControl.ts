@@ -294,7 +294,7 @@ export async function runSourceControlServerMetadataUpdate(
 export function createSourceControlServerMetadataUpdateQueue() {
   const expectedBranchByThreadKey = new Map<
     string,
-    { branch: string | null; awaitingObservation: boolean; observedBranch: string | null }
+    { branch: string | null; observationSequence: number }
   >();
   const pendingByThreadKey = new Map<string, Promise<void>>();
   const sequenceByThreadKey = new Map<string, number>();
@@ -305,20 +305,12 @@ export function createSourceControlServerMetadataUpdateQueue() {
     if (!expected) {
       expectedBranchByThreadKey.set(targetThreadKey, {
         branch: expectedBranch,
-        awaitingObservation: false,
-        observedBranch: expectedBranch,
+        observationSequence: 1,
       });
       return;
     }
-    expected.observedBranch = expectedBranch;
-    if (pendingByThreadKey.has(targetThreadKey)) return;
-    if (expected.branch === expectedBranch) {
-      expected.awaitingObservation = false;
-      return;
-    }
-    if (!expected.awaitingObservation) {
-      expected.branch = expectedBranch;
-    }
+    expected.branch = expectedBranch;
+    expected.observationSequence += 1;
   };
 
   return {
@@ -326,9 +318,16 @@ export function createSourceControlServerMetadataUpdateQueue() {
     enqueue(input: QueuedSourceControlServerMetadataUpdateInput) {
       const targetThreadKey = scopedThreadKey(input.activeThreadRef);
       const previous = pendingByThreadKey.get(targetThreadKey);
-      observe(input.activeThreadRef, input.expectedBranch);
+      if (!expectedBranchByThreadKey.has(targetThreadKey)) {
+        expectedBranchByThreadKey.set(targetThreadKey, {
+          branch: input.expectedBranch,
+          observationSequence: 0,
+        });
+      }
 
       const result = (previous ?? Promise.resolve()).then(async () => {
+        const expectedBranchState = expectedBranchByThreadKey.get(targetThreadKey);
+        const observationSequence = expectedBranchState?.observationSequence ?? 0;
         const requestSequence = (sequenceByThreadKey.get(targetThreadKey) ?? 0) + 1;
         sequenceByThreadKey.set(targetThreadKey, requestSequence);
         const updateResult = await runSourceControlServerMetadataUpdate({
@@ -340,12 +339,10 @@ export function createSourceControlServerMetadataUpdateQueue() {
           updateThreadMetadata: input.updateThreadMetadata,
         });
         if (updateResult._tag === "Success") {
-          const observedBranch = expectedBranchByThreadKey.get(targetThreadKey)?.observedBranch;
-          expectedBranchByThreadKey.set(targetThreadKey, {
-            branch: input.metadata.branch,
-            awaitingObservation: observedBranch !== input.metadata.branch,
-            observedBranch: observedBranch ?? null,
-          });
+          const latestExpectedBranchState = expectedBranchByThreadKey.get(targetThreadKey);
+          if (latestExpectedBranchState?.observationSequence === observationSequence) {
+            latestExpectedBranchState.branch = input.metadata.branch;
+          }
         }
         return updateResult;
       });

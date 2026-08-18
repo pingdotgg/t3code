@@ -515,7 +515,6 @@ describe("runSourceControlServerMetadataUpdate", () => {
       updateThreadMetadata,
     });
     await Promise.resolve();
-    queue.observe(activeThreadRef, "main");
     await queue.enqueue({
       activeThreadRef,
       expectedBranch: "main",
@@ -529,7 +528,7 @@ describe("runSourceControlServerMetadataUpdate", () => {
     ]);
   });
 
-  it("unlocks a successful guard observed while its request is pending", async () => {
+  it("preserves the latest server observation received while a request is pending", async () => {
     const queue = createSourceControlServerMetadataUpdateQueue();
     const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
     let releaseFirst: (() => void) | undefined;
@@ -555,17 +554,60 @@ describe("runSourceControlServerMetadataUpdate", () => {
       updateThreadMetadata,
     });
     await Promise.resolve();
-    queue.observe(activeThreadRef, "feature/one");
+    queue.observe(activeThreadRef, "external/branch");
     releaseFirst?.();
     await first;
     await Promise.resolve();
-    queue.observe(activeThreadRef, "external/branch");
     await queue.enqueue({
       activeThreadRef,
       expectedBranch: "external/branch",
       metadata: { branch: "feature/two", worktreePath: null },
       updateThreadMetadata,
     });
+
+    expect(calls).toEqual([
+      { expectedBranch: "main", branch: "feature/one" },
+      { expectedBranch: "external/branch", branch: "feature/two" },
+    ]);
+  });
+
+  it("uses a server observation after a failed pending request for the next queued write", async () => {
+    const queue = createSourceControlServerMetadataUpdateQueue();
+    const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
+    let releaseFirst: (() => void) | undefined;
+    const updateThreadMetadata = async (
+      input: Parameters<Parameters<typeof queue.enqueue>[0]["updateThreadMetadata"]>[0],
+    ) => {
+      calls.push({
+        expectedBranch: input.input.expectedBranch ?? null,
+        branch: input.input.branch ?? null,
+      });
+      if (calls.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        return AsyncResult.failure(Cause.fail("write failed"));
+      }
+      return AsyncResult.success(undefined);
+    };
+
+    const first = queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/one", worktreePath: null },
+      updateThreadMetadata,
+    });
+    const second = queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/two", worktreePath: null },
+      updateThreadMetadata,
+    });
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "external/branch");
+    releaseFirst?.();
+    await first;
+    await second;
 
     expect(calls).toEqual([
       { expectedBranch: "main", branch: "feature/one" },
