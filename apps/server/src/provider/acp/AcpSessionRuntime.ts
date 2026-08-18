@@ -69,6 +69,8 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId: string;
+  /** Allow multiple session/prompt RPCs to reach agents that support active-turn redirects. */
+  readonly concurrentPrompts?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -293,9 +295,9 @@ export const make = (
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
-    const activePromptFiberRef = yield* Ref.make<
-      Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
-    >(Option.none());
+    const activePromptFibersRef = yield* Ref.make<
+      ReadonlyArray<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
+    >([]);
     const sessionLoadGateRef = yield* Ref.make<Option.Option<SessionLoadGate>>(Option.none());
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
@@ -716,58 +718,60 @@ export const make = (
       }),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
-      prompt: (payload) =>
-        promptSerializationSemaphore.withPermit(
-          Effect.gen(function* () {
-            const started = yield* getStartedState;
-            yield* closeActiveAssistantSegment({
-              queue: eventQueue,
-              assistantSegmentRef,
-            });
-            const requestPayload = {
-              sessionId: started.sessionId,
-              ...payload,
-            } satisfies EffectAcpSchema.PromptRequest;
-            const cancelledResponse = {
-              stopReason: "cancelled",
-            } satisfies EffectAcpSchema.PromptResponse;
-            const promptRpcFiber = yield* runLoggedRequest(
-              "session/prompt",
-              requestPayload,
-              acp.agent.prompt(requestPayload),
-            ).pipe(Effect.forkIn(runtimeScope));
-            yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
-            return yield* Fiber.join(promptRpcFiber).pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.succeed(cancelledResponse)
-                  : Effect.failCause(cause),
-              ),
-              Effect.ensuring(
-                Effect.gen(function* () {
-                  yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
-                  yield* Ref.set(activePromptFiberRef, Option.none());
-                }),
-              ),
-              Effect.tap(() =>
-                closeActiveAssistantSegment({
-                  queue: eventQueue,
-                  assistantSegmentRef,
-                }),
-              ),
-            );
-          }),
-        ),
+      prompt: (payload) => {
+        const runPrompt = Effect.gen(function* () {
+          const started = yield* getStartedState;
+          yield* closeActiveAssistantSegment({
+            queue: eventQueue,
+            assistantSegmentRef,
+          });
+          const requestPayload = {
+            sessionId: started.sessionId,
+            ...payload,
+          } satisfies EffectAcpSchema.PromptRequest;
+          const cancelledResponse = {
+            stopReason: "cancelled",
+          } satisfies EffectAcpSchema.PromptResponse;
+          const promptRpcFiber = yield* runLoggedRequest(
+            "session/prompt",
+            requestPayload,
+            acp.agent.prompt(requestPayload),
+          ).pipe(Effect.forkIn(runtimeScope));
+          yield* Ref.update(activePromptFibersRef, (current) => [...current, promptRpcFiber]);
+          return yield* Fiber.join(promptRpcFiber).pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.succeed(cancelledResponse)
+                : Effect.failCause(cause),
+            ),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                yield* Ref.update(activePromptFibersRef, (current) =>
+                  current.filter((fiber) => fiber !== promptRpcFiber),
+                );
+              }),
+            ),
+            Effect.tap(() =>
+              closeActiveAssistantSegment({
+                queue: eventQueue,
+                assistantSegmentRef,
+              }),
+            ),
+          );
+        });
+        return options.concurrentPrompts
+          ? runPrompt
+          : promptSerializationSemaphore.withPermit(runPrompt);
+      },
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
-            const activePromptFiber = yield* Ref.get(activePromptFiberRef);
-            if (Option.isSome(activePromptFiber)) {
-              yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
-            }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
+            const activePromptFibers = yield* Ref.get(activePromptFibersRef);
+            yield* Effect.forEach(activePromptFibers, Fiber.interrupt, { discard: true }).pipe(
+              Effect.ignore,
+            );
+            yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
           }),
         ),
       ),

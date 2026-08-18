@@ -10,6 +10,16 @@ import {
 } from "./ProviderSettingsForm";
 
 describe("ProviderSettingsForm helpers", () => {
+  it("exposes Hermes as an early-access provider with binary and home settings", () => {
+    const hermes = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hermes")];
+    expect(hermes?.label).toBe("Hermes");
+    expect(hermes?.badgeLabel).toBe("Early Access");
+    expect(deriveProviderSettingsFields(hermes!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "homePath",
+    ]);
+  });
+
   it("derives visible provider config fields from the client definition schema", () => {
     const codex = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("codex")];
 

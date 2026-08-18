@@ -13,6 +13,45 @@ import {
 } from "./AcpRuntimeModel.ts";
 
 describe("AcpRuntimeModel", () => {
+  it("parses Hermes reasoning, usage, and command updates", () => {
+    const thought = parseSessionUpdateEvent({
+      sessionId: "hermes-session",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "checking the workspace" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(thought.events[0]).toMatchObject({
+      _tag: "ContentDelta",
+      streamKind: "reasoning_text",
+      text: "checking the workspace",
+    });
+
+    const usage = parseSessionUpdateEvent({
+      sessionId: "hermes-session",
+      update: { sessionUpdate: "usage_update", used: 12_345, size: 131_072 },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(usage.events[0]).toMatchObject({
+      _tag: "UsageUpdated",
+      used: 12_345,
+      size: 131_072,
+    });
+
+    const commands = parseSessionUpdateEvent({
+      sessionId: "hermes-session",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: "steer", description: "Redirect active work", input: { hint: "guidance" } },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(commands.events[0]).toMatchObject({
+      _tag: "AvailableCommandsUpdated",
+      commands: [{ name: "steer" }],
+    });
+  });
+
   it("parses session mode state from typed ACP session setup responses", () => {
     const modeState = parseSessionModeState({
       sessionId: "session-1",
@@ -321,6 +360,7 @@ describe("AcpRuntimeModel", () => {
     expect(contentResult.events).toEqual([
       {
         _tag: "ContentDelta",
+        streamKind: "assistant_text",
         text: "hello from acp",
         rawPayload: {
           sessionId: "session-1",

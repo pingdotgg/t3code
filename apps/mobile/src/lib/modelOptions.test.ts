@@ -10,6 +10,31 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("uses the Hermes product label for the built-in instance", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "hermes",
+          driver: "hermes",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "default",
+              name: "Hermes Default",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)[0]?.providerLabel).toBe("Hermes");
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [
