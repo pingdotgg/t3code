@@ -437,6 +437,29 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("replaces a rule whose stored key uses an alias spelling", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "escape", command: "script.run-tests.run" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        // The settings UI renders a stored "escape" rule as "esc", so the
+        // replace target arrives spelled differently than it was persisted.
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+m",
+          command: "script.run-tests.run",
+          replace: { key: "esc", command: "script.run-tests.run" },
+        });
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [{ key: "mod+m", command: "script.run-tests.run" }]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("removes only the targeted custom keybinding", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;

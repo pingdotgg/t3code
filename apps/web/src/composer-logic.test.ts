@@ -8,6 +8,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  shouldInterruptRunningThreadFromKeybinding,
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -24,6 +25,27 @@ describe("shouldSubmitComposerOnEnter", () => {
   it("inserts a newline for Shift+Enter", () => {
     expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
   });
+});
+
+describe("shouldInterruptRunningThreadFromKeybinding", () => {
+  it("interrupts a running thread", () => {
+    expect(
+      shouldInterruptRunningThreadFromKeybinding({ command: "thread.interrupt", isRunning: true }),
+    ).toBe(true);
+  });
+
+  it("leaves the shortcut alone when the thread is not running", () => {
+    expect(
+      shouldInterruptRunningThreadFromKeybinding({ command: "thread.interrupt", isRunning: false }),
+    ).toBe(false);
+  });
+
+  it.each(["composer.stash", "thread.next", null] as const)(
+    "ignores the unrelated command %s",
+    (command) => {
+      expect(shouldInterruptRunningThreadFromKeybinding({ command, isRunning: true })).toBe(false);
+    },
+  );
 });
 
 describe("detectComposerTrigger", () => {

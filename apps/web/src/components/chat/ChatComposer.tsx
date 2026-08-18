@@ -40,9 +40,14 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
+  shouldInterruptRunningThreadFromKeybinding,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  OPEN_FLOATING_LAYER_SELECTOR,
+  readFileAsDataUrl,
+} from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -2319,6 +2324,52 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashCurrentPrompt,
     terminalOpen,
   ]);
+
+  // Interrupting the running turn is a keybinding rather than a hard-coded key
+  // so it shows up in Settings and can be rebound. It only claims the shortcut
+  // while a turn is running; otherwise the key falls through untouched.
+  //
+  // Bubble phase, unlike the capture-phase composer.stash listener above:
+  // stash must beat the browser's save dialog, while interrupt must lose to
+  // any open overlay that dismisses on the same key. By the time the event
+  // bubbles to window every overlay handler has run, and a dismiss marks the
+  // event consumed via preventDefault.
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      // Interrupt is one-shot: key auto-repeat would spray concurrent
+      // interrupt requests that race each other for the same turn.
+      if (event.repeat) return;
+      // An overlay (dialog, menu, select, command palette) already consumed
+      // this press to dismiss itself.
+      if (event.defaultPrevented) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+        },
+      });
+      if (
+        !shouldInterruptRunningThreadFromKeybinding({ command, isRunning: phase === "running" })
+      ) {
+        return;
+      }
+      // An open floating layer owns the keyboard even when its dismiss
+      // handler has not run yet — window bubble listeners fire in
+      // registration order, so a later-mounted overlay (the expanded image
+      // viewer) marks the event only after this handler has already seen it.
+      // Checking the DOM instead of the event answers "is an overlay open"
+      // regardless of listener ordering; the model picker is excluded via
+      // the default binding's when clause.
+      if (isCommandPaletteOpen() || document.querySelector(OPEN_FLOATING_LAYER_SELECTOR) !== null) {
+        return;
+      }
+      event.preventDefault();
+      onInterrupt();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isComposerModelPickerOpen, keybindings, onInterrupt, phase, terminalOpen]);
 
   // ------------------------------------------------------------------
   // Callbacks: images

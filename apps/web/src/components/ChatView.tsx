@@ -314,6 +314,7 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
+  OPEN_FLOATING_LAYER_SELECTOR,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
@@ -457,14 +458,7 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   '[role="switch"]',
   '[role="tab"]',
 ].join(",");
-const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
-  '[data-slot="dialog"]',
-  '[data-slot="menu-popup"]',
-  '[data-slot="select-popup"]',
-  '[data-slot="popover-popup"]',
-  '[data-slot="combobox-popup"]',
-  '[data-slot="autocomplete-popup"]',
-].join(",");
+const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = OPEN_FLOATING_LAYER_SELECTOR;
 
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
@@ -4717,7 +4711,17 @@ function ChatViewContent(props: ChatViewProps) {
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: shortcutContext,
+      });
+
+      // Type-to-focus only claims keys that resolve to no binding: a user who
+      // explicitly bound a bare printable key (for example to
+      // thread.interrupt) means the command, and this handler runs in the
+      // capture phase, so consuming the key here would shadow bindings
+      // dispatched by bubble-phase listeners.
       if (
+        !command &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -4729,9 +4733,6 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: shortcutContext,
-      });
       if (!command) return;
 
       if (command === "terminal.toggle") {

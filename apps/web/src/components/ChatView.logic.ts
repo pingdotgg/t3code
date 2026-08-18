@@ -22,6 +22,22 @@ import {
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
+/**
+ * Matches any open floating layer: dialogs, menus, selects, popovers, and
+ * ad-hoc dialogs that only carry `role="dialog"` (like the expanded image
+ * viewer). Used to suppress global key behavior — type-to-focus and the
+ * thread.interrupt shortcut — while an overlay owns the keyboard.
+ */
+export const OPEN_FLOATING_LAYER_SELECTOR = [
+  '[data-slot="dialog"]',
+  '[data-slot="menu-popup"]',
+  '[data-slot="select-popup"]',
+  '[data-slot="popover-popup"]',
+  '[data-slot="combobox-popup"]',
+  '[data-slot="autocomplete-popup"]',
+  '[role="dialog"]',
+].join(",");
+
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
