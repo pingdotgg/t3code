@@ -30,6 +30,12 @@ describe("findTextMatches", () => {
     expect(findTextMatches([text], "docs")).toHaveLength(1);
     expect(findTextMatches([text], "hidden")).toHaveLength(0);
   });
+
+  it("preserves matches that span adjacent inline Markdown nodes", () => {
+    const text = renderMarkdownSearchText("**foo**bar");
+    expect(text).toBe("foobar");
+    expect(findTextMatches([text], "oob")).toHaveLength(1);
+  });
 });
 
 describe("shouldPreserveAssistantLineBreaks", () => {

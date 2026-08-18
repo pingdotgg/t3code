@@ -518,20 +518,31 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         const root = document.querySelector(`[data-timeline-row-id="${CSS.escape(entry.id)}"]`);
         if (!root) return;
 
-        const ranges: Range[] = [];
         const needle = findQuery.toLowerCase();
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const textNodes: Array<{ node: Text; start: number; end: number }> = [];
+        let text = "";
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          const text = node.textContent ?? "";
-          for (const { start, end } of findCaseInsensitiveTextRanges(text, needle)) {
-            const range = new Range();
-            range.setStart(node, start);
-            range.setEnd(node, end);
-            ranges.push(range);
-          }
+          const value = node.textContent ?? "";
+          textNodes.push({
+            node: node as Text,
+            start: text.length,
+            end: text.length + value.length,
+          });
+          text += value;
         }
-        const activeRange = ranges[match.occurrenceIndex];
-        if (!activeRange) return;
+        const activeMatch = findCaseInsensitiveTextRanges(text, needle)[match.occurrenceIndex];
+        if (!activeMatch) return;
+        const startNode = textNodes.find(
+          ({ start, end }) => start <= activeMatch.start && activeMatch.start < end,
+        );
+        const endNode = textNodes.find(
+          ({ start, end }) => start < activeMatch.end && activeMatch.end <= end,
+        );
+        if (!startNode || !endNode) return;
+        const activeRange = new Range();
+        activeRange.setStart(startNode.node, activeMatch.start - startNode.start);
+        activeRange.setEnd(endNode.node, activeMatch.end - endNode.start);
         CSS.highlights.set(THREAD_FIND_HIGHLIGHT, new Highlight(activeRange));
 
         let scrollParent = root.parentElement;
