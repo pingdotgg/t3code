@@ -31,6 +31,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./fileTreeGitStatus": {
+      "types": "./src/fileTreeGitStatus.ts",
+      "import": "./src/fileTreeGitStatus.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
