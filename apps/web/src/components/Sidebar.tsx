@@ -41,6 +41,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  ContainerIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
@@ -73,6 +74,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
@@ -366,6 +368,35 @@ function SidebarThreadTooltip({
         </div>
       </div>
     </TooltipPopup>
+  );
+}
+
+/**
+ * Marks a remote-environment project in the project scope picker with the
+ * ServerIcon thread rows use for remote threads; the machine name surfaces
+ * in the tooltip.
+ */
+function RemoteProjectBadge({
+  desktopLocal,
+  labels,
+}: {
+  desktopLocal: boolean;
+  labels: readonly string[];
+}) {
+  const prefix = desktopLocal ? "Sandbox" : "Remote";
+  const label = labels.length > 0 ? `${prefix}: ${labels.join(", ")}` : prefix;
+  const Icon = desktopLocal ? ContainerIcon : ServerIcon;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span aria-label={label} className="inline-flex shrink-0 items-center text-icon-muted" />
+        }
+      >
+        <Icon aria-hidden className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1824,6 +1855,15 @@ export default function Sidebar() {
       ),
     [environments],
   );
+  const desktopLocalEnvironmentIds = useMemo(
+    () =>
+      new Set(
+        environments
+          .filter((environment) => isDesktopLocalConnectionTarget(environment.entry.target))
+          .map((environment) => environment.environmentId),
+      ),
+    [environments],
+  );
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -1844,8 +1884,10 @@ export default function Sidebar() {
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
+        isDesktopLocalEnvironment: (environmentId) => desktopLocalEnvironmentIds.has(environmentId),
       }),
     [
+      desktopLocalEnvironmentIds,
       environmentLabelById,
       orderedProjects,
       primaryEnvironmentId,
@@ -3480,6 +3522,12 @@ export default function Sidebar() {
                     <span className="min-w-0 flex-1 truncate">
                       {scopedProjectGroup?.displayName ?? "All projects"}
                     </span>
+                    {scopedProjectGroup?.environmentPresence === "remote-only" ? (
+                      <RemoteProjectBadge
+                        desktopLocal={scopedProjectGroup.allRemoteMembersAreDesktopLocal}
+                        labels={scopedProjectGroup.remoteEnvironmentLabels}
+                      />
+                    ) : null}
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
                   <MenuPopup align="start" className="w-(--anchor-width)">
@@ -3513,19 +3561,27 @@ export default function Sidebar() {
                               className="size-4 shrink-0"
                             />
                             <span className="min-w-0 truncate text-sm">{project.displayName}</span>
-                            <Button
-                              size="icon-xs"
-                              variant="ghost-muted"
-                              aria-label={`Project settings for ${project.displayName}`}
-                              title={`Project settings for ${project.displayName}`}
-                              className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                void handleProjectSettings(event, project);
-                              }}
-                            >
-                              <SettingsIcon className="size-3.5" />
-                            </Button>
+                            <span className="ml-auto flex shrink-0 items-center">
+                              {project.environmentPresence === "remote-only" ? (
+                                <RemoteProjectBadge
+                                  desktopLocal={project.allRemoteMembersAreDesktopLocal}
+                                  labels={project.remoteEnvironmentLabels}
+                                />
+                              ) : null}
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                aria-label={`Project settings for ${project.displayName}`}
+                                title={`Project settings for ${project.displayName}`}
+                                className="size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  void handleProjectSettings(event, project);
+                                }}
+                              >
+                                <SettingsIcon className="size-3.5" />
+                              </Button>
+                            </span>
                           </MenuRadioItem>
                         );
                       })}
