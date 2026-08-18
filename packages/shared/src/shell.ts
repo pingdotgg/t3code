@@ -269,9 +269,25 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
         throw new Error(`Unsupported environment variable name: ${name}`);
       }
 
+      // The unscoped read returns the PATH this process inherited, which is
+      // stale when the user registered a directory after the parent process
+      // started. The Machine and User registry scopes hold what a fresh
+      // sign-in would see, so capture those too. The process value stays
+      // first to keep the existing resolution order, and mergePathValues
+      // drops the duplicates later.
+      const readValue =
+        name === "PATH"
+          ? [
+              `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+              `$machine = [Environment]::GetEnvironmentVariable('${name}', 'Machine')`,
+              `$user = [Environment]::GetEnvironmentVariable('${name}', 'User')`,
+              "$value = (@($value, $machine, $user) | Where-Object { $_ }) -join ';'",
+            ]
+          : [`$value = [Environment]::GetEnvironmentVariable('${name}')`];
+
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        ...readValue,
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
