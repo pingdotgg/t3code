@@ -232,6 +232,14 @@ const make = Effect.gen(function* () {
         if (event.type === "thread.archived") {
           return enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId });
         }
+        if (event.type === "thread.unarchived") {
+          // A fast archive -> unarchive can make the queued archive job fail
+          // its locked eligibility recheck before archive quiescence runs.
+          // Close the pre-archive preview lease at the authoritative restore
+          // transition as well, without letting a stale archive job close a
+          // preview for an already-active thread later.
+          return closeThreadPreviews(event.payload.threadId);
+        }
         return Effect.void;
       }),
     );

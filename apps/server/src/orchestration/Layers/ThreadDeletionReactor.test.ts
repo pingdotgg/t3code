@@ -84,6 +84,23 @@ const deletedEvent = (threadId: ThreadId): OrchestrationEvent => ({
   },
 });
 
+const unarchivedEvent = (threadId: ThreadId): OrchestrationEvent => ({
+  sequence: 2,
+  eventId: EventId.make(`event-unarchive-${threadId}`),
+  aggregateKind: "thread",
+  aggregateId: threadId,
+  type: "thread.unarchived",
+  occurredAt: "2026-07-20T00:00:01.000Z",
+  commandId: CommandId.make(`command-unarchive-${threadId}`),
+  causationEventId: null,
+  correlationId: CommandId.make(`command-unarchive-${threadId}`),
+  metadata: {},
+  payload: {
+    threadId,
+    updatedAt: "2026-07-20T00:00:01.000Z",
+  },
+});
+
 function testReactorLayer(input: {
   readonly eventStream: Stream.Stream<OrchestrationEvent>;
   readonly stopSession: ProviderService["Service"]["stopSession"];
@@ -430,19 +447,24 @@ effectIt.effect("leaves stale archive cleanup to cold-storage eligibility", () =
   }),
 );
 
-effectIt.effect("does not close a restored preview from a delayed archive job", () =>
+effectIt.effect("closes a restored preview at unarchive instead of from a stale archive job", () =>
   Effect.gen(function* () {
     const events = yield* PubSub.unbounded<OrchestrationEvent>();
     const subscription = yield* PubSub.subscribe(events);
     const threadId = ThreadId.make("thread-restored-before-archive-job");
     const staleArchiveChecked = yield* Deferred.make<void>();
+    const restoredPreviewClosed = yield* Deferred.make<void>();
     const previewCloseCalls = yield* Ref.make(0);
     const layer = testReactorLayer({
       eventStream: Stream.fromSubscription(subscription),
       stopSession: () => Effect.void,
       getBinding: () => Effect.succeed(Option.none()),
       getProjectedSession: () => Effect.succeed(Option.none()),
-      closePreview: () => Ref.update(previewCloseCalls, (count) => count + 1),
+      closePreview: () =>
+        Ref.update(previewCloseCalls, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(restoredPreviewClosed, undefined)),
+          Effect.asVoid,
+        ),
       archiveThread: () => Deferred.succeed(staleArchiveChecked, undefined).pipe(Effect.asVoid),
       // Models cold storage rejecting a queued archive after its locked
       // eligibility recheck because the thread has already been restored.
@@ -457,6 +479,10 @@ effectIt.effect("does not close a restored preview from a delayed archive job", 
       yield* reactor.drain;
 
       expect(yield* Ref.get(previewCloseCalls)).toBe(0);
+
+      yield* PubSub.publish(events, unarchivedEvent(threadId));
+      yield* Deferred.await(restoredPreviewClosed);
+      expect(yield* Ref.get(previewCloseCalls)).toBe(1);
     }).pipe(Effect.provide(layer));
   }),
 );
