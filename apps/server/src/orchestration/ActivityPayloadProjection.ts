@@ -91,14 +91,35 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
     projectedItem.command = item.command;
   }
 
+  const aggregatedOutput = asTrimmedString(item.aggregatedOutput);
+  if (aggregatedOutput) {
+    const summary = summarizeToolTextOutput(aggregatedOutput);
+    if (summary) {
+      projectedItem.aggregatedOutput = summary;
+    }
+  }
+
   const input = asRecord(item.input);
   if (input && "command" in input) {
     projectedItem.input = { command: input.command };
   }
 
   const result = asRecord(item.result);
-  if (result && "command" in result) {
-    projectedItem.result = { command: result.command };
+  if (result) {
+    const projectedResult: Record<string, unknown> = {};
+    if ("command" in result) {
+      projectedResult.command = result.command;
+    }
+    const content = asTrimmedString(result.content);
+    if (content) {
+      const summary = summarizeToolTextOutput(content);
+      if (summary) {
+        projectedResult.content = summary;
+      }
+    }
+    if (Object.keys(projectedResult).length > 0) {
+      projectedItem.result = projectedResult;
+    }
   }
 
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
@@ -232,6 +253,12 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
 }
 
 function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
+  const direct = asTrimmedString(value);
+  if (direct) {
+    const summary = summarizeToolTextOutput(direct);
+    return summary ? { content: summary } : undefined;
+  }
+
   const rawOutput = asRecord(value);
   if (!rawOutput) {
     return undefined;
@@ -256,7 +283,32 @@ function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
     return summary ? { content: summary } : undefined;
   }
 
+  const stderr = asTrimmedString(rawOutput.stderr);
+  if (stderr) {
+    const summary = summarizeToolTextOutput(stderr);
+    return summary ? { content: summary } : undefined;
+  }
+
   return undefined;
+}
+
+function projectAcpContent(value: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const text = value
+    .map((entryValue) => {
+      const entry = asRecord(entryValue);
+      const content = asRecord(entry?.content);
+      return entry?.type === "content" && content?.type === "text"
+        ? asTrimmedString(content.text)
+        : null;
+    })
+    .filter((entry): entry is string => entry !== null)
+    .join("\n");
+  const summary = summarizeToolTextOutput(text);
+  return summary ? { content: summary } : undefined;
 }
 
 /**
@@ -305,7 +357,7 @@ export function projectActivityPayload(
     projectedData.kind = data.kind;
   }
 
-  const rawOutput = projectRawOutput(data.rawOutput);
+  const rawOutput = projectRawOutput(data.rawOutput) ?? projectAcpContent(data.content);
   if (rawOutput) {
     projectedData.rawOutput = rawOutput;
   }

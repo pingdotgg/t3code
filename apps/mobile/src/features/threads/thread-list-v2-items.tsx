@@ -6,14 +6,7 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
-import {
-  Alert,
-  Platform,
-  Pressable,
-  useColorScheme,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -27,6 +20,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   resolveThreadListV2SnoozeMenuSelection,
@@ -120,7 +114,7 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 }) {
-  const colorScheme = useColorScheme();
+  const { themeAppearance: colorScheme } = useAppearancePreferences();
   return (
     <Pressable
       accessibilityHint={
@@ -141,10 +135,11 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       </Text>
       <View className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
       <SymbolView
-        name={props.expanded ? "chevron.up" : "chevron.down"}
+        name="chevron.down"
         size={10}
         tintColor={colorScheme === "dark" ? SNOOZE_ACCENT_DARK : SNOOZE_ACCENT_LIGHT}
         type="monochrome"
+        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
@@ -177,10 +172,11 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
       </Text>
       <View className="h-px flex-1 bg-border" />
       <SymbolView
-        name={props.expanded ? "chevron.up" : "chevron.down"}
+        name="chevron.down"
         size={10}
         tintColor={mutedColor}
         type="monochrome"
+        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
@@ -369,8 +365,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly canMovePinnedDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  /** Reports this row's live PR state up so the partition can auto-settle
-      merged/closed work (mirrors web's onChangeRequestState). */
+  /** Reports this row's live PR state for the partition's merge and close
+      rules. Mirrors web's onChangeRequestState. */
   readonly onChangeRequestState?: (
     threadKey: string,
     state: "open" | "closed" | "merged" | null,
@@ -660,8 +656,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
-  // The sidebar pane fills selected rows with the accent color (matching the
-  // v1 sidebar), so every piece of row text needs a white-on-accent variant.
+  // The sidebar pane fills selected rows with the theme's message surface, so
+  // every piece of row text must use that surface's paired foreground.
   const cardContent = (
     <>
       <View className="flex-row items-center gap-1.5">
@@ -689,7 +685,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <Text
           className={cn(
             "text-xs tabular-nums",
-            selected ? "text-white" : (statusLabel?.className ?? "text-foreground-tertiary"),
+            selected
+              ? "text-user-bubble-foreground"
+              : (statusLabel?.className ?? "text-foreground-tertiary"),
           )}
         >
           {statusLabel?.label ?? timeLabel}
@@ -766,7 +764,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {pr ? (
           <Text
             accessibilityLabel={pr.accessibilityLabel}
-            className={cn("text-xs", selected ? "text-white" : pr.textClassName)}
+            className={cn("text-xs", selected ? "text-user-bubble-foreground" : pr.textClassName)}
             style={{ fontFamily: MONO_FONT }}
           >
             #{pr.label}
