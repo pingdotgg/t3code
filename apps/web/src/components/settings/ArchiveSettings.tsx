@@ -351,8 +351,11 @@ export function ArchivedThreadsPanel() {
       if (!reservation) return;
       reservation.start();
       try {
-        const result = await unarchiveThread(threadRef);
-        showArchivedActionFailure("Failed to unarchive thread", result);
+        const attempt = await settlePromise(() => unarchiveThread(threadRef));
+        showArchivedActionFailure(
+          "Failed to unarchive thread",
+          attempt._tag === "Success" ? attempt.value : attempt,
+        );
       } finally {
         reservation.finish();
       }
@@ -376,8 +379,11 @@ export function ArchivedThreadsPanel() {
           if (!confirmed) return;
         }
         reservation.start();
-        const result = await deleteThread(threadRef);
-        showArchivedActionFailure("Failed to delete thread", result);
+        const attempt = await settlePromise(() => deleteThread(threadRef));
+        showArchivedActionFailure(
+          "Failed to delete thread",
+          attempt._tag === "Success" ? attempt.value : attempt,
+        );
       } finally {
         reservation.finish();
       }

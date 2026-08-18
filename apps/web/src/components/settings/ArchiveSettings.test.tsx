@@ -12,6 +12,9 @@ const testDoubles = vi.hoisted(() => ({
   confirm: vi.fn(async (_message: string, _options?: ConfirmDialogOptions) => false),
   contextMenu: vi.fn(),
   contextMenuResult: null as string | null,
+  deleteThread: vi.fn(),
+  unarchiveThread: vi.fn(),
+  toastAdd: vi.fn(),
   buttonClicks: new Map<string, CapturedButtonClick[]>(),
   archiveState: {
     snapshots: [] as ReadonlyArray<unknown>,
@@ -78,9 +81,14 @@ vi.mock("../../hooks/useSettings", () => ({
 
 vi.mock("../../hooks/useThreadActions", () => ({
   useThreadActions: () => ({
-    deleteThread: vi.fn(),
-    unarchiveThread: vi.fn(),
+    deleteThread: testDoubles.deleteThread,
+    unarchiveThread: testDoubles.unarchiveThread,
   }),
+}));
+
+vi.mock("../ui/toast", () => ({
+  stackedThreadToast: (toast: unknown) => toast,
+  toastManager: { add: testDoubles.toastAdd },
 }));
 
 vi.mock("../../localApi", () => ({
@@ -120,6 +128,9 @@ afterEach(() => {
   testDoubles.confirm.mockClear();
   testDoubles.contextMenu.mockClear();
   testDoubles.contextMenuResult = null;
+  testDoubles.deleteThread.mockReset();
+  testDoubles.unarchiveThread.mockReset();
+  testDoubles.toastAdd.mockReset();
   testDoubles.buttonClicks.clear();
   testDoubles.archiveState.snapshots = [];
   testDoubles.archiveState.isLoading = false;
@@ -262,6 +273,36 @@ describe("ArchivedThreadsPanel", () => {
         expect.stringContaining('Delete archived conversation "Archived conversation"?'),
         { variant: "destructive" },
       );
+    });
+  });
+
+  it.each([
+    {
+      action: () => testDoubles.unarchiveThread,
+      buttonLabel: "Unarchive",
+      title: "Failed to unarchive thread",
+    },
+    {
+      action: () => testDoubles.deleteThread,
+      buttonLabel: "Delete",
+      title: "Failed to delete thread",
+    },
+  ])("reports an unexpected $buttonLabel rejection", async ({ action, buttonLabel, title }) => {
+    const error = new Error(`${buttonLabel} rejected`);
+    action().mockRejectedValueOnce(error);
+    if (buttonLabel === "Delete") {
+      testDoubles.confirm.mockResolvedValueOnce(true);
+    }
+    renderPopulatedArchive("Archived");
+
+    clickCapturedButton(buttonLabel);
+
+    await vi.waitFor(() => {
+      expect(testDoubles.toastAdd).toHaveBeenCalledWith({
+        type: "error",
+        title,
+        description: error.message,
+      });
     });
   });
 
