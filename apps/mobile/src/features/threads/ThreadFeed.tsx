@@ -37,6 +37,7 @@ import {
   StyleSheet,
   Text as NativeText,
   type ColorValue,
+  type TextStyle,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -103,7 +104,13 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
-import { createAndroidSelectableMarkdownRenderers } from "./androidSelectableMarkdownRenderers";
+import {
+  createAndroidSelectableHeadingStyle,
+  createAndroidSelectableMarkdownRenderers,
+} from "./androidSelectableMarkdownRenderers";
+
+/** theme.spacing.s; the markdown library draws the h1 rule this far below the text. */
+const MARKDOWN_HEADING_RULE_SPACING = 4;
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -461,7 +468,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       },
       spacing: {
         xs: 4,
-        s: 4,
+        s: MARKDOWN_HEADING_RULE_SPACING,
         m: 8,
         l: 8,
         xl: 16,
@@ -530,7 +537,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
     const createMarkdownRenderers = (
       bodyTextColor: string,
-      headingTextColor: string,
+      headingStyle: TextStyle | undefined,
+      headingBorderColor: string,
       inlineTextColor: string,
       inlineCodeTextColor: string,
       blockBackgroundColor: string,
@@ -548,36 +556,17 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               lineHeight: markdownFontSizes.bodyLineHeight,
               marginBottom: preserveSoftBreaks ? 0 : 10,
             },
-            heading: (level) => ({
-              color: headingTextColor,
-              fontFamily: boldFontFamily,
-              fontSize:
-                level === 1
-                  ? markdownFontSizes.h1
-                  : level === 2
-                    ? markdownFontSizes.h2
-                    : level === 3
-                      ? markdownFontSizes.h3
-                      : level === 4
-                        ? markdownFontSizes.h4
-                        : level === 5
-                          ? markdownFontSizes.h5
-                          : markdownFontSizes.h6,
-              lineHeight:
-                (level === 1
-                  ? markdownFontSizes.h1
-                  : level === 2
-                    ? markdownFontSizes.h2
-                    : level === 3
-                      ? markdownFontSizes.h3
-                      : level === 4
-                        ? markdownFontSizes.h4
-                        : level === 5
-                          ? markdownFontSizes.h5
-                          : markdownFontSizes.h6) * 1.3,
-              fontWeight: "700",
-              marginTop: preserveSoftBreaks ? 8 : 18,
-              marginBottom: preserveSoftBreaks ? 4 : 8,
+            listItemText: {
+              color: bodyTextColor,
+              fontFamily: regularFontFamily,
+              fontSize: markdownFontSizes.m,
+              lineHeight: markdownFontSizes.bodyLineHeight,
+            },
+            heading: createAndroidSelectableHeadingStyle({
+              fontSizes: markdownFontSizes,
+              borderColor: headingBorderColor,
+              borderSpacing: MARKDOWN_HEADING_RULE_SPACING,
+              override: headingStyle,
             }),
           })
         : {}),
@@ -746,7 +735,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         styles: userStyles,
         renderers: createMarkdownRenderers(
           markdownUserBodyColor,
-          markdownUserBodyColor,
+          userStyles.heading,
+          markdownUserFenceBg,
           markdownUserCodeText,
           markdownUserInlineCodeText,
           markdownUserFenceBg,
@@ -781,7 +771,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         styles: assistantStyles,
         renderers: createMarkdownRenderers(
           markdownBodyColor,
-          markdownStrongColor,
+          assistantStyles.heading,
+          markdownCodeBg,
           markdownCodeText,
           markdownInlineCodeText,
           markdownCodeBg,
