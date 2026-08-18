@@ -48,7 +48,23 @@ the agent keeps its built-in tools. Routing built-ins through MCP as well is
 later hardening — it buys per-action review instead of standing grants, and is
 not needed to ship.
 
-### 3. Peer fabric — proposal
+### 3. Generic ACP driver — design
+
+[generic-acp-driver.md](./generic-acp-driver.md)
+
+A T3 driver that speaks only the open Agent Client Protocol, so it can drive any
+ACP agent — including the bridge above — with no vendor methods in its core.
+
+Written to be upstream-able. Vendor knowledge lives in **profiles**, which are
+data: a named bundle of command, args, env, capabilities and models. Adding an
+agent is a config entry, never a new adapter.
+
+Why not reuse an existing driver: `CursorAdapter.ts` carries
+`cursor/list_available_models`, `cursor/ask_question`, `cursor/create_plan` and
+`cursor/update_todos`. Those are vendor extensions, not ACP, and matching them
+would mean impersonating another vendor's product in a public repository.
+
+### 4. Peer fabric — proposal
 
 [t3-p2p-proposal.md](./t3-p2p-proposal.md)
 
@@ -57,11 +73,11 @@ mechanism. The gap it addresses is **provisioning**, not transport: before a
 client can connect to a machine, something has to be running there, and today
 that means opening a shell and configuring an address by hand.
 
-Central principle: a peer offers *capabilities* ("this machine will run a
+Central principle: a peer offers _capabilities_ ("this machine will run a
 broker for you"), never access. A peer that runs arbitrary commands is a remote
 shell wearing a fabric costume.
 
-### 4. Broker PTY adapter — documented, not recommended
+### 5. Broker PTY adapter — documented, not recommended
 
 [agy-broker-pty.md](./agy-broker-pty.md)
 
