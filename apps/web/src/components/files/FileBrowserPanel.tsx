@@ -5,6 +5,7 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { workingTreeGitStatusByPath } from "@t3tools/shared/fileTreeGitStatus";
 import { RotateCw } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
@@ -18,6 +19,8 @@ import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { useEnvironmentQuery } from "~/state/query";
+import { vcsEnvironment } from "~/state/vcs";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
@@ -48,6 +51,8 @@ const TREE_UNSAFE_CSS = `
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
 }
+
+const EMPTY_PROJECT_ENTRIES: ReadonlyArray<ProjectEntry> = [];
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
@@ -109,13 +114,27 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
-  const entries = entriesQuery.data?.entries ?? [];
+  const gitStatusQuery = useEnvironmentQuery(
+    vcsEnvironment.status({
+      environmentId,
+      input: { cwd },
+    }),
+  );
+  const entries = entriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
     [entries],
   );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
   const treePaths = useMemo(() => entries.map(treePath), [entries]);
+  const gitStatusEntries = useMemo(
+    () =>
+      Array.from(
+        workingTreeGitStatusByPath(gitStatusQuery.data?.workingTree.files ?? [], treePaths),
+        ([path, status]) => ({ path, status }),
+      ),
+    [gitStatusQuery.data?.workingTree.files, treePaths],
+  );
   const previousTreePathsRef = useRef<readonly string[]>([]);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
@@ -256,11 +275,13 @@ export default function FileBrowserPanel({
   };
 
   useEffect(() => {
-    if (previousTreePathsRef.current === treePaths) return;
-    entryKindsRef.current = entryKinds;
-    previousTreePathsRef.current = treePaths;
-    model.resetPaths(treePaths);
-  }, [entryKinds, model, treePaths]);
+    if (previousTreePathsRef.current !== treePaths) {
+      entryKindsRef.current = entryKinds;
+      previousTreePathsRef.current = treePaths;
+      model.resetPaths(treePaths);
+    }
+    model.setGitStatus(gitStatusEntries.length > 0 ? gitStatusEntries : undefined);
+  }, [entryKinds, gitStatusEntries, model, treePaths]);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -373,6 +394,11 @@ export default function FileBrowserPanel({
           style={{
             colorScheme: resolvedTheme,
             ["--trees-fg-override" as string]: "var(--foreground)",
+            ["--trees-git-added-color-override" as string]: "var(--success)",
+            ["--trees-git-untracked-color-override" as string]: "var(--success)",
+            ["--trees-git-modified-color-override" as string]: "var(--warning)",
+            ["--trees-git-deleted-color-override" as string]: "var(--destructive)",
+            ["--trees-git-renamed-color-override" as string]: "var(--warning)",
           }}
         />
       )}
