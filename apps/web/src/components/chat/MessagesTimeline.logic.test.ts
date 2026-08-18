@@ -3,8 +3,10 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  findCaseInsensitiveTextRanges,
   findTextMatches,
   normalizeCompactToolLabel,
+  renderMarkdownSearchText,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
@@ -17,6 +19,16 @@ describe("findTextMatches", () => {
       { textIndex: 2, occurrenceIndex: 0 },
     ]);
     expect(findTextMatches(["anything"], "")).toEqual([]);
+  });
+
+  it("uses original string offsets when case folding expands a Unicode character", () => {
+    expect(findCaseInsensitiveTextRanges("İstanbul", "İ")).toEqual([{ start: 0, end: 1 }]);
+  });
+
+  it("searches rendered Markdown text rather than hidden link destinations", () => {
+    const text = renderMarkdownSearchText("Read [the docs](https://example.com/hidden) now");
+    expect(findTextMatches([text], "docs")).toHaveLength(1);
+    expect(findTextMatches([text], "hidden")).toHaveLength(0);
   });
 });
 

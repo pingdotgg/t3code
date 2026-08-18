@@ -77,8 +77,10 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
+  findCaseInsensitiveTextRanges,
   findTextMatches,
   normalizeCompactToolLabel,
+  renderMarkdownSearchText,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -437,7 +439,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [timelineEntries],
   );
   const findTexts = useMemo(
-    () => findMessageEntries.map((entry) => entry.message.text),
+    () => findMessageEntries.map((entry) => renderMarkdownSearchText(entry.message.text)),
     [findMessageEntries],
   );
   const findMatches = useMemo(() => findTextMatches(findTexts, findQuery), [findQuery, findTexts]);
@@ -520,15 +522,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         const needle = findQuery.toLowerCase();
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          const text = node.textContent?.toLowerCase() ?? "";
-          for (
-            let offset = 0;
-            (offset = text.indexOf(needle, offset)) !== -1;
-            offset += needle.length
-          ) {
+          const text = node.textContent ?? "";
+          for (const { start, end } of findCaseInsensitiveTextRanges(text, needle)) {
             const range = new Range();
-            range.setStart(node, offset);
-            range.setEnd(node, offset + needle.length);
+            range.setStart(node, start);
+            range.setEnd(node, end);
             ranges.push(range);
           }
         }
@@ -717,7 +715,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       <TimelineRowActivityCtx value={activityState}>
         <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
           {findOpen ? (
-            <InputGroup className="surface-glass absolute right-4 top-3 z-30 h-9 w-auto shadow-lg">
+            <InputGroup className="surface-glass absolute right-4 top-3 z-30 w-auto shadow-lg **:[input]:w-48">
               <InputGroupAddon>
                 <SearchIcon aria-hidden="true" />
               </InputGroupAddon>
@@ -731,7 +729,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 }}
                 aria-label="Find in thread"
                 placeholder="Find in thread"
-                className="w-48"
               />
               <InputGroupAddon align="inline-end" className="gap-1">
                 <span className="min-w-12 text-center text-xs text-muted-foreground">
