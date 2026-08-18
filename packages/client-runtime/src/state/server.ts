@@ -289,6 +289,11 @@ export function applyServerConfigProjection(
         config: {
           ...projection.config,
           settings: event.payload.settings,
+          // Absent from servers that predate the field; keep the snapshot's
+          // list rather than blanking the Open menu.
+          ...(event.payload.availableEditors === undefined
+            ? {}
+            : { availableEditors: event.payload.availableEditors }),
         },
         latestEvent: event,
         source: "live",

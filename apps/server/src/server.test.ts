@@ -31,7 +31,7 @@ import {
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
-  EditorId,
+  EditorSelectionId,
 } from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
@@ -107,6 +107,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as InstalledApplications from "./process/InstalledApplications.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
@@ -388,6 +389,7 @@ const buildAppUnderTest = (options?: {
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
+    installedApplications?: Partial<InstalledApplications.InstalledApplications["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
@@ -655,6 +657,10 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ExternalLauncher.ExternalLauncher)({
             resolveAvailableEditors: () => Effect.succeed([]),
             ...options?.layers?.externalLauncher,
+          }),
+          Layer.mock(InstalledApplications.InstalledApplications)({
+            list: Effect.succeed([]),
+            ...options?.layers?.installedApplications,
           }),
           Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
             resolveTargets: () => Effect.succeed([]),
@@ -5071,7 +5077,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc shell.openInEditor", () =>
     Effect.gen(function* () {
-      let openedInput: { cwd: string; editor: EditorId } | null = null;
+      let openedInput: { cwd: string; editor: EditorSelectionId } | null = null;
       yield* buildAppUnderTest({
         layers: {
           externalLauncher: {
@@ -5094,6 +5100,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(openedInput, { cwd: "/tmp/project", editor: "cursor" });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc shell.listInstalledApplications", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          installedApplications: {
+            list: Effect.succeed([
+              { id: "zed", name: "Zed", command: "/usr/bin/zed", args: [] },
+              { id: "brave", name: "Brave", command: "/usr/bin/brave", args: ["--new-window"] },
+            ]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const applications = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.shellListInstalledApplications]()),
+      );
+
+      assert.deepEqual(
+        applications.map((application) => application.name),
+        ["Zed", "Brave"],
+      );
+      assert.deepEqual(applications[1]?.args, ["--new-window"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

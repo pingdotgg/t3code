@@ -1,4 +1,5 @@
 import {
+  type CustomEditorId,
   EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -280,6 +281,42 @@ describe("server state projection", () => {
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
     expect(result.latestEvent.type).toBe("settingsUpdated");
+  });
+
+  it("applies availableEditors from a settings update so a new custom app is selectable", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const projected = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: {
+        settings: { ...CONFIG.settings },
+        availableEditors: ["vscode", "custom:antigravity" as CustomEditorId],
+      },
+    });
+
+    expect(Option.getOrThrow(projected).config.availableEditors).toEqual([
+      "vscode",
+      "custom:antigravity",
+    ]);
+  });
+
+  it("keeps the snapshot editor list when a settings update omits availableEditors", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: { ...CONFIG, availableEditors: ["vscode", "zed"] },
+    });
+    const projected = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: { settings: { ...CONFIG.settings } },
+    });
+
+    expect(Option.getOrThrow(projected).config.availableEditors).toEqual(["vscode", "zed"]);
   });
 
   it("retains welcome when a ready event follows in the same stream chunk", () => {

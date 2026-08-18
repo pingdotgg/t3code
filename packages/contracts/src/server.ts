@@ -17,7 +17,7 @@ import {
   KeybindingWhen,
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
-import { EditorId, RemoteOpenTarget } from "./editor.ts";
+import { EditorSelectionId, RemoteOpenTarget } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
@@ -426,8 +426,9 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviders,
   // Editor ids grow over time; drop ones this build does not know rather than
-  // failing the whole config decode.
-  availableEditors: ForwardCompatibleArray(EditorId),
+  // failing the whole config decode. Includes `custom:<slug>` ids for
+  // applications the user picked from the "Open with" list.
+  availableEditors: ForwardCompatibleArray(EditorSelectionId),
   /**
    * SSH hosts this environment advertises for remote open-in-editor links.
    * Absent on servers that predate the feature; empty when the machine has no
@@ -496,6 +497,13 @@ export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderSta
 
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
+  /**
+   * Recomputed alongside the settings because editing `customEditors` changes
+   * which applications the Open menu can offer. Optional so a client stays
+   * compatible with a server that predates this field; it then keeps the list
+   * from the last snapshot.
+   */
+  availableEditors: Schema.optional(ForwardCompatibleArray(EditorSelectionId)),
 });
 export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
 

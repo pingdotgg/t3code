@@ -1,4 +1,4 @@
-import { EDITORS, EditorId, EnvironmentId } from "@t3tools/contracts";
+import { EDITORS, EditorSelectionId, EnvironmentId } from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
   type AtomCommandFailure,
@@ -30,7 +30,7 @@ export class PreferredEditorUnavailableError extends Schema.TaggedErrorClass<Pre
   {
     environmentId: EnvironmentId,
     targetPath: Schema.String,
-    availableEditorIds: Schema.Array(EditorId),
+    availableEditorIds: Schema.Array(EditorSelectionId),
   },
 ) {
   override get message(): string {
@@ -38,8 +38,8 @@ export class PreferredEditorUnavailableError extends Schema.TaggedErrorClass<Pre
   }
 }
 
-export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
-  const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
+export function usePreferredEditor(availableEditors: ReadonlyArray<EditorSelectionId>) {
+  const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorSelectionId);
 
   const effectiveEditor = useMemo(() => {
     if (lastEditor && availableEditors.includes(lastEditor)) return lastEditor;
@@ -50,19 +50,19 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
 }
 
 export function resolveAndPersistPreferredEditor(
-  availableEditors: readonly EditorId[],
-): EditorId | null {
-  const availableEditorIds = new Set(availableEditors);
-  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
+  availableEditors: readonly EditorSelectionId[],
+): EditorSelectionId | null {
+  const availableEditorIds = new Set<string>(availableEditors);
+  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorSelectionId);
   if (stored && availableEditorIds.has(stored)) return stored;
   const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
-  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorSelectionId);
   return editor ?? null;
 }
 
 export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
-  availableEditors: readonly EditorId[],
+  availableEditors: readonly EditorSelectionId[],
 ) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
@@ -74,7 +74,7 @@ export function useOpenInPreferredEditor(
       targetPath: string,
     ): Promise<
       AtomCommandResult<
-        EditorId,
+        EditorSelectionId,
         | OpenInEditorError
         | PreferredEditorEnvironmentRequiredError
         | PreferredEditorUnavailableError

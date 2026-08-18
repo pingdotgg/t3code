@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
+import { ExternalLauncherError, InstalledApplication, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
@@ -204,6 +204,7 @@ export const WS_METHODS = {
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
+  shellListInstalledApplications: "shell.listInstalledApplications",
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
@@ -644,6 +645,16 @@ export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
 });
 
+/** Applications installed on the environment host, for the "Open with" list. */
+export const WsShellListInstalledApplicationsRpc = Rpc.make(
+  WS_METHODS.shellListInstalledApplications,
+  {
+    payload: Schema.Void,
+    success: Schema.Array(InstalledApplication),
+    error: EnvironmentAuthorizationError,
+  },
+);
+
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
@@ -1022,6 +1033,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
+  WsShellListInstalledApplicationsRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
   WsSubscribeVcsStatusRpc,

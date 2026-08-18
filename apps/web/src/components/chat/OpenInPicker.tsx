@@ -1,10 +1,12 @@
 import {
   buildRemoteOpenUrl,
-  EditorId,
+  isCustomEditorId,
+  type CustomEditor,
+  type EditorSelectionId,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import {
@@ -14,7 +16,7 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
+import { ChevronDownIcon, FolderClosedIcon, LayoutGridIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
@@ -44,17 +46,24 @@ import {
   WebStormIcon,
 } from "../JetBrainsIcons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { applicationInitialIcon } from "./applicationInitialIcon";
+import { OpenWithDialog } from "./OpenWithDialog";
 
 type OpenInOption = {
   label: string;
   Icon: Icon;
-  value: EditorId;
+  value: EditorSelectionId;
   kind: "brand" | "generic";
 };
 
-const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+const resolveOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorSelectionId>,
+  customEditors: ReadonlyArray<CustomEditor>,
+) => {
   const baseOptions: ReadonlyArray<OpenInOption> = [
     {
       label: "Cursor",
@@ -187,8 +196,18 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       kind: "generic",
     },
   ];
-  const availableEditorSet = new Set(availableEditors);
-  return baseOptions.filter((option) => availableEditorSet.has(option.value));
+  const availableEditorSet = new Set<string>(availableEditors);
+  // Chosen applications sort after the built-ins and pass through the same
+  // availability probe, so an uninstalled one drops out of the menu.
+  const customOptions: ReadonlyArray<OpenInOption> = customEditors.map((entry) => ({
+    label: entry.label,
+    Icon: applicationInitialIcon(entry.label),
+    value: entry.id,
+    kind: "generic",
+  }));
+  return [...baseOptions, ...customOptions].filter((option) =>
+    availableEditorSet.has(option.value),
+  );
 };
 
 function getOpenInIconClass(kind: OpenInOption["kind"]) {
@@ -205,11 +224,13 @@ export const OpenInPicker = memo(function OpenInPicker({
 }: {
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
-  availableEditors: ReadonlyArray<EditorId>;
+  availableEditors: ReadonlyArray<EditorSelectionId>;
   openInCwd: string | null;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
+  const [openWithOpen, setOpenWithOpen] = useState(false);
+  const customEditors = useEnvironmentSettings(environmentId, (settings) => settings.customEditors);
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const remoteCapableEditors = useRemoteCapableEditors();
@@ -220,18 +241,21 @@ export const OpenInPicker = memo(function OpenInPicker({
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
   const options = useMemo(
-    () => resolveOptions(navigator.platform, effectiveEditors),
-    [effectiveEditors],
+    () => resolveOptions(navigator.platform, effectiveEditors, customEditors),
+    [customEditors, effectiveEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
   const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
+    (editorId: EditorSelectionId | null) => {
       if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
       if (remote.mode === "remote-unavailable") return;
       if (remote.mode === "remote-links") {
+        // A chosen application is a plain local command with no deep-link
+        // scheme, so it cannot open a workspace on a remote host.
+        if (isCustomEditorId(editor)) return;
         const url = buildRemoteOpenUrl({
           editor,
           host: remote.host.host,
@@ -344,10 +368,25 @@ export const OpenInPicker = memo(function OpenInPicker({
               {remote.mode === "remote-links" && !remoteHintSeen && (
                 <MenuItem disabled>Opens over SSH. Needs your key on {environmentLabel}</MenuItem>
               )}
+              {/* Chosen applications run on the environment host, which only
+                  executes commands in local-exec mode; remote-link mode is
+                  limited to editors with a deep-link scheme. */}
+              {remote.mode === "local-exec" && (
+                <MenuItem onClick={() => setOpenWithOpen(true)}>
+                  <LayoutGridIcon aria-hidden="true" className={getOpenInIconClass("generic")} />
+                  Open with…
+                </MenuItem>
+              )}
             </>
           )}
         </MenuPopup>
       </Menu>
+      <OpenWithDialog
+        environmentId={environmentId}
+        open={openWithOpen}
+        onOpenChange={setOpenWithOpen}
+        onLaunch={openInEditor}
+      />
     </Group>
   );
 });

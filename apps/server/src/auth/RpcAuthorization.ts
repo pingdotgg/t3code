@@ -81,6 +81,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsSearchEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsWriteFile]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
+  // Read-only scan of the host's application registry; launching one of them
+  // still goes through shellOpenInEditor, which requires the operate scope.
+  [WS_METHODS.shellListInstalledApplications]: AuthOrchestrationReadScope,
   [WS_METHODS.filesystemBrowse]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,

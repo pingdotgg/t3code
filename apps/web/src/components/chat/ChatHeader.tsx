@@ -1,6 +1,6 @@
 import {
   type EnvironmentId,
-  type EditorId,
+  type EditorSelectionId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -60,7 +60,7 @@ interface ChatHeaderProps {
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
-  availableEditors: ReadonlyArray<EditorId>;
+  availableEditors: ReadonlyArray<EditorSelectionId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;

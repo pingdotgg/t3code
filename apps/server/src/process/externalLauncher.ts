@@ -14,7 +14,10 @@ import {
   ExternalLauncherEditorSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
+  isCustomEditorId,
+  type CustomEditor,
   type EditorId,
+  type EditorSelectionId,
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -47,7 +50,7 @@ export {
 } from "@t3tools/contracts";
 export type { LaunchEditorInput };
 interface EditorLaunch {
-  readonly editor: EditorId;
+  readonly editor: EditorSelectionId;
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -300,6 +303,26 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
   return yield* buildAvailableEditors(platform, env);
 });
 
+/**
+ * Chosen applications are probed on every call rather than cached with the
+ * built-ins: the list is user-sized (a handful at most), and a stale cache
+ * would keep offering an app the user just removed or that was uninstalled.
+ */
+const resolveAvailableCustomEditors = Effect.fn("externalLauncher.resolveAvailableCustomEditors")(
+  function* (
+    customEditors: ReadonlyArray<CustomEditor>,
+  ): Effect.fn.Return<ReadonlyArray<EditorSelectionId>, never, FileSystem.FileSystem | Path.Path> {
+    const env = yield* readCommandLookupEnv;
+    const available: EditorSelectionId[] = [];
+    for (const custom of customEditors) {
+      if (yield* isCommandAvailable(custom.command, { env })) {
+        available.push(custom.id);
+      }
+    }
+    return available;
+  },
+);
+
 // Editor discovery walks PATH for every known editor and runs for every
 // client connect (the server config embeds the available editors). Memoize
 // the discovered set for a bounded window so repeat connects skip even the
@@ -328,7 +351,13 @@ interface EditorDiscoveryCacheEntry {
 export class ExternalLauncher extends Context.Service<
   ExternalLauncher,
   {
-    readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
+    /**
+     * Built-in editors plus any chosen applications whose command resolves on
+     * this host. `customEditors` comes from server settings.
+     */
+    readonly resolveAvailableEditors: (
+      customEditors?: ReadonlyArray<CustomEditor>,
+    ) => Effect.Effect<ReadonlyArray<EditorSelectionId>>;
     /** Launch a URL target in the default browser. */
     readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
     /**
@@ -336,7 +365,10 @@ export class ExternalLauncher extends Context.Service<
      *
      * Launches the editor as a detached process so server startup is not blocked.
      */
-    readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+    readonly launchEditor: (
+      input: LaunchEditorInput,
+      customEditors?: ReadonlyArray<CustomEditor>,
+    ) => Effect.Effect<void, ExternalLauncherError>;
   }
 >()("t3/process/externalLauncher") {}
 
@@ -346,6 +378,7 @@ export class ExternalLauncher extends Context.Service<
 
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
+  customEditors: ReadonlyArray<CustomEditor>,
 ): Effect.fn.Return<EditorLaunch, ExternalLauncherError, FileSystem.FileSystem | Path.Path> {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
@@ -354,6 +387,21 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     "externalLauncher.cwd": input.cwd,
     "externalLauncher.platform": platform,
   });
+  // Chosen applications resolve from server settings only, so the command is
+  // never attacker-controlled by a client naming an arbitrary id.
+  if (isCustomEditorId(input.editor)) {
+    const custom = customEditors.find((candidate) => candidate.id === input.editor);
+    if (!custom) {
+      return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
+    }
+    return {
+      editor: custom.id,
+      target: input.cwd,
+      command: custom.command,
+      args: [...custom.args, input.cwd],
+    };
+  }
+
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
@@ -488,14 +536,24 @@ export const make = Effect.gen(function* () {
   });
 
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => cachedAvailableEditors,
+    resolveAvailableEditors: (customEditors = []) =>
+      Effect.gen(function* () {
+        const builtIn = yield* cachedAvailableEditors;
+        if (customEditors.length === 0) {
+          return builtIn;
+        }
+        const custom = yield* provideCommandResolutionServices(
+          resolveAvailableCustomEditors(customEditors),
+        );
+        return [...builtIn, ...custom];
+      }),
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
-    launchEditor: (input) =>
+    launchEditor: (input, customEditors = []) =>
       provideCommandResolutionServices(
-        Effect.flatMap(resolveEditorLaunch(input), (launch) =>
+        Effect.flatMap(resolveEditorLaunch(input, customEditors), (launch) =>
           launchEditorProcess(launch).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),

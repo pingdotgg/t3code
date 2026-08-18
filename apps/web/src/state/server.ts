@@ -1,6 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  type EditorId,
+  type EditorSelectionId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -32,7 +32,7 @@ interface PrimaryServerState {
   readonly welcome: ServerLifecycleWelcomePayload | null;
 }
 
-const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
+const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorSelectionId> = [];
 export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_PRIMARY_SERVER_STATE: PrimaryServerState = {
   config: null,
@@ -86,7 +86,7 @@ export const primaryServerKeybindingsAtom = Atom.make(
 ).pipe(Atom.withLabel("web-primary-server-keybindings"));
 
 export const primaryServerAvailableEditorsAtom = Atom.make(
-  (get): ReadonlyArray<EditorId> =>
+  (get): ReadonlyArray<EditorSelectionId> =>
     get(primaryServerConfigAtom)?.availableEditors ?? EMPTY_AVAILABLE_EDITORS,
 ).pipe(Atom.withLabel("web-primary-server-available-editors"));
 

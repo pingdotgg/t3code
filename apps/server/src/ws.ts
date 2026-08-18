@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  type CustomEditor,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -66,6 +67,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as InstalledApplications from "./process/InstalledApplications.ts";
 import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
@@ -362,6 +364,7 @@ const makeWsRpcLayer = (
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
+      const installedApplications = yield* InstalledApplications.InstalledApplications;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
@@ -995,9 +998,8 @@ const makeWsRpcLayer = (
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
-        const settings = ServerSettings.redactServerSettingsForClient(
-          yield* serverSettings.getSettings,
-        );
+        const rawSettings = yield* serverSettings.getSettings;
+        const settings = ServerSettings.redactServerSettingsForClient(rawSettings);
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
 
@@ -1010,7 +1012,7 @@ const makeWsRpcLayer = (
           issues: keybindingsConfig.issues,
           providers,
           availableEditors: yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
+            externalLauncher.resolveAvailableEditors(rawSettings.customEditors),
           ),
           // Same discovery-with-timeout treatment as editors: a slow probe
           // must not stall server.getConfig, so it degrades to no targets.
@@ -1828,7 +1830,24 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
-          observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
+          observeRpcEffect(
+            WS_METHODS.shellOpenInEditor,
+            // The command for a chosen application is read from server
+            // settings, never from the client, which only names an id. An
+            // unreadable settings file degrades to built-ins only (a custom id
+            // then reports "unknown editor") rather than leaking
+            // ServerSettingsError into this RPC's error channel.
+            Effect.flatMap(
+              serverSettings.getSettings.pipe(
+                Effect.map((current) => current.customEditors),
+                Effect.orElseSucceed(() => [] as ReadonlyArray<CustomEditor>),
+              ),
+              (customEditors) => externalLauncher.launchEditor(input, customEditors),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.shellListInstalledApplications]: () =>
+          observeRpcEffect(WS_METHODS.shellListInstalledApplications, installedApplications.list, {
             "rpc.aggregate": "workspace",
           }),
         [WS_METHODS.filesystemBrowse]: (input) =>
@@ -2191,12 +2210,24 @@ const makeWsRpcLayer = (
                 Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               const settingsUpdates = serverSettings.streamChanges.pipe(
-                Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
-                Stream.map((settings) => ({
-                  version: 1 as const,
-                  type: "settingsUpdated" as const,
-                  payload: { settings },
-                })),
+                // Editing `customEditors` changes what the Open menu can offer,
+                // so the editor list is re-probed with the settings rather than
+                // going stale until the next full snapshot.
+                Stream.mapEffect((settings) =>
+                  Effect.map(
+                    resolveAvailableEditorsForConfig(
+                      externalLauncher.resolveAvailableEditors(settings.customEditors),
+                    ),
+                    (availableEditors) => ({
+                      version: 1 as const,
+                      type: "settingsUpdated" as const,
+                      payload: {
+                        settings: ServerSettings.redactServerSettingsForClient(settings),
+                        availableEditors,
+                      },
+                    }),
+                  ),
+                ),
               );
 
               yield* providerRegistry

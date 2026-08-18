@@ -1,5 +1,5 @@
 import type {
-  EditorId,
+  EditorSelectionId,
   EnvironmentId,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
@@ -73,7 +73,7 @@ interface FilePreviewPanelProps {
   threadRef: ScopedThreadRef;
   composerDraftTarget: ScopedThreadRef | DraftId;
   keybindings: ResolvedKeybindingsConfig;
-  availableEditors: ReadonlyArray<EditorId>;
+  availableEditors: ReadonlyArray<EditorSelectionId>;
   revealLine: number | null;
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;

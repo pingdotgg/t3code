@@ -12,5 +12,12 @@ export function createShellEnvironmentAtoms<R, E>(
       label: "environment-data:shell:open-in-editor",
       tag: WS_METHODS.shellOpenInEditor,
     }),
+    // A command rather than a query atom: the list is only needed while the
+    // "Open with" dialog is open, and fetching on open keeps a freshly
+    // installed application from being masked by a cached subscription.
+    listInstalledApplications: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:shell:list-installed-applications",
+      tag: WS_METHODS.shellListInstalledApplications,
+    }),
   };
 }

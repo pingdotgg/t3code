@@ -22,6 +22,7 @@ import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as InstalledApplications from "./process/InstalledApplications.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -422,6 +423,7 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
+  Layer.provideMerge(InstalledApplications.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
