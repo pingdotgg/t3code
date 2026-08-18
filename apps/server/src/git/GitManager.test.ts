@@ -1130,6 +1130,71 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   );
 
   it.effect(
+    "status preserves a fork PR whose head is named after the default branch",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["push", "fork-seed", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-777/main"]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/main"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork-seed",
+          "git@github.com:contributor/codething-mvp.git",
+          forkDir,
+        );
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              "contributor:main": JSON.stringify([
+                {
+                  number: 777,
+                  title: "Fork PR from main",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/777",
+                  baseRefName: "main",
+                  headRefName: "main",
+                  state: "OPEN",
+                  updatedAt: "2026-03-10T07:00:00Z",
+                  isCrossRepository: true,
+                  headRepository: {
+                    nameWithOwner: "contributor/codething-mvp",
+                  },
+                  headRepositoryOwner: {
+                    login: "contributor",
+                  },
+                },
+              ]),
+            },
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.refName).toBe("t3code/pr-777/main");
+        expect(status.pr).toEqual({
+          number: 777,
+          title: "Fork PR from main",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/777",
+          baseRef: "main",
+          headRef: "main",
+          state: "open",
+        });
+        expect(ghCalls).toContain(
+          "pr list --head contributor:main --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        );
+      }),
+    20_000,
+  );
+
+  it.effect(
     "status ignores synthetic local branch aliases when the upstream remote name contains slashes",
     () =>
       Effect.gen(function* () {
@@ -1312,6 +1377,43 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("main");
       expect(status.pr).toBeNull();
+    }),
+  );
+
+  it.effect("status does not inherit a merged PR from a feature branch's default upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/from-main", "origin/main"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 54,
+                title: "Reverse merge from main",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/54",
+                baseRefName: "je-filter-list",
+                headRefName: "main",
+                state: "MERGED",
+                mergedAt: "2023-09-28T03:21:10Z",
+                updatedAt: "2023-09-28T03:21:10Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.refName).toBe("feature/from-main");
+      expect(status.pr).toBeNull();
+      expect(ghCalls.some((call) => call.includes("pr list"))).toBe(false);
     }),
   );
 
