@@ -4,6 +4,7 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  shouldOpenTerminalSelectionMenu,
   terminalContextMenuItems,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
@@ -75,6 +76,27 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 0)).toBe(true);
     expect(shouldHandleTerminalSelectionMouseUp(false, 0)).toBe(false);
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
+  });
+
+  it("keeps Linux desktop selection passive so clipboard shortcuts reach the terminal", () => {
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: true,
+        platform: "Linux x86_64",
+      }),
+    ).toBe(false);
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: false,
+        platform: "Linux x86_64",
+      }),
+    ).toBe(true);
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: true,
+        platform: "MacIntel",
+      }),
+    ).toBe(true);
   });
 
   it("uses Ghostty's physical screen range for visually wrapped selections", () => {

@@ -34,7 +34,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn, isMacPlatform } from "~/lib/utils";
+import { cn, isLinuxPlatform, isMacPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -243,6 +243,16 @@ export function shouldHandleTerminalSelectionMouseUp(
   button: number,
 ): boolean {
   return selectionGestureActive && button === 0;
+}
+
+export function shouldOpenTerminalSelectionMenu(options: {
+  nativeContextMenu: boolean;
+  platform: string;
+}): boolean {
+  // Electron's native Linux popup grabs keyboard input but only displays its
+  // accelerators. Leave selection passive so terminal shortcuts reach Ghostty;
+  // the same actions remain available from the terminal's right-click menu.
+  return !(options.nativeContextMenu && isLinuxPlatform(options.platform));
 }
 
 export function terminalSelectionLineRange(position: {
@@ -834,6 +844,14 @@ export function TerminalViewport({
         );
         selectionGestureActiveRef.current = false;
         if (!shouldHandle) {
+          return;
+        }
+        if (
+          !shouldOpenTerminalSelectionMenu({
+            nativeContextMenu: window.desktopBridge !== undefined,
+            platform: navigator.platform,
+          })
+        ) {
           return;
         }
         selectionPointerRef.current = { x: event.clientX, y: event.clientY };
