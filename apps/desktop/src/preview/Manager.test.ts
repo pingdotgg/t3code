@@ -1257,6 +1257,65 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("applies a guest viewport override without taking agent control", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const sendCommand = vi.fn(async () => undefined);
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const controllers: Array<PreviewManager.PreviewTabState["controller"]> = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            controllers.push(state.controller);
+          }),
+        );
+        yield* manager.createTab("tab_viewport");
+        yield* manager.registerWebview("tab_viewport", 42);
+        yield* manager.setViewport("tab_viewport", { width: 390, height: 844 });
+        yield* manager.setViewport("tab_viewport", { width: 844, height: 390 });
+        yield* manager.setViewport("tab_viewport", { clear: true });
+
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
+          width: 390,
+          height: 844,
+          deviceScaleFactor: 1,
+          mobile: true,
+        });
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
+          width: 844,
+          height: 390,
+          deviceScaleFactor: 1,
+          mobile: true,
+        });
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.clearDeviceMetricsOverride");
+        expect(controllers).not.toContain("agent");
+      }),
+    ),
+  );
+
   effectIt.effect("blocks late webview and capture starts during tab close", () =>
     withManager((manager) =>
       Effect.gen(function* () {

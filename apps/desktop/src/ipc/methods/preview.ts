@@ -2,6 +2,7 @@ import {
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewAutomationClickInputSchema,
+  DesktopPreviewAutomationSetViewportInputSchema,
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
@@ -153,6 +154,18 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
     yield* manager.setColorScheme(tabId, colorScheme);
   }),
 });
+export const setViewport = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_VIEWPORT_CHANNEL,
+  payload: DesktopPreviewAutomationSetViewportInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setViewport")(function* (input) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setViewport(
+      input.tabId,
+      "clear" in input ? { clear: true } : { width: input.width, height: input.height },
+    );
+  }),
+});
 export const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
@@ -289,6 +302,19 @@ export const automationSnapshot = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const automationSetViewport = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_SET_VIEWPORT_CHANNEL,
+  payload: DesktopPreviewAutomationSetViewportInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.automationSetViewport")(function* (input) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.automationSetViewport(
+      input.tabId,
+      "clear" in input ? { clear: true } : { width: input.width, height: input.height },
+    );
+  }),
+});
+
 export const automationClick = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL,
   payload: DesktopPreviewAutomationClickInputSchema,
@@ -372,6 +398,7 @@ export const methods = [
   resetZoom,
   hardReload,
   setColorScheme,
+  setViewport,
   openDevTools,
   clearCookies,
   clearCache,
@@ -386,6 +413,7 @@ export const methods = [
   closePictureInPicture,
   automationStatus,
   automationSnapshot,
+  automationSetViewport,
   automationClick,
   automationType,
   automationPress,

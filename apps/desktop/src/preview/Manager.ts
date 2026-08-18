@@ -2251,6 +2251,51 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* applyColorScheme(tabId, wc, colorScheme);
   });
 
+  const deviceMetricsOverride = (input: { readonly width: number; readonly height: number }) => ({
+    width: input.width,
+    height: input.height,
+    deviceScaleFactor: 1,
+    // Shortest side, so landscape phones stay mobile (844x390, not width-only).
+    mobile: Math.min(input.width, input.height) < 768,
+  });
+
+  const applyViewportOverride = Effect.fn("PreviewManager.applyViewportOverride")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+  ) {
+    yield* ensureControlSession(wc);
+    yield* attemptPromise({ operation: "applyViewportOverride", tabId, webContentsId: wc.id }, () =>
+      "clear" in input
+        ? wc.debugger.sendCommand("Emulation.clearDeviceMetricsOverride")
+        : wc.debugger.sendCommand(
+            "Emulation.setDeviceMetricsOverride",
+            deviceMetricsOverride(input),
+          ),
+    );
+  });
+
+  // Human/toolbar path. Must not take agent control or write a resize action.
+  const setViewport = Effect.fn("PreviewManager.setViewport")(function* (
+    tabId: string,
+    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* applyViewportOverride(tabId, wc, input);
+  });
+
+  const automationSetViewport = Effect.fn("PreviewManager.automationSetViewport")(function* (
+    tabId: string,
+    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* withControlSession(tabId, wc, "resize", (send) =>
+      "clear" in input
+        ? send("Emulation.clearDeviceMetricsOverride")
+        : send("Emulation.setDeviceMetricsOverride", deviceMetricsOverride(input)),
+    );
+  });
+
   const captureScreenshot = Effect.fn("PreviewManager.captureScreenshot")(function* (
     tabId: string,
   ) {
@@ -3544,6 +3589,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     saveRecording,
     setAnnotationTheme,
     setColorScheme,
+    setViewport,
+    automationSetViewport,
     setMainWindow,
     startRecording,
     closePictureInPicture,
@@ -3846,6 +3893,14 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       colorScheme: DesktopPreviewColorScheme,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setViewport: (
+      tabId: string,
+      input: { readonly width: number; readonly height: number } | { readonly clear: true },
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly automationSetViewport: (
+      tabId: string,
+      input: { readonly width: number; readonly height: number } | { readonly clear: true },
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
     readonly clearCache: () => Effect.Effect<void, PreviewManagerError>;
@@ -3944,6 +3999,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     reapplyZoom: operations.reapplyZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
+    setViewport: operations.setViewport,
+    automationSetViewport: operations.automationSetViewport,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* () {
       yield* browserSession

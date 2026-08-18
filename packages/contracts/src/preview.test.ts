@@ -11,6 +11,7 @@ import {
   PreviewSessionSnapshot,
   PreviewViewportSetting,
 } from "./preview.ts";
+import { DesktopPreviewAutomationSetViewportInputSchema } from "./ipc.ts";
 import {
   PreviewAutomationHost,
   PreviewAutomationError,
@@ -32,6 +33,9 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodeSetViewportInput = Schema.decodeUnknownSync(
+  DesktopPreviewAutomationSetViewportInputSchema,
+);
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {
@@ -220,6 +224,22 @@ describe("PreviewAutomationStatus", () => {
         viewport: { width: 412, height: 915 },
       }).viewport,
     ).toEqual({ width: 412, height: 915 });
+  });
+});
+
+describe("DesktopPreviewAutomationSetViewportInputSchema", () => {
+  it("accepts a complete size or an explicit clear, and rejects a partial size", () => {
+    expect(decodeSetViewportInput({ tabId: "tab-1", width: 800, height: 600 })).toEqual({
+      tabId: "tab-1",
+      width: 800,
+      height: 600,
+    });
+    expect(decodeSetViewportInput({ tabId: "tab-1", clear: true })).toEqual({
+      tabId: "tab-1",
+      clear: true,
+    });
+    expect(() => decodeSetViewportInput({ tabId: "tab-1", width: 800 })).toThrow();
+    expect(() => decodeSetViewportInput({ tabId: "tab-1" })).toThrow();
   });
 });
 

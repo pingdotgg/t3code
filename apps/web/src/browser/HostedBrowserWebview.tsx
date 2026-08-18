@@ -5,8 +5,10 @@ import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { applyPreviewGuestViewport } from "~/components/preview/previewGuestViewport";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
+import { useThreadPreviewState } from "~/previewStateStore";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import {
@@ -55,6 +57,7 @@ export function HostedBrowserWebview(props: {
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
+  const guestViewportRef = useRef(viewport);
   const crashRecoveryRef = useRef<WebviewCrashRecoveryState>(INITIAL_WEBVIEW_CRASH_RECOVERY_STATE);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
   const presentation = useBrowserSurfaceStore(
@@ -71,6 +74,8 @@ export function HostedBrowserWebview(props: {
     }),
   );
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
+  const hasWebContents =
+    useThreadPreviewState(threadRef).desktopByTabId[tabId]?.hasWebContents === true;
 
   useEffect(() => {
     crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
@@ -114,6 +119,15 @@ export function HostedBrowserWebview(props: {
           const webContentsId = webview.getWebContentsId();
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
+            if (disposed || webviewRef.current !== webview) return;
+            const setViewport = previewBridge?.setViewport;
+            if (setViewport) {
+              await applyPreviewGuestViewport(
+                setViewport,
+                runtimeTabId,
+                guestViewportRef.current,
+              ).catch(() => undefined);
+            }
           }
         } catch {
           // did-attach/dom-ready will retry if the guest was not ready yet.
@@ -191,6 +205,18 @@ export function HostedBrowserWebview(props: {
     deviceToolbarVisible,
     aspectRatio: lockedAspectRatio,
   });
+  const guestViewportKey = browserViewportSettingKey(effectiveViewport);
+  guestViewportRef.current = effectiveViewport;
+  useEffect(() => {
+    const setViewport = previewBridge?.setViewport;
+    if (!setViewport || !hasWebContents) return;
+    const frame = window.requestAnimationFrame(() => {
+      void applyPreviewGuestViewport(setViewport, runtimeTabId, guestViewportRef.current).catch(
+        () => undefined,
+      );
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [guestViewportKey, hasWebContents, runtimeTabId]);
   const fittedSourceViewport =
     presentation.fitSourceContent && lastRect
       ? resolveFittedBrowserViewport(
