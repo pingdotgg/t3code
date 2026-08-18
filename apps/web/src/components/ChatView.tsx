@@ -5127,6 +5127,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
         return;
       }
+      pendingSendRecoveryRef.current = null;
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -5149,6 +5150,7 @@ function ChatViewContent(props: ChatViewProps) {
         : null;
     if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
+      pendingSendRecoveryRef.current = null;
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -5308,6 +5310,11 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
+    // A new send supersedes any earlier recovery snapshot: the previous turn's
+    // text must not restore into this send's freshly cleared composer (which
+    // would then be treated as non-empty and drop this send's own text on a
+    // later failure). This send re-arms its own snapshot on accept below.
+    pendingSendRecoveryRef.current = null;
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
