@@ -88,20 +88,6 @@ const make = Effect.gen(function* () {
   const providerEventLoggers = yield* ProviderEventLoggers;
   const retryRequested = yield* Queue.sliding<void>(1);
 
-  const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
-    logCleanupCauseUnlessInterrupted({
-      effect: providerService.stopSession({ threadId }),
-      message: "thread deletion cleanup skipped provider session stop",
-      threadId,
-    });
-
-  const closeThreadTerminals = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
-    logCleanupCauseUnlessInterrupted({
-      effect: terminalManager.close({ threadId, deleteHistory: true }),
-      message: "thread deletion cleanup skipped terminal close",
-      threadId,
-    });
-
   const closeThreadPreviews = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
       effect: previewManager.close({ threadId }),
@@ -116,13 +102,6 @@ const make = Effect.gen(function* () {
       ),
       { discard: true },
     );
-
-  const closeProviderLogWriters = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
-    logCleanupCauseUnlessInterrupted({
-      effect: closeProviderLogWritersRequired(threadId),
-      message: "thread lifecycle cleanup skipped provider log writer close",
-      threadId,
-    });
 
   const stopArchiveProviderSession = Effect.fn("stopArchiveProviderSession")(function* (
     threadId: ThreadArchivedEvent["payload"]["threadId"],
@@ -176,9 +155,13 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-    yield* stopProviderSession(threadId);
-    yield* closeThreadTerminals(threadId);
-    yield* closeProviderLogWriters(threadId);
+    // Deletion is destructive, so every writer-quiescence boundary must fail
+    // closed. processLifecycleJobSafely records the failure and requests a
+    // durable rescan instead of deleting while a provider, terminal, or log
+    // writer may still be active.
+    yield* providerService.stopSession({ threadId });
+    yield* terminalManager.close({ threadId, deleteHistory: true });
+    yield* closeProviderLogWritersRequired(threadId);
     yield* threadColdStorage.deleteThread(threadId);
   });
 

@@ -39,11 +39,7 @@ import * as TerminalManager from "../../terminal/Manager.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import {
-  ThreadColdStorage,
-  ThreadColdStorageError,
-  layer as ThreadColdStorageLive,
-} from "../ThreadColdStorage.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import {
@@ -71,12 +67,30 @@ const archivedEvent = (threadId: ThreadId): OrchestrationEvent => ({
   },
 });
 
+const deletedEvent = (threadId: ThreadId): OrchestrationEvent => ({
+  sequence: 1,
+  eventId: EventId.make(`event-delete-${threadId}`),
+  aggregateKind: "thread",
+  aggregateId: threadId,
+  type: "thread.deleted",
+  occurredAt: "2026-07-20T00:00:00.000Z",
+  commandId: CommandId.make(`command-delete-${threadId}`),
+  causationEventId: null,
+  correlationId: CommandId.make(`command-delete-${threadId}`),
+  metadata: {},
+  payload: {
+    threadId,
+    deletedAt: "2026-07-20T00:00:00.000Z",
+  },
+});
+
 function testReactorLayer(input: {
   readonly eventStream: Stream.Stream<OrchestrationEvent>;
   readonly stopSession: ProviderService["Service"]["stopSession"];
   readonly getBinding: ProviderSessionDirectory["Service"]["getBinding"];
   readonly getProjectedSession: ProjectionThreadSessionRepository["Service"]["getByThreadId"];
-  readonly archiveThread: ThreadColdStorage["Service"]["archiveThread"];
+  readonly archiveThread: ThreadColdStorage.ThreadColdStorage["Service"]["archiveThread"];
+  readonly deleteThread?: ThreadColdStorage.ThreadColdStorage["Service"]["deleteThread"];
   readonly closePreview?: PreviewManager["Service"]["close"];
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly pendingArchives?: ReadonlyArray<ThreadId>;
@@ -121,12 +135,12 @@ function testReactorLayer(input: {
       ),
     ),
     Layer.provide(
-      Layer.mock(ThreadColdStorage)({
+      Layer.mock(ThreadColdStorage.ThreadColdStorage)({
         archiveThread: (threadId, quiesce) =>
           (input.runArchiveQuiesce === false ? Effect.void : (quiesce ?? Effect.void)).pipe(
             Effect.mapError(
               (cause) =>
-                new ThreadColdStorageError({
+                new ThreadColdStorage.ThreadColdStorageError({
                   operation: "archive",
                   threadId,
                   cause,
@@ -134,7 +148,7 @@ function testReactorLayer(input: {
             ),
             Effect.andThen(input.archiveThread(threadId)),
           ),
-        deleteThread: () => Effect.void,
+        deleteThread: input.deleteThread ?? (() => Effect.void),
         compactLegacyStorage: Effect.void,
         listPendingArchiveThreadIds: Effect.succeed(input.pendingArchives ?? []),
         listPendingDeleteThreadIds: Effect.succeed([]),
@@ -173,6 +187,44 @@ describe("logCleanupCauseUnlessInterrupted", () => {
     }
   });
 });
+
+effectIt.effect("does not delete while provider quiescence is failing", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-delete-provider-still-active");
+    const stopAttempted = yield* Deferred.make<void>();
+    const deleteCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () =>
+        Deferred.succeed(stopAttempted, undefined).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderValidationError({
+                operation: "ProviderService.stopSession",
+                issue: "provider is still active",
+              }),
+            ),
+          ),
+        ),
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      archiveThread: () => Effect.void,
+      deleteThread: () => Ref.update(deleteCalls, (count) => count + 1),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, deletedEvent(threadId));
+      yield* Deferred.await(stopAttempted);
+      yield* reactor.drain;
+
+      expect(yield* Ref.get(deleteCalls)).toBe(0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
 
 effectIt.effect("releases a lifecycle job reservation when enqueueing is interrupted", () =>
   Effect.gen(function* () {
@@ -469,7 +521,7 @@ effectIt.effect("retries a failed durable archive job after a delay", () =>
               ? Deferred.succeed(firstAttempt, undefined).pipe(
                   Effect.andThen(
                     Effect.fail(
-                      new ThreadColdStorageError({
+                      new ThreadColdStorage.ThreadColdStorageError({
                         operation: "archive",
                         threadId,
                         cause: new Error("temporary archive failure"),
@@ -514,7 +566,7 @@ effectIt.effect("coalesces concurrent lifecycle failures into one delayed rescan
           Effect.flatMap((attempt) => {
             if (attempt <= 2) {
               return Effect.fail(
-                new ThreadColdStorageError({
+                new ThreadColdStorage.ThreadColdStorageError({
                   operation: "archive",
                   threadId,
                   cause: new Error("temporary archive failure"),
@@ -575,7 +627,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
         Ref.update(previewCloseCalls, (calls) => [...calls, closedThreadId]),
     });
     const loggerLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
-    const coldStorageLayer = ThreadColdStorageLive.pipe(
+    const coldStorageLayer = ThreadColdStorage.layer.pipe(
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-force-delete-cold-" }),
@@ -604,7 +656,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
 
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const reactor = yield* ThreadDeletionReactor;
 
       yield* sql`

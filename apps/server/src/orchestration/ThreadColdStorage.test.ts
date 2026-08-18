@@ -10,11 +10,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import {
-  ThreadColdStorage,
-  ThreadColdStorageError,
-  layer as ThreadColdStorageLive,
-} from "./ThreadColdStorage.ts";
+import * as ThreadColdStorage from "./ThreadColdStorage.ts";
 
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -37,7 +33,7 @@ const insertArchivedThread = Effect.fn("insertArchivedThreadTestFixture")(functi
 });
 
 const layer = it.layer(
-  ThreadColdStorageLive.pipe(
+  ThreadColdStorage.layer.pipe(
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-cold-storage-" })),
     Layer.provideMerge(NodeServices.layer),
@@ -47,7 +43,7 @@ const layer = it.layer(
 layer("ThreadColdStorage", (it) => {
   it.effect("normalizes typed quiesce failures at the archive boundary", () =>
     Effect.gen(function* () {
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-quiesce-failure");
       const quiesceFailure = { _tag: "QuiesceFailure" } as const;
 
@@ -61,7 +57,7 @@ layer("ThreadColdStorage", (it) => {
       assert.strictEqual(archiveFailure.threadId, threadId);
       assert.strictEqual(archiveFailure.cause, quiesceFailure);
 
-      const normalizedFailure = new ThreadColdStorageError({
+      const normalizedFailure = new ThreadColdStorage.ThreadColdStorageError({
         operation: "archive",
         threadId,
         cause: quiesceFailure,
@@ -71,7 +67,7 @@ layer("ThreadColdStorage", (it) => {
       );
       assert.strictEqual(repeatedFailure, normalizedFailure);
 
-      const differentlyAttributedFailure = new ThreadColdStorageError({
+      const differentlyAttributedFailure = new ThreadColdStorage.ThreadColdStorageError({
         operation: "restore",
         threadId,
         cause: quiesceFailure,
@@ -88,7 +84,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("archives post-quiescence state while a running thread awaits user input", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-running-pending-user-input");
 
       yield* insertArchivedThread(threadId, "Running thread awaiting user input");
@@ -216,7 +212,7 @@ layer("ThreadColdStorage", (it) => {
 
   it.effect("discovers archived shells before a lifecycle manifest exists", () =>
     Effect.gen(function* () {
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-archive-queue-fallback");
 
       yield* insertArchivedThread(threadId, "Archive queue fallback thread");
@@ -228,7 +224,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("discovers deleted shells before a cleanup queue entry exists", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-delete-queue-fallback");
 
       yield* insertArchivedThread(threadId, "Delete queue fallback thread");
@@ -245,7 +241,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("reserves hot archived rows while an unarchive command is pending", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-unarchive-hot-reservation");
 
       yield* insertArchivedThread(threadId, "Pending hot unarchive");
@@ -318,7 +314,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("reports unknown archive chunk kinds with structured validation detail", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-unknown-archive-chunk-kind");
 
       yield* insertArchivedThread(threadId, "Unknown archive chunk kind");
@@ -351,7 +347,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("re-archives an orphaned restore reservation discovered after restart", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-orphaned-restore-reservation");
 
       yield* insertArchivedThread(threadId, "Orphaned restore reservation");
@@ -396,7 +392,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("re-archives hot rows after restored-bundle finalization fails", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-rearchive-stale-restored");
 
       yield* insertArchivedThread(threadId, "Re-archive stale restore");
@@ -451,7 +447,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("does not replay a restored bundle over active thread data", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -509,7 +505,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("keeps command receipts hot while conversation data is cold", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-hot-command-receipt");
 
       yield* insertArchivedThread(threadId, "Hot command receipt");
@@ -552,7 +548,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("compresses conversation data, destroys logs, restores content, and hard-deletes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -696,7 +692,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("ignores traversal attachment entries while restoring", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -745,7 +741,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("keeps cold SQL data authoritative when attachment restore fails", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -796,7 +792,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("round-trips binary SQL values", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-binary");
       const diffBytes = new Uint8Array([0, 1, 2, 127, 128, 255]);
 
@@ -821,7 +817,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("retries archive cleanup without rebuilding deleted hot data", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -867,7 +863,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("finishes cleanup-pending archives after their shell is removed", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -898,7 +894,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("archives only attachments owned by colliding thread segments", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -976,7 +972,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("restores cleanup-pending bundles before unarchiving", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-cleanup-pending-restore");
 
       yield* insertArchivedThread(threadId, "Cleanup-pending restore thread");
@@ -1013,7 +1009,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("abandons an incomplete archive after the shell is unarchived", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const threadId = ThreadId.make("thread-unarchived-before-archive");
 
       yield* insertArchivedThread(threadId, "Unarchived before archive thread");
@@ -1060,7 +1056,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("retries attachment cleanup after directory I/O errors", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const threadId = ThreadId.make("thread-attachment-directory-error");
@@ -1093,7 +1089,7 @@ layer("ThreadColdStorage", (it) => {
   it.effect("keeps the delete cleanup queue entry until external cleanup succeeds", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const storage = yield* ThreadColdStorage;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

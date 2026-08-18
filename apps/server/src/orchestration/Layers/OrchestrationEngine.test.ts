@@ -41,10 +41,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
-import {
-  ThreadColdStorage,
-  noOpLayer as ThreadColdStorageNoOpLayer,
-} from "../ThreadColdStorage.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -52,7 +49,7 @@ const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
 const OrchestrationEngineNoColdStorageLive = OrchestrationEngineLive.pipe(
-  Layer.provide(ThreadColdStorageNoOpLayer),
+  Layer.provide(ThreadColdStorage.noOpLayer),
 );
 
 async function createOrchestrationSystem() {
@@ -946,7 +943,7 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
     };
-    const coldStorage: ThreadColdStorage["Service"] = {
+    const coldStorage: ThreadColdStorage.ThreadColdStorage["Service"] = {
       archiveThread: () => Effect.void,
       restoreTree: () => Effect.succeed(restoreOnUnarchive),
       rollbackRestoreTree: (threadId) =>
@@ -978,7 +975,7 @@ describe("OrchestrationEngine", () => {
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
-      Layer.provide(Layer.succeed(ThreadColdStorage, coldStorage)),
+      Layer.provide(Layer.succeed(ThreadColdStorage.ThreadColdStorage, coldStorage)),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
