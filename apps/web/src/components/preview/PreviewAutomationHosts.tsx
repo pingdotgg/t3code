@@ -71,6 +71,7 @@ import {
   resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
+import { resolveHostWaitBudgetMs } from "./previewAutomationHostBudget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
 
@@ -92,7 +93,10 @@ const waitForDesktopOverlay = async (
   operation: PreviewAutomationRequest["operation"],
   timeoutMs: number,
 ): Promise<void> => {
-  const deadline = Date.now() + timeoutMs;
+  // Expire before the broker does, so an unavailable overlay surfaces as
+  // PreviewAutomationOverlayTimeoutError rather than a bare broker timeout.
+  const waitBudgetMs = resolveHostWaitBudgetMs(timeoutMs);
+  const deadline = Date.now() + waitBudgetMs;
   while (Date.now() <= deadline) {
     const state = assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
       operation,
@@ -108,7 +112,7 @@ const waitForDesktopOverlay = async (
     requestId,
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
-    timeoutMs,
+    timeoutMs: waitBudgetMs,
   });
 };
 
