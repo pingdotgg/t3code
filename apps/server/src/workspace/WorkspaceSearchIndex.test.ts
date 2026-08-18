@@ -1,5 +1,6 @@
 import {
   FileFinder,
+  type DirItem,
   type FileItem,
   type GrepCursor,
   type GrepOptions,
@@ -35,6 +36,15 @@ function mixedFileItem(relativePath: string): MixedItem {
   return { type: "file", item: fileItem(relativePath) };
 }
 
+function mixedDirectoryItem(relativePath: string): MixedItem {
+  const item: DirItem = {
+    relativePath,
+    dirName: relativePath.slice(relativePath.lastIndexOf("/") + 1),
+    maxAccessFrecency: 0,
+  };
+  return { type: "directory", item };
+}
+
 it.effect("deduplicates paths using their wire-normalized value", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -55,11 +65,40 @@ it.effect("deduplicates paths using their wire-normalized value", () =>
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
       const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
-      const result = yield* searchIndex.list();
+      const listResult = yield* searchIndex.list();
+      const searchResult = yield* searchIndex.search("", 10);
 
-      expect(result.entries.filter((entry) => entry.path === "pkg/notes.txt")).toEqual([
+      expect(listResult.entries.filter((entry) => entry.path === "pkg/notes.txt")).toEqual([
         { kind: "file", path: "pkg/notes.txt" },
       ]);
+      expect(searchResult.entries).toEqual([{ kind: "file", path: "pkg/notes.txt" }]);
+    }),
+  ),
+);
+
+it.effect("trims wire whitespace before removing directory separators", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const items = [mixedDirectoryItem("pkg/"), mixedFileItem("pkg/ ")];
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        mixedSearch: vi.fn(() => ({
+          ok: true as const,
+          value: {
+            items,
+            scores: [],
+            totalMatched: items.length,
+            totalFiles: 1,
+          },
+        })),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const result = yield* searchIndex.search("", 10);
+
+      expect(result.entries).toEqual([{ kind: "directory", path: "pkg" }]);
     }),
   ),
 );
