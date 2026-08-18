@@ -8,6 +8,8 @@ import {
   Globe2,
   Plus,
   TerminalSquare,
+  Volume2,
+  VolumeOff,
   X,
 } from "lucide-react";
 import {
@@ -37,6 +39,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
+import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 
 interface RightPanelTabsProps {
@@ -52,6 +55,12 @@ interface RightPanelTabsProps {
   pendingSurfaceIds: ReadonlySet<string>;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
+  /**
+   * Maps a server session tab id to the desktop runtime tab id the Electron
+   * preview manager is keyed by. Session ids are only unique within one server
+   * process, so desktop operations must not be addressed with them.
+   */
+  previewRuntimeTabId?: ((tabId: string) => string) | undefined;
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -116,7 +125,53 @@ const SURFACE_UNAVAILABLE_HINTS = {
   agents: "Available from a thread.",
 } as const;
 
-type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
+type TabContextMenuAction =
+  | "copy-path"
+  | "toggle-mute"
+  | "close"
+  | "close-others"
+  | "close-to-right"
+  | "close-all";
+
+/**
+ * Desktop preview tab backing a surface, or null for non-preview surfaces, the
+ * "new browser tab" placeholder, and the web build where no desktop tab exists.
+ */
+function previewTabIdOf(
+  surface: RightPanelSurface,
+  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
+): string | null {
+  if (surface.kind !== "preview" || !surface.resourceId) return null;
+  return sessions[surface.resourceId]?.tabId ?? null;
+}
+
+/**
+ * Label and enabled state for a preview tab's mute menu entry.
+ * Stays disabled until desktop overlay state arrives: a server session id can
+ * resolve while the preview manager's createTab is still in flight, and muting
+ * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
+ */
+export function tabMuteMenuItem(input: {
+  overlay: DesktopPreviewOverlay | null;
+  canResolveRuntimeTabId: boolean;
+}): { label: string; disabled: boolean } {
+  const muted = input.overlay?.audioMuted ?? false;
+  return {
+    label: muted ? "Unmute tab" : "Mute tab",
+    disabled: input.overlay === null || !input.canResolveRuntimeTabId,
+  };
+}
+
+type TabAudioState = "none" | "audible" | "muted";
+
+/**
+ * A muted tab that is not making sound shows nothing: mute is armed silently,
+ * and the indicator only appears once there is audio to speak of.
+ */
+function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
+  if (!overlay?.audible) return "none";
+  return overlay.audioMuted ? "muted" : "audible";
+}
 
 function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
   return (
@@ -534,6 +589,25 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (surface.kind === "file") {
         items.push({ id: "copy-path", label: "Copy path" });
       }
+      const menuPreviewTabId = previewTabIdOf(surface, props.previewSessions);
+      // Desktop overlay state only arrives once the preview manager has created
+      // the tab. A server session id alone can still be ahead of that, and
+      // muting then fails with PreviewTabNotFoundError that nobody surfaces.
+      const menuOverlay = menuPreviewTabId
+        ? (props.desktopByTabId[menuPreviewTabId] ?? null)
+        : null;
+      const menuMuted = menuOverlay?.audioMuted ?? false;
+      if (surface.kind === "preview") {
+        // Not gated on audibility: silencing a quiet tab ahead of time is the
+        // point, so the item is offered whenever the tab is mutable at all.
+        items.push({
+          id: "toggle-mute",
+          ...tabMuteMenuItem({
+            overlay: menuOverlay,
+            canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
+          }),
+        });
+      }
       items.push(
         { id: "close", label: "Close" },
         {
@@ -558,6 +632,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         case "copy-path":
           if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
           break;
+        case "toggle-mute": {
+          // menuOverlay repeats the disabled gate above: the desktop tab must
+          // exist before it can be addressed, however the menu was dismissed.
+          const runtimeTabId =
+            menuPreviewTabId && menuOverlay
+              ? (props.previewRuntimeTabId?.(menuPreviewTabId) ?? null)
+              : null;
+          if (runtimeTabId) {
+            void previewBridge?.setAudioMuted(runtimeTabId, !menuMuted).catch(() => undefined);
+          }
+          break;
+        }
         case "close":
           props.onCloseSurface(surface);
           break;
@@ -626,6 +712,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const previewTabId = previewTabIdOf(surface, props.previewSessions);
+              // Desktop state is keyed by the session id, but desktop actions
+              // must be addressed with the runtime id.
+              const audio = tabAudioState(
+                previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
+              );
+              const audioRuntimeTabId = previewTabId
+                ? (props.previewRuntimeTabId?.(previewTabId) ?? null)
+                : null;
               return (
                 <div
                   key={surface.id}
@@ -663,6 +758,34 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     </span>
                     <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
                   </button>
+                  {audio === "none" || !audioRuntimeTabId ? null : (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+                            aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                            onClick={(event) => {
+                              // Sibling of the close button, inside a tab that
+                              // activates on click: keep this to the toggle.
+                              event.stopPropagation();
+                              void previewBridge
+                                ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
+                                .catch(() => undefined);
+                            }}
+                          >
+                            {audio === "muted" ? (
+                              <VolumeOff className="size-3" />
+                            ) : (
+                              <Volume2 className="size-3" />
+                            )}
+                          </button>
+                        }
+                      />
+                      <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+                    </Tooltip>
+                  )}
                   <Tooltip>
                     <TooltipTrigger
                       render={
