@@ -4,11 +4,69 @@
 > fork and is not proposed for upstream. It lives under `docs/fork/` so it stays
 > out of `docs/internals/`, which upstream owns.
 
-## Status
+## Status: not recommended
 
-Design only. Nothing here is implemented. Stage 1 (run `agy` in T3 Code's
-existing thread terminal, same machine as the server) needs no code and is the
-current recommended path.
+**An earlier revision of this document claimed T3 Code has no cross-host
+terminal transport. That was wrong.** T3 already solves the cross-host case,
+and this adapter is not needed to run `agy` on another machine.
+
+The design below is retained because the constraint analysis is accurate and
+would matter if the narrow remaining case (see [Does anything survive?](#does-anything-survive))
+is ever worth building. Nothing here is implemented.
+
+## What T3 already does
+
+T3's remote model puts remoteness at the **connection layer**, never by
+splitting the runtime ([`docs/internals/remote.md`](../internals/remote.md)):
+
+```
+one T3 server per machine = one ExecutionEnvironment
+client keeps a list of known environments and connects to whichever it wants
+```
+
+A client — including the phone — holds many saved environments and talks
+directly to each server. Access methods already shipped: direct LAN, bearer
+pairing, Tailscale serve, T3 Connect relay tunnels, and desktop-managed SSH.
+
+So for `agy` on machine B, controlled from a phone:
+
+1. Run a T3 server on B. The desktop app will even do this for you over SSH —
+   it "probes the host, starts or reuses a remote T3 server, opens a local port
+   forward, and saves the environment"
+   ([remote access](../user/remote-access.md), Option 3).
+2. Pair the phone to that environment. Tailscale pairing goes through the
+   ordinary bearer path.
+3. Open a terminal in a thread on B and type `agy`.
+
+Zero code, on the same machine or a different one. Terminal scrollback is
+persisted to disk and replayed on reattach, so this survives disconnects.
+
+### Why "spawn the broker from a T3 terminal" doesn't rescue the design
+
+It is circular. T3's terminal spawns on **the machine its own server runs on**.
+Using it to start a broker starts that broker on machine A — which does nothing
+to reach machine B. To start the broker on B you need execution on B, and the
+only ways to get it are a T3 server on B (which makes the broker redundant) or
+an out-of-band shell (which is the thing the broker was meant to replace).
+
+## Does anything survive?
+
+Transport was the argument for this adapter, and T3 wins it. Two narrower
+arguments remain, and neither is about reach:
+
+**Privilege surface.** A T3 server on B grants a full login shell, filesystem,
+git, and provider access. The broker with `BROKER_TERM=1` and
+`BROKER_TERM_CMDS=agy` grants exactly one PTY running one named binary, with no
+shell. If B is a machine where you want `agy` reachable but do *not* want a
+general-purpose remote development server, that difference is real — and it is
+a security argument, not a capability one.
+
+**The supervision workflow.** Per-prompt permission review with an audit trail
+has no T3 equivalent. That is a distinct product idea and does not need this
+adapter to exist.
+
+Neither justifies the work today. Revisit only if the privilege-surface
+argument becomes concrete.
 
 ## Sources
 
@@ -17,35 +75,15 @@ be published alongside the fork:
 
 - T3 Code's PTY contract — `apps/server/src/terminal/PtyAdapter.ts` (this repo)
 - The broker wire protocol — [`docs/protocol.md`][protocol] §Terminal (`/term`)
-  in the public [SciREPL-MCP][mcp] repository, vendored at
-  `.repos/scirepl-mcp` on the `claude/scirepl-mcp-submodule-gs2ifz` branch
+  in the public [SciREPL-MCP][mcp] repository
 
-No part of this design derives from SciREPL Pro. The adapter implements T3
+No part of this design derives from SciREPL Pro. The adapter would implement T3
 Code's own interface against the published broker protocol; it does not port
 the Pro client.
 
-## Problem
+---
 
-Stage 1 covers the common case: `agy` on the same machine as the T3 server,
-typed into a thread terminal. It works today, survives disconnects, and replays
-scrollback from disk.
-
-It does not cover `agy` running on a **different machine** from the T3 server.
-T3 Code has no cross-host terminal or provider transport at all. The SciREPL
-broker already solves exactly that shape — it spawns a PTY on its own host and
-relays it over a WebSocket — so the gap is a transport adapter, not a feature.
-
-Target topology:
-
-```
-phone ──► T3 server (machine A) ──► broker (machine B) ──► PTY: agy, on B
-          [T3 WS/RPC]              [broker /term WS]
-```
-
-Reverse-worker mode (`/worker`) is explicitly **out of scope**. It exists to
-relay to a third host beyond the broker, and this design does not need that
-indirection: the broker's ordinary `/term` already spawns the PTY on the broker
-host, which is where `agy` runs.
+# Design, if it were built
 
 ## The seam
 
@@ -67,8 +105,7 @@ interface PtyProcess {
 ```
 
 Everything above it — `TerminalManager`, the wire contract, web/desktop/mobile
-UI, disk-persisted scrollback — is transport-agnostic and is reused unchanged.
-A third implementation is the entire feature.
+UI, disk-persisted scrollback — is transport-agnostic and reused unchanged.
 
 ### Call mapping
 
@@ -82,14 +119,17 @@ A third implementation is the entire feature.
 | `onExit(cb)` | `{type:"term", kind:"exit"}` |
 
 Message shapes are quoted from [`docs/protocol.md`][protocol] §Terminal.
+`NodePtyAdapter` (172 lines) is the structural template.
 
-`NodePtyAdapter` (172 lines) is the structural template: a small class wrapping
-a handle, plus an `Effect.fn` factory returning `PtyAdapter.PtyAdapter.of({ spawn })`.
+Reverse-worker mode (`/worker`) is out of scope: it relays to a third host
+beyond the broker, and the broker's ordinary `/term` already spawns the PTY on
+the broker host, which is where `agy` runs.
 
-## Constraints that shape the design
+## Constraints
 
-These are the parts that are *not* a mechanical translation. Each one is a real
-mismatch between the two models.
+These are the parts that are not a mechanical translation. Each is a real
+mismatch between the two models, and they are the reason this adapter is more
+than an afternoon.
 
 ### 1. The adapter is resolved once, not per spawn
 
@@ -97,14 +137,11 @@ mismatch between the two models.
 (`Manager.ts:1113`) and resolves it once (`Manager.ts:1134`). There is no
 per-session adapter selection.
 
-**Therefore:** do not register `BrokerPtyAdapter` as the service. Register a
-single **delegating** adapter that inspects `PtySpawnInput` — which carries
-`shell`, `args`, `cwd`, `cols`, `rows`, `env` — and routes each spawn to either
-the local node-pty path or the broker path. `Manager.ts` needs no changes.
-
-The routing key should be explicit rather than inferred. An `env` marker set
-when the terminal is opened is the least surprising option, since `env` already
-flows end-to-end through `TerminalOpenInput`.
+**Therefore:** register a single **delegating** adapter that inspects
+`PtySpawnInput` — which carries `shell`, `args`, `cwd`, `cols`, `rows`, `env` —
+and routes each spawn to either the local node-pty path or the broker path. An
+`env` marker is the least surprising routing key, since `env` already flows
+end-to-end through `TerminalOpenInput`. `Manager.ts` needs no changes.
 
 ### 2. The broker hosts exactly one PTY, globally
 
@@ -115,50 +152,39 @@ PTY exists **reattaches to it** rather than spawning a second one, replying
 T3 supports many terminals across many threads. These models do not agree.
 
 **Therefore:** treat one broker as capacity for exactly one T3 terminal. A
-second broker-routed terminal must fail cleanly at open time with an
-explanatory error — never silently adopt another terminal's session, which
-would cross-wire two threads' output. This is the single most important
-correctness constraint in this design.
+second broker-routed terminal must fail cleanly at open time — never silently
+adopt another terminal's session, which would cross-wire two threads' output.
+This is the most important correctness constraint here.
 
 ### 3. `started` carries no pid
 
 The broker replies `{kind:"started", cmd}`; the pid is logged on the broker host
 but never sent. T3's `PtyProcess.pid` is a required `number`.
 
-**Therefore:** synthesize a stable negative pid per broker session so it cannot
-collide with a real local pid. Consequence to accept: `registerTerminalProcesses`
-feeds `PortScanner`, so **port discovery and preview detection do not work for
-broker terminals**. That is a real feature loss, not a rough edge — it should be
-stated in the UI rather than silently degraded.
+**Therefore:** synthesize a stable negative pid so it cannot collide with a real
+local pid. Consequence to accept: `registerTerminalProcesses` feeds
+`PortScanner`, so **port discovery and preview detection do not work for broker
+terminals**. A real feature loss, and it should be stated in the UI rather than
+silently degraded.
 
 ### 4. `cwd` is the broker's, not T3's
 
 The broker spawns with `cwd: AGENT_CWD`, its own configured workspace. T3's
-per-terminal `cwd` has no effect.
-
-**Therefore:** the working directory is broker configuration, not T3 state. The
-UI must not imply otherwise — showing a local path for a remote terminal would
-be a lie. Surface the broker's advertised workspace instead, or no path at all.
+per-terminal `cwd` has no effect. The UI must not show a local path for a remote
+terminal.
 
 ### 5. `shell` is a path; `cmd` is an allowlist label
 
 T3 passes a resolved shell path (`env.SHELL ?? "bash"`). The broker takes a
-label, validates it against `BROKER_TERM_CMDS`, and rejects anything else with
-`command not allowed: … (allowed: …)`. The `welcome` event advertises the
-permitted set as `cmds`.
+label, validates it against `BROKER_TERM_CMDS`, and rejects anything else. The
+`welcome` event advertises the permitted set as `cmds`.
 
-**Therefore:** the adapter maps to a label, never a path. Read `cmds` from
-`welcome` and fail the spawn with a clear `PtySpawnError` when the wanted label
-is absent — the allowlist is the broker owner's security boundary and the
-adapter must respect it rather than route around it.
-
-For this fork's purpose the label is `agy`. Keeping `shell` **out** of
-`BROKER_TERM_CMDS` is the deployment's decision and is what makes the remote
-surface meaningfully narrower than an ssh session.
+**Therefore:** map to a label, never a path. Read `cmds` from `welcome` and fail
+with a clear `PtySpawnError` when the wanted label is absent. The allowlist is
+the broker owner's security boundary; the adapter respects it rather than
+routing around it. This constraint is also the privilege-surface argument above.
 
 ### 6. Grace window versus T3's retention
-
-The two layers disagree about how long a detached session lives:
 
 | | Detached session lifetime |
 | --- | --- |
@@ -168,55 +194,34 @@ The two layers disagree about how long a detached session lives:
 T3 is the more durable of the two. After the grace window the broker's PTY is
 gone while T3 still believes the session exists.
 
-**Therefore:** a `start` that returns `started` *without* `reattached: true`
-when T3 expected a live session means the process was reaped. Surface that as an
-exit, so the UI shows a dead terminal instead of a live one that silently lost
-its history. Raising `BROKER_TERM_GRACE_MS` narrows the window but cannot close
-it, and must not be treated as a fix.
+**Therefore:** a `start` returning `started` *without* `reattached: true` when
+T3 expected a live session means the process was reaped. Surface that as an exit
+so the UI shows a dead terminal rather than a live one that lost its history.
+Raising `BROKER_TERM_GRACE_MS` narrows the window but cannot close it.
 
 ### 7. Spawn is a round trip
 
-Local spawn is effectively synchronous. The broker path requires connect →
-`hello` → `start` → `started` before a `PtyProcess` can be returned.
+Local spawn is effectively synchronous; the broker path needs connect → `hello`
+→ `start` → `started` before returning a `PtyProcess`.
 
 **Therefore:** `spawn` awaits `started` and maps `{kind:"error"}` and connect
-failure onto `PtySpawnError` (which already carries `adapter`, `shell`, `cause`).
-It needs a timeout; an unreachable broker must fail the open rather than hang
-it. `exit` carries `code` only, so `PtyExitEvent.signal` is always `null`.
+failure onto `PtySpawnError`. It needs a timeout — an unreachable broker must
+fail the open rather than hang it. `exit` carries `code` only, so
+`PtyExitEvent.signal` is always `null`.
 
-## What this does not buy
+## What this would not buy
 
-A terminal is a terminal. There are no approval cards, no per-turn
-checkpointing, and no thread history — `agy`'s permission prompts are answered
-by typing into the TUI, including the ctrl+g expansion needed to read truncated
-commands before approving them.
+A terminal is a terminal: no approval cards, no per-turn checkpointing, no
+thread history. `agy`'s permission prompts are answered by typing into the TUI,
+including the ctrl+g expansion needed to read truncated commands before
+approving them.
 
-Those require structured output from `agy`, which it does not emit: the broker
+Those need structured output from `agy`, which it does not emit — the broker
 classifies it `format: 'text'` because there is nothing to parse. The blocker is
 [agy's own ACP/JSON-RPC feature request][acp], not the broker and not T3. If
-`agy` ever gains a structured mode, the better integration is a native T3
-provider driver modelled on `GrokDriver` + `GrokAcpSupport`, and this adapter
-becomes redundant rather than a foundation.
-
-## Open questions
-
-1. How does a user mark a terminal as broker-routed? Project setting, per-open
-   choice, or a dedicated environment concept.
-2. Where do the broker URL and token live? They are per-environment secrets and
-   must not land in thread state.
-3. Should the single-PTY limit be enforced at open time in the UI, or surfaced
-   as a spawn error? Failing early is friendlier but needs the capacity check
-   somewhere the client can reach.
-
-## Implementation sketch
-
-One new file, `apps/server/src/terminal/BrokerPtyAdapter.ts`, plus a delegating
-adapter and its wiring. Estimated size comparable to `NodePtyAdapter` (172
-lines). No changes to `Manager.ts`, the terminal contract, or any client.
-
-Tests should follow `NodePtyAdapter.test.ts` and drive a fake broker socket:
-allowlist rejection, reattach detection, grace-window expiry surfaced as exit,
-and the second-terminal refusal from constraint 2.
+`agy` gains a structured mode, the right integration is a native T3 provider
+driver modelled on `GrokDriver` + `GrokAcpSupport`, and this adapter becomes
+redundant rather than a foundation.
 
 [protocol]: https://github.com/s243a/SciREPL-MCP/blob/main/docs/protocol.md
 [mcp]: https://github.com/s243a/SciREPL-MCP
