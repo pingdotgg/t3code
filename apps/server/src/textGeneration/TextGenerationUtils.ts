@@ -11,10 +11,12 @@ const MAX_TITLE_UNWRAP_DEPTH = 5;
  * `{"title": "Fix the flaky test"}` instead of `Fix the flaky test`. Detect
  * that shape and unwrap the inner value, recursing to handle double-wrapping.
  *
- * When the object has a single string value we take it regardless of the key
- * name (models label it `title`, `name`, `summary`, ...). Only when several
- * keys make that ambiguous do we prefer a string `title`. Anything that is not
- * a JSON object with such a value is returned as-is.
+ * When the object has exactly one string value we take it regardless of the
+ * key name (models label it `title`, `name`, `summary`, ...) and regardless of
+ * how many non-string fields sit alongside it (`confidence`, `reasoning`, ...).
+ * Only when several string values make the choice ambiguous do we prefer a
+ * string `title`. Anything that is not a JSON object with such a value is
+ * returned as-is.
  */
 export function unwrapJsonEnvelopeTitle(raw: string): string {
   let current = raw.trim();

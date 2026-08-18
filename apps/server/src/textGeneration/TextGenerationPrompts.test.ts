@@ -158,6 +158,15 @@ describe("sanitizeThreadTitle", () => {
     );
   });
 
+  it("extracts the sole string field even when other non-string fields exist", () => {
+    expect(
+      sanitizeThreadTitle('{"name": "Add dark mode toggle", "priority": 2, "done": false}'),
+    ).toBe("Add dark mode toggle");
+    expect(sanitizeThreadTitle('{"confidence": 0.9, "title": "Fix the flaky login test"}')).toBe(
+      "Fix the flaky login test",
+    );
+  });
+
   it("prefers the title key when several string values are ambiguous", () => {
     expect(
       sanitizeThreadTitle('{"summary": "restate the request", "title": "Real thread name"}'),
