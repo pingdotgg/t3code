@@ -1,5 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
+import { formatShortcutLabel } from "./keybindings";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Inline Lucide-style icon paths (stroke-based, viewBox 0 0 24 24, strokeWidth 2).
@@ -125,6 +127,31 @@ export function matchesContextMenuAccelerator(
     event.shiftKey === modifiers.has("shift") &&
     event.altKey === (modifiers.has("alt") || modifiers.has("option")) &&
     event.key.toLowerCase() === key
+  );
+}
+
+export function formatContextMenuAcceleratorLabel(
+  accelerator: string,
+  platform = navigator.platform,
+): string {
+  const parts = accelerator
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const key = parts.pop();
+  if (!key) return accelerator;
+
+  const modifiers = new Set(parts.map((part) => part.toLowerCase()));
+  return formatShortcutLabel(
+    {
+      key,
+      metaKey: modifiers.has("cmd") || modifiers.has("command"),
+      ctrlKey: modifiers.has("ctrl") || modifiers.has("control"),
+      shiftKey: modifiers.has("shift"),
+      altKey: modifiers.has("alt") || modifiers.has("option"),
+      modKey: modifiers.has("cmdorctrl") || modifiers.has("commandorcontrol"),
+    },
+    platform,
   );
 }
 
@@ -300,11 +327,12 @@ export function showContextMenuFallback<T extends string>(
         button.appendChild(label);
 
         if (item.accelerator) {
-          const accelerator = document.createElement("span");
-          accelerator.className = "ms-auto shrink-0 text-xs text-muted-foreground";
+          const accelerator = document.createElement("kbd");
+          accelerator.className =
+            "ms-auto shrink-0 font-medium font-sans text-secondary-label text-xs tracking-widest";
           accelerator.style.cssText =
-            "margin-inline-start:auto;color:var(--muted-foreground);font-size:0.75rem;white-space:nowrap;";
-          accelerator.textContent = item.accelerator;
+            "margin-inline-start:auto;color:var(--secondary-label);font-family:var(--font-sans,system-ui,sans-serif);font-weight:500;font-size:0.75rem;letter-spacing:0.1em;white-space:nowrap;";
+          accelerator.textContent = formatContextMenuAcceleratorLabel(item.accelerator);
           button.appendChild(accelerator);
         }
 

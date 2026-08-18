@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
+import {
+  dismissContextMenu,
+  formatContextMenuAcceleratorLabel,
+  showContextMenuFallback,
+} from "./contextMenuFallback";
 
 type FakeListener = (event: FakeDomEvent) => void;
 
@@ -195,6 +199,22 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
+  it("formats and styles accelerator labels like shared menu shortcuts", async () => {
+    expect(formatContextMenuAcceleratorLabel("Command+Shift+C", "MacIntel")).toBe("⇧⌘C");
+    expect(formatContextMenuAcceleratorLabel("Ctrl+Shift+C", "Linux x86_64")).toBe("Ctrl+Shift+C");
+
+    const selectionPromise = showContextMenuFallback([
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
+    ]);
+    const shortcut = (document as unknown as FakeDocument).querySelectorAll("kbd")[0];
+
+    expect(shortcut?.textContent).toBe("Ctrl+Shift+C");
+    expect(shortcut?.className).toContain("text-secondary-label");
+
+    dismissContextMenu();
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
   it("resolves a clicked flat menu item", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename" },

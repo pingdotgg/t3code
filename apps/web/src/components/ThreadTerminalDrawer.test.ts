@@ -132,5 +132,10 @@ describe("resolveTerminalSelectionActionPosition", () => {
       label: "Copy",
       accelerator: "Command+C",
     });
+    expect(terminalSelectionMenuItems("Win32")).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Ctrl+C",
+    });
   });
 });

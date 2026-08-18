@@ -34,7 +34,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn, isLinuxPlatform, isMacPlatform } from "~/lib/utils";
+import { cn, isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -268,6 +268,11 @@ export function terminalSelectionLineRange(position: {
 
 export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
 
+function terminalCopyAccelerator(platform: string): string {
+  if (isMacPlatform(platform)) return "Command+C";
+  return isWindowsPlatform(platform) ? "Ctrl+C" : "Ctrl+Shift+C";
+}
+
 /** Post-selection popup: just the two selection actions, always enabled. */
 export function terminalSelectionMenuItems(
   platform = navigator.platform,
@@ -277,7 +282,7 @@ export function terminalSelectionMenuItems(
     {
       id: "copy",
       label: "Copy",
-      accelerator: isMacPlatform(platform) ? "Command+C" : "Ctrl+Shift+C",
+      accelerator: terminalCopyAccelerator(platform),
     },
   ];
 }
