@@ -7,6 +7,7 @@ import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contr
 import { primaryServerProvidersAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
+import { useDeferredUnmountCleanup } from "../hooks/useDeferredUnmountCleanup";
 import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
 import {
   canOneClickUpdateProviderCandidate,
@@ -123,15 +124,13 @@ export function ProviderUpdatePrimaryNotification() {
 
   // If this flow unmounts (e.g. a WSL backend appears and we switch to the
   // per-environment popover), close any prompt it owns so it does not linger.
-  useEffect(() => {
-    return () => {
-      const activeToast = activeToastRef.current;
-      if (activeToast) {
-        toastManager.close(activeToast.toastId);
-        activeToastRef.current = null;
-      }
-    };
-  }, []);
+  useDeferredUnmountCleanup(() => {
+    const activeToast = activeToastRef.current;
+    if (activeToast) {
+      toastManager.close(activeToast.toastId);
+      activeToastRef.current = null;
+    }
+  });
 
   const updateProviders = useMemo(() => collectProviderUpdateCandidates(providers), [providers]);
   const notificationKey = useMemo(

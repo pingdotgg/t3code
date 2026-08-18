@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useEnvironments } from "~/state/environments";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { useDeferredUnmountCleanup } from "~/hooks/useDeferredUnmountCleanup";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
 import { ProviderUpdateEnvironmentRows } from "./ProviderUpdateEnvironmentRows";
 import { useLocalEnvironmentUpdateGroups } from "./ProviderUpdateLaunchNotification.environments";
@@ -73,14 +74,12 @@ function ProviderUpdateEnvironmentsNotification() {
 
   // Close our prompt if this flow unmounts (e.g. the WSL backend is disabled
   // and we fall back to the single-prompt flow).
-  useEffect(() => {
-    return () => {
-      if (activeToastRef.current !== null) {
-        toastManager.close(activeToastRef.current.toastId);
-        activeToastRef.current = null;
-      }
-    };
-  }, []);
+  useDeferredUnmountCleanup(() => {
+    if (activeToastRef.current !== null) {
+      toastManager.close(activeToastRef.current.toastId);
+      activeToastRef.current = null;
+    }
+  });
 
   const updateGroups = useMemo(() => environmentGroupsWithUpdates(groups), [groups]);
   const notificationKey = useMemo(() => localEnvironmentUpdateNotificationKey(groups), [groups]);
