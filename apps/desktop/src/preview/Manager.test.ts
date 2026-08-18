@@ -1836,6 +1836,80 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("does not commit capture transitions when throttling updates fail", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setBackgroundThrottling = vi.fn<(enabled: boolean) => void>();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+
+        yield* manager.createTab("tab_capture_throttling_failure");
+        yield* manager.registerWebview("tab_capture_throttling_failure", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling },
+        } as never);
+
+        setBackgroundThrottling.mockImplementationOnce(() => {
+          throw new Error("start throttling update failed");
+        });
+        const failedStart = yield* Effect.exit(
+          manager.startRecording("tab_capture_throttling_failure"),
+        );
+        expect(Exit.isFailure(failedStart)).toBe(true);
+
+        yield* manager.startRecording("tab_capture_throttling_failure");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [false]]);
+
+        setBackgroundThrottling.mockImplementationOnce(() => {
+          throw new Error("stop throttling update failed");
+        });
+        const failedStop = yield* Effect.exit(
+          manager.stopRecording("tab_capture_throttling_failure"),
+        );
+        expect(Exit.isFailure(failedStop)).toBe(true);
+
+        yield* manager.stopRecording("tab_capture_throttling_failure");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [false], [true], [true]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not publish a replacement window when capture reconciliation fails", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setBackgroundThrottling = vi.fn(() => {
+          throw new Error("replacement throttling update failed");
+        });
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+
+        yield* manager.createTab("tab_capture_replacement_failure");
+        yield* manager.registerWebview("tab_capture_replacement_failure", 42);
+        yield* manager.startRecording("tab_capture_replacement_failure");
+
+        const failedReplacement = yield* Effect.exit(
+          manager.setMainWindow({
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: { setBackgroundThrottling },
+          } as never),
+        );
+        expect(Exit.isFailure(failedReplacement)).toBe(true);
+
+        yield* manager.stopRecording("tab_capture_replacement_failure");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
+      }),
+    ),
+  );
+
   effectIt.effect("releases frame capture when the main window closes", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2199,6 +2273,8 @@ describe("PreviewManager", () => {
   effectIt.effect("shares background frame capture between recording and picture-in-picture", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        const setBackgroundThrottling = vi.fn();
+        const mainWindowWebContents = { setBackgroundThrottling };
         const jpeg = Buffer.from("shared-preview-frame");
         const capturePage = vi.fn(async () => ({
           toJPEG: () => jpeg,
@@ -2206,6 +2282,7 @@ describe("PreviewManager", () => {
         }));
         fromId.mockReturnValue({
           id: 42,
+          hostWebContents: mainWindowWebContents,
           isDestroyed: () => false,
           getType: () => "webview",
           getURL: () => "https://example.com",
@@ -2258,6 +2335,12 @@ describe("PreviewManager", () => {
         const states: PreviewManager.PreviewTabState[] = [];
         const recordingFrames: DesktopPreviewRecordingFrame[] = [];
 
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: mainWindowWebContents,
+        } as never);
+
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
             states.push(state);
@@ -2272,6 +2355,7 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_pip", 42);
         yield* manager.openPictureInPicture("tab_pip");
 
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
         expect(browserWindowConstructor).toHaveBeenCalledWith(
           expect.objectContaining({
             alwaysOnTop: true,
@@ -2317,6 +2401,7 @@ describe("PreviewManager", () => {
         expect(recordingFrames).toHaveLength(1);
 
         yield* manager.stopRecording("tab_pip");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
         const framesBeforePictureInPictureOnlyTick = pictureInPictureSend.mock.calls.length;
         yield* TestClock.adjust(100);
         expect(capturePage).toHaveBeenCalledTimes(3);
@@ -2326,6 +2411,7 @@ describe("PreviewManager", () => {
         expect(recordingFrames).toHaveLength(1);
 
         yield* manager.closePictureInPicture("tab_pip");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
         expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
         expect(states.at(-1)?.pictureInPicture).toBe(false);
         const capturesAfterClose = capturePage.mock.calls.length;

@@ -585,25 +585,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ),
       );
     });
+  const setWindowBackgroundThrottling = Effect.fnUntraced(function* (
+    window: BrowserWindow,
+    enabled: boolean,
+  ) {
+    if (window.isDestroyed()) return;
+    yield* attempt({ operation: "frameCapture.setBackgroundThrottling" }, () =>
+      window.webContents.setBackgroundThrottling(enabled),
+    );
+  });
   const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
     const mainWindow = yield* Ref.get(mainWindowRef);
-    if (Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) return;
-    yield* attempt({ operation: "frameCapture.setBackgroundThrottling" }, () =>
-      mainWindow.value.webContents.setBackgroundThrottling(enabled),
-    ).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Failed to update preview frame capture throttling.", {
-          enabled,
-          error,
-        }),
-      ),
-    );
+    if (Option.isNone(mainWindow)) return;
+    yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
   });
   const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
   ) {
-    const captureScope = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+    yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
         const current = sessions.get(tabId);
         if (!current || !current.consumers.has(consumer)) {
@@ -627,10 +627,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
         return [current.scope, remainingSessions] as const;
       }),
+    ).pipe(
+      Effect.flatMap((captureScope) =>
+        captureScope ? Scope.close(captureScope, Exit.void).pipe(Effect.ignore) : Effect.void,
+      ),
+      Effect.uninterruptible,
     );
-    if (captureScope) {
-      yield* Scope.close(captureScope, Exit.void).pipe(Effect.ignore);
-    }
   });
 
   const stopAllRecordings = Effect.fn("PreviewManager.stopAllRecordings")(function* () {
@@ -1722,25 +1724,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* Fiber.join(mainWindowCleanupFiber);
       mainWindowCleanupFiber = undefined;
     }
-    frameCaptureWindowOpen = true;
-    yield* Ref.set(mainWindowRef, Option.some(window));
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
         if (sessions.size > 0) {
-          yield* setFrameCaptureBackgroundThrottling(false);
+          yield* setWindowBackgroundThrottling(window, false);
         }
+        yield* Ref.set(mainWindowRef, Option.some(window));
+        frameCaptureWindowOpen = true;
+        window.once("closed", () => {
+          frameCaptureWindowOpen = false;
+          mainWindowCleanupFiber = runFork(
+            Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
+              concurrency: "unbounded",
+              discard: true,
+            }).pipe(Effect.ignore),
+          );
+        });
         return [undefined, sessions] as const;
       }),
-    );
-    window.once("closed", () => {
-      frameCaptureWindowOpen = false;
-      mainWindowCleanupFiber = runFork(
-        Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
-          concurrency: "unbounded",
-          discard: true,
-        }).pipe(Effect.ignore),
-      );
-    });
+    ).pipe(Effect.uninterruptible);
   });
 
   const createTabUnlocked = Effect.fn("PreviewManager.createTabUnlocked")(function* (
@@ -2680,7 +2682,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         ] as const;
       });
-    });
+    }).pipe(Effect.uninterruptible);
     if (!created) return;
     yield* capturePreviewFrame(tabId).pipe(
       Effect.catch((error) =>
