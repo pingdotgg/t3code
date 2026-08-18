@@ -85,16 +85,17 @@ import {
 } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
-import type { PullRequestAskSelectionInput } from "./PullRequestCodeTab";
+import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
-  buildAskAboutLinesHandoff,
+  buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
@@ -102,13 +103,16 @@ import {
   buildResolveConflictsPrompt,
   handoffPrompt,
   handoffReviewComments,
-  pullRequestActionNeedsHostRefresh,
+  latestPullRequestReviewOutcomes,
   pullRequestActionMenuHasGroup,
+  pullRequestActionNeedsHostRefresh,
+  pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   readableFailure,
   resolveBaseFreshness,
   type PullRequestFinding,
+  shouldRefreshPullRequestActivity,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
 import {
@@ -120,7 +124,9 @@ import {
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
+  PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
+  pullRequestReviewOutcomeToneClassName,
   resolvePullRequestState,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
@@ -509,6 +515,17 @@ export function PullRequestDetailPanel({
     detailQuery.refresh();
     activityQuery.refresh();
   }, [activityQuery.refresh, detailQuery.refresh]);
+  const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!coreDetail) return;
+    const next = { key: pullRequestKey, updatedAt: coreDetail.updatedAt };
+    if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
+      activityQuery.refresh();
+    }
+    activityRevision.current = next;
+  }, [activityQuery.refresh, coreDetail, pullRequestKey]);
   useEffect(() => {
     if (!detail) return;
     onStateChange?.({
@@ -519,11 +536,11 @@ export function PullRequestDetailPanel({
       isDraft: detail.isDraft,
     });
   }, [detail, onStateChange]);
-  // A pull request changes while it is open in front of somebody — a push lands, a check
-  // finishes, a review arrives — so the panel reads it again on the way back to the window and
-  // while a reader sits on it. Keyed by the pull request rather than by the panel, because this
-  // one panel shows a different pull request every time it is opened.
-  useLiveRefresh(refreshDetail, {
+  // Core detail is cheap enough to re-read while this stays open. Activity is heavier, so the
+  // revision effect above reads it only after this same pull request reports a change. Keyed by
+  // the pull request rather than by the panel, because this one panel shows a different pull
+  // request every time it is opened.
+  useLiveRefresh(detailQuery.refresh, {
     key: `pull-request:${reference.projectId}:${reference.repository}#${reference.number}`,
   });
   // The button, on the other hand, goes around the server's cache rather than through it: it is
@@ -677,7 +694,7 @@ export function PullRequestDetailPanel({
   // Beside the thread whose own pull request this is, a task belongs in that thread's composer:
   // the branch is already checked out under it, so opening a second thread would only scatter
   // the work.
-  const attachTarget = context === "thread" ? (composerDraftTarget ?? null) : null;
+  const attachTarget = pullRequestComposerTarget(context, composerDraftTarget);
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
 
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
@@ -921,20 +938,20 @@ export function PullRequestDetailPanel({
     });
   };
 
-  /** Lines the reader marked in the diff, asked about rather than commented on. */
-  const askAboutSelection = (selection: PullRequestAskSelectionInput) => {
+  const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
     if (!detail) return;
-    void startAsk(`ask:${selection.comment.id}`, {
-      ...buildAskAboutLinesHandoff({
+    void startAsk(
+      `selection:${selection.comment.id}`,
+      buildAddSelectionToAgentHandoff({
         number: detail.number,
         title: detail.title,
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
         comment: selection.comment,
-        question: selection.question,
+        request: selection.request,
       }),
-    });
+    );
   };
 
   const startCheckout = (mode: "worktree" | "local") => {
@@ -1061,6 +1078,19 @@ export function PullRequestDetailPanel({
     : null;
   const checksSummary = detail ? summarizePullRequestChecks(detail.checks) : null;
   const checksState = detail ? pullRequestChecksState(detail.checks) : null;
+  // Approvals that still stand, and only those. A superseded one is dimmed beside the reviewer
+  // who gave it, so counting it here would have the header assert in a number what the row next
+  // to it has just qualified.
+  //
+  // Not counted at all from a conversation this page only holds the recent end of: an approval
+  // older than the window would be missing, and "1" beside a tick is read as the whole answer.
+  // The Summary tab's row can say it may be short; a bare number cannot, so it stays away.
+  const approvalCount =
+    detail && !detail.commentsTruncated
+      ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
+          (entry) => entry.outcome === "approved" && !entry.stale,
+        ).length
+      : 0;
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">
@@ -1085,22 +1115,31 @@ export function PullRequestDetailPanel({
           >
             {detail && statePresentation ? (
               <>
-                <span className="min-w-0 truncate" title={detail.repository}>
-                  {detail.repository}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
-                  onContextMenu={(event) => openNumberContextMenu(event, detail)}
-                  className={cn(
-                    "shrink-0 font-medium underline-offset-2 hover:underline",
-                    statePresentation.toneClassName,
-                  )}
-                  title={openOnHostLabel(detail.provider)}
-                  aria-label={`Open pull request #${detail.number} on host`}
-                >
-                  #{detail.number}
-                </button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="min-w-0 truncate">{detail.repository}</span>}
+                  />
+                  <TooltipPopup side="top">{detail.repository}</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+                        onContextMenu={(event) => openNumberContextMenu(event, detail)}
+                        className={cn(
+                          "shrink-0 font-medium underline-offset-2 hover:underline",
+                          statePresentation.toneClassName,
+                        )}
+                        aria-label={`Open pull request #${detail.number} on host`}
+                      >
+                        #{detail.number}
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="top">{openOnHostLabel(detail.provider)}</TooltipPopup>
+                </Tooltip>
               </>
             ) : null}
           </div>
@@ -1116,23 +1155,36 @@ export function PullRequestDetailPanel({
           >
             {detail && statePresentation ? (
               <>
-                <button
-                  type="button"
-                  tabIndex={condensed ? 0 : -1}
-                  onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
-                  onContextMenu={(event) => openNumberContextMenu(event, detail)}
-                  className={cn(
-                    "shrink-0 font-medium underline-offset-2 hover:underline",
-                    statePresentation.toneClassName,
-                  )}
-                  title={openOnHostLabel(detail.provider)}
-                  aria-label={`Open pull request #${detail.number} on host`}
-                >
-                  #{detail.number}
-                </button>
-                <span className="min-w-0 truncate font-medium text-foreground" title={detail.title}>
-                  {detail.title}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        tabIndex={condensed ? 0 : -1}
+                        onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+                        onContextMenu={(event) => openNumberContextMenu(event, detail)}
+                        className={cn(
+                          "shrink-0 font-medium underline-offset-2 hover:underline",
+                          statePresentation.toneClassName,
+                        )}
+                        aria-label={`Open pull request #${detail.number} on host`}
+                      >
+                        #{detail.number}
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="top">{openOnHostLabel(detail.provider)}</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="min-w-0 truncate font-medium text-foreground">
+                        {detail.title}
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">{detail.title}</TooltipPopup>
+                </Tooltip>
                 {conflicting ? (
                   <Badge
                     variant="error"
@@ -1384,14 +1436,22 @@ export function PullRequestDetailPanel({
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}
               {autoMergeArmed ? (
-                <Badge
-                  variant="info"
-                  className="h-5 shrink-0 gap-1 rounded px-1.5 text-[10px]"
-                  title="The host will merge this on its own once its requirements are met"
-                >
-                  <GitMergeIcon aria-hidden className="size-3" />
-                  Auto-merge
-                </Badge>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Badge
+                        variant="info"
+                        className="h-5 shrink-0 gap-1 rounded px-1.5 text-[10px]"
+                      >
+                        <GitMergeIcon aria-hidden className="size-3" />
+                        Auto-merge
+                      </Badge>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    The host will merge this on its own once its requirements are met
+                  </TooltipPopup>
+                </Tooltip>
               ) : null}
               {primaryAction === "ready" ? (
                 <Button size="xs" disabled={actionPending} onClick={() => void perform("ready")}>
@@ -1464,11 +1524,13 @@ export function PullRequestDetailPanel({
                     </button>
                   ))}
                 </nav>
-                <span
-                  className="ml-auto inline-flex min-w-0 shrink items-center gap-1 font-mono text-[11px] text-muted-foreground"
-                  title={`${detail.baseBranch} ← ${detail.headBranch}`}
-                >
-                  <span className="truncate">{detail.baseBranch}</span>
+                <span className="ml-auto inline-flex min-w-0 shrink items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="truncate" />}>
+                      {detail.baseBranch}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{`${detail.baseBranch} ← ${detail.headBranch}`}</TooltipPopup>
+                  </Tooltip>
                   {freshness ? (
                     <PullRequestBaseFreshnessWarning
                       baseBranch={detail.baseBranch}
@@ -1479,7 +1541,12 @@ export function PullRequestDetailPanel({
                     />
                   ) : null}
                   <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
-                  <span className="truncate">{detail.headBranch}</span>
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="truncate" />}>
+                      {detail.headBranch}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{`${detail.baseBranch} ← ${detail.headBranch}`}</TooltipPopup>
+                  </Tooltip>
                 </span>
                 <span className="ml-2 inline-flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-1 tabular-nums">
@@ -1593,12 +1660,16 @@ export function PullRequestDetailPanel({
                 </PullRequestMetaLine>
 
                 <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <code
-                    className="min-w-0 max-w-48 shrink truncate rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground"
-                    title={detail.baseBranch}
-                  >
-                    {detail.baseBranch}
-                  </code>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <code className="min-w-0 max-w-48 shrink truncate rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground">
+                          {detail.baseBranch}
+                        </code>
+                      }
+                    />
+                    <TooltipPopup side="top">{detail.baseBranch}</TooltipPopup>
+                  </Tooltip>
                   {freshness ? (
                     <PullRequestBaseFreshnessWarning
                       baseBranch={detail.baseBranch}
@@ -1608,32 +1679,41 @@ export function PullRequestDetailPanel({
                     />
                   ) : null}
                   <ArrowLeftIcon aria-label="receives changes from" className="size-4 shrink-0" />
-                  <button
-                    type="button"
-                    className="grid min-w-0 max-w-64 shrink cursor-pointer rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                    aria-label={isBranchCopied ? "Branch name copied" : "Copy pull request branch"}
-                    title={isBranchCopied ? "Copied" : "Copy pull request branch"}
-                    onClick={() => copyBranchToClipboard(detail.headBranch)}
-                  >
-                    <code
-                      className={cn(
-                        "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
-                        isBranchCopied ? "opacity-0" : "opacity-100",
-                      )}
-                      title={detail.headBranch}
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          className="grid min-w-0 max-w-64 shrink cursor-pointer rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                          aria-label={
+                            isBranchCopied ? "Branch name copied" : "Copy pull request branch"
+                          }
+                          onClick={() => copyBranchToClipboard(detail.headBranch)}
+                        />
+                      }
                     >
-                      {detail.headBranch}
-                    </code>
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "col-start-1 row-start-1 truncate text-center transition-opacity duration-150 motion-reduce:transition-none",
-                        isBranchCopied ? "opacity-100" : "opacity-0",
-                      )}
-                    >
-                      Copied
-                    </span>
-                  </button>
+                      <code
+                        className={cn(
+                          "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
+                          isBranchCopied ? "opacity-0" : "opacity-100",
+                        )}
+                      >
+                        {detail.headBranch}
+                      </code>
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "col-start-1 row-start-1 truncate text-center transition-opacity duration-150 motion-reduce:transition-none",
+                          isBranchCopied ? "opacity-100" : "opacity-0",
+                        )}
+                      >
+                        Copied
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">
+                      {`${isBranchCopied ? "Copied" : "Copy pull request branch"}: ${detail.headBranch}`}
+                    </TooltipPopup>
+                  </Tooltip>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
                     <span className="inline-flex items-center gap-1.5 tabular-nums">
                       <FileDiffIcon className="size-3.5" />
@@ -1749,6 +1829,24 @@ export function PullRequestDetailPanel({
                             ? "…"
                             : detail.commits.length.toLocaleString()}
                       </span>
+                      {/* Only once somebody has approved: a nought beside a tick would read as a
+                          verdict of its own on a change nobody has looked at yet. */}
+                      {approvalCount > 0 ? (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            pullRequestReviewOutcomeToneClassName("approved"),
+                          )}
+                        >
+                          <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
+                          {approvalCount.toLocaleString()}
+                          {/* The icon is decorative and a name written onto a generic span is
+                              not announced, so the bare number says what it counts in words. */}
+                          <span className="sr-only">
+                            {approvalCount === 1 ? "approval" : "approvals"}
+                          </span>
+                        </span>
+                      ) : null}
                     </PullRequestMetaLine>
                     <Button
                       size="xs"
@@ -1862,7 +1960,7 @@ export function PullRequestDetailPanel({
               <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
                 <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
                   <PullRequestCodeTab
-                    onAskAboutSelection={askAboutSelection}
+                    {...(attachTarget ? { onAddToAgentSelection: addSelectionToAgent } : {})}
                     environmentId={environmentId}
                     reference={reference}
                     detail={detail}
