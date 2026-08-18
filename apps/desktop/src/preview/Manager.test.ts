@@ -1800,8 +1800,7 @@ describe("PreviewManager", () => {
   effectIt.effect("keeps window unthrottled until the final frame capture stops", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const firstWindowThrottling = vi.fn();
-        const replacementWindowThrottling = vi.fn();
+        const setBackgroundThrottling = vi.fn();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
@@ -1821,25 +1820,56 @@ describe("PreviewManager", () => {
         yield* manager.setMainWindow({
           isDestroyed: () => false,
           once: vi.fn(),
-          webContents: { setBackgroundThrottling: firstWindowThrottling },
+          webContents: { setBackgroundThrottling },
         } as never);
 
         yield* manager.startRecording("tab_capture_throttling_1");
         yield* manager.startRecording("tab_capture_throttling_2");
-        expect(firstWindowThrottling.mock.calls).toEqual([[false]]);
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
 
         yield* manager.stopRecording("tab_capture_throttling_1");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
+
+        yield* manager.stopRecording("tab_capture_throttling_2");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("releases frame capture when the main window closes", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let closeMainWindow: (() => void) | undefined;
+        const firstWindowThrottling = vi.fn();
+        const replacementWindowThrottling = vi.fn();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+
+        yield* manager.createTab("tab_window_close_recording");
+        yield* manager.registerWebview("tab_window_close_recording", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn((event: string, listener: () => void) => {
+            if (event === "closed") closeMainWindow = listener;
+          }),
+          webContents: { setBackgroundThrottling: firstWindowThrottling },
+        } as never);
+        yield* manager.startRecording("tab_window_close_recording");
         expect(firstWindowThrottling.mock.calls).toEqual([[false]]);
+
+        closeMainWindow?.();
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
 
         yield* manager.setMainWindow({
           isDestroyed: () => false,
           once: vi.fn(),
           webContents: { setBackgroundThrottling: replacementWindowThrottling },
         } as never);
-        expect(replacementWindowThrottling.mock.calls).toEqual([[false]]);
-
-        yield* manager.stopRecording("tab_capture_throttling_2");
-        expect(replacementWindowThrottling.mock.calls).toEqual([[false], [true]]);
+        expect(replacementWindowThrottling).not.toHaveBeenCalled();
       }),
     ),
   );

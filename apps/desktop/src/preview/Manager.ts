@@ -631,6 +631,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
   });
 
+  const stopAllRecordings = Effect.fn("PreviewManager.stopAllRecordings")(function* () {
+    const sessions = yield* SynchronizedRef.get(frameCaptureSessionsRef);
+    yield* Effect.forEach(sessions.keys(), (tabId) => stopFrameCapture(tabId, "recording"), {
+      concurrency: "unbounded",
+      discard: true,
+    });
+  });
+
   const deliverEvent = (
     eventKind: "state-change" | "recording-frame" | "pointer-event",
     tabId: string,
@@ -1718,7 +1726,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
     window.once("closed", () => {
-      runFork(closeAllPictureInPicture());
+      runFork(
+        Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      );
     });
   });
 
