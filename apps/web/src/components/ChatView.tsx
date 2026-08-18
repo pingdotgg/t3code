@@ -1700,6 +1700,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef,
     draftId,
     expectedBranch: activeServerThread?.branch ?? null,
+    hasExpectedBranchObservation: activeServerThread !== null,
     existingThreadKeys,
     isServerThread,
     setDraftThreadContext,

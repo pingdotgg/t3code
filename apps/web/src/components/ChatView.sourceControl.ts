@@ -43,6 +43,7 @@ interface UseSourceControlThreadMetadataRoutingInput {
   readonly activeThreadKey: string | null;
   readonly draftId: DraftId | null;
   readonly expectedBranch: string | null;
+  readonly hasExpectedBranchObservation: boolean;
   readonly existingThreadKeys: ReadonlySet<string>;
   readonly isServerThread: boolean;
   readonly setDraftThreadContext: SetDraftThreadContext;
@@ -294,7 +295,13 @@ export async function runSourceControlServerMetadataUpdate(
 export function createSourceControlServerMetadataUpdateQueue() {
   const expectedBranchByThreadKey = new Map<
     string,
-    { branch: string | null; observationSequence: number }
+    {
+      branch: string | null;
+      observationSequence: number;
+      latestObservedBranch: string | null;
+      latestObservationIsStale: boolean;
+      pendingTransition: { from: string | null; to: string | null } | null;
+    }
   >();
   const pendingByThreadKey = new Map<string, Promise<void>>();
   const sequenceByThreadKey = new Map<string, number>();
@@ -305,12 +312,23 @@ export function createSourceControlServerMetadataUpdateQueue() {
     if (!expected) {
       expectedBranchByThreadKey.set(targetThreadKey, {
         branch: expectedBranch,
+        latestObservedBranch: expectedBranch,
+        latestObservationIsStale: false,
         observationSequence: 1,
+        pendingTransition: null,
       });
       return;
     }
-    expected.branch = expectedBranch;
+    expected.latestObservedBranch = expectedBranch;
+    expected.latestObservationIsStale = false;
     expected.observationSequence += 1;
+    const transition = expected.pendingTransition;
+    if (transition && expectedBranch === transition.from) {
+      expected.latestObservationIsStale = true;
+      return;
+    }
+    expected.branch = expectedBranch;
+    expected.pendingTransition = null;
   };
 
   return {
@@ -321,18 +339,22 @@ export function createSourceControlServerMetadataUpdateQueue() {
       if (!expectedBranchByThreadKey.has(targetThreadKey)) {
         expectedBranchByThreadKey.set(targetThreadKey, {
           branch: input.expectedBranch,
+          latestObservedBranch: input.expectedBranch,
+          latestObservationIsStale: false,
           observationSequence: 0,
+          pendingTransition: null,
         });
       }
 
       const result = (previous ?? Promise.resolve()).then(async () => {
         const expectedBranchState = expectedBranchByThreadKey.get(targetThreadKey);
+        const requestExpectedBranch = expectedBranchState?.branch ?? null;
         const observationSequence = expectedBranchState?.observationSequence ?? 0;
         const requestSequence = (sequenceByThreadKey.get(targetThreadKey) ?? 0) + 1;
         sequenceByThreadKey.set(targetThreadKey, requestSequence);
         const updateResult = await runSourceControlServerMetadataUpdate({
           activeThreadRef: input.activeThreadRef,
-          expectedBranch: expectedBranchByThreadKey.get(targetThreadKey)?.branch ?? null,
+          expectedBranch: requestExpectedBranch,
           getCurrentSequence: () => sequenceByThreadKey.get(targetThreadKey),
           metadata: input.metadata,
           requestSequence,
@@ -340,8 +362,22 @@ export function createSourceControlServerMetadataUpdateQueue() {
         });
         if (updateResult._tag === "Success") {
           const latestExpectedBranchState = expectedBranchByThreadKey.get(targetThreadKey);
-          if (latestExpectedBranchState?.observationSequence === observationSequence) {
+          if (!latestExpectedBranchState) return updateResult;
+          const observedDuringRequest =
+            latestExpectedBranchState.observationSequence !== observationSequence;
+          if (
+            !observedDuringRequest ||
+            latestExpectedBranchState.latestObservationIsStale ||
+            latestExpectedBranchState.latestObservedBranch === requestExpectedBranch
+          ) {
             latestExpectedBranchState.branch = input.metadata.branch;
+            latestExpectedBranchState.pendingTransition = {
+              from: requestExpectedBranch,
+              to: input.metadata.branch,
+            };
+          } else if (latestExpectedBranchState.latestObservedBranch === input.metadata.branch) {
+            latestExpectedBranchState.branch = input.metadata.branch;
+            latestExpectedBranchState.pendingTransition = null;
           }
         }
         return updateResult;
@@ -404,6 +440,7 @@ export function useSourceControlThreadMetadataRouting(
     activeThreadRef,
     draftId,
     expectedBranch,
+    hasExpectedBranchObservation,
     existingThreadKeys,
     isServerThread,
     setDraftThreadContext,
@@ -437,9 +474,9 @@ export function useSourceControlThreadMetadataRouting(
   }, [existingThreadKeys]);
 
   useEffect(() => {
-    if (!activeThreadMetadataRef) return;
+    if (!activeThreadMetadataRef || !hasExpectedBranchObservation) return;
     metadataUpdateQueue.observe(activeThreadMetadataRef, expectedBranch);
-  }, [activeThreadMetadataRef, expectedBranch, metadataUpdateQueue]);
+  }, [activeThreadMetadataRef, expectedBranch, hasExpectedBranchObservation, metadataUpdateQueue]);
 
   const clearActiveSourceControlMetadataError = useCallback(() => {
     // Draft metadata changes are local store updates and do not create dismissible metadata errors.

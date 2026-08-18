@@ -515,6 +515,7 @@ describe("runSourceControlServerMetadataUpdate", () => {
       updateThreadMetadata,
     });
     await Promise.resolve();
+    queue.observe(activeThreadRef, "main");
     await queue.enqueue({
       activeThreadRef,
       expectedBranch: "main",
@@ -525,6 +526,41 @@ describe("runSourceControlServerMetadataUpdate", () => {
     expect(calls).toEqual([
       { expectedBranch: "main", branch: "feature/one" },
       { expectedBranch: "feature/one", branch: "feature/two" },
+    ]);
+  });
+
+  it("accepts a later return to an old branch after the successful branch was observed", async () => {
+    const queue = createSourceControlServerMetadataUpdateQueue();
+    const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
+    const updateThreadMetadata = async (
+      input: Parameters<Parameters<typeof queue.enqueue>[0]["updateThreadMetadata"]>[0],
+    ) => {
+      calls.push({
+        expectedBranch: input.input.expectedBranch ?? null,
+        branch: input.input.branch ?? null,
+      });
+      return AsyncResult.success(undefined);
+    };
+
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/one", worktreePath: null },
+      updateThreadMetadata,
+    });
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "feature/one");
+    queue.observe(activeThreadRef, "main");
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "feature/one",
+      metadata: { branch: "feature/two", worktreePath: null },
+      updateThreadMetadata,
+    });
+
+    expect(calls).toEqual([
+      { expectedBranch: "main", branch: "feature/one" },
+      { expectedBranch: "main", branch: "feature/two" },
     ]);
   });
 
