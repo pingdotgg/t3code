@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
   ChevronRightIcon,
+  CodeIcon,
   CopyIcon,
   GlobeIcon,
   InfoIcon,
@@ -11,6 +12,7 @@ import {
   Minimize2Icon,
   OctagonAlertIcon,
   TriangleAlertIcon,
+  WorkflowIcon,
   WrapTextIcon,
 } from "lucide-react";
 import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
@@ -63,7 +65,9 @@ import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { isMermaidFenceLanguage } from "../lib/mermaidRendering";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings } from "../hooks/useSettings";
@@ -617,19 +621,24 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  diagram,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  diagram?: ReactNode;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
+  const [view, setView] = useState<"code" | "diagram">(diagram ? "diagram" : "code");
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showingDiagram = diagram != null && view === "diagram";
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
+  const diagramToggleLabel = showingDiagram ? "Show code" : "Show diagram";
 
   const handleCopy = useCallback(() => {
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -674,6 +683,7 @@ function MarkdownCodeBlock({
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
+      data-mermaid-view={diagram != null ? view : undefined}
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
         <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
@@ -684,24 +694,52 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
+          {diagram != null ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={showingDiagram}
+                    onClick={() =>
+                      setView((current) => (current === "diagram" ? "code" : "diagram"))
+                    }
+                    aria-label={diagramToggleLabel}
+                  />
+                }
+              >
+                {showingDiagram ? (
+                  <CodeIcon className="size-3" />
+                ) : (
+                  <WorkflowIcon className="size-3" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{diagramToggleLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {showingDiagram ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={wrapped}
+                    onClick={() => setWrapped((value) => !value)}
+                    aria-label={wrapLabel}
+                  />
+                }
+              >
+                <WrapTextIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -721,7 +759,7 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
+      {showingDiagram ? diagram : children}
     </div>
   );
 }
@@ -1751,6 +1789,23 @@ function ChatMarkdown({
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
+            diagram={
+              isMermaidFenceLanguage(language) ? (
+                <RenderErrorBoundary
+                  fallback={
+                    <div className="chat-markdown-mermaid-error" role="alert">
+                      <p>Couldn't render this diagram.</p>
+                    </div>
+                  }
+                >
+                  <MermaidDiagram
+                    code={codeBlock.code}
+                    theme={resolvedTheme}
+                    isStreaming={isStreaming}
+                  />
+                </RenderErrorBoundary>
+              ) : undefined
+            }
           >
             <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
