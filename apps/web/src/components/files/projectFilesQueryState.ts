@@ -7,7 +7,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
@@ -115,6 +115,24 @@ export function clearProjectFileQueryData(
   appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), null);
 }
 
+export function hasSettledProjectFileRevalidation(
+  confirmedAgainst: object | null | undefined,
+  result: AsyncResult.AsyncResult<ProjectReadFileResult, unknown>,
+): boolean {
+  return (
+    confirmedAgainst !== undefined &&
+    result !== confirmedAgainst &&
+    result._tag === "Success" &&
+    !result.waiting
+  );
+}
+
+export function shouldRevalidateProjectFileOnMount(
+  result: AsyncResult.AsyncResult<ProjectReadFileResult, unknown>,
+): boolean {
+  return result._tag !== "Initial" && !result.waiting;
+}
+
 function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | null {
   if (result._tag !== "Failure") return null;
   const cause = Cause.squash(result.cause);
@@ -185,13 +203,36 @@ export function useProjectFileQuery(
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
   const data = Option.getOrNull(AsyncResult.value(result));
-  const optimisticResult = useAtomValue(
-    optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
+  const optimisticAtom = optimisticFileAtom(
+    environmentId,
+    cwd,
+    relativePath ?? EMPTY_PROJECT_FILE_PATH,
   );
+  const optimisticResult = useAtomValue(optimisticAtom);
   const optimisticFile = relativePath === null ? null : optimisticResult;
+  const revalidationSettled = hasSettledProjectFileRevalidation(
+    optimisticFile?.confirmedAgainst,
+    result,
+  );
+
+  useEffect(() => {
+    if (!enabled || relativePath === null) return;
+    const current = appAtomRegistry.get(atom);
+    // Mounting starts initial and stale queries. Force a read only when mount
+    // reused a still-fresh cache entry that would otherwise skip the disk.
+    if (!shouldRevalidateProjectFileOnMount(current)) return;
+    refreshAtom();
+  }, [atom, enabled, refreshAtom, relativePath]);
+
+  useEffect(() => {
+    // A new local draft can replace the confirmed entry before this effect
+    // runs. Clear only the entry whose revalidation just settled.
+    if (!revalidationSettled || appAtomRegistry.get(optimisticAtom) !== optimisticFile) return;
+    appAtomRegistry.set(optimisticAtom, null);
+  }, [optimisticAtom, optimisticFile, revalidationSettled]);
 
   return {
-    data: optimisticFile?.data ?? data,
+    data: revalidationSettled ? data : (optimisticFile?.data ?? data),
     error: errorMessage(result),
     isPending: result.waiting,
     refresh,
