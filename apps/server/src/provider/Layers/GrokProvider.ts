@@ -29,7 +29,12 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  GROK_REASONING_EFFORT_OPTION_ID,
+  makeGrokAcpRuntime,
+  parseGrokReasoningEffortMenu,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -99,7 +104,30 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+export function buildGrokModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
+  const menu = parseGrokReasoningEffortMenu(model._meta);
+  if (!menu) {
+    return EMPTY_CAPABILITIES;
+  }
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: GROK_REASONING_EFFORT_OPTION_ID,
+        label: "Reasoning",
+        type: "select",
+        options: menu.options.map((option) => ({
+          id: option.id,
+          label: option.label,
+          ...(option.description ? { description: option.description } : {}),
+          ...(option.isDefault ? { isDefault: true } : {}),
+        })),
+        ...(menu.currentValue ? { currentValue: menu.currentValue } : {}),
+      },
+    ],
+  });
+}
+
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
@@ -117,7 +145,7 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities: buildGrokModelCapabilities(model),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);

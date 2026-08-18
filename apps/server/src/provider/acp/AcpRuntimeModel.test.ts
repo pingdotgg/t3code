@@ -374,4 +374,77 @@ describe("AcpRuntimeModel", () => {
       },
     });
   });
+
+  it("maps usage_update and notification _meta into TokenUsageUpdated", () => {
+    const usageUpdate = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1234,
+        size: 256000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(usageUpdate.events).toEqual([
+      {
+        _tag: "TokenUsageUpdated",
+        usedTokens: 1234,
+        maxTokens: 256000,
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1234,
+            size: 256000,
+          },
+        },
+      },
+    ]);
+
+    const metaUsage = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      _meta: {
+        totalTokens: 80,
+        totalContextTokens: 128000,
+      },
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "hello" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(metaUsage.events).toEqual([
+      {
+        _tag: "ContentDelta",
+        text: "hello",
+        rawPayload: {
+          sessionId: "session-1",
+          _meta: {
+            totalTokens: 80,
+            totalContextTokens: 128000,
+          },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "hello" },
+          },
+        },
+      },
+      {
+        _tag: "TokenUsageUpdated",
+        usedTokens: 80,
+        maxTokens: 128000,
+        rawPayload: {
+          sessionId: "session-1",
+          _meta: {
+            totalTokens: 80,
+            totalContextTokens: 128000,
+          },
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "hello" },
+          },
+        },
+      },
+    ]);
+  });
 });

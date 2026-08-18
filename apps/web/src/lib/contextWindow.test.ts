@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
 
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+  formatProviderDisplayName,
+} from "./contextWindow";
 
 function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
   return {
@@ -16,6 +20,12 @@ function makeActivity(id: string, kind: string, payload: unknown): Orchestration
 }
 
 describe("contextWindow", () => {
+  it("names known providers for the context meter", () => {
+    expect(formatProviderDisplayName("grok")).toBe("Grok");
+    expect(formatProviderDisplayName("claude")).toBe("Claude");
+    expect(formatProviderDisplayName("codex")).toBe("Codex");
+  });
+
   it("derives the latest valid context window snapshot", () => {
     const snapshot = deriveLatestContextWindowSnapshot([
       makeActivity("activity-1", "context-window.updated", {

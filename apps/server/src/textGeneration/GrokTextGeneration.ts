@@ -7,6 +7,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
 import { type GrokSettings, type ModelSelection } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
@@ -26,6 +27,7 @@ import {
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  GROK_REASONING_EFFORT_OPTION_ID,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../provider/acp/GrokAcpSupport.ts";
@@ -87,6 +89,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           runtime,
           currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
           requestedModelId: resolvedModel,
+          requestedReasoningEffort: getModelSelectionStringOptionValue(
+            modelSelection,
+            GROK_REASONING_EFFORT_OPTION_ID,
+          ),
           mapError: (cause) =>
             new TextGenerationError({
               operation,
