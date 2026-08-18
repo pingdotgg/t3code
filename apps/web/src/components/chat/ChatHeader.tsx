@@ -20,6 +20,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -45,6 +46,7 @@ import {
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
+  contextControls?: ReactNode;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   draftId?: DraftId;
@@ -108,6 +110,7 @@ export function shouldShowOpenInPicker(input: {
 }
 
 export const ChatHeader = memo(function ChatHeader({
+  contextControls,
   activeThreadEnvironmentId,
   activeThreadId,
   draftId,
@@ -318,6 +321,7 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        {contextControls}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

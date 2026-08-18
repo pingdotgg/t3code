@@ -747,7 +747,7 @@ export function BranchToolbarBranchSelector({
               <ChangeRequestStatusIcon className="size-3" />
               <span>#{branchPr.number}</span>
             </TooltipTrigger>
-            <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
+            <TooltipPopup side="bottom">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
         {/* Context menu lives on the wrapper: the disabled Button has
@@ -778,7 +778,7 @@ export function BranchToolbarBranchSelector({
           </ComboboxTrigger>
         </span>
       </div>
-      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+      <ComboboxPopup align="end" side="bottom" className="flex w-80 flex-col">
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
             <SearchIcon
@@ -857,7 +857,7 @@ export function BranchToolbarBranchSelector({
                   </label>
                 }
               />
-              <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
+              <TooltipPopup side="bottom" className="max-w-72 whitespace-normal leading-tight">
                 Creates the worktree from the latest matching branch on origin instead of your local
                 branch.
               </TooltipPopup>

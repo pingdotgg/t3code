@@ -1754,7 +1754,7 @@ function ComposerPromptEditorInner({
             <ContentEditable
               className={cn(
                 // The wrapper owns the appearance preference; keep everything else here.
-                "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+                "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none sm:min-h-9",
                 className,
               )}
               data-testid="composer-editor"
