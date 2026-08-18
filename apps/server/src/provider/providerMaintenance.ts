@@ -268,8 +268,7 @@ function isHomebrewCommandPath(commandPath: string): boolean {
     normalized.includes("/opt/homebrew/caskroom/") ||
     normalized.includes("/usr/local/caskroom/") ||
     normalized.includes("/homebrew/caskroom/") ||
-    normalized.startsWith("/opt/homebrew/bin/") ||
-    normalized.startsWith("/usr/local/bin/")
+    normalized.startsWith("/opt/homebrew/bin/")
   );
 }
 

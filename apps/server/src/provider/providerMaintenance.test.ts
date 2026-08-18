@@ -332,6 +332,21 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("does not treat an Ubuntu /usr/local/bin executable as Homebrew-managed", () => {
+    expect(
+      packageToolUpdate.resolve({
+        binaryPath: "/usr/local/bin/package-tool",
+        env: {
+          PATH: "",
+        },
+      }),
+    ).toEqual({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      update: null,
+    });
+  });
+
   it.effect(
     "switches native-package-tool to native updates when the binary resolves through the native installer",
     () =>
