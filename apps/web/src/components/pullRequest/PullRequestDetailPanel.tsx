@@ -1337,7 +1337,7 @@ export function PullRequestDetailPanel({
                                     icon and the label need their own row to share a line. */}
                                 <span className="flex min-w-0 items-center gap-2">
                                   <GitMergeIcon className="size-3.5" />
-                                  <span className="capitalize">{method}</span>
+                                  <span>{MERGE_METHOD_LABELS[method]}</span>
                                 </span>
                               </MenuRadioItem>
                             ))}
