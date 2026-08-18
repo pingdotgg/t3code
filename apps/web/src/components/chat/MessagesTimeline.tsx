@@ -823,6 +823,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     type="button"
                     size="icon-xs"
                     variant="ghost"
+                    className="data-pressed:border-primary! data-pressed:bg-primary! data-pressed:text-primary-foreground!"
                     data-pressed={findCaseSensitive || undefined}
                     aria-label="Match case"
                     aria-pressed={findCaseSensitive}
