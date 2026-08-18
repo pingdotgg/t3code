@@ -287,6 +287,47 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("lists t3-plugin skills plugin-qualified when a plugin dir is passed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const pluginDir = path.join(tempDir, "claude-plugin");
+
+      yield* writeSkill(
+        path.join(pluginDir, "skills"),
+        "handoff",
+        ["---", "name: handoff", "description: Hand off work.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "deploy",
+        ["---", "name: deploy", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined, undefined, {
+        t3PluginDir: pluginDir,
+      });
+
+      assert.deepEqual(skills, [
+        {
+          name: "deploy",
+          path: path.join(configDir, "skills", "deploy", "SKILL.md"),
+          enabled: true,
+          scope: "user",
+        },
+        {
+          name: "t3:handoff",
+          path: path.join(pluginDir, "skills", "handoff", "SKILL.md"),
+          enabled: true,
+          scope: "plugin",
+          description: "Hand off work.",
+        },
+      ]);
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

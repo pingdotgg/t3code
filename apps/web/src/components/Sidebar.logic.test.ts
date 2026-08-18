@@ -303,6 +303,38 @@ describe("hasUnseenCompletion", () => {
     ).toBe(true);
   });
 
+  it("flags a never-visited thread created after the read-state baseline", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: undefined,
+        createdAt: "2026-03-09T10:00:00.000Z",
+        readStateBaselineAt: "2026-03-01T00:00:00.000Z",
+        session: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats a never-visited thread older than the read-state baseline as read", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: undefined,
+        createdAt: "2026-02-01T00:00:00.000Z",
+        readStateBaselineAt: "2026-03-01T00:00:00.000Z",
+        session: null,
+      }),
+    ).toBe(false);
+  });
+
   it("treats a missing client visit marker as read", () => {
     expect(
       hasUnseenCompletion({

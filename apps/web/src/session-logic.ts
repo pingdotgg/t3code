@@ -99,6 +99,9 @@ export interface WorkLogEntry {
     workflowId: string | null;
     agentTaskIds: ReadonlyArray<string>;
   };
+  /** Other side of a handoff lineage activity (`handoff.created` / `handoff.received`). */
+  linkedThreadId?: string;
+  linkedThreadTitle?: string;
 }
 
 const workLogCollapseKey = Symbol();
@@ -1012,6 +1015,18 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (toolCallId) {
     entry.toolCallId = toolCallId;
+  }
+  if (activity.kind === "handoff.created" || activity.kind === "handoff.received") {
+    const linkedThreadId =
+      activity.kind === "handoff.created" ? payload?.childThreadId : payload?.parentThreadId;
+    if (typeof linkedThreadId === "string" && linkedThreadId.length > 0) {
+      entry.linkedThreadId = linkedThreadId;
+    }
+    const linkedThreadTitle =
+      activity.kind === "handoff.created" ? payload?.childTitle : payload?.parentTitle;
+    if (typeof linkedThreadTitle === "string" && linkedThreadTitle.length > 0) {
+      entry.linkedThreadTitle = linkedThreadTitle;
+    }
   }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {

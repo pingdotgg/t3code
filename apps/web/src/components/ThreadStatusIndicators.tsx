@@ -524,6 +524,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
+  const readStateBaselineAt = useUiStateStore((state) => state.readStateBaselineAt);
   const threadProject = useProject(
     useMemo(
       () => scopeProjectRef(thread.environmentId, thread.projectId),
@@ -558,6 +559,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     thread: {
       ...thread,
       lastVisitedAt,
+      readStateBaselineAt,
     },
   });
 

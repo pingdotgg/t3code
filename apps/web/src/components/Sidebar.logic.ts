@@ -162,7 +162,9 @@ type ThreadStatusInput = Pick<
   | "session"
   | "backgroundLiveness"
 > & {
+  createdAt?: string | undefined;
   lastVisitedAt?: string | undefined;
+  readStateBaselineAt?: string | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -257,11 +259,25 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
+/**
+ * A never-visited thread counts as read only when it predates this client's
+ * read-state baseline: adopting a client (or switching sidebars) must not light
+ * up every historical thread, while a thread that appeared afterwards — a
+ * handoff child, a scheduled run — completed without anyone looking at it.
+ */
+function createdAfterReadStateBaseline(thread: ThreadStatusInput): boolean {
+  if (!thread.readStateBaselineAt || !thread.createdAt) return false;
+  const baselineAt = Date.parse(thread.readStateBaselineAt);
+  const createdAt = Date.parse(thread.createdAt);
+  if (Number.isNaN(baselineAt) || Number.isNaN(createdAt)) return false;
+  return createdAt > baselineAt;
+}
+
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return false;
+  if (!thread.lastVisitedAt) return createdAfterReadStateBaseline(thread);
 
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;

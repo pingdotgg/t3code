@@ -212,7 +212,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
   ].join("\n");
 }
 
-const CLOUD_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(5);
+const CLOUT3_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(5);
 
 const confirmRelayClientInstall = (version: string) =>
   Prompt.run(
@@ -301,7 +301,7 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
         Effect.flatMap((client) =>
           client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
         ),
-        Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
+        Effect.timeout(CLOUT3_CLI_LIVE_SERVER_TIMEOUT),
       ),
     ),
   );

@@ -21,6 +21,7 @@ export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
+  readStateBaselineAt?: string;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
@@ -36,6 +37,14 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
+  /**
+   * When this client started tracking read state. A thread the user never
+   * opened counts as read only if it predates this: adopting a new client (or
+   * a new sidebar) must not light up every historical thread, but a thread
+   * created after the baseline — a handoff child, a scheduled run — has a
+   * completion nobody has seen yet.
+   */
+  readStateBaselineAt: string;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -49,6 +58,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   threadLastVisitedAtById: {},
+  readStateBaselineAt: new Date().toISOString(),
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
@@ -98,7 +108,10 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
-export function parsePersistedState(parsed: PersistedUiState): UiState {
+export function parsePersistedState(
+  parsed: PersistedUiState,
+  now: string = new Date().toISOString(),
+): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
       ? (() => {
@@ -126,6 +139,11 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     projectExpandedById,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
+    readStateBaselineAt:
+      typeof parsed.readStateBaselineAt === "string" &&
+      Number.isFinite(Date.parse(parsed.readStateBaselineAt))
+        ? parsed.readStateBaselineAt
+        : now,
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -204,6 +222,7 @@ export function persistState(state: UiState): void {
         projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
+        readStateBaselineAt: state.readStateBaselineAt,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
@@ -411,6 +430,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
     ),
 }));
+
+// The baseline only pins read state if it survives a reload, so a client that
+// just minted one writes it out now instead of waiting for the first change.
+persistState(useUiStateStore.getState());
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
 

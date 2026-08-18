@@ -78,9 +78,11 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { makeHandoffCallbackEnvironment } from "../../handoff/callbackEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { resolveT3ClaudePluginDir } from "../Drivers/ClaudePlugin.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -1705,6 +1707,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const claudeSdkExecutablePath = yield* resolveClaudeSdkExecutablePath(
     claudeSettings.binaryPath,
     claudeEnvironment,
+  );
+  const t3ClaudePluginDir = yield* resolveT3ClaudePluginDir().pipe(
+    Effect.provideService(Path.Path, path),
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
   );
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -4304,6 +4310,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
+
+      // Callback credentials for the `d handoff` CLI (ADR 0002): the session's
+      // MCP bearer token doubles as the handoff credential, so the spawned
+      // agent can call back into this server without any extra minting.
+      const sessionEnvironment = mcpSession
+        ? {
+            ...claudeEnvironment,
+            ...makeHandoffCallbackEnvironment(mcpSession, {
+              ...(t3ClaudePluginDir ? { cliShimPath: path.join(t3ClaudePluginDir, "bin", "t3") } : {}),
+            }),
+          }
+        : claudeEnvironment;
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4328,7 +4346,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: claudeEnvironment,
+        env: sessionEnvironment,
+        ...(t3ClaudePluginDir ? { plugins: [{ type: "local", path: t3ClaudePluginDir }] } : {}),
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession

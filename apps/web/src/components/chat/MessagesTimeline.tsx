@@ -1,11 +1,12 @@
 import {
+  ThreadId,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type TurnId,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   emptyAgentPanelModel,
@@ -46,6 +47,7 @@ import {
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowRightLeftIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -65,6 +67,8 @@ import {
   XIcon,
   ZapIcon,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -1405,14 +1409,19 @@ const WorkGroupSection = memo(function WorkGroupSection({
         <p className="px-0.5 pb-0.5 font-medium text-secondary-label text-[11px]">{groupLabel}</p>
       )}
       <div className="space-y-px">
-        {nonEmptyEntries.map((workEntry) => (
-          <SimpleWorkEntryRow
-            key={workEntry.id}
-            workEntry={workEntry}
-            workspaceRoot={workspaceRoot}
-            isExpandedToolGroupEntry={isExpandedToolGroupEntry}
-          />
-        ))}
+        {nonEmptyEntries.map((workEntry) =>
+          workEntry.sourceActivityKind === "handoff.created" ||
+          workEntry.sourceActivityKind === "handoff.received" ? (
+            <HandoffWorkEntryRow key={workEntry.id} workEntry={workEntry} />
+          ) : (
+            <SimpleWorkEntryRow
+              key={workEntry.id}
+              workEntry={workEntry}
+              workspaceRoot={workspaceRoot}
+              isExpandedToolGroupEntry={isExpandedToolGroupEntry}
+            />
+          ),
+        )}
       </div>
     </GroupContainer>
   );
@@ -1541,6 +1550,39 @@ function toolGroupSummaryIconName(
       return "hammer";
   }
 }
+/**
+ * Lineage row for `handoff.created` / `handoff.received` activities: the
+ * summary plus a link into the other side of the handoff.
+ */
+const HandoffWorkEntryRow = memo(function HandoffWorkEntryRow({
+  workEntry,
+}: {
+  workEntry: TimelineWorkEntry;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const linkedThreadId = workEntry.linkedThreadId;
+
+  return (
+    <div className="flex items-center gap-1.5 rounded-md px-0.5 py-0.5 text-[12px] leading-5">
+      <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/65">
+        <ArrowRightLeftIcon className="size-3.5" aria-hidden />
+      </span>
+      <span className="min-w-0 truncate font-medium text-foreground/82">{workEntry.label}</span>
+      {linkedThreadId ? (
+        <Link
+          to="/$environmentId/$threadId"
+          params={buildThreadRouteParams(
+            scopeThreadRef(ctx.activeThreadEnvironmentId, ThreadId.make(linkedThreadId)),
+          )}
+          className="shrink-0 text-primary underline-offset-2 hover:underline"
+          onClick={stopRowToggle}
+        >
+          Open thread
+        </Link>
+      ) : null}
+    </div>
+  );
+});
 
 function WorkGroupToggleTimelineRow({
   row,

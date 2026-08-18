@@ -22,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
+    readStateBaselineAt: "2026-01-01T00:00:00.000Z",
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
@@ -166,7 +167,7 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
-    });
+    }, "2026-03-01T00:00:00.000Z");
 
     expect(parsed).toEqual({
       projectExpandedById: {
@@ -176,6 +177,7 @@ describe("parsePersistedState", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      readStateBaselineAt: "2026-03-01T00:00:00.000Z",
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -295,6 +297,7 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      readStateBaselineAt: "2026-01-01T00:00:00.000Z",
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {

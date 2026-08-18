@@ -20,8 +20,9 @@ import * as Path from "effect/Path";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+import { T3_CLAUDE_PLUGIN_NAME } from "./ClaudePlugin.ts";
 
-type ClaudeSkillScope = "user" | "project";
+type ClaudeSkillScope = "user" | "project" | "plugin";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
@@ -96,12 +97,25 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   config: Pick<ClaudeSettings, "homePath">,
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
+  options?: {
+    /**
+     * Directory of the T3-shipped Claude plugin (see `resolveT3ClaudePluginDir`).
+     * Its skills are injected into every session via the SDK `plugins` option
+     * and addressed plugin-qualified (`t3:<skill>`), so they never collide
+     * with user/project skills. Passed explicitly by the caller so discovery
+     * stays a pure function of its inputs.
+     */
+    readonly t3PluginDir?: string;
+  },
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
 
   const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
+    ...(options?.t3PluginDir
+      ? [{ directory: path.join(options.t3PluginDir, "skills"), scope: "plugin" as const }]
+      : []),
     { directory: path.join(configDirPath, "skills"), scope: "user" },
     ...(cwd
       ? [
@@ -134,10 +148,12 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
-      if (!name) {
+      const baseName =
+        (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
+      if (!baseName) {
         continue;
       }
+      const name = root.scope === "plugin" ? `${T3_CLAUDE_PLUGIN_NAME}:${baseName}` : baseName;
 
       skillsByName.set(name, {
         name,

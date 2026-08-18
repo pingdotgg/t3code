@@ -244,6 +244,18 @@ export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =
 export const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
 
+/**
+ * Resolve a raw bearer token against the live registry. Used by callback
+ * surfaces outside the MCP transport (e.g. `POST /handoff`) that authenticate
+ * with the same per-session credential.
+ */
+export const resolveActiveMcpToken = (
+  rawToken: string,
+): Effect.Effect<McpInvocationContext.McpInvocationScope | undefined> =>
+  activeMcpSessionRegistry
+    ? activeMcpSessionRegistry.resolve(rawToken)
+    : Effect.sync((): McpInvocationContext.McpInvocationScope | undefined => undefined);
+
 /** Exposed for tests. */
 export const __testing = {
   make: makeWithOptions,
