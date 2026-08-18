@@ -474,6 +474,24 @@ struct MarkdownDocumentTests {
     }
 
     @Test
+    func readsDestinationsPastTitlesAndBalancedParentheses() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![plot](out/plot.png "generated (final")
+
+            ![shot](out/foo(1).png)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/plot.png", alt: "plot"),
+                .image(source: "out/foo(1).png", alt: "shot"),
+            ]
+        )
+    }
+
+    @Test
     func keepsImagesInsideProseAsParagraphText() {
         let document = MarkdownDocument(
             parsing: """

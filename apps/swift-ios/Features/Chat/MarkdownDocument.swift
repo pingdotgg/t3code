@@ -61,7 +61,8 @@ struct MarkdownImageReference: Equatable, Sendable {
                   in: characters,
                   from: destinationStart,
                   open: "(",
-                  close: ")"
+                  close: ")",
+                  ignoringQuotedText: true
               ),
               // Only a line that is nothing but the image becomes a block; an
               // image inside a sentence stays inline text.
@@ -116,19 +117,36 @@ struct MarkdownImageReference: Equatable, Sendable {
             .map(String.init)
     }
 
+    /// Set `ignoringQuotedText` for a link destination: a quoted title may hold
+    /// an unbalanced parenthesis, as in `(out/plot.png "generated (final")`, and
+    /// counting those would hide the real closing delimiter.
     private static func matchingDelimiter(
         in characters: [Character],
         from start: Int,
         open: Character,
-        close: Character
+        close: Character,
+        ignoringQuotedText: Bool = false
     ) -> Int? {
         var depth = 0
         var cursor = start
+        var openQuote: Character?
         while cursor < characters.count {
             let character = characters[cursor]
             if character == "\\" {
                 cursor += 2
                 continue
+            }
+            if ignoringQuotedText {
+                if let activeQuote = openQuote {
+                    if character == activeQuote { openQuote = nil }
+                    cursor += 1
+                    continue
+                }
+                if character == "\"" || character == "'" {
+                    openQuote = character
+                    cursor += 1
+                    continue
+                }
             }
             if character == open {
                 depth += 1
