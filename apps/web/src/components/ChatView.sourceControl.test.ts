@@ -564,6 +564,47 @@ describe("runSourceControlServerMetadataUpdate", () => {
     ]);
   });
 
+  it("rejects stale observations from every unacknowledged chained write", async () => {
+    const queue = createSourceControlServerMetadataUpdateQueue();
+    const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
+    const updateThreadMetadata = async (
+      input: Parameters<Parameters<typeof queue.enqueue>[0]["updateThreadMetadata"]>[0],
+    ) => {
+      calls.push({
+        expectedBranch: input.input.expectedBranch ?? null,
+        branch: input.input.branch ?? null,
+      });
+      return AsyncResult.success(undefined);
+    };
+
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/one", worktreePath: null },
+      updateThreadMetadata,
+    });
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/two", worktreePath: null },
+      updateThreadMetadata,
+    });
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "main");
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/three", worktreePath: null },
+      updateThreadMetadata,
+    });
+
+    expect(calls).toEqual([
+      { expectedBranch: "main", branch: "feature/one" },
+      { expectedBranch: "feature/one", branch: "feature/two" },
+      { expectedBranch: "feature/two", branch: "feature/three" },
+    ]);
+  });
+
   it("preserves the latest server observation received while a request is pending", async () => {
     const queue = createSourceControlServerMetadataUpdateQueue();
     const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];

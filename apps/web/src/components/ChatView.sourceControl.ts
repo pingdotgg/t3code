@@ -300,7 +300,10 @@ export function createSourceControlServerMetadataUpdateQueue() {
       observationSequence: number;
       latestObservedBranch: string | null;
       latestObservationIsStale: boolean;
-      pendingTransition: { from: string | null; to: string | null } | null;
+      pendingTransition: {
+        staleBranches: ReadonlySet<string | null>;
+        to: string | null;
+      } | null;
     }
   >();
   const pendingByThreadKey = new Map<string, Promise<void>>();
@@ -323,7 +326,12 @@ export function createSourceControlServerMetadataUpdateQueue() {
     expected.latestObservationIsStale = false;
     expected.observationSequence += 1;
     const transition = expected.pendingTransition;
-    if (transition && expectedBranch === transition.from) {
+    if (transition && expectedBranch === transition.to) {
+      expected.branch = expectedBranch;
+      expected.pendingTransition = null;
+      return;
+    }
+    if (transition?.staleBranches.has(expectedBranch)) {
       expected.latestObservationIsStale = true;
       return;
     }
@@ -370,9 +378,13 @@ export function createSourceControlServerMetadataUpdateQueue() {
             latestExpectedBranchState.latestObservationIsStale ||
             latestExpectedBranchState.latestObservedBranch === requestExpectedBranch
           ) {
+            const staleBranches = new Set(
+              latestExpectedBranchState.pendingTransition?.staleBranches ?? [],
+            );
+            staleBranches.add(requestExpectedBranch);
             latestExpectedBranchState.branch = input.metadata.branch;
             latestExpectedBranchState.pendingTransition = {
-              from: requestExpectedBranch,
+              staleBranches,
               to: input.metadata.branch,
             };
           } else if (latestExpectedBranchState.latestObservedBranch === input.metadata.branch) {
