@@ -357,6 +357,9 @@ export function createSourceControlServerMetadataUpdateQueue() {
       const result = (previous ?? Promise.resolve()).then(async () => {
         const expectedBranchState = expectedBranchByThreadKey.get(targetThreadKey);
         const requestExpectedBranch = expectedBranchState?.branch ?? null;
+        const requestStaleBranches = new Set(
+          expectedBranchState?.pendingTransition?.staleBranches ?? [],
+        );
         const observationSequence = expectedBranchState?.observationSequence ?? 0;
         const requestSequence = (sequenceByThreadKey.get(targetThreadKey) ?? 0) + 1;
         sequenceByThreadKey.set(targetThreadKey, requestSequence);
@@ -378,9 +381,11 @@ export function createSourceControlServerMetadataUpdateQueue() {
             latestExpectedBranchState.latestObservationIsStale ||
             latestExpectedBranchState.latestObservedBranch === requestExpectedBranch
           ) {
-            const staleBranches = new Set(
-              latestExpectedBranchState.pendingTransition?.staleBranches ?? [],
-            );
+            const staleBranches = new Set(requestStaleBranches);
+            for (const staleBranch of latestExpectedBranchState.pendingTransition?.staleBranches ??
+              []) {
+              staleBranches.add(staleBranch);
+            }
             staleBranches.add(requestExpectedBranch);
             latestExpectedBranchState.branch = input.metadata.branch;
             latestExpectedBranchState.pendingTransition = {

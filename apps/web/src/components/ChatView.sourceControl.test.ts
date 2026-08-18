@@ -605,6 +605,57 @@ describe("runSourceControlServerMetadataUpdate", () => {
     ]);
   });
 
+  it("retains predecessor guards when an in-flight chained write observes its input", async () => {
+    const queue = createSourceControlServerMetadataUpdateQueue();
+    const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
+    let releaseSecond: (() => void) | undefined;
+    const updateThreadMetadata = async (
+      input: Parameters<Parameters<typeof queue.enqueue>[0]["updateThreadMetadata"]>[0],
+    ) => {
+      calls.push({
+        expectedBranch: input.input.expectedBranch ?? null,
+        branch: input.input.branch ?? null,
+      });
+      if (calls.length === 2) {
+        await new Promise<void>((resolve) => {
+          releaseSecond = resolve;
+        });
+      }
+      return AsyncResult.success(undefined);
+    };
+
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/one", worktreePath: null },
+      updateThreadMetadata,
+    });
+    const second = queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "main",
+      metadata: { branch: "feature/two", worktreePath: null },
+      updateThreadMetadata,
+    });
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "feature/one");
+    releaseSecond?.();
+    await second;
+    await Promise.resolve();
+    queue.observe(activeThreadRef, "main");
+    await queue.enqueue({
+      activeThreadRef,
+      expectedBranch: "feature/one",
+      metadata: { branch: "feature/three", worktreePath: null },
+      updateThreadMetadata,
+    });
+
+    expect(calls).toEqual([
+      { expectedBranch: "main", branch: "feature/one" },
+      { expectedBranch: "feature/one", branch: "feature/two" },
+      { expectedBranch: "feature/two", branch: "feature/three" },
+    ]);
+  });
+
   it("preserves the latest server observation received while a request is pending", async () => {
     const queue = createSourceControlServerMetadataUpdateQueue();
     const calls: Array<{ expectedBranch: string | null; branch: string | null }> = [];
