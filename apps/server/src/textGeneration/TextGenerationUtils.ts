@@ -2,77 +2,66 @@ import { TextGenerationError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 /** Guard against pathological nesting when unwrapping a self-wrapped title. */
-const MAX_TITLE_UNWRAP_DEPTH = 5;
-
-/** Strip a single ```` ```json ... ``` ```` (or bare ```` ``` ... ``` ````) fence, if the value is one. */
-function stripCodeFence(value: string): string {
-  const match = value.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/i);
-  return match?.[1]?.trim() ?? value;
-}
-
-/**
- * Remove decorations models wrap around a JSON envelope before we test it: a
- * code fence and/or surrounding quotes/backticks. Titles regularly arrive
- * quoted, so `"{"title":"X"}"` must still be recognised as an envelope.
- */
-function stripEnvelopeDecorations(value: string): string {
-  return stripCodeFence(value.trim())
-    .replace(/^['"`]+/, "")
-    .replace(/['"`]+$/, "")
-    .trim();
-}
+const MAX_TITLE_UNWRAP_DEPTH = 8;
 
 /**
  * Some models ignore the structured-output contract and emit the whole JSON
  * envelope as the field's value, so a title comes back as the literal string
- * `{"title": "Fix the flaky test"}` instead of `Fix the flaky test`. Detect
- * that shape and unwrap the inner value, recursing to handle double-wrapping.
+ * `{"title": "Fix the flaky test"}` (or a JSON-encoded string, possibly nested)
+ * instead of `Fix the flaky test`. Peel that back by decoding as JSON:
  *
- * We only unwrap when the *entire* title (after stripping an optional code
- * fence and surrounding quotes) is a single JSON object — never an object
- * embedded in surrounding prose, so a legitimate title like
- * `Document {"foo":"bar"} syntax` is left intact. When that object has exactly one string value we take it regardless
- * of the key name (models label it `title`, `name`, `summary`, ...) and
- * regardless of how many non-string fields sit alongside it (`confidence`,
- * `reasoning`, ...). Only when several string values make the choice ambiguous
- * do we prefer a string `title`. Anything else is returned as-is.
+ * - decodes to a JSON string → recursively unwrap the decoded string;
+ * - decodes to a JSON object with exactly one string value → recursively unwrap
+ *   that value, whatever its key (`title`, `name`, `summary`, ...) and however
+ *   many non-string fields sit alongside it (`confidence`, `reasoning`, ...);
+ * - decodes to a JSON object with several string values → recursively unwrap a
+ *   string `title` when present, otherwise give up;
+ * - anything else (not JSON, a number, an array, an ambiguous object) → return
+ *   the value unchanged.
+ *
+ * Because plain prose is not valid JSON, a legitimate title that merely
+ * mentions an object, like `Document {"foo":"bar"} syntax`, decodes as nothing
+ * and is left intact.
  */
 export function unwrapJsonEnvelopeTitle(raw: string): string {
-  let current = raw.trim();
-  for (let depth = 0; depth < MAX_TITLE_UNWRAP_DEPTH; depth += 1) {
-    const candidate = stripEnvelopeDecorations(current);
-    // Require the whole value to be the object; do not pull one out of prose.
-    if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
-      return current;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      return current;
-    }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return current;
-    }
-    const entries = Object.entries(parsed as Record<string, unknown>);
-    const stringEntries = entries.filter(([, value]) => typeof value === "string");
-    let unwrapped: string | undefined;
-    if (stringEntries.length === 1) {
+  return unwrapJsonValue(raw.trim(), 0);
+}
+
+function unwrapJsonValue(value: string, depth: number): string {
+  if (depth >= MAX_TITLE_UNWRAP_DEPTH) {
+    return value;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return value;
+  }
+
+  if (typeof parsed === "string") {
+    return unwrapJsonValue(parsed.trim(), depth + 1);
+  }
+
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const stringValues = Object.values(parsed as Record<string, unknown>).filter(
+      (entry): entry is string => typeof entry === "string",
+    );
+    const [firstStringValue] = stringValues;
+    if (stringValues.length === 1 && firstStringValue !== undefined) {
       // Single string value: use it whatever the key is called.
-      unwrapped = stringEntries[0]?.[1] as string;
-    } else if (stringEntries.length > 1) {
+      return unwrapJsonValue(firstStringValue.trim(), depth + 1);
+    }
+    if (stringValues.length > 1) {
       // Ambiguous: disambiguate with a `title` key when present.
       const title = (parsed as { title?: unknown }).title;
       if (typeof title === "string") {
-        unwrapped = title;
+        return unwrapJsonValue(title.trim(), depth + 1);
       }
     }
-    if (unwrapped === undefined) {
-      return current;
-    }
-    current = unwrapped.trim();
   }
-  return current;
+
+  return value;
 }
 
 const isTextGenerationError = Schema.is(TextGenerationError);
