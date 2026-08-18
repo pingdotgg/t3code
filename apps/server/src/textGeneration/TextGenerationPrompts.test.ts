@@ -6,7 +6,7 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import { normalizeCliError, sanitizePrTitle, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -143,6 +143,42 @@ describe("sanitizeThreadTitle", () => {
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
     ).toBe("Reconnect failures after restart because the se...");
+  });
+
+  it("unwraps a self-wrapped JSON envelope emitted as the title value", () => {
+    expect(sanitizeThreadTitle('{"title": "Fix the flaky login test"}')).toBe(
+      "Fix the flaky login test",
+    );
+  });
+
+  it("unwraps a JSON envelope surrounded by prose or code fences", () => {
+    expect(sanitizeThreadTitle('```json\n{"title": "Add dark mode toggle"}\n```')).toBe(
+      "Add dark mode toggle",
+    );
+  });
+
+  it("unwraps a doubly-wrapped JSON envelope", () => {
+    expect(sanitizeThreadTitle('{"title": "{\\"title\\": \\"Refactor auth flow\\"}"}')).toBe(
+      "Refactor auth flow",
+    );
+  });
+
+  it("leaves a plain title containing braces untouched", () => {
+    expect(sanitizeThreadTitle("Handle { and } in the parser")).toBe(
+      "Handle { and } in the parser",
+    );
+  });
+});
+
+describe("sanitizePrTitle", () => {
+  it("unwraps a self-wrapped JSON envelope emitted as the title value", () => {
+    expect(sanitizePrTitle('{"title": "fix(auth): reject expired tokens"}')).toBe(
+      "fix(auth): reject expired tokens",
+    );
+  });
+
+  it("keeps a normal single-line title", () => {
+    expect(sanitizePrTitle("feat: add retry to uploader")).toBe("feat: add retry to uploader");
   });
 });
 

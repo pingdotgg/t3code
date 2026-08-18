@@ -1,5 +1,38 @@
 import { TextGenerationError } from "@t3tools/contracts";
+import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Schema from "effect/Schema";
+
+/** Guard against pathological nesting when unwrapping a self-wrapped title. */
+const MAX_TITLE_UNWRAP_DEPTH = 5;
+
+/**
+ * Some models ignore the structured-output contract and emit the whole JSON
+ * envelope as the field's value, so a title comes back as the literal string
+ * `{"title": "Fix the flaky test"}` instead of `Fix the flaky test`. Detect
+ * that shape and unwrap the inner `title`, recursing to handle double-wrapping.
+ * Anything that is not a JSON object with a string `title` is returned as-is.
+ */
+export function unwrapJsonEnvelopeTitle(raw: string): string {
+  let current = raw.trim();
+  for (let depth = 0; depth < MAX_TITLE_UNWRAP_DEPTH && current.includes("{"); depth += 1) {
+    const candidate = extractJsonObject(current);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      return current;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return current;
+    }
+    const title = (parsed as { title?: unknown }).title;
+    if (typeof title !== "string") {
+      return current;
+    }
+    current = title.trim();
+  }
+  return current;
+}
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
@@ -35,7 +68,7 @@ export function sanitizeCommitSubject(raw: string): string {
 
 /** Normalise a raw PR title to a single line with a sensible fallback. */
 export function sanitizePrTitle(raw: string): string {
-  const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  const singleLine = unwrapJsonEnvelopeTitle(raw).split(/\r?\n/g)[0]?.trim() ?? "";
   if (singleLine.length > 0) {
     return singleLine;
   }
@@ -44,8 +77,7 @@ export function sanitizePrTitle(raw: string): string {
 
 /** Normalise a raw thread title to a compact single-line sidebar-safe label. */
 export function sanitizeThreadTitle(raw: string): string {
-  const normalized = raw
-    .trim()
+  const normalized = unwrapJsonEnvelopeTitle(raw)
     .split(/\r?\n/g)[0]
     ?.trim()
     .replace(/^['"`]+|['"`]+$/g, "")
