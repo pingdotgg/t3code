@@ -4,11 +4,13 @@
  *
  * OpenCode keeps exact usage on assistant messages. Current releases use the
  * `session_message` table while older releases use `message`. Installations
- * migrating between them may contain both, so rows are unioned by message ID
- * with the current representation winning duplicates.
+ * migrating between them may contain both. The current representation owns a
+ * session from its first projected assistant onward; older legacy rows remain
+ * useful before that boundary.
  *
  * @module usageOpenCodeReader
  */
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
@@ -19,8 +21,10 @@ import * as Schema from "effect/Schema";
 import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
 
 const OpenCodeUsageRow = Schema.Struct({
+  source: Schema.Union([Schema.Literal("current"), Schema.Literal("legacy")]),
   id: Schema.String,
   sessionId: Schema.String,
+  createdAtMs: Schema.Number,
   timestampMs: Schema.NullOr(Schema.Number),
   providerId: Schema.NullOr(Schema.String),
   modelId: Schema.NullOr(Schema.String),
@@ -33,6 +37,14 @@ const OpenCodeUsageRow = Schema.Struct({
 });
 const decodeOpenCodeUsageRow = Schema.decodeUnknownOption(OpenCodeUsageRow);
 const decodeOpenCodeUsageRows = Schema.decodeUnknownOption(Schema.Array(OpenCodeUsageRow));
+
+const OpenCodeMigrationBoundary = Schema.Struct({
+  sessionId: Schema.String,
+  timestampMs: Schema.Number,
+});
+const decodeOpenCodeMigrationBoundaries = Schema.decodeUnknownSync(
+  Schema.Array(OpenCodeMigrationBoundary),
+);
 
 export type OpenCodeUsageSchema = "current" | "legacy" | "mixed";
 
@@ -79,8 +91,10 @@ function tableHasRows(database: NodeSqlite.DatabaseSync, table: string): boolean
 
 const CURRENT_USAGE_QUERY = `
   SELECT
+    'current' AS source,
     id,
     session_id AS sessionId,
+    time_created AS createdAtMs,
     COALESCE(json_extract(data, '$.time.completed'), time_created) AS timestampMs,
     json_extract(data, '$.model.providerID') AS providerId,
     json_extract(data, '$.model.id') AS modelId,
@@ -92,13 +106,14 @@ const CURRENT_USAGE_QUERY = `
     json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens
   FROM session_message
   WHERE type = 'assistant' AND time_created >= ?
-  ORDER BY time_created, id
 `;
 
 const LEGACY_USAGE_QUERY = `
   SELECT
+    'legacy' AS source,
     id,
     session_id AS sessionId,
+    time_created AS createdAtMs,
     COALESCE(json_extract(data, '$.time.completed'), time_created) AS timestampMs,
     json_extract(data, '$.providerID') AS providerId,
     json_extract(data, '$.modelID') AS modelId,
@@ -110,29 +125,62 @@ const LEGACY_USAGE_QUERY = `
     json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens
   FROM message
   WHERE json_extract(data, '$.role') = 'assistant' AND time_created >= ?
-  ORDER BY time_created, id
 `;
 
-const MIXED_LEGACY_USAGE_QUERY = `
+const CURRENT_MIGRATION_BOUNDARIES_QUERY = `
   SELECT
-    message.id AS id,
-    message.session_id AS sessionId,
-    COALESCE(json_extract(message.data, '$.time.completed'), message.time_created) AS timestampMs,
-    json_extract(message.data, '$.providerID') AS providerId,
-    json_extract(message.data, '$.modelID') AS modelId,
-    json_extract(message.data, '$.cost') AS costUsd,
-    json_extract(message.data, '$.tokens.input') AS inputTokens,
-    json_extract(message.data, '$.tokens.output') AS outputTokens,
-    json_extract(message.data, '$.tokens.reasoning') AS reasoningTokens,
-    json_extract(message.data, '$.tokens.cache.read') AS cacheReadTokens,
-    json_extract(message.data, '$.tokens.cache.write') AS cacheWriteTokens
-  FROM message
-  WHERE
-    json_extract(message.data, '$.role') = 'assistant'
-    AND message.time_created >= ?
-    AND NOT EXISTS (SELECT 1 FROM session_message WHERE session_message.id = message.id)
-  ORDER BY message.time_created, message.id
+    session_id AS sessionId,
+    MIN(time_created) AS timestampMs
+  FROM session_message
+  WHERE type = 'assistant'
+  GROUP BY session_id
 `;
+
+interface OpenCodeUsageCacheEntry {
+  readonly databaseState: string;
+  readonly resultsBySinceMs: Map<number, OpenCodeUsageReadSuccess>;
+}
+
+const MAX_CACHED_WINDOWS = 8;
+const usageCache = new Map<string, OpenCodeUsageCacheEntry>();
+
+function fileState(path: string, required: boolean): string | null {
+  try {
+    const stat = NodeFS.statSync(path, { bigint: true });
+    return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String).join(":");
+  } catch {
+    return required ? null : "missing";
+  }
+}
+
+/** Includes SQLite sidecars so uncheckpointed WAL writes invalidate the cache. */
+function databaseState(databasePath: string): string | null {
+  const main = fileState(databasePath, true);
+  if (main === null) return null;
+  return [
+    main,
+    fileState(`${databasePath}-wal`, false),
+    fileState(`${databasePath}-journal`, false),
+  ].join("|");
+}
+
+function usageIdentity(value: typeof OpenCodeUsageRow.Type): string {
+  // Forks copy these provider-call fields and timestamps verbatim while
+  // replacing the message and session IDs. A genuine post-fork call receives
+  // fresh timestamps and therefore remains distinct.
+  return JSON.stringify([
+    value.createdAtMs,
+    value.timestampMs,
+    value.providerId,
+    value.modelId,
+    value.costUsd,
+    value.inputTokens,
+    value.outputTokens,
+    value.reasoningTokens,
+    value.cacheReadTokens,
+    value.cacheWriteTokens,
+  ]);
+}
 
 /**
  * Reads message-level OpenCode usage without materialising message content.
@@ -140,7 +188,7 @@ const MIXED_LEGACY_USAGE_QUERY = `
  * `sinceMs` is only a query prefilter. Exact daily/hourly bounds are still
  * applied by {@link UsageAggregator}, just as they are for transcript files.
  */
-export function readOpenCodeUsageRecords(
+function readOpenCodeUsageRecordsUncached(
   databasePath: string,
   sinceMs: number,
 ): OpenCodeUsageReadResult {
@@ -175,13 +223,26 @@ export function readOpenCodeUsageRecords(
           ? database.prepare(LEGACY_USAGE_QUERY).all(sinceMs)
           : [
               ...database.prepare(CURRENT_USAGE_QUERY).all(sinceMs),
-              ...database.prepare(MIXED_LEGACY_USAGE_QUERY).all(sinceMs),
+              ...database.prepare(LEGACY_USAGE_QUERY).all(sinceMs),
             ];
+    const migrationBoundaries =
+      schema === "mixed"
+        ? new Map(
+            decodeOpenCodeMigrationBoundaries(
+              database.prepare(CURRENT_MIGRATION_BOUNDARIES_QUERY).all(),
+            ).map((value) => [value.sessionId, value.timestampMs] as const),
+          )
+        : new Map<string, number>();
     const decodedRows = decodeOpenCodeUsageRows(rows);
     const candidates = Option.isSome(decodedRows)
       ? decodedRows.value.map((value) => Option.some(value))
       : rows.map((row) => decodeOpenCodeUsageRow(row));
-    const records: UsageRecord[] = [];
+    const validCandidates: Array<{
+      readonly source: "current" | "legacy";
+      readonly identity: string;
+      readonly record: UsageRecord;
+      readonly coveredByCurrentMigration: boolean;
+    }> = [];
     let malformedRecords = 0;
 
     for (const decoded of candidates) {
@@ -221,18 +282,49 @@ export function readOpenCodeUsageRecords(
         continue;
       }
 
-      records.push({
-        provider: "opencode",
-        timestampMs: value.timestampMs,
-        model: `${providerId}/${modelId}`,
-        sessionId: value.sessionId,
-        totals,
-        reportedCostUsd:
-          value.costUsd !== null && Number.isFinite(value.costUsd) && value.costUsd >= 0
-            ? value.costUsd
-            : null,
-        dedupeKey: `opencode:${value.id}`,
+      const identity = usageIdentity(value);
+      const boundary = migrationBoundaries.get(value.sessionId);
+      validCandidates.push({
+        source: value.source,
+        identity,
+        coveredByCurrentMigration:
+          value.source === "legacy" && boundary !== undefined && value.timestampMs >= boundary,
+        record: {
+          provider: "opencode",
+          timestampMs: value.timestampMs,
+          model: `${providerId}/${modelId}`,
+          sessionId: value.sessionId,
+          totals,
+          reportedCostUsd:
+            value.costUsd !== null && Number.isFinite(value.costUsd) && value.costUsd >= 0
+              ? value.costUsd
+              : null,
+          dedupeKey: `opencode:${value.id}`,
+        },
       });
+    }
+
+    // A mixed-schema legacy row at or after its session's first projected
+    // assistant is a dual-write, even though the projection is keyed by the
+    // generated step event rather than the legacy message ID. Propagate that
+    // provenance across identical legacy rows so forked copies are excluded
+    // along with the original dual-write.
+    const currentOwnedLegacy = new Set(
+      validCandidates
+        .filter((candidate) => candidate.coveredByCurrentMigration)
+        .map((candidate) => candidate.identity),
+    );
+    const seenBySource = {
+      current: new Set<string>(),
+      legacy: new Set<string>(),
+    };
+    const records: UsageRecord[] = [];
+    for (const candidate of validCandidates) {
+      if (candidate.source === "legacy" && currentOwnedLegacy.has(candidate.identity)) continue;
+      const seen = seenBySource[candidate.source];
+      if (seen.has(candidate.identity)) continue;
+      seen.add(candidate.identity);
+      records.push(candidate.record);
     }
 
     return { status: "ok", schema, records, malformedRecords };
@@ -244,4 +336,40 @@ export function readOpenCodeUsageRecords(
   } finally {
     database?.close();
   }
+}
+
+/**
+ * Reads message-level OpenCode usage without materialising message content.
+ * Results are cached until the database or one of its write sidecars changes,
+ * keeping the legacy JSON predicate off the server event loop on warm reads.
+ *
+ * `sinceMs` is only a query prefilter. Exact daily/hourly bounds are still
+ * applied by {@link UsageAggregator}, just as they are for transcript files.
+ */
+export function readOpenCodeUsageRecords(
+  databasePath: string,
+  sinceMs: number,
+): OpenCodeUsageReadResult {
+  const before = databaseState(databasePath);
+  const cached = usageCache.get(databasePath);
+  if (before !== null && cached?.databaseState === before) {
+    const result = cached.resultsBySinceMs.get(sinceMs);
+    if (result !== undefined) return result;
+  }
+
+  const result = readOpenCodeUsageRecordsUncached(databasePath, sinceMs);
+  const after = databaseState(databasePath);
+  if (result.status === "ok" && before !== null && before === after) {
+    const resultsBySinceMs =
+      cached?.databaseState === before
+        ? cached.resultsBySinceMs
+        : new Map<number, OpenCodeUsageReadSuccess>();
+    if (!resultsBySinceMs.has(sinceMs) && resultsBySinceMs.size >= MAX_CACHED_WINDOWS) {
+      const oldestSinceMs = resultsBySinceMs.keys().next().value;
+      if (oldestSinceMs !== undefined) resultsBySinceMs.delete(oldestSinceMs);
+    }
+    resultsBySinceMs.set(sinceMs, result);
+    usageCache.set(databasePath, { databaseState: before, resultsBySinceMs });
+  }
+  return result;
 }
