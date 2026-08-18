@@ -218,8 +218,13 @@ describe("readOpenCodeUsageRecords", () => {
     );
     insert.run("malformed", 1000, JSON.stringify({ model: { providerID: "openai" } }));
     insert.run(
-      "cancelled",
+      "interrupted",
       1001,
+      JSON.stringify({ model: { providerID: "openai", id: "gpt-5" } }),
+    );
+    insert.run(
+      "cancelled",
+      1002,
       JSON.stringify({
         model: { providerID: "openai", id: "gpt-5" },
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },

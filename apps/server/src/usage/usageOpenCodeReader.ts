@@ -214,14 +214,10 @@ export function readOpenCodeUsageRecords(
         reasoningTokens,
       };
       if (totalTokens(totals) === 0) {
-        const hasTokenPayload = [
-          value.inputTokens,
-          value.outputTokens,
-          value.reasoningTokens,
-          value.cacheReadTokens,
-          value.cacheWriteTokens,
-        ].some((tokenCount) => tokenCount !== null);
-        if (!hasTokenPayload) malformedRecords += 1;
+        // OpenCode creates the assistant row before a provider responds. An
+        // interrupted turn can leave that otherwise valid row without a token
+        // payload, while cancelled turns persist an all-zero payload. Neither
+        // represents usage or a damaged usage record.
         continue;
       }
 
