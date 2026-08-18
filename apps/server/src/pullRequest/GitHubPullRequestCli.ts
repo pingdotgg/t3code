@@ -1451,8 +1451,7 @@ export const make = Effect.gen(function* () {
           // the page. Narrowed to a command that ran and was refused: a missing `gh` or a
           // signed-out one fails the same way for every request.
           Effect.catchTags({
-            GitHubCliCommandError: (error) =>
-              filesPage(1).pipe(Effect.catch(() => Effect.fail(error))),
+            GitHubCliCommandError: (error) => filesPage(1).pipe(Effect.mapError(() => error)),
           }),
         );
     },
