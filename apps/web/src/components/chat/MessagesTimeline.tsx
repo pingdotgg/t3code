@@ -514,9 +514,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       const inputFocused = document.activeElement === findInputRef.current;
       if (key === "g") {
-        if (!findOpen || inputFocused) return;
+        if (inputFocused) return;
         event.preventDefault();
         event.stopPropagation();
+        if (!findOpen) setFindOpen(true);
         goToFindMatch(event.shiftKey ? -1 : 1);
         return;
       }
