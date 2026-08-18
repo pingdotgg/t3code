@@ -6,7 +6,14 @@
 @custom-variant wco (&:is(.wco, .wco *));
 
 ::highlight(thread-find) {
-  background-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+::highlight(thread-find-active) {
+  background-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  text-decoration: underline;
+  text-decoration-color: var(--primary);
+  text-decoration-thickness: 2px;
 }
 
 /* On mobile, morph the expanded hero composer into the compact docked

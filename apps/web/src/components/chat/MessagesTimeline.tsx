@@ -39,6 +39,7 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
+import { isElectron } from "../../env";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -195,6 +196,7 @@ function TimelineLoadEarlierHeader({
 }
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const THREAD_FIND_HIGHLIGHT = "thread-find";
+const THREAD_FIND_ACTIVE_HIGHLIGHT = "thread-find-active";
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
@@ -464,11 +466,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   useEffect(() => {
     const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
+      const key = event.key.toLowerCase();
       if (
-        event.key.toLowerCase() !== "f" ||
+        (key !== "f" && key !== "g") ||
         (!event.metaKey && !event.ctrlKey) ||
         event.altKey ||
-        event.shiftKey ||
         !timelineViewportElement ||
         timelineViewportElement.getBoundingClientRect().width === 0 ||
         timelineViewportElement.closest('[data-chat-column-maximized-away="true"]') ||
@@ -481,13 +483,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ) {
         return;
       }
+
+      const inputFocused = document.activeElement === findInputRef.current;
+      if (key === "g") {
+        if (!findOpen || inputFocused) return;
+        event.preventDefault();
+        event.stopPropagation();
+        goToFindMatch(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.shiftKey || (!isElectron && findOpen && inputFocused)) return;
+
       event.preventDefault();
       event.stopPropagation();
-      setFindOpen(true);
+      if (findOpen) {
+        findInputRef.current?.focus();
+      } else {
+        setFindOpen(true);
+      }
     };
     window.addEventListener("keydown", handleFindShortcut, true);
     return () => window.removeEventListener("keydown", handleFindShortcut, true);
-  }, [timelineViewportElement]);
+  }, [findOpen, goToFindMatch, timelineViewportElement]);
 
   useEffect(() => {
     if (!findOpen) return;
@@ -497,9 +514,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   useEffect(() => {
     CSS.highlights.delete(THREAD_FIND_HIGHLIGHT);
+    CSS.highlights.delete(THREAD_FIND_ACTIVE_HIGHLIGHT);
     const match = findMatches[findMatchIndex];
     const entry = match === undefined ? undefined : findMessageEntries[match.textIndex];
-    if (!findOpen || !findQuery || !match || !entry) return;
+    if (!findOpen || !findQuery || !match || !entry || !timelineViewportElement) return;
 
     const rowIndex = rows.findIndex((row) => row.id === entry.id);
     if (rowIndex === -1) {
@@ -514,12 +532,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     void listRef.current?.scrollToIndex({ index: rowIndex, animated: false, viewOffset: 80 });
 
     let paintFrame = 0;
-    const mountFrame = requestAnimationFrame(() => {
-      paintFrame = requestAnimationFrame(() => {
-        const root = document.querySelector(`[data-timeline-row-id="${CSS.escape(entry.id)}"]`);
-        if (!root) return;
+    let repaintFrame = 0;
+    const paintHighlights = () => {
+      const allRanges: Range[] = [];
+      let activeRange: Range | undefined;
+      for (const [textIndex, messageEntry] of findMessageEntries.entries()) {
+        const root = timelineViewportElement?.querySelector(
+          `[data-timeline-row-id="${CSS.escape(messageEntry.id)}"]`,
+        );
+        if (!root) continue;
 
-        const needle = findQuery.toLowerCase();
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         const textNodes: Array<{ node: Text; start: number; end: number }> = [];
         let text = "";
@@ -532,19 +554,45 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           });
           text += value;
         }
-        const activeMatch = findCaseInsensitiveTextRanges(text, needle)[match.occurrenceIndex];
-        if (!activeMatch) return;
-        const startNode = textNodes.find(
-          ({ start, end }) => start <= activeMatch.start && activeMatch.start < end,
+        for (const [occurrenceIndex, textRange] of findCaseInsensitiveTextRanges(
+          text,
+          findQuery,
+        ).entries()) {
+          const startNode = textNodes.find(
+            ({ start, end }) => start <= textRange.start && textRange.start < end,
+          );
+          const endNode = textNodes.find(
+            ({ start, end }) => start < textRange.end && textRange.end <= end,
+          );
+          if (!startNode || !endNode) continue;
+          const range = new Range();
+          range.setStart(startNode.node, textRange.start - startNode.start);
+          range.setEnd(endNode.node, textRange.end - endNode.start);
+          allRanges.push(range);
+          if (textIndex === match.textIndex && occurrenceIndex === match.occurrenceIndex) {
+            activeRange = range;
+          }
+        }
+      }
+      CSS.highlights.set(THREAD_FIND_HIGHLIGHT, new Highlight(...allRanges));
+      if (activeRange) {
+        CSS.highlights.set(THREAD_FIND_ACTIVE_HIGHLIGHT, new Highlight(activeRange));
+      }
+      return activeRange;
+    };
+    const scheduleRepaint = () => {
+      cancelAnimationFrame(repaintFrame);
+      repaintFrame = requestAnimationFrame(() => paintHighlights());
+    };
+    const observer = new MutationObserver(scheduleRepaint);
+    observer.observe(timelineViewportElement, { childList: true, subtree: true });
+    const mountFrame = requestAnimationFrame(() => {
+      paintFrame = requestAnimationFrame(() => {
+        const activeRange = paintHighlights();
+        const root = timelineViewportElement.querySelector(
+          `[data-timeline-row-id="${CSS.escape(entry.id)}"]`,
         );
-        const endNode = textNodes.find(
-          ({ start, end }) => start < activeMatch.end && activeMatch.end <= end,
-        );
-        if (!startNode || !endNode) return;
-        const activeRange = new Range();
-        activeRange.setStart(startNode.node, activeMatch.start - startNode.start);
-        activeRange.setEnd(endNode.node, activeMatch.end - endNode.start);
-        CSS.highlights.set(THREAD_FIND_HIGHLIGHT, new Highlight(activeRange));
+        if (!root || !activeRange) return;
 
         let scrollParent = root.parentElement;
         while (scrollParent && !/(auto|scroll)/u.test(getComputedStyle(scrollParent).overflowY)) {
@@ -563,7 +611,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return () => {
       cancelAnimationFrame(mountFrame);
       cancelAnimationFrame(paintFrame);
+      cancelAnimationFrame(repaintFrame);
+      observer.disconnect();
       CSS.highlights.delete(THREAD_FIND_HIGHLIGHT);
+      CSS.highlights.delete(THREAD_FIND_ACTIVE_HIGHLIGHT);
     };
   }, [
     expandedTurnIds,
@@ -575,6 +626,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listRef,
     rows,
     suspendEndScrollMaintenanceForDisclosure,
+    timelineViewportElement,
   ]);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);

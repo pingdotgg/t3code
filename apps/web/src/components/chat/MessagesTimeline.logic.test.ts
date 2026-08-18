@@ -36,6 +36,12 @@ describe("findTextMatches", () => {
     expect(text).toBe("foobar");
     expect(findTextMatches([text], "oob")).toHaveLength(1);
   });
+
+  it("searches inline and fenced code in prompts and responses", () => {
+    const text = renderMarkdownSearchText("Run `pnpm test`:\n\n```ts\nconst answer = 42;\n```");
+    expect(findTextMatches([text], "pnpm test")).toHaveLength(1);
+    expect(findTextMatches([text], "answer = 42")).toHaveLength(1);
+  });
 });
 
 describe("shouldPreserveAssistantLineBreaks", () => {
