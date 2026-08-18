@@ -1,9 +1,14 @@
 import { TextGenerationError } from "@t3tools/contracts";
-import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Schema from "effect/Schema";
 
 /** Guard against pathological nesting when unwrapping a self-wrapped title. */
 const MAX_TITLE_UNWRAP_DEPTH = 5;
+
+/** Strip a single ```` ```json ... ``` ```` (or bare ```` ``` ... ``` ````) fence, if the value is one. */
+function stripCodeFence(value: string): string {
+  const match = value.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/i);
+  return match?.[1]?.trim() ?? value;
+}
 
 /**
  * Some models ignore the structured-output contract and emit the whole JSON
@@ -11,17 +16,23 @@ const MAX_TITLE_UNWRAP_DEPTH = 5;
  * `{"title": "Fix the flaky test"}` instead of `Fix the flaky test`. Detect
  * that shape and unwrap the inner value, recursing to handle double-wrapping.
  *
- * When the object has exactly one string value we take it regardless of the
- * key name (models label it `title`, `name`, `summary`, ...) and regardless of
- * how many non-string fields sit alongside it (`confidence`, `reasoning`, ...).
- * Only when several string values make the choice ambiguous do we prefer a
- * string `title`. Anything that is not a JSON object with such a value is
- * returned as-is.
+ * We only unwrap when the *entire* title (after stripping an optional code
+ * fence) is a single JSON object — never an object embedded in surrounding
+ * prose, so a legitimate title like `Document {"foo":"bar"} syntax` is left
+ * intact. When that object has exactly one string value we take it regardless
+ * of the key name (models label it `title`, `name`, `summary`, ...) and
+ * regardless of how many non-string fields sit alongside it (`confidence`,
+ * `reasoning`, ...). Only when several string values make the choice ambiguous
+ * do we prefer a string `title`. Anything else is returned as-is.
  */
 export function unwrapJsonEnvelopeTitle(raw: string): string {
   let current = raw.trim();
-  for (let depth = 0; depth < MAX_TITLE_UNWRAP_DEPTH && current.includes("{"); depth += 1) {
-    const candidate = extractJsonObject(current);
+  for (let depth = 0; depth < MAX_TITLE_UNWRAP_DEPTH; depth += 1) {
+    const candidate = stripCodeFence(current);
+    // Require the whole value to be the object; do not pull one out of prose.
+    if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
+      return current;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(candidate);

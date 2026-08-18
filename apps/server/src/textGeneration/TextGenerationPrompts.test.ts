@@ -178,9 +178,21 @@ describe("sanitizeThreadTitle", () => {
     expect(sanitizeThreadTitle(raw)).toBe(raw);
   });
 
-  it("unwraps a JSON envelope surrounded by prose or code fences", () => {
+  it("unwraps a JSON envelope wrapped in a code fence", () => {
     expect(sanitizeThreadTitle('```json\n{"title": "Add dark mode toggle"}\n```')).toBe(
       "Add dark mode toggle",
+    );
+    expect(sanitizeThreadTitle('```\n{"name": "Add dark mode toggle"}\n```')).toBe(
+      "Add dark mode toggle",
+    );
+  });
+
+  it("does not unwrap a JSON object embedded in surrounding prose", () => {
+    expect(sanitizeThreadTitle('Document {"foo":"bar"} syntax')).toBe(
+      'Document {"foo":"bar"} syntax',
+    );
+    expect(sanitizeThreadTitle('Explain the {"name": "widget"} config')).toBe(
+      'Explain the {"name": "widget"} config',
     );
   });
 
