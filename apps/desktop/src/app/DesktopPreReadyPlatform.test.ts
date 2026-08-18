@@ -5,17 +5,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { appendSwitchMock, getSwitchValueMock, hasSwitchMock, registerSchemesMock } = vi.hoisted(
-  () => ({
+const { appendSwitchMock, appOnMock, getSwitchValueMock, hasSwitchMock, registerSchemesMock } =
+  vi.hoisted(() => ({
     appendSwitchMock: vi.fn(),
+    appOnMock: vi.fn(),
     getSwitchValueMock: vi.fn(),
     hasSwitchMock: vi.fn(),
     registerSchemesMock: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock("electron", () => ({
   app: {
+    on: appOnMock,
     commandLine: {
       appendSwitch: appendSwitchMock,
       getSwitchValue: getSwitchValueMock,
@@ -32,6 +33,7 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 describe("DesktopPreReadyPlatform", () => {
   beforeEach(() => {
     appendSwitchMock.mockReset();
+    appOnMock.mockReset();
     getSwitchValueMock.mockReset();
     hasSwitchMock.mockReset();
     registerSchemesMock.mockReset();
@@ -64,6 +66,31 @@ describe("DesktopPreReadyPlatform", () => {
     assert.isNull(value);
   });
 
+  it("buffers a macOS URL opened before the desktop runtime is configured", () => {
+    let openUrlListener: ((event: unknown, url: string) => void) | undefined;
+    const openedUrls = DesktopPreReadyPlatform.makeEarlyOpenUrlBuffer({
+      platform: "darwin",
+      electronApp: {
+        on: (eventName, listener) => {
+          assert.equal(eventName, "open-url");
+          openUrlListener = listener;
+        },
+      },
+    });
+
+    if (!openUrlListener) {
+      throw new Error("open-url listener was not registered");
+    }
+    openUrlListener({}, "t3code://app/#/environment-123/thread-456");
+
+    const handledUrls: string[] = [];
+    openedUrls.setHandler((url) => {
+      handledUrls.push(url);
+    });
+
+    assert.deepEqual(handledUrls, ["t3code://app/#/environment-123/thread-456"]);
+  });
+
   it("returns null for missing Electron command-line switches", () => {
     const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
       {
@@ -90,6 +117,11 @@ describe("DesktopPreReadyPlatform", () => {
         registerSchemesMock.mockImplementation(() => {
           events.push("pre-ready");
         });
+        appOnMock.mockImplementation((eventName, listener) => {
+          assert.equal(eventName, "open-url");
+          events.push("open-url");
+          assert.equal(typeof listener, "function");
+        });
 
         const preReadyLayer = DesktopPreReadyPlatform.layer.pipe(
           Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
@@ -105,24 +137,32 @@ describe("DesktopPreReadyPlatform", () => {
           ),
         );
 
-        const runtimeLayer = clerkShapedLayer.pipe(
-          Layer.flatMap((clerkContext) => Layer.succeedContext(clerkContext)),
-          Layer.provideMerge(preReadyLayer),
+        const runtimeLayer = preReadyLayer.pipe(
+          Layer.flatMap((preReadyContext) =>
+            clerkShapedLayer.pipe(
+              Layer.flatMap((clerkContext) =>
+                Layer.mergeAll(
+                  Layer.succeedContext(preReadyContext),
+                  Layer.succeedContext(clerkContext),
+                ),
+              ),
+            ),
+          ),
         );
 
         const result = yield* Effect.all({
           clerk: ClerkShaped,
           preReady: DesktopPreReadyPlatform.DesktopPreReadyElectronOptions,
+          openUrls: DesktopPreReadyPlatform.DesktopPreReadyOpenUrls,
         }).pipe(Effect.provide(runtimeLayer));
 
-        assert.deepEqual(result, {
-          clerk: { ready: true },
-          preReady: {
-            linux: null,
-            linuxPasswordStoreCommandLine: null,
-          },
+        assert.deepEqual(result.clerk, { ready: true });
+        assert.deepEqual(result.preReady, {
+          linux: null,
+          linuxPasswordStoreCommandLine: null,
         });
-        assert.deepEqual(events, ["pre-ready", "clerk"]);
+        assert.isFunction(result.openUrls.setHandler);
+        assert.isTrue(events.indexOf("open-url") < events.indexOf("clerk"));
         assert.equal(registerSchemesMock.mock.calls.length, 1);
         assert.equal(appendSwitchMock.mock.calls.length, 0);
       }),

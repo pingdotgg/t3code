@@ -17,6 +17,42 @@ export interface DesktopPreReadyCommandLineReader {
   readonly getSwitchValue: (switchName: string) => string;
 }
 
+export interface EarlyOpenUrlElectronApp {
+  readonly on: (eventName: "open-url", listener: (event: unknown, url: string) => void) => void;
+}
+
+export interface EarlyOpenUrlBuffer {
+  readonly setHandler: (handler: (url: string) => void) => void;
+}
+
+export function makeEarlyOpenUrlBuffer(input: {
+  readonly platform: NodeJS.Platform;
+  readonly electronApp: EarlyOpenUrlElectronApp;
+}): EarlyOpenUrlBuffer {
+  if (input.platform !== "darwin") {
+    return { setHandler: () => {} };
+  }
+
+  const pendingUrls: string[] = [];
+  let handler: ((url: string) => void) | undefined;
+  input.electronApp.on("open-url", (_event, url) => {
+    if (handler) {
+      handler(url);
+      return;
+    }
+    pendingUrls.push(url);
+  });
+
+  return {
+    setHandler: (nextHandler) => {
+      handler = nextHandler;
+      for (const url of pendingUrls.splice(0)) {
+        handler(url);
+      }
+    },
+  };
+}
+
 export function readCommandLineSwitchValue(
   commandLine: DesktopPreReadyCommandLineReader,
   switchName: string,
@@ -46,6 +82,21 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
+export class DesktopPreReadyOpenUrls extends Context.Service<
+  DesktopPreReadyOpenUrls,
+  EarlyOpenUrlBuffer
+>()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyOpenUrls") {}
+
+const makeOpenUrls = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  return yield* Effect.sync(() =>
+    makeEarlyOpenUrlBuffer({
+      platform,
+      electronApp: Electron.app,
+    }),
+  );
+});
+
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
@@ -71,4 +122,5 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.mergeAll(
   ElectronProtocol.layerSchemePrivileges,
   Layer.effect(DesktopPreReadyElectronOptions, make),
+  Layer.effect(DesktopPreReadyOpenUrls, makeOpenUrls),
 );

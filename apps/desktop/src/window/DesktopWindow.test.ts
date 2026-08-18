@@ -201,6 +201,8 @@ function makeTestLayer(input: {
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
+  readonly beforeWindowCreate?: Effect.Effect<void>;
+  readonly exposeCreatedWindowBeforeMain?: boolean;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
 }) {
@@ -238,17 +240,27 @@ function makeTestLayer(input: {
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
+  const currentMainOrFirst = input.exposeCreatedWindowBeforeMain
+    ? Effect.gen(function* () {
+        const main = yield* Ref.get(input.mainWindow);
+        if (Option.isSome(main) || (yield* Ref.get(input.createCount)) === 0) {
+          return main;
+        }
+        return Option.some(input.window);
+      })
+    : Ref.get(input.mainWindow);
   const electronWindowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: (options) =>
       Effect.sync(() => {
         input.createdWindowOptions?.push(options);
       }).pipe(
         Effect.andThen(Ref.update(input.createCount, (count) => count + 1)),
+        Effect.andThen(input.beforeWindowCreate ?? Effect.void),
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
-    currentMainOrFirst: Ref.get(input.mainWindow),
-    focusedMainOrFirst: Ref.get(input.mainWindow),
+    currentMainOrFirst,
+    focusedMainOrFirst: currentMainOrFirst,
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
     reveal: () => Effect.void,
@@ -459,6 +471,191 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("opens a pending external thread when the backend becomes ready", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.openThread({
+          environmentId: "environment-123",
+          threadId: "thread-456",
+        });
+
+        assert.equal(yield* Ref.get(createCount), 0);
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["t3code-dev://app/#/environment-123/thread-456"],
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("navigates the open desktop window to an external thread", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.openThread({
+          environmentId: "environment-123",
+          threadId: "thread-456",
+        });
+
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["t3code-dev://app/"],
+          ["t3code-dev://app/#/environment-123/thread-456"],
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("retries the external thread URL after a development load failure", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.openThread({
+          environmentId: "environment-123",
+          threadId: "thread-456",
+        });
+        const didFailLoad = fakeWindow.webContentsListeners.get("did-fail-load");
+        if (!didFailLoad) {
+          return yield* Effect.die("renderer load listener was not registered");
+        }
+
+        didFailLoad(
+          {},
+          -9,
+          "ERR_UNEXPECTED",
+          "t3code-dev://app/#/environment-123/thread-456",
+          true,
+        );
+        yield* TestClock.adjust(100);
+
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["t3code-dev://app/"],
+          ["t3code-dev://app/#/environment-123/thread-456"],
+          ["t3code-dev://app/#/environment-123/thread-456"],
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("opens the normal app URL after a deep-link window is closed", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.openThread({
+          environmentId: "environment-123",
+          threadId: "thread-456",
+        });
+
+        const closed = fakeWindow.windowListeners.get("closed");
+        if (!closed) {
+          return yield* Effect.die("closed listener was not registered");
+        }
+        closed();
+        yield* Effect.promise(() => Promise.resolve());
+
+        yield* desktopWindow.activate;
+
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["t3code-dev://app/"],
+          ["t3code-dev://app/#/environment-123/thread-456"],
+          ["t3code-dev://app/"],
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("coalesces concurrent cold-start links on the latest thread", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const firstCreationStarted = yield* Deferred.make<void>();
+      const allowFirstCreation = yield* Deferred.make<void>();
+      const isFirstCreation = yield* Ref.make(true);
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        exposeCreatedWindowBeforeMain: true,
+        beforeWindowCreate: Effect.gen(function* () {
+          if (!(yield* Ref.getAndSet(isFirstCreation, false))) return;
+          yield* Deferred.succeed(firstCreationStarted, undefined);
+          yield* Deferred.await(allowFirstCreation);
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.openThread({
+          environmentId: "environment-123",
+          threadId: "thread-456",
+        });
+        const readyFiber = yield* desktopWindow
+          .handleBackendReady(new URL("http://127.0.0.1:3773"))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(firstCreationStarted);
+
+        const newerLinkFiber = yield* desktopWindow
+          .openThread({
+            environmentId: "environment-789",
+            threadId: "thread-abc",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        assert.equal(yield* Ref.get(createCount), 1);
+
+        yield* Deferred.succeed(allowFirstCreation, undefined);
+        yield* Fiber.join(readyFiber);
+        yield* Fiber.join(newerLinkFiber);
+
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["t3code-dev://app/#/environment-789/thread-abc"],
+        ]);
       }).pipe(Effect.provide(layer));
     }),
   );
