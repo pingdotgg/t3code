@@ -441,7 +441,7 @@ export function useThreadListActions(): {
   );
   const regenerateThreadTitle = useCallback(
     async (thread: EnvironmentThreadShell) => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const key = threadActionKey(thread);
       if (
         thread.titleRegeneration != null ||
         titleRegenerationInFlightThreadKeys.current.has(key)

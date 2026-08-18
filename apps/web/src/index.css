@@ -669,9 +669,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   [data-settings-page-scroll] div.settings-search-target-pulse,
-  [data-settings-page-scroll] section.settings-search-target-pulse > div:first-child {
+  [data-settings-page-scroll] section.settings-search-target-pulse > div:first-child,
+  [data-settings-page-scroll] input.settings-search-target-pulse {
     animation: settings-search-target-pulse 650ms ease-in-out 2;
+  }
+
+  [data-settings-page-scroll] div.settings-search-target-pulse,
+  [data-settings-page-scroll] section.settings-search-target-pulse > div:first-child {
     border-radius: 0.75rem;
+  }
+
+  [data-settings-page-scroll] input.settings-search-target-pulse {
+    border-radius: var(--control-radius);
   }
 
   /* The pulse is the destination indicator; without it (reduced motion), the

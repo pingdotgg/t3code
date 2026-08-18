@@ -174,7 +174,7 @@ const populatedArchiveSnapshots = [
 function renderPopulatedArchive(searchQuery?: string) {
   testDoubles.archiveState.snapshots = populatedArchiveSnapshots;
   testDoubles.archiveSearchQueryOverride = searchQuery ?? null;
-  renderToStaticMarkup(<ArchivedThreadsPanel />);
+  return renderToStaticMarkup(<ArchivedThreadsPanel />);
 }
 
 function clickCapturedButton(label: string, currentTarget: unknown = {}) {
@@ -263,6 +263,14 @@ describe("ArchivedThreadsPanel", () => {
         { variant: "destructive" },
       );
     });
+  });
+
+  it("exposes the active archive sort direction in the button label", () => {
+    const markup = renderPopulatedArchive("Archived");
+
+    expect(markup).toContain('aria-label="Sort by Archived, descending"');
+    expect(markup).toContain('aria-label="Sort by Created"');
+    expect(markup).not.toContain("aria-sort");
   });
 
   it("requests a destructive confirmation for a project bulk delete", async () => {

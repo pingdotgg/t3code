@@ -281,6 +281,30 @@ describe("buildArchivedThreadGroups", () => {
     ]);
   });
 
+  it("ranks partial matches with more query tokens ahead of weaker matches", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const fewerTokens = makeThread({
+      id: ThreadId.make("thread-fewer-tokens"),
+      projectId: project.id,
+      title: "Alpha only",
+    });
+    const moreTokens = makeThread({
+      id: ThreadId.make("thread-more-tokens"),
+      projectId: project.id,
+      title: `${"x".repeat(1_200)} Alpha Beta`,
+    });
+
+    const result = buildGroups({
+      snapshots: [makeSnapshot([project], [fewerTokens, moreTokens])],
+      query: "alpha beta gamma",
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-more-tokens",
+      "thread-fewer-tokens",
+    ]);
+  });
+
   it("filters archived title matches by environment", () => {
     const secondEnvironmentId = EnvironmentId.make("environment-2");
     const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });

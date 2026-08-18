@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => {
     "unsnooze",
     "unpin",
     "unsettle",
+    "updateMetadata",
   );
   const threadShellsAtom = {};
 
@@ -262,6 +263,31 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     await expect(actions.snoozeThread(firstThread, snoozedUntil)).resolves.toBe(false);
     await expect(actions.snoozeThread(secondThread, snoozedUntil)).resolves.toBe(true);
     expect(mocks.threadCommands.mutations.snooze).toHaveBeenCalledTimes(2);
+
+    completeFirst(success);
+    await expect(first).resolves.toBe(true);
+  });
+
+  it("keeps title-regeneration reservations collision-safe for scoped thread ids", async () => {
+    const firstThread = makeThread("thread", "environment:one");
+    const secondThread = makeThread("one:thread", "environment");
+    let completeFirst!: (result: typeof success) => void;
+    mocks.serverConfigs.set("environment:one", {
+      environment: { capabilities: { threadTitleRegeneration: true } },
+    });
+    mocks.serverConfigs.set("environment", {
+      environment: { capabilities: { threadTitleRegeneration: true } },
+    });
+    mocks.threadCommands.mutations.updateMetadata.mockReturnValueOnce(
+      new Promise<typeof success>((resolve) => {
+        completeFirst = resolve;
+      }),
+    );
+    const actions = useThreadListActions();
+
+    const first = actions.regenerateThreadTitle(firstThread);
+    await expect(actions.regenerateThreadTitle(secondThread)).resolves.toBe(true);
+    expect(mocks.threadCommands.mutations.updateMetadata).toHaveBeenCalledTimes(2);
 
     completeFirst(success);
     await expect(first).resolves.toBe(true);

@@ -75,7 +75,9 @@ function ArchivedSortButton({
     <button
       type="button"
       className="inline-flex min-w-0 items-center justify-end gap-1 text-right text-[11px] font-medium text-muted-foreground/70 transition-colors hover:text-foreground"
-      aria-sort={active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}
+      aria-label={`Sort by ${label}${
+        active ? `, ${sort.direction === "asc" ? "ascending" : "descending"}` : ""
+      }`}
       onClick={(event) => {
         event.stopPropagation();
         onClick();
@@ -109,7 +111,7 @@ function ArchivedIconButton({
             variant={destructive ? "destructive-outline" : "ghost"}
             size="icon-xs"
             aria-label={label}
-            className="size-6 rounded-md"
+            className="size-6"
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -712,7 +714,7 @@ export function ArchivedThreadsPanel() {
                           variant="ghost"
                           size="icon-xs"
                           aria-label={`Project actions for ${project.title}`}
-                          className="size-6 rounded-md justify-self-end"
+                          className="size-6 justify-self-end"
                           disabled={projectHasInFlightAction}
                           onClick={(event) => {
                             event.stopPropagation();

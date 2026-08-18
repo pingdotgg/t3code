@@ -703,7 +703,7 @@ function ArchivedThreadRow(props: {
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >
-            {rowContent}
+            <Pressable>{rowContent}</Pressable>
           </ControlPillMenu>
         )
       }
