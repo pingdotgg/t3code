@@ -290,6 +290,74 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("forwards custom model controls to Claude CLI", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Use gateway model",
+            body: "Body",
+          },
+        }),
+        argsMustContain: '--model gateway/model[1m] --effort xhigh --settings {"fastMode":false}',
+        claudeConfig: {
+          customModels: ["gateway/model"],
+          customModelCapabilities: {
+            "gateway/model": {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "xhigh", label: "Extra High", isDefault: true },
+                  ],
+                },
+                {
+                  id: "fastMode",
+                  label: "Fast Mode",
+                  type: "boolean",
+                },
+                {
+                  id: "contextWindow",
+                  label: "Context Window",
+                  type: "select",
+                  options: [
+                    { id: "200k", label: "200k" },
+                    { id: "1m", label: "1M", isDefault: true },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "feature/custom-model",
+            commitSummary: "Use gateway model",
+            diffSummary: "1 file changed",
+            diffPatch: "diff --git a/README.md b/README.md",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "gateway/model",
+              [
+                { id: "effort", value: "xhigh" },
+                { id: "fastMode", value: false },
+                { id: "contextWindow", value: "1m" },
+              ],
+            ),
+          });
+
+          expect(generated.title).toBe("Use gateway model");
+        }),
+    ),
+  );
+
   it.effect("generates thread titles through the Claude provider", () =>
     withFakeClaudeEnv(
       {

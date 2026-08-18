@@ -361,6 +361,52 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
+  it.effect("passes configured custom model IDs to session and turn runtime requests", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({ customModels: ["gpt-5-codex"] });
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5-codex");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-custom-model-id"),
+        runtimeMode: "full-access",
+        modelSelection: selection,
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.equal(runtime.options.model, "gpt-5-codex");
+      NodeAssert.deepStrictEqual(runtime.options.customModels, ["gpt-5-codex"]);
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("sess-custom-model-id"),
+        input: "hello",
+        modelSelection: selection,
+        attachments: [],
+      });
+
+      NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
+        input: "hello",
+        model: "gpt-5-codex",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("passes configured launch args into the session runtime", () => {
     const runtimeFactory = makeRuntimeFactory();
     const layer = Layer.effect(

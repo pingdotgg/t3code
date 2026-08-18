@@ -38,6 +38,7 @@ import {
 } from "@t3tools/shared/model";
 import {
   getClaudeModelCapabilities,
+  isConfiguredCustomClaudeModel,
   isClaudeUltracodeEffort,
   normalizeClaudeCliEffort,
   resolveClaudeApiModelId,
@@ -126,7 +127,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       toJsonSchemaObject(outputSchemaJson),
       "Failed to encode structured output schema.",
     );
-    const caps = getClaudeModelCapabilities(modelSelection.model);
+    const customModelCapabilities = claudeSettings.customModelCapabilities ?? {};
+    const caps = getClaudeModelCapabilities(modelSelection.model, customModelCapabilities);
     const descriptors = getProviderOptionDescriptors({
       caps,
       selections: modelSelection.options,
@@ -134,7 +136,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
     const rawEffortSelection = getModelSelectionStringOptionValue(modelSelection, "effort");
     const resolvedEffort = resolveClaudeEffort(caps, rawEffortSelection);
-    const cliEffort = normalizeClaudeCliEffort(resolvedEffort, modelSelection.model);
+    const cliEffort = normalizeClaudeCliEffort(
+      resolvedEffort,
+      modelSelection.model,
+      isConfiguredCustomClaudeModel(modelSelection.model, customModelCapabilities),
+    );
     const ultracode = isClaudeUltracodeEffort(resolvedEffort);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
@@ -144,7 +150,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-      ...(fastMode ? { fastMode: true } : {}),
+      ...(typeof fastMode === "boolean" ? { fastMode } : {}),
       ...(ultracode ? { ultracode: true } : {}),
     };
     const settingsJson =
@@ -166,7 +172,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeApiModelId(modelSelection),
+          resolveClaudeApiModelId(modelSelection, customModelCapabilities),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           ...(settingsJson ? ["--settings", settingsJson] : []),
           "--dangerously-skip-permissions",

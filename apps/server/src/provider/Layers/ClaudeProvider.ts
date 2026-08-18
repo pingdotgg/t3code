@@ -14,6 +14,7 @@ import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
+  getDeclaredCustomModelCapabilities,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -46,7 +47,6 @@ import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
-
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
@@ -330,6 +330,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = CLAUDE_MODEL_CATALOG.map((model) =>
   isLegacyClaudeModel(model.slug) ? { ...model, isLegacy: true } : model,
 );
+const BUILT_IN_MODEL_SLUGS = new Set(BUILT_IN_MODELS.map((model) => model.slug));
 
 function supportsClaudeOpus5(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_5_VERSION) >= 0 : false;
@@ -387,11 +388,28 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
 }
 
-export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
+export function getClaudeModelCapabilities(
+  model: string | null | undefined,
+  customModelCapabilities: Readonly<Record<string, ModelCapabilities>> = {},
+): ModelCapabilities {
   const slug = model?.trim();
+  const customCapabilities = getDeclaredCustomModelCapabilities(customModelCapabilities, slug);
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
+    customCapabilities ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
+  );
+}
+
+export function isConfiguredCustomClaudeModel(
+  model: string | null | undefined,
+  customModelCapabilities: Readonly<Record<string, ModelCapabilities>>,
+): boolean {
+  const slug = model?.trim();
+  return Boolean(
+    slug &&
+    !BUILT_IN_MODEL_SLUGS.has(slug) &&
+    getDeclaredCustomModelCapabilities(customModelCapabilities, slug),
   );
 }
 
@@ -421,12 +439,16 @@ export function resolveClaudeEffort(
 export function normalizeClaudeCliEffort(
   effort: string | null | undefined,
   model: string | null | undefined,
+  isCustomModel = false,
 ): string | undefined {
   if (!effort || effort === "ultrathink") {
     return undefined;
   }
   if (effort === "ultracode") {
     return "xhigh";
+  }
+  if (isCustomModel) {
+    return effort;
   }
   if (
     effort === "xhigh" &&
@@ -449,8 +471,9 @@ export function isClaudeUltracodeEffort(effort: string | null | undefined): bool
 
 export function resolveClaudeContextWindow(
   modelSelection: ModelSelection | undefined,
+  customModelCapabilities: Readonly<Record<string, ModelCapabilities>> = {},
 ): string | undefined {
-  const caps = getClaudeModelCapabilities(modelSelection?.model);
+  const caps = getClaudeModelCapabilities(modelSelection?.model, customModelCapabilities);
   const raw = getModelSelectionStringOptionValue(modelSelection, "contextWindow");
   const descriptors = getProviderOptionDescriptors({
     caps,
@@ -461,10 +484,15 @@ export function resolveClaudeContextWindow(
   return typeof value === "string" ? value : undefined;
 }
 
-export function resolveClaudeApiModelId(modelSelection: ModelSelection): string {
-  switch (resolveClaudeContextWindow(modelSelection)) {
+export function resolveClaudeApiModelId(
+  modelSelection: ModelSelection,
+  customModelCapabilities: Readonly<Record<string, ModelCapabilities>> = {},
+): string {
+  switch (resolveClaudeContextWindow(modelSelection, customModelCapabilities)) {
     case "1m":
-      return `${modelSelection.model}[1m]`;
+      return modelSelection.model.endsWith("[1m]")
+        ? modelSelection.model
+        : `${modelSelection.model}[1m]`;
     default:
       return modelSelection.model;
   }
@@ -822,6 +850,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     BUILT_IN_MODELS,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    {
+      customModelCapabilities: claudeSettings.customModelCapabilities,
+    },
   );
 
   if (!claudeSettings.enabled) {
@@ -910,8 +941,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   const models = providerModelsFromSettings(
     getBuiltInClaudeModelsForVersion(parsedVersion),
-    claudeSettings.customModels,
+    claudeSettings.customModels.filter((model) => !BUILT_IN_MODEL_SLUGS.has(model.trim())),
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    {
+      customModelCapabilities: claudeSettings.customModelCapabilities,
+    },
   );
   const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
     ? undefined
@@ -985,6 +1019,9 @@ export const makePendingClaudeProvider = (
       BUILT_IN_MODELS,
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+      {
+        customModelCapabilities: claudeSettings.customModelCapabilities,
+      },
     );
 
     if (!claudeSettings.enabled) {

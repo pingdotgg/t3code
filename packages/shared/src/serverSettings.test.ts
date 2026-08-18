@@ -298,6 +298,53 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces legacy custom model capability maps", () => {
+    const capabilities = {
+      optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" as const }],
+    };
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providers: {
+        codex: {
+          ...DEFAULT_SERVER_SETTINGS.providers.codex,
+          customModelCapabilities: { old: capabilities },
+        },
+        claudeAgent: {
+          ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+          customModelCapabilities: { old: capabilities },
+        },
+        cursor: {
+          ...DEFAULT_SERVER_SETTINGS.providers.cursor,
+          customModelCapabilities: { old: capabilities },
+        },
+        grok: {
+          ...DEFAULT_SERVER_SETTINGS.providers.grok,
+          customModelCapabilities: { old: capabilities },
+        },
+        opencode: {
+          ...DEFAULT_SERVER_SETTINGS.providers.opencode,
+          customModelCapabilities: { old: capabilities },
+        },
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      providers: {
+        codex: { customModelCapabilities: {} },
+        claudeAgent: { customModelCapabilities: { next: capabilities } },
+        cursor: { customModelCapabilities: {} },
+        grok: { customModelCapabilities: {} },
+        opencode: { customModelCapabilities: {} },
+      },
+    });
+
+    expect(next.providers.codex.customModelCapabilities).toEqual({});
+    expect(next.providers.claudeAgent.customModelCapabilities).toEqual({ next: capabilities });
+    expect(next.providers.cursor.customModelCapabilities).toEqual({});
+    expect(next.providers.grok.customModelCapabilities).toEqual({});
+    expect(next.providers.opencode.customModelCapabilities).toEqual({});
+  });
+
   it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {
     const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       backgroundActivity: {

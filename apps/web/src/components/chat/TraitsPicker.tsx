@@ -190,7 +190,7 @@ function getTraitsSectionVisibility(input: {
     showFastMode,
     showContextWindow,
     showAgent,
-    hasAnyControls: showEffort || showThinking || showFastMode || showContextWindow || showAgent,
+    hasAnyControls: selected.selectDescriptors.length > 0 || selected.booleanDescriptors.length > 0,
   };
 }
 

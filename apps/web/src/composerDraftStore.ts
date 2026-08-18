@@ -29,7 +29,11 @@ import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  normalizeCustomModelSlug,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -875,13 +879,16 @@ function normalizeModelSelection(
   if (typeof rawModel !== "string") {
     return null;
   }
-  // Slug normalization can use provider-kind-specific rules when a legacy
-  // driver key is present. Instance-only selections are not reverse-inferred
-  // into a driver kind here; they get generic default normalization.
-  const driverKindHint =
-    normalizeProviderDriverKind(candidate?.provider ?? legacy?.provider) ??
-    ProviderDriverKind.make("codex");
-  const model = normalizeModelSlug(rawModel, driverKindHint);
+  // Canonical selections preserve provider-owned IDs. Only legacy provider-shaped
+  // selections expand aliases with driver-specific rules.
+  const model =
+    candidate?.instanceId !== undefined
+      ? normalizeCustomModelSlug(rawModel)
+      : normalizeModelSlug(
+          rawModel,
+          normalizeProviderDriverKind(candidate?.provider ?? legacy?.provider) ??
+            ProviderDriverKind.make("codex"),
+        );
   if (!model) {
     return null;
   }
@@ -2817,7 +2824,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           const instanceKey = options?.instanceId ?? defaultInstanceIdForDriver(normalizedProvider);
           const fallbackModel =
-            normalizeModelSlug(options?.model, normalizedProvider) ??
+            normalizeCustomModelSlug(options?.model) ??
             DEFAULT_MODEL_BY_PROVIDER[normalizedProvider] ??
             DEFAULT_MODEL;
           const providerOpts =

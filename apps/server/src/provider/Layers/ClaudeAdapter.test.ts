@@ -38,6 +38,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -273,6 +274,51 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it("keeps built-in capabilities ahead of custom metadata", () => {
+    const builtIn = getClaudeModelCapabilities("claude-opus-5");
+    const resolved = getClaudeModelCapabilities("claude-opus-5", {
+      "claude-opus-5": { optionDescriptors: [] },
+    });
+
+    assert.deepEqual(resolved, builtIn);
+    assert.equal(
+      resolved.optionDescriptors?.some((descriptor) => descriptor.id === "effort"),
+      true,
+    );
+  });
+
+  it("keeps arbitrary custom controls in the Claude catalog", () => {
+    const resolved = getClaudeModelCapabilities("vendor/preview", {
+      "vendor/preview": {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [{ id: "high", label: "High" }],
+          },
+          {
+            id: "serviceTier",
+            label: "Service Tier",
+            type: "select",
+            options: [{ id: "priority", label: "Priority" }],
+          },
+        ],
+      },
+    });
+
+    assert.deepEqual(
+      resolved.optionDescriptors?.map((descriptor) => descriptor.id),
+      ["effort", "serviceTier"],
+    );
+  });
+
+  it("does not read inherited object keys as Claude custom capabilities", () => {
+    const resolved = getClaudeModelCapabilities("constructor", {});
+
+    assert.deepEqual(resolved, { optionDescriptors: [] });
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -694,6 +740,80 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.settings, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forwards declared custom-model controls to Claude SDK launch options", () => {
+    const customModelCapabilities = {
+      "gateway/model": {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select" as const,
+            options: [
+              { id: "low", label: "Low" },
+              { id: "xhigh", label: "Extra High" },
+              { id: "max", label: "Max", isDefault: true },
+            ],
+          },
+          {
+            id: "fastMode",
+            label: "Fast Mode",
+            type: "boolean" as const,
+          },
+          {
+            id: "thinking",
+            label: "Thinking",
+            type: "boolean" as const,
+          },
+          {
+            id: "contextWindow",
+            label: "Context Window",
+            type: "select" as const,
+            options: [
+              { id: "200k", label: "200k" },
+              { id: "1m", label: "1M", isDefault: true },
+            ],
+          },
+        ],
+      },
+    };
+    const harness = makeHarness({
+      claudeConfig: {
+        customModels: ["gateway/model"],
+        customModelCapabilities,
+      } as Partial<ClaudeSettings>,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "gateway/model",
+          [
+            { id: "effort", value: "xhigh" },
+            { id: "fastMode", value: false },
+            { id: "thinking", value: false },
+            { id: "contextWindow", value: "1m" },
+          ],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "gateway/model[1m]");
+      assert.equal(createInput?.options.effort, "xhigh");
+      assert.deepEqual(createInput?.options.settings, {
+        alwaysThinkingEnabled: false,
+        fastMode: false,
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

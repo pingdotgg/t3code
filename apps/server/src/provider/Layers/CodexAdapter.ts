@@ -1658,10 +1658,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
-        const serviceTier =
-          input.modelSelection?.instanceId === boundInstanceId
-            ? getCodexServiceTierOptionValue(input.modelSelection)
-            : undefined;
+        const modelSelection =
+          input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+        const serviceTier = modelSelection
+          ? getCodexServiceTierOptionValue(modelSelection)
+          : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
@@ -1675,8 +1676,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { resumeCursor: input.resumeCursor }
             : {}),
           runtimeMode: input.runtimeMode,
-          ...(input.modelSelection?.instanceId === boundInstanceId
-            ? { model: input.modelSelection.model }
+          ...(modelSelection
+            ? {
+                model: modelSelection.model,
+              }
+            : {}),
+          ...(codexConfig.customModels.length > 0
+            ? { customModels: codexConfig.customModels }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
           ...(mcpSession
@@ -1808,19 +1814,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
-    const reasoningEffort =
-      input.modelSelection?.instanceId === boundInstanceId
-        ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
-        : undefined;
-    const serviceTier =
-      input.modelSelection?.instanceId === boundInstanceId
-        ? getCodexServiceTierOptionValue(input.modelSelection)
-        : undefined;
+    const modelSelection =
+      input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+    const reasoningEffort = modelSelection
+      ? getModelSelectionStringOptionValue(modelSelection, "reasoningEffort")
+      : undefined;
+    const serviceTier = modelSelection ? getCodexServiceTierOptionValue(modelSelection) : undefined;
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
-        ...(input.modelSelection?.instanceId === boundInstanceId
-          ? { model: input.modelSelection.model }
+        ...(modelSelection
+          ? {
+              model: modelSelection.model,
+            }
           : {}),
         ...(reasoningEffort
           ? {

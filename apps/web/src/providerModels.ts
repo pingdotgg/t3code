@@ -82,6 +82,10 @@ export function getProviderModelCapabilities(
   model: string | null | undefined,
   provider: ProviderDriverKind,
 ): ModelCapabilities {
+  const exactModel = model ? models.find((candidate) => candidate.slug === model) : undefined;
+  if (exactModel) {
+    return exactModel.capabilities ?? EMPTY_CAPABILITIES;
+  }
   const slug = normalizeModelSlug(model, provider);
   return models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
 }

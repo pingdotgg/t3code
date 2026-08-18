@@ -70,6 +70,58 @@ describe("providerModelsFromSettings", () => {
     expect(models.map((model) => model.slug)).toEqual(["claude-opus-4-8", "opus"]);
     expect(models[1]?.isCustom).toBe(true);
   });
+
+  it("does not read inherited object keys as custom capabilities", () => {
+    const fallbackCapabilities = createModelCapabilities({ optionDescriptors: [] });
+    const models = providerModelsFromSettings([], ["constructor"], fallbackCapabilities, {
+      customModelCapabilities: {},
+    });
+
+    expect(models[0]?.capabilities).toBe(fallbackCapabilities);
+  });
+
+  it("uses per-model capabilities when a custom model declares them", () => {
+    const fallbackCapabilities = createModelCapabilities({ optionDescriptors: [] });
+    const declaredCapabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "max", label: "Max", isDefault: true },
+          ],
+        },
+      ],
+    });
+
+    const models = providerModelsFromSettings([], ["gateway/model"], fallbackCapabilities, {
+      customModelCapabilities: { "gateway/model": declaredCapabilities },
+    });
+
+    expect(models[0]?.capabilities).toEqual(declaredCapabilities);
+  });
+
+  it("keeps arbitrary descriptors without a provider allowlist", () => {
+    const fallbackCapabilities = createModelCapabilities({ optionDescriptors: [] });
+    const declaredCapabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "temperature",
+          label: "Temperature",
+          type: "select",
+          options: [{ id: "warm", label: "Warm" }],
+        },
+      ],
+    });
+
+    const models = providerModelsFromSettings([], ["vendor/preview"], fallbackCapabilities, {
+      customModelCapabilities: { "vendor/preview": declaredCapabilities },
+    });
+
+    expect(models[0]?.capabilities).toEqual(declaredCapabilities);
+  });
 });
 
 describe("ProviderCommandNotFoundError", () => {

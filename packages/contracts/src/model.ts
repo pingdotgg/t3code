@@ -127,6 +127,9 @@ export const ModelCapabilities = Schema.Struct({
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
+export const CustomModelCapabilities = Schema.Record(TrimmedNonEmptyString, ModelCapabilities);
+export type CustomModelCapabilities = typeof CustomModelCapabilities.Type;
+
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");

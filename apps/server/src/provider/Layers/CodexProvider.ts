@@ -24,7 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, getDeclaredCustomModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
@@ -37,7 +37,6 @@ import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
-
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
@@ -228,6 +227,7 @@ export function applyPreferredCodexDefaultModel(
 function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
+  customModelCapabilities: Readonly<Record<string, ModelCapabilities>> = {},
 ): ReadonlyArray<ServerProviderModel> {
   if (customModels.length === 0) {
     return models;
@@ -242,11 +242,12 @@ function appendCustomCodexModels(
       continue;
     }
     seen.add(slug);
+    const declaredCapabilities = getDeclaredCustomModelCapabilities(customModelCapabilities, slug);
     customEntries.push({
       slug,
       name: slug,
       isCustom: true,
-      capabilities: fallbackCapabilities,
+      capabilities: declaredCapabilities ?? fallbackCapabilities,
     });
   }
   return customEntries.length === 0 ? models : [...models, ...customEntries];
@@ -325,6 +326,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly launchArgs?: string;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
+  readonly customModelCapabilities?: Readonly<Record<string, ModelCapabilities>>;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
@@ -390,7 +392,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     return {
       account: accountResponse,
       version,
-      models: appendCustomCodexModels([], input.customModels ?? []),
+      models: appendCustomCodexModels([], input.customModels ?? [], input.customModelCapabilities),
       skills: [],
     } satisfies CodexAppServerProviderSnapshot;
   }
@@ -409,7 +411,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     version,
     models: applyPreferredCodexDefaultModel(
-      appendCustomCodexModels(models, input.customModels ?? []),
+      appendCustomCodexModels(models, input.customModels ?? [], input.customModelCapabilities),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
@@ -423,12 +425,18 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
       models.add(trimmed);
     }
   }
-  return Array.from(models, (model) => ({
-    slug: model,
-    name: model,
-    isCustom: true,
-    capabilities: null,
-  }));
+  return Array.from(models, (model) => {
+    const capabilities = getDeclaredCustomModelCapabilities(
+      codexSettings.customModelCapabilities,
+      model,
+    );
+    return {
+      slug: model,
+      name: model,
+      isCustom: true,
+      capabilities: capabilities ?? null,
+    };
+  });
 };
 
 const makePendingCodexProvider = (
@@ -508,6 +516,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly launchArgs?: string;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
+    readonly customModelCapabilities?: Readonly<Record<string, ModelCapabilities>>;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
@@ -547,6 +556,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
+    ...(codexSettings.customModelCapabilities
+      ? { customModelCapabilities: codexSettings.customModelCapabilities }
+      : {}),
     environment: resolvedEnvironment,
   }).pipe(
     Effect.scoped,

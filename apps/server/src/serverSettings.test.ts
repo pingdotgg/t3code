@@ -136,9 +136,94 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
   );
 
+  it.effect("keeps old custom-model settings valid with empty capability metadata", () =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeServerSettings({
+        providers: {
+          claudeAgent: {
+            customModels: ["gateway/model"],
+          },
+        },
+      });
+
+      assert.deepEqual(decoded.providers.claudeAgent, {
+        enabled: true,
+        binaryPath: "claude",
+        homePath: "",
+        customModels: ["gateway/model"],
+        launchArgs: "",
+      });
+    }),
+  );
+
+  it.effect("decodes custom-model capability metadata for every provider and patches", () =>
+    Effect.gen(function* () {
+      const customModelCapabilities = {
+        "gateway/model": {
+          optionDescriptors: [
+            {
+              id: "contextWindow",
+              label: "Context Window",
+              type: "select" as const,
+              options: [
+                { id: "200k", label: "200k" },
+                { id: "1m", label: "1M", isDefault: true },
+              ],
+            },
+          ],
+        },
+      };
+
+      const decoded = yield* decodeServerSettings({
+        providers: {
+          codex: { customModels: ["gateway/model"], customModelCapabilities },
+          claudeAgent: { customModels: ["gateway/model"], customModelCapabilities },
+          cursor: { customModels: ["gateway/model"], customModelCapabilities },
+          grok: { customModels: ["gateway/model"], customModelCapabilities },
+          opencode: { customModels: ["gateway/model"], customModelCapabilities },
+        },
+      });
+      const patch = yield* decodeSettingsPatch({
+        providers: {
+          codex: { customModelCapabilities },
+          claudeAgent: { customModelCapabilities },
+          cursor: { customModelCapabilities },
+          grok: { customModelCapabilities },
+          opencode: { customModelCapabilities },
+        },
+      });
+
+      for (const provider of ["codex", "claudeAgent", "cursor", "grok", "opencode"] as const) {
+        assert.deepEqual(
+          decoded.providers[provider].customModelCapabilities,
+          customModelCapabilities,
+        );
+        assert.deepEqual(
+          patch.providers?.[provider]?.customModelCapabilities,
+          customModelCapabilities,
+        );
+      }
+    }),
+  );
+
   it.effect("deep merges nested settings updates without dropping siblings", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const customModelCapabilities = {
+        "claude-custom": {
+          optionDescriptors: [
+            {
+              id: "contextWindow",
+              label: "Context Window",
+              type: "select" as const,
+              options: [
+                { id: "200k", label: "200k" },
+                { id: "1m", label: "1M", isDefault: true },
+              ],
+            },
+          ],
+        },
+      };
 
       yield* serverSettings.updateSettings({
         providers: {
@@ -149,6 +234,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           claudeAgent: {
             binaryPath: "/usr/local/bin/claude",
             customModels: ["claude-custom"],
+            customModelCapabilities,
           },
         },
         textGenerationModelSelection: {
@@ -189,6 +275,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         binaryPath: "/usr/local/bin/claude",
         homePath: "",
         customModels: ["claude-custom"],
+        customModelCapabilities,
         launchArgs: "",
       });
       assert.deepEqual(

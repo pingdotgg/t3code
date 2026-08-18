@@ -34,6 +34,40 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.requiresNewThreadForModelChange).toBe(true);
     }),
   );
+
+  it.effect("keeps arbitrary custom controls in the Grok catalog", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* buildInitialGrokProviderSnapshot(
+        decodeGrokSettings({
+          customModels: ["vendor/preview"],
+          customModelCapabilities: {
+            "vendor/preview": {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [{ id: "high", label: "High" }],
+                },
+              ],
+            },
+          },
+        }),
+      );
+      const custom = snapshot.models.find((model) => model.slug === "vendor/preview");
+
+      expect(custom?.capabilities).toEqual({
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [{ id: "high", label: "High" }],
+          },
+        ],
+      });
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {

@@ -12,9 +12,12 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { useState, type ReactNode } from "react";
 import {
+  CustomModelCapabilities,
   isProviderDriverKind,
+  type ModelCapabilities,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -22,6 +25,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { getDeclaredCustomModelCapabilities } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -52,6 +56,8 @@ import {
 } from "./providerStatus";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+const isCustomModelCapabilities = Schema.is(CustomModelCapabilities);
 
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
@@ -90,6 +96,12 @@ function readConfigStringArray(config: unknown, key: string): ReadonlyArray<stri
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+function readCustomModelCapabilities(config: unknown): Readonly<Record<string, ModelCapabilities>> {
+  if (config === null || typeof config !== "object") return {};
+  const value = (config as Record<string, unknown>).customModelCapabilities;
+  return isCustomModelCapabilities(value) ? value : {};
+}
+
 /**
  * Set `key` to an arbitrary value on the opaque config blob. Unlike
  * provider settings field updates, does not drop empty-looking values — the
@@ -109,9 +121,30 @@ function nextConfigBlobWithValue(
   return base;
 }
 
+export function reconcileCustomModelCapabilities(input: {
+  readonly capabilities: Readonly<Record<string, ModelCapabilities>>;
+  readonly currentModels: ReadonlyArray<string>;
+  readonly nextModels: ReadonlyArray<string>;
+}): Readonly<Record<string, ModelCapabilities>> {
+  const currentModels = new Set(input.currentModels);
+  const entries: Array<readonly [string, ModelCapabilities]> = [];
+  for (const slug of input.nextModels) {
+    const capabilities = Object.hasOwn(input.capabilities, slug)
+      ? input.capabilities[slug]
+      : undefined;
+    if (capabilities) {
+      entries.push([slug, capabilities]);
+    } else if (!currentModels.has(slug)) {
+      entries.push([slug, { optionDescriptors: [] }]);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<string>;
+  readonly customModelCapabilities?: Readonly<Record<string, ModelCapabilities>>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -119,15 +152,26 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
+  const serverModelSlugs = new Set(serverModels.map((model) => model.slug));
+  const customModels = input.customModels
+    .filter((slug) => !serverModelSlugs.has(slug))
+    .map((slug) => {
+      const liveModel = liveCustomModelsBySlug.get(slug);
+      const configuredCapabilities = getDeclaredCustomModelCapabilities(
+        input.customModelCapabilities,
+        slug,
+      );
+      const capabilities = configuredCapabilities;
+      if (liveModel) {
+        return capabilities ? { ...liveModel, capabilities } : liveModel;
+      }
+      return {
         slug,
         name: slug,
         isCustom: true,
-        capabilities: null,
-      },
-  );
+        capabilities: capabilities ?? null,
+      };
+    });
   return [...serverModels, ...customModels];
 }
 
@@ -323,6 +367,7 @@ interface ProviderInstanceCardProps {
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
   readonly liveProvider: ServerProvider | undefined;
+  readonly sourceProviders: ReadonlyArray<ServerProvider>;
   readonly isExpanded: boolean;
   readonly onExpandedChange: (open: boolean) => void;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
@@ -380,6 +425,7 @@ export function ProviderInstanceCard({
   instance,
   driverOption,
   liveProvider,
+  sourceProviders,
   isExpanded,
   onExpandedChange,
   onUpdate,
@@ -444,12 +490,14 @@ export function ProviderInstanceCard({
     : null;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
+  const customModelCapabilities = readCustomModelCapabilities(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
+    customModelCapabilities,
   });
 
   const updateDisplayName = (value: string) => {
@@ -487,6 +535,34 @@ export function ProviderInstanceCard({
 
   const updateCustomModels = (next: ReadonlyArray<string>) => {
     const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
+    const remainingCapabilities = reconcileCustomModelCapabilities({
+      capabilities: customModelCapabilities,
+      currentModels: customModels,
+      nextModels: next,
+    });
+    if (Object.keys(remainingCapabilities).length > 0) {
+      nextConfig.customModelCapabilities = remainingCapabilities;
+    } else {
+      delete nextConfig.customModelCapabilities;
+    }
+    const { config: _omit, ...rest } = instance;
+    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+  };
+
+  const updateCustomModelCapabilities = (
+    slug: string,
+    capabilities: ModelCapabilities | undefined,
+  ) => {
+    const nextCapabilities = Object.fromEntries([
+      ...Object.entries(customModelCapabilities).filter(([key]) => key !== slug),
+      ...(capabilities ? ([[slug, capabilities]] as const) : []),
+    ]);
+    const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...customModels]);
+    if (Object.keys(nextCapabilities).length > 0) {
+      nextConfig.customModelCapabilities = nextCapabilities;
+    } else {
+      delete nextConfig.customModelCapabilities;
+    }
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
@@ -778,7 +854,10 @@ export function ProviderInstanceCard({
                 instanceId={instanceId}
                 driverKind={driverKind}
                 models={modelsForDisplay}
+                sourceProviders={sourceProviders}
                 customModels={customModels}
+                customModelCapabilities={customModelCapabilities}
+                onCustomModelCapabilitiesChange={updateCustomModelCapabilities}
                 hiddenModels={hiddenModels}
                 favoriteModels={favoriteModels}
                 modelOrder={modelOrder}

@@ -40,7 +40,6 @@ const GROK_PRESENTATION = {
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
-
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
@@ -58,7 +57,7 @@ export function buildInitialGrokProviderSnapshot(
 ): Effect.Effect<ServerProviderDraft> {
   return Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = grokModelsFromSettings(grokSettings.customModels);
+    const models = grokModelsFromSettings(grokSettings);
 
     if (!grokSettings.enabled) {
       return buildServerProvider({
@@ -93,10 +92,12 @@ export function buildInitialGrokProviderSnapshot(
 }
 
 function grokModelsFromSettings(
-  customModels: ReadonlyArray<string> | undefined,
+  grokSettings: Pick<GrokSettings, "customModels" | "customModelCapabilities">,
   builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
+  return providerModelsFromSettings(builtInModels, grokSettings.customModels, EMPTY_CAPABILITIES, {
+    customModelCapabilities: grokSettings.customModelCapabilities,
+  });
 }
 
 function buildGrokDiscoveredModelsFromSessionModelState(
@@ -167,7 +168,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
+  const fallbackModels = grokModelsFromSettings(grokSettings);
 
   if (!grokSettings.enabled) {
     return buildServerProvider({
@@ -294,7 +295,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   const discoveredModels = discoveryExit.value.value;
   const models =
     discoveredModels.length > 0
-      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
+      ? grokModelsFromSettings(grokSettings, discoveredModels)
       : fallbackModels;
 
   return buildServerProvider({

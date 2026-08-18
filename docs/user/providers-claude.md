@@ -10,6 +10,31 @@ Common reasons:
 - run Claude through a router such as Claude Code Router
 - use external providers exposed through a Claude-compatible workflow
 
+## Custom Model Controls
+
+Add a custom model in **Settings → Providers → Claude → Models**. Use the settings button beside
+the model to add controls by exact option ID, then set their labels, values, and defaults. Claude's
+adapter recognizes `effort`, `fastMode`, `contextWindow`, and `thinking`. The message composer shows
+every control you add. See [Custom models](./providers-custom-models.md) for adapter behavior.
+
+The saved model ID stays exact. For example, a custom model saved as `gateway/model` stays visible as
+`gateway/model`. If you declare a `1m` context option and select it, T3 Code gives Claude Code the
+`gateway/model[1m]` launch selector. T3 Code stores the configured gateway model ID without that
+selector. T3 Code does not assume 1M support for other custom models.
+
+Reasoning selections use the Claude Agent SDK effort option. Custom model names do not force a
+built-in Claude effort mapping. Existing `ultracode` and `ultrathink` behavior still applies. Only
+list values supported by your Claude Code version and gateway.
+
+Claude fast mode has an important limit: it is Claude Code's native `fastMode` setting. It is not
+OpenAI priority service, and the Claude Agent SDK does not provide an OpenAI `serviceTier` option.
+Enable fast mode only when your Claude runtime and gateway support Claude's native fast-mode
+setting. A gateway that only supports OpenAI priority service cannot receive that choice through
+the Claude provider.
+
+Existing custom models keep working without changes. A custom model with no declared controls keeps
+the same empty capability metadata and shows no extra composer controls.
+
 ## I Only Use One Claude Account
 
 Use the default provider.

@@ -1415,6 +1415,21 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("preserves an exact custom model ID when its first control changes", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProviderModelOptions(
+      threadRef,
+      CLAUDE_AGENT_DRIVER,
+      toSelections({ effort: "high" }),
+      { model: "opus" },
+    );
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "opus", { effort: "high" }));
+  });
+
   it("updates only the draft when sticky persistence is omitted", () => {
     const store = useComposerDraftStore.getState();
 
@@ -1598,6 +1613,21 @@ describe("composerDraftStore setModelSelection", () => {
     expect(
       draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
     ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.3-codex"));
+  });
+
+  it("preserves provider-owned IDs in canonical selections", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5-codex"));
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "opus"));
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.modelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5-codex"),
+    );
+    expect(draft?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE]).toEqual(
+      modelSelection(CLAUDE_AGENT_DRIVER, "opus"),
+    );
   });
 });
 

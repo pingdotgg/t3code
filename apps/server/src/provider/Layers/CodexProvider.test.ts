@@ -1,10 +1,16 @@
 import { assert, it } from "@effect/vitest";
+import { CodexSettings } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
+  makePendingCodexProvider,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
+
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
   assert.deepStrictEqual(
@@ -82,6 +88,39 @@ it("maps current Codex model capability fields", () => {
     },
   ]);
 });
+
+it.effect("keeps arbitrary custom controls in the Codex catalog", () =>
+  Effect.gen(function* () {
+    const provider = yield* makePendingCodexProvider(
+      decodeCodexSettings({
+        customModels: ["vendor/preview"],
+        customModelCapabilities: {
+          "vendor/preview": {
+            optionDescriptors: [
+              {
+                id: "temperature",
+                label: "Temperature",
+                type: "select",
+                options: [{ id: "warm", label: "Warm" }],
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    assert.deepStrictEqual(provider.models[0]?.capabilities, {
+      optionDescriptors: [
+        {
+          id: "temperature",
+          label: "Temperature",
+          type: "select",
+          options: [{ id: "warm", label: "Warm" }],
+        },
+      ],
+    });
+  }),
+);
 
 it("uses standard routing when the catalog has no default service tier", () => {
   const capabilities = mapCodexModelCapabilities({

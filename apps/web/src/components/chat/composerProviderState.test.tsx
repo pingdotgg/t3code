@@ -11,6 +11,7 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
+import { DraftId } from "../../composerDraftStore";
 
 // Everything in composerProviderState is now data-driven by the model's
 // optionDescriptors, so these tests use a single synthetic provider/model and
@@ -141,6 +142,70 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("shows only controls declared by a custom model", () => {
+    const models: ReadonlyArray<ServerProviderModel> = [
+      {
+        slug: MODEL,
+        name: MODEL,
+        isCustom: true,
+        capabilities: {
+          optionDescriptors: [
+            selectDescriptor("contextWindow", [
+              { id: "200k", label: "200k" },
+              { id: "1m", label: "1M", isDefault: true },
+            ]),
+          ],
+        },
+      },
+    ];
+
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models,
+      modelOptions: selections(["effort", "max"], ["fastMode", true], ["contextWindow", "200k"]),
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["contextWindow", "200k"]));
+  });
+  it("prefers an exact custom model ID over a built-in alias", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const models: ReadonlyArray<ServerProviderModel> = [
+      {
+        slug: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
+          ],
+        },
+      },
+      {
+        slug: "sonnet",
+        name: "sonnet",
+        isCustom: true,
+        capabilities: {
+          optionDescriptors: [
+            selectDescriptor("contextWindow", [
+              { id: "200k", label: "200K" },
+              { id: "1m", label: "1M", isDefault: true },
+            ]),
+          ],
+        },
+      },
+    ];
+
+    const state = getComposerProviderState({
+      provider: claude,
+      model: "sonnet",
+      models,
+      modelOptions: selections(["effort", "high"], ["contextWindow", "1m"]),
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["contextWindow", "1m"]));
+  });
+
   it("derives promptEffort from the first select descriptor and preserves all others for dispatch", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
@@ -229,6 +294,21 @@ describe("getComposerProviderState", () => {
 });
 
 describe("provider traits render guards", () => {
+  it("renders an arbitrary on/off descriptor for a custom model", () => {
+    const args = {
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([booleanDescriptor("option")]),
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+      draftId: DraftId.make("draft-custom-boolean"),
+    };
+
+    expect(renderProviderTraitsPicker(args)).not.toBeNull();
+    expect(renderProviderTraitsMenuContent(args)).not.toBeNull();
+  });
+
   it("returns null when no thread target is provided", () => {
     const models = modelWith([
       selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),

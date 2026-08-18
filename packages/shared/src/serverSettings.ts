@@ -121,6 +121,15 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
+function replaceCustomModelCapabilities<
+  Current extends { readonly customModelCapabilities?: unknown },
+  Patch extends { readonly customModelCapabilities?: Current["customModelCapabilities"] },
+>(current: Current, patch: Patch | undefined): Current {
+  return patch?.customModelCapabilities === undefined
+    ? current
+    : ({ ...current, customModelCapabilities: patch.customModelCapabilities } as Current);
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
@@ -171,6 +180,17 @@ export function applyServerSettingsPatch(
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    providers: {
+      ...next.providers,
+      claudeAgent: replaceCustomModelCapabilities(
+        next.providers.claudeAgent,
+        patch.providers?.claudeAgent,
+      ),
+      codex: replaceCustomModelCapabilities(next.providers.codex, patch.providers?.codex),
+      cursor: replaceCustomModelCapabilities(next.providers.cursor, patch.providers?.cursor),
+      grok: replaceCustomModelCapabilities(next.providers.grok, patch.providers?.grok),
+      opencode: replaceCustomModelCapabilities(next.providers.opencode, patch.providers?.opencode),
+    },
     ...(backgroundActivity !== undefined
       ? {
           backgroundActivity: {

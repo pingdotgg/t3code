@@ -58,7 +58,6 @@ const CURSOR_PRESENTATION = {
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
-
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
 const CURSOR_CLI_INSTALLATION_DOCS_URL = "https://cursor.com/docs/cli/installation";
@@ -572,9 +571,11 @@ export const discoverCursorModelsViaAcp = (
 ) => discoverCursorModelsViaListAvailableModels(cursorSettings, environment);
 
 export function getCursorFallbackModels(
-  cursorSettings: Pick<CursorSettings, "customModels">,
+  cursorSettings: Pick<CursorSettings, "customModels" | "customModelCapabilities">,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings([], cursorSettings.customModels, EMPTY_CAPABILITIES);
+  return providerModelsFromSettings([], cursorSettings.customModels, EMPTY_CAPABILITIES, {
+    customModelCapabilities: cursorSettings.customModelCapabilities,
+  });
 }
 
 /** Timeout for `agent about` — it's slower than a simple `--version` probe. */
@@ -638,6 +639,9 @@ export function buildCursorProviderSnapshot(input: {
       input.discoveredModels ?? [],
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
+      {
+        customModelCapabilities: input.cursorSettings.customModelCapabilities,
+      },
     ),
     probe: {
       installed: true,

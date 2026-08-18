@@ -181,6 +181,47 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it.effect("keeps exact custom IDs and built-in aliases distinct across model switches", () =>
+    Effect.gen(function* () {
+      const customModels = ["gpt-5-codex"];
+      const custom = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Implement it",
+        model: "gpt-5-codex",
+        customModels,
+        interactionMode: "default",
+      });
+      const builtIn = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Implement it",
+        model: "5.4",
+        customModels,
+        interactionMode: "default",
+      });
+      const afterCustom = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        ...(custom.model ? { model: custom.model } : {}),
+        customModels,
+      });
+      const afterBuiltIn = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        ...(builtIn.model ? { model: builtIn.model } : {}),
+        customModels,
+      });
+
+      NodeAssert.equal(custom.model, "gpt-5-codex");
+      NodeAssert.equal(custom.collaborationMode?.settings.model, "gpt-5-codex");
+      NodeAssert.equal(afterCustom.model, "gpt-5-codex");
+      NodeAssert.equal(builtIn.model, "gpt-5.4");
+      NodeAssert.equal(builtIn.collaborationMode?.settings.model, "gpt-5.4");
+      NodeAssert.equal(afterBuiltIn.model, "gpt-5.4");
+    }),
+  );
+
   it("reports the same fallback model and effort in settings and instructions", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -571,6 +612,46 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("distinguishes exact custom model IDs from built-in aliases in thread requests", () =>
+    Effect.gen(function* () {
+      const models: Array<string | undefined> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          _method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          models.push("model" in payload ? (payload.model ?? undefined) : undefined);
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("custom-thread"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5-codex",
+        customModels: ["gpt-5-codex"],
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("built-in-thread"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "5.4",
+        customModels: ["gpt-5-codex"],
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.deepStrictEqual(models, ["gpt-5-codex", "gpt-5.4"]);
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];

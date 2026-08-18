@@ -25,6 +25,15 @@ export function createModelCapabilities(input: {
   };
 }
 
+export function getDeclaredCustomModelCapabilities(
+  declarations: Readonly<Record<string, ModelCapabilities>> | null | undefined,
+  model: string | null | undefined,
+): ModelCapabilities | undefined {
+  return declarations && model && Object.hasOwn(declarations, model)
+    ? declarations[model]
+    : undefined;
+}
+
 function getRawSelectionValueById(
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
   id: string,

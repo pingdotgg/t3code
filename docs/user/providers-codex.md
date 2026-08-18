@@ -10,6 +10,22 @@ Common reasons:
 - switch to another account when one account hits limits
 - keep one shared Codex history instead of maintaining two separate Codex setups
 
+## Custom Model Controls
+
+Add a custom model in **Settings → Providers → Codex → Models**. Use the settings button beside the
+model to add controls by exact option ID, then set their labels, values, and defaults. Codex's
+adapter recognizes `reasoningEffort` and `serviceTier`. The message composer shows every control you
+add. See [Custom models](./providers-custom-models.md) for adapter behavior.
+
+Codex reasoning choices are sent as `reasoningEffort`. Service-tier choices are sent as
+`serviceTier`; this is where Standard, Fast, priority, or other tiers reported by the Codex app
+server belong. A tier only works when the selected Codex endpoint supports it.
+
+T3 Code does not treat Claude fast mode as a Codex or OpenAI service tier. Each provider adapter uses
+its own native request option. The Codex adapter has no `contextWindow` request translation today.
+
+Existing custom models with no declared controls continue to work as before.
+
 ## I Only Use One Codex Account
 
 Use the default provider.
