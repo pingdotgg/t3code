@@ -2262,6 +2262,15 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   );
 });
 
+// tar reads an `-f` target containing a colon as `host:path` and tries to reach
+// it over rsh, so handing it a Windows drive path (C:\...\wsl-runtime.tar.gz)
+// makes Git for Windows' GNU tar fail with "Cannot connect to C: resolve
+// failed". The staged source tree and the archive both live under the build's
+// stage root, so the target is always expressible relative to tar's cwd.
+export const wslRuntimeArchiveTarTarget = (relativeArchivePath: string): string =>
+  relativeArchivePath.replaceAll("\\", "/");
+
+// `archivePath` is relative to the cwd tar runs in; see wslRuntimeArchiveTarTarget.
 export const buildWslRuntimeArchiveArgs = (
   archivePath: string = WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from,
 ): ReadonlyArray<string> => [
@@ -2273,7 +2282,7 @@ export const buildWslRuntimeArchiveArgs = (
   "node_modules",
 ];
 
-const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (input: {
+export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (input: {
   readonly sourceDir: string;
   readonly archivePath: string;
   readonly hashPath: string;
@@ -2281,8 +2290,9 @@ const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (in
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(input.archivePath), { recursive: true });
+  const tarTarget = wslRuntimeArchiveTarTarget(path.relative(input.sourceDir, input.archivePath));
   yield* runCommand(
-    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(input.archivePath), {
+    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(tarTarget), {
       cwd: input.sourceDir,
     }),
     { label: "tar WSL runtime", verbose: false },

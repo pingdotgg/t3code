@@ -48,6 +48,7 @@ import {
   resolvePackageManagerUserAgent,
   stageLinuxIconSize,
   stageDesktopDmgBackground,
+  stageWslRuntimeArchive,
   STAGE_INSTALL_ARGS,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -65,6 +66,7 @@ import {
   WSL_RUNTIME_ARCHIVE_HASH_NAME,
   WSL_RUNTIME_ARCHIVE_NAME,
   WSL_RUNTIME_EXTRA_RESOURCES,
+  wslRuntimeArchiveTarTarget,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -1087,6 +1089,74 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "apps/server/dist",
       "node_modules",
     ]);
+  });
+
+  it("keeps Windows tar targets colon-free so GNU tar does not read them as remote hosts", () => {
+    assert.equal(
+      wslRuntimeArchiveTarTarget("..\\app\\apps\\desktop\\prod-resources\\wsl-runtime.tar.gz"),
+      "../app/apps/desktop/prod-resources/wsl-runtime.tar.gz",
+    );
+    assert.equal(
+      wslRuntimeArchiveTarTarget("../app/apps/desktop/prod-resources/wsl-runtime.tar.gz"),
+      "../app/apps/desktop/prod-resources/wsl-runtime.tar.gz",
+    );
+  });
+
+  // The staged source tree and the archive live in sibling stage directories,
+  // so this covers the real call: on Windows the archive path is an absolute
+  // C:\... path, and handing that to tar is what made Git's GNU tar try to
+  // reach a host named "C".
+  it.effect("spawns tar with an archive target relative to the staged source tree", () => {
+    const commands: Array<{
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly options: { readonly cwd?: string };
+    }> = [];
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-runtime-archive-" });
+        const sourceDir = path.join(stageRoot, "server");
+        const stageAppDir = path.join(stageRoot, "app");
+        const archivePath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from);
+        const hashPath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE.from);
+        yield* fs.makeDirectory(sourceDir, { recursive: true });
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as (typeof commands)[number];
+            commands.push(childProcess);
+            // Stand in for tar: write the archive by resolving the -f target
+            // against the cwd tar was spawned in, exactly as tar would.
+            const target = path.resolve(childProcess.options.cwd ?? "", childProcess.args[1] ?? "");
+            return Effect.as(fs.writeFileString(target, "wsl-runtime-archive"), mockProcess(0));
+          }),
+        );
+
+        yield* stageWslRuntimeArchive({ sourceDir, archivePath, hashPath }).pipe(
+          Effect.provide(spawnerLayer),
+        );
+
+        const tarCommand = commands.find((command) => command.command === "tar");
+        if (tarCommand === undefined) return assert.fail("tar was not spawned");
+
+        const target = tarCommand.args[1] ?? "";
+        assert.equal(tarCommand.options.cwd, sourceDir);
+        assert.notInclude(target, ":");
+        assert.isFalse(path.isAbsolute(target));
+        // Relative or not, tar has to land the archive where the build expects it.
+        assert.equal(path.resolve(sourceDir, target), archivePath);
+        assert.isTrue(yield* fs.exists(archivePath));
+
+        // The sidecar carries the archive's SHA-256, which becomes the WSL
+        // runtime cache identity.
+        const hash = yield* fs.readFileString(hashPath);
+        assert.match(hash.trim(), /^[0-9a-f]{64}$/);
+      }),
+    );
   });
 
   it("promotes target fff binaries to direct staged dependencies", () => {
