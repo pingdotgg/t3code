@@ -109,6 +109,20 @@ export function ComposerEditor({
   // first controlled payload must be a non-echo so a restored draft (or a
   // recycled native view) is applied rather than skipped.
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([]);
+  const previousDocumentKeyRef = useRef(props.documentKey);
+  if (previousDocumentKeyRef.current !== props.documentKey) {
+    // A replaced document (thread switch, send clearing the draft) must not be
+    // matched against the previous document's snapshots: an empty draft
+    // matches an old empty snapshot and gets stamped behind the native
+    // revision, which the editor rejects — it keeps showing the previous
+    // document's text while the send button reads the new document's empty
+    // draft, and nothing recovers until the next keystroke. Snapshots only
+    // survive to this point when renders lag behind native events (an agent
+    // streaming into a heavy thread), which is why the wedge needs a busy app.
+    // Dropping the history stamps this render at the current native revision.
+    previousDocumentKeyRef.current = props.documentKey;
+    nativeEventSnapshotsRef.current = [];
+  }
   const [initialConfirmedTokens] = useState(() => collectComposerInlineTokens(props.value));
   const confirmedTokensRef = useRef(initialConfirmedTokens);
   const textColor = useThemeColor("--color-foreground");

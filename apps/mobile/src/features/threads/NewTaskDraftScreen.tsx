@@ -815,6 +815,11 @@ export function NewTaskDraftScreen(props: {
       editable={!isIncomingShareTransferPending}
       multiline
       scrollEnabled
+      // The draft key identifies the controlled document: switching projects or
+      // starting another task replaces the prompt rather than editing it, so
+      // the editor must not classify it against the previous draft's revision
+      // history (see documentKey in T3ComposerEditor.types.ts).
+      documentKey={flow.draftKey ?? "new-task"}
       value={flow.prompt}
       skills={flow.selectedProviderSkills}
       onChangeText={flow.setPrompt}
