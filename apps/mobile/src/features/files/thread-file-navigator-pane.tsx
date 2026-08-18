@@ -18,6 +18,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
+import { useProjectEntriesRefresh } from "./use-project-entries-refresh";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
@@ -39,6 +40,7 @@ export function ThreadFileNavigatorPane(props: {
       input: { cwd: props.cwd },
     }),
   );
+  const entriesRefresh = useProjectEntriesRefresh(props.environmentId, props.cwd);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handlePreviewFile = useCallback(
     (relativePath: string) => {
@@ -58,25 +60,25 @@ export function ThreadFileNavigatorPane(props: {
           accessibilityLabel: "Refresh files",
           icon: { name: "arrow.clockwise", type: "sfSymbol" as const },
           identifier: "thread-file-navigator-refresh",
-          onPress: entriesQuery.refresh,
+          onPress: entriesRefresh.refresh,
           sharesBackground: false,
           tintColor: foregroundColor,
           type: "button" as const,
           width: 44,
         },
       ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [entriesQuery.refresh, foregroundColor],
+    [entriesRefresh.refresh, foregroundColor],
   );
 
   const fileTree = (
     <FileTreeBrowser
       entries={entriesData?.entries ?? []}
       error={entriesQuery.error}
-      isPending={entriesQuery.isPending}
+      isPending={entriesQuery.isPending || entriesRefresh.isRefreshing}
       searchQuery={searchQuery}
       selectedPath={props.selectedPath}
       onPreviewFile={handlePreviewFile}
-      onRefresh={entriesQuery.refresh}
+      onRefresh={entriesRefresh.refresh}
       onSelectFile={props.onSelectFile}
     />
   );
@@ -150,7 +152,7 @@ export function ThreadFileNavigatorPane(props: {
             accessibilityLabel="Refresh files"
             hitSlop={8}
             className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
-            onPress={entriesQuery.refresh}
+            onPress={entriesRefresh.refresh}
           >
             <SymbolView name="arrow.clockwise" size={14} tintColor={iconColor} type="monochrome" />
           </Pressable>

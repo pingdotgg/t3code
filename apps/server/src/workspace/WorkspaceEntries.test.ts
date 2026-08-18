@@ -121,6 +121,27 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.truncated).toBe(false);
       }),
     );
+
+    it.effect("rescans files created after the workspace index was cached", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-refresh-" });
+        yield* writeTextFile(cwd, "existing.txt");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        yield* workspaceEntries.list({ cwd });
+        yield* writeTextFile(cwd, "created-after-list.txt");
+
+        const cached = yield* workspaceEntries.list({ cwd });
+        expect(cached.entries.some((entry) => entry.path === "created-after-list.txt")).toBe(false);
+
+        yield* workspaceEntries.refresh(cwd);
+        const refreshed = yield* workspaceEntries.list({ cwd });
+        expect(refreshed.entries).toContainEqual({
+          path: "created-after-list.txt",
+          kind: "file",
+        });
+      }),
+    );
   });
 
   describe("search", () => {

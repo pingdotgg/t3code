@@ -42,6 +42,7 @@ import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
+import { useProjectEntriesRefresh } from "./use-project-entries-refresh";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
@@ -259,6 +260,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         })
       : null,
   );
+  const entriesRefresh = useProjectEntriesRefresh(environmentId, cwd);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handleReturnToThread = useCallback(() => {
     if (navigation.canGoBack()) {
@@ -408,7 +410,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
               {
                 accessibilityLabel: "Refresh files",
                 icon: "arrow.clockwise",
-                onPress: entriesQuery.refresh,
+                onPress: entriesRefresh.refresh,
               },
             ]}
           />
@@ -451,11 +453,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}
-        isPending={entriesQuery.isPending}
+        isPending={entriesQuery.isPending || entriesRefresh.isRefreshing}
         searchQuery={searchQuery}
         selectedPath={null}
         onPreviewFile={handlePreviewFile}
-        onRefresh={entriesQuery.refresh}
+        onRefresh={entriesRefresh.refresh}
         onSelectFile={handleSelectFile}
       />
       <FilesToolbarBottomFade />
