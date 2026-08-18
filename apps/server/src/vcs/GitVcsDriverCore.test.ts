@@ -1275,6 +1275,14 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["mv", "old-name.ts", "new-name.ts"]);
         yield* writeTextFile(cwd, "new-name.ts", "rename me\nthen edit\n");
         yield* writeTextFile(cwd, "café.ts", "unicode\n");
+        yield* writeTextFile(cwd, "my file.ts", "spaced\n");
+        yield* git(cwd, ["add", "my file.ts"]);
+        yield* git(cwd, ["commit", "-m", "add spaced name", "--", "my file.ts"]);
+        yield* writeTextFile(cwd, "my file.ts", "spaced\nthen edit\n");
+        yield* writeTextFile(cwd, "naïve.ts", "unicode tracked\n");
+        yield* git(cwd, ["add", "naïve.ts"]);
+        yield* git(cwd, ["commit", "-m", "add unicode name", "--", "naïve.ts"]);
+        yield* writeTextFile(cwd, "naïve.ts", "unicode tracked\nthen edit\n");
 
         const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
         const byPath = new Map(status.workingTree.files.map((file) => [file.path, file]));
@@ -1285,6 +1293,13 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(byPath.get("gone.ts")?.status, "deleted");
         assert.equal(byPath.get("new-name.ts")?.status, "renamed");
         assert.equal(byPath.get("café.ts")?.status, "untracked");
+        assert.equal(byPath.get("my file.ts")?.status, "modified");
+        assert.equal(byPath.get("naïve.ts")?.status, "modified");
+        assert.equal(
+          status.workingTree.files.filter((file) => file.path === "my file.ts").length,
+          1,
+        );
+        assert.equal(status.workingTree.files.filter((file) => file.path === "naïve.ts").length, 1);
       }),
     );
 

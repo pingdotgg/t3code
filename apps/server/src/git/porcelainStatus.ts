@@ -5,16 +5,92 @@ export type PorcelainStatusEntry = {
   readonly status: VcsWorkingTreeFileStatus;
 };
 
+const OCTAL_DIGIT = /[0-7]/;
+const GIT_PATH_UNQUOTE_DECODER = new TextDecoder("utf-8");
+const GIT_PATH_UNQUOTE_ENCODER = new TextEncoder();
+
+function pushUtf8Bytes(bytes: number[], text: string): void {
+  const encoded = GIT_PATH_UNQUOTE_ENCODER.encode(text);
+  for (const byte of encoded) bytes.push(byte);
+}
+
+/** Decode a Git C-quoted pathname such as `"my file.ts"` or `"caf\\303\\251.ts"`. */
+export function unquoteGitPath(raw: string): string {
+  if (!raw.startsWith('"')) return raw;
+  const bytes: number[] = [];
+  let i = 1;
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (ch === '"') return GIT_PATH_UNQUOTE_DECODER.decode(Uint8Array.from(bytes));
+    if (ch === "\\" && i + 1 < raw.length) {
+      const next = raw[i + 1] ?? "";
+      if (OCTAL_DIGIT.test(next)) {
+        let octal = next;
+        let consumed = 1;
+        const second = raw[i + 2] ?? "";
+        if (OCTAL_DIGIT.test(second)) {
+          octal += second;
+          consumed++;
+          const third = raw[i + 3] ?? "";
+          if (OCTAL_DIGIT.test(third)) {
+            octal += third;
+            consumed++;
+          }
+        }
+        bytes.push(Number.parseInt(octal, 8) & 0xff);
+        i += 1 + consumed;
+        continue;
+      }
+      pushUtf8Bytes(
+        bytes,
+        next === "n"
+          ? "\n"
+          : next === "t"
+            ? "\t"
+            : next === "r"
+              ? "\r"
+              : next === "a"
+                ? "\u0007"
+                : next === "b"
+                  ? "\b"
+                  : next === "f"
+                    ? "\f"
+                    : next === "v"
+                      ? "\v"
+                      : next,
+      );
+      i += 2;
+      continue;
+    }
+    pushUtf8Bytes(bytes, ch ?? "");
+    i++;
+  }
+  return raw;
+}
+
+function restAfterFields(line: string, fieldCount: number): string {
+  let index = 0;
+  let seen = 0;
+  while (index < line.length && seen < fieldCount) {
+    while (index < line.length && line[index] === " ") index++;
+    if (index >= line.length) return "";
+    while (index < line.length && line[index] !== " ") index++;
+    seen++;
+  }
+  while (index < line.length && line[index] === " ") index++;
+  return line.slice(index);
+}
+
 function parsePorcelainPath(line: string): string | null {
   if (line.startsWith("? ") || line.startsWith("! ")) {
-    const simple = line.slice(2).trim();
+    const simple = unquoteGitPath(line.slice(2).trim());
     return simple.length > 0 ? simple : null;
   }
 
   if (line.startsWith("2 ")) {
     const tabIndex = line.indexOf("\t");
     const head = tabIndex >= 0 ? line.slice(0, tabIndex) : line;
-    const dest = head.split(" ").slice(9).join(" ").trim();
+    const dest = unquoteGitPath(restAfterFields(head, 9).trim());
     return dest.length > 0 ? dest : null;
   }
 
@@ -26,12 +102,12 @@ function parsePorcelainPath(line: string): string | null {
   if (tabIndex >= 0) {
     const fromTab = line.slice(tabIndex + 1);
     const [filePath] = fromTab.split("\t");
-    return filePath?.trim().length ? filePath.trim() : null;
+    const decoded = unquoteGitPath(filePath?.trim() ?? "");
+    return decoded.length > 0 ? decoded : null;
   }
 
-  const parts = line.trim().split(/\s+/g);
-  const filePath = parts.at(-1) ?? "";
-  return filePath.length > 0 ? filePath : null;
+  const dest = unquoteGitPath(restAfterFields(line, line.startsWith("u ") ? 11 : 8).trim());
+  return dest.length > 0 ? dest : null;
 }
 
 export function workingTreeStatusFromPorcelainXy(
@@ -53,7 +129,7 @@ export function workingTreeStatusFromPorcelainXy(
 /** Maps one porcelain-2 row to the single status the file explorer can show. */
 export function parsePorcelainStatus(line: string): PorcelainStatusEntry | null {
   if (line.startsWith("? ")) {
-    const path = line.slice(2).trim();
+    const path = unquoteGitPath(line.slice(2).trim());
     return path.length > 0 ? { path, status: "untracked" } : null;
   }
   if (line.startsWith("! ")) {

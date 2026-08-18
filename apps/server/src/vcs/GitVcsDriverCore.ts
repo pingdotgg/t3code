@@ -27,7 +27,7 @@ import {
   type VcsRef,
   type VcsWorkingTreeFileStatus,
 } from "@t3tools/contracts";
-import { parsePorcelainStatus } from "../git/porcelainStatus.ts";
+import { parsePorcelainStatus, unquoteGitPath } from "../git/porcelainStatus.ts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -172,10 +172,11 @@ function parseNumstatEntries(
     const added = Number.parseInt(addedRaw ?? "0", 10);
     const deleted = Number.parseInt(deletedRaw ?? "0", 10);
     const renameArrowIndex = rawPath.indexOf(" => ");
-    const normalizedPath =
-      renameArrowIndex >= 0 ? rawPath.slice(renameArrowIndex + " => ".length).trim() : rawPath;
+    const normalizedPath = unquoteGitPath(
+      renameArrowIndex >= 0 ? rawPath.slice(renameArrowIndex + " => ".length).trim() : rawPath,
+    );
     entries.push({
-      path: normalizedPath.length > 0 ? normalizedPath : rawPath,
+      path: normalizedPath.length > 0 ? normalizedPath : unquoteGitPath(rawPath),
       insertions: Number.isFinite(added) ? added : 0,
       deletions: Number.isFinite(deleted) ? deleted : 0,
     });
@@ -1601,7 +1602,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
           cwd,
-          ["diff", "HEAD", "--relative", "--numstat", "--"],
+          ["-c", "core.quotepath=false", "diff", "HEAD", "--relative", "--numstat", "--"],
           { allowNonZeroExit: true },
         ).pipe(
           Effect.flatMap((result) => {
@@ -1610,11 +1611,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               return Effect.map(
                 Effect.all([
                   runGitStdout("GitVcsDriver.statusDetails.numstat.unborn", cwd, [
+                    "-c",
+                    "core.quotepath=false",
                     "diff",
                     "--relative",
                     "--numstat",
                   ]),
                   runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
+                    "-c",
+                    "core.quotepath=false",
                     "diff",
                     "--cached",
                     "--relative",
@@ -1645,7 +1650,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 ...gitCommandContext({
                   operation: "GitVcsDriver.statusDetails.numstat",
                   cwd,
-                  args: ["diff", "HEAD", "--relative", "--numstat", "--"],
+                  args: [
+                    "-c",
+                    "core.quotepath=false",
+                    "diff",
+                    "HEAD",
+                    "--relative",
+                    "--numstat",
+                    "--",
+                  ],
                 }),
                 detail: "git diff HEAD --numstat failed.",
                 exitCode: result.exitCode,
