@@ -1,4 +1,9 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import {
+  DEV_BROWSER_LOOPBACK_HOST,
+  DEV_LOOPBACK_HOST,
+  resolveDevProxyTarget,
+} from "@t3tools/shared/devProxy";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
@@ -186,6 +191,21 @@ describe("browser target resolver", () => {
         path: "/app",
       }).resolvedUrl,
     ).toBe("http://localhost:5173/app");
+  });
+
+  it("keeps the dev runner loopback listener and proxy reachable to local preview guests", async () => {
+    const proxyTarget = resolveDevProxyTarget("13773", undefined, undefined);
+    expect(proxyTarget).toBe(`http://${DEV_LOOPBACK_HOST}:13773/`);
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: proxyTarget });
+
+    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
+    expect(
+      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
+        kind: "environment-port",
+        port: 5733,
+        path: "/pair#token=example",
+      }).resolvedUrl,
+    ).toBe(`http://${DEV_BROWSER_LOOPBACK_HOST}:5733/pair#token=example`);
   });
 
   it("leaves malformed input for the normal navigation error path", async () => {
