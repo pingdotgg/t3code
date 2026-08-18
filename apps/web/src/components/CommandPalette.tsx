@@ -41,7 +41,6 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
-  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -137,9 +136,9 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import {
-  COMMAND_PALETTE_META_ICON_CLASS,
-  CommandPaletteMetaDot,
+  ProjectCommandSubtitle,
   ThreadCommandSubtitle,
+  projectCommandLocationSearchTerms,
 } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
@@ -1051,7 +1050,7 @@ function OpenCommandPaletteDialog(props: {
             return [
               ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
                 []),
-              ...(location ? [location.label] : []),
+              ...projectCommandLocationSearchTerms(location),
             ];
           },
           renderDescription: (project) => {
@@ -1060,16 +1059,7 @@ function OpenCommandPaletteDialog(props: {
               label: "Remote",
             };
             return (
-              <span className="flex min-w-0 items-center gap-1">
-                <span className="inline-flex min-w-0 items-center gap-1">
-                  {location.kind === "remote" ? (
-                    <ServerIcon aria-hidden className={COMMAND_PALETTE_META_ICON_CLASS} />
-                  ) : null}
-                  <span className="truncate">{location.label}</span>
-                </span>
-                <CommandPaletteMetaDot />
-                <span className="truncate">{project.workspaceRoot}</span>
-              </span>
+              <ProjectCommandSubtitle location={location} workspaceRoot={project.workspaceRoot} />
             );
           },
           icon: projectFavicon,
