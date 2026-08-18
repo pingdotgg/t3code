@@ -70,6 +70,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { Toggle } from "../ui/toggle";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -819,23 +820,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   placeholder="Find in thread"
                 />
                 <InputGroupAddon align="inline-end" className="gap-1">
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="data-pressed:border-primary! data-pressed:bg-primary! data-pressed:text-primary-foreground!"
-                    data-pressed={findCaseSensitive || undefined}
+                  <Toggle
+                    pressed={findCaseSensitive}
+                    size="xs"
+                    variant="primary"
+                    className="font-mono text-[11px]"
                     aria-label="Match case"
-                    aria-pressed={findCaseSensitive}
                     title="Match case"
-                    onClick={() => {
-                      setFindCaseSensitive(!findCaseSensitive);
+                    onPressedChange={(pressed) => {
+                      setFindCaseSensitive(pressed);
                       setFindMatchIndex(0);
                       onManualNavigation();
                     }}
                   >
-                    <span className="text-[11px] font-semibold leading-none">Aa</span>
-                  </Button>
+                    Aa
+                  </Toggle>
                   <span className="min-w-12 text-center text-xs text-muted-foreground">
                     {findQuery
                       ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
