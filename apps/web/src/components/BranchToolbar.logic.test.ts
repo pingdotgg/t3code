@@ -91,6 +91,7 @@ describe("buildEnvironmentOption", () => {
           ["codex" as never]: { instanceId: "codex" as never, model: "o3" },
         },
       },
+      connectionStatusLabel: "Connected",
       isAvailable: true,
     });
 
@@ -117,9 +118,14 @@ describe("buildEnvironmentOption", () => {
         workspaceRoot: "C:/repo",
         defaultModelSelection: null,
         profile: null,
+        connectionStatusLabel: "Reconnecting...",
         isAvailable: false,
       }),
-    ).toMatchObject({ connection: "unavailable", profile: { branchLabel: "Current checkout" } });
+    ).toMatchObject({
+      connection: "unavailable",
+      connectionStatusLabel: "Reconnecting...",
+      profile: { branchLabel: "Current checkout" },
+    });
   });
 
   it("does not preview a saved model from a disabled target provider", () => {
@@ -163,6 +169,7 @@ describe("buildEnvironmentOption", () => {
           modelShortName: "Sonnet 4",
         }),
       ]),
+      connectionStatusLabel: "Connected",
       isAvailable: true,
     });
 

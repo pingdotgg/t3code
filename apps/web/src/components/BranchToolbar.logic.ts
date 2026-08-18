@@ -34,6 +34,7 @@ export interface EnvironmentOption {
   isPrimary: boolean;
   workspaceRoot: string;
   connection: EnvironmentConnectionState;
+  connectionStatusLabel: string;
   profile: MachineProfileSummary;
 }
 
@@ -92,6 +93,7 @@ export function buildEnvironmentOption(input: {
   > | null;
   providerEntries?: readonly ProviderInstanceEntry[] | null;
   isAvailable: boolean;
+  connectionStatusLabel: string;
 }): EnvironmentOption {
   const modelPreview = input.providerEntries
     ? resolveEnvironmentModelPreview({
@@ -118,6 +120,7 @@ export function buildEnvironmentOption(input: {
     isPrimary: input.isPrimary,
     workspaceRoot: input.workspaceRoot,
     connection: input.isAvailable ? "connected" : "unavailable",
+    connectionStatusLabel: input.connectionStatusLabel,
     profile: modelPreview
       ? {
           ...summary,

@@ -20,7 +20,7 @@ function TruncatedMachineValue({ value, className }: { value: string; className:
 export interface MachineProfileRowProps {
   environment: Pick<
     EnvironmentOption,
-    "label" | "isPrimary" | "workspaceRoot" | "connection" | "profile"
+    "label" | "isPrimary" | "workspaceRoot" | "connection" | "connectionStatusLabel" | "profile"
   >;
 }
 
@@ -37,9 +37,10 @@ export const MachineProfileRow = memo(function MachineProfileRow({
         <EnvironmentIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
         <TruncatedMachineValue value={environment.label} className="min-w-0 truncate font-medium" />
         {unavailable ? (
-          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Unavailable
-          </span>
+          <TruncatedMachineValue
+            value={environment.connectionStatusLabel}
+            className="min-w-0 max-w-[50%] truncate text-[10px] font-medium text-muted-foreground"
+          />
         ) : null}
       </span>
       <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-[11px] leading-tight text-muted-foreground">

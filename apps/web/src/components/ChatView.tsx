@@ -23,6 +23,7 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import {
+  connectionStatusText,
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
@@ -1934,6 +1935,9 @@ function ChatViewContent(props: ChatViewProps) {
           fallbackExecutionProfile: activeDraftMachineProfile,
           providerEntries,
           isAvailable: connectionPhase === "connected",
+          connectionStatusLabel: environment
+            ? connectionStatusText(environment.connection)
+            : "Unavailable",
         }),
       );
     }

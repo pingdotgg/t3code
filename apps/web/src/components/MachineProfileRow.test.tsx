@@ -12,6 +12,7 @@ describe("MachineProfileRow", () => {
           isPrimary: false,
           workspaceRoot: "C:/Users/lucas/Projects/t3code",
           connection: "connected",
+          connectionStatusLabel: "Connected",
           profile: {
             branchLabel: "feature/remote",
             workspaceLabel: "C:/Users/lucas/Projects/t3code/.t3/worktrees/remote",
@@ -42,6 +43,7 @@ describe("MachineProfileRow", () => {
           isPrimary: true,
           workspaceRoot: "C:/repo",
           connection: "unavailable",
+          connectionStatusLabel: "Reconnecting...",
           profile: {
             branchLabel: "Current checkout",
             workspaceLabel: "Current checkout",
@@ -54,7 +56,8 @@ describe("MachineProfileRow", () => {
       />,
     );
 
-    expect(markup).toContain("Unavailable");
-    expect(markup.match(/pointer-events-auto/gu)).toHaveLength(7);
+    expect(markup).toContain("Reconnecting...");
+    expect(markup).not.toContain(">Unavailable<");
+    expect(markup.match(/pointer-events-auto/gu)).toHaveLength(8);
   });
 });

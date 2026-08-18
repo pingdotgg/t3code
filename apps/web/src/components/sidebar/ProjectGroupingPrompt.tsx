@@ -24,7 +24,7 @@ export function ProjectGroupingPrompt({
     <Alert
       variant="info"
       controlAlignment="first-line"
-      className="mx-1 rounded-xl border-info/30 bg-info/6 text-xs"
+      className="mx-1 text-xs"
       data-testid="project-grouping-prompt"
     >
       <GitMergeIcon aria-hidden />
