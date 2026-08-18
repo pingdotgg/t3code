@@ -1846,10 +1846,18 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const webContentsById = new Map([
+          [42, makeTestPreviewWebContents(capturePage, 42)],
+          [43, makeTestPreviewWebContents(capturePage, 43)],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (webContentsById.get(id) ?? null),
+        );
 
         yield* manager.createTab("tab_window_close_recording");
+        yield* manager.createTab("tab_window_close_race");
         yield* manager.registerWebview("tab_window_close_recording", 42);
+        yield* manager.registerWebview("tab_window_close_race", 43);
         yield* manager.setMainWindow({
           isDestroyed: () => false,
           once: vi.fn((event: string, listener: () => void) => {
@@ -1861,6 +1869,8 @@ describe("PreviewManager", () => {
         expect(firstWindowThrottling.mock.calls).toEqual([[false]]);
 
         closeMainWindow?.();
+        const racedStart = yield* Effect.exit(manager.startRecording("tab_window_close_race"));
+        expect(Exit.isFailure(racedStart)).toBe(true);
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
 

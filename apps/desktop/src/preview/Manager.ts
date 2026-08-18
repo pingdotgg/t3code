@@ -526,6 +526,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+  let frameCaptureWindowOpen = true;
+  let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
     { readonly semaphore: Semaphore.Semaphore; users: number }
@@ -1716,6 +1718,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const setMainWindow = Effect.fn("PreviewManager.setMainWindow")(function* (
     window: BrowserWindow,
   ) {
+    if (mainWindowCleanupFiber) {
+      yield* Fiber.join(mainWindowCleanupFiber);
+      mainWindowCleanupFiber = undefined;
+    }
+    frameCaptureWindowOpen = true;
     yield* Ref.set(mainWindowRef, Option.some(window));
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
@@ -1726,11 +1733,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
     window.once("closed", () => {
-      runFork(
+      frameCaptureWindowOpen = false;
+      mainWindowCleanupFiber = runFork(
         Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
           concurrency: "unbounded",
           discard: true,
-        }),
+        }).pipe(Effect.ignore),
       );
     });
   });
@@ -2635,6 +2643,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const created = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
       return Effect.gen(function* () {
+        if (!frameCaptureWindowOpen) {
+          return yield* new PreviewOperationError({
+            operation: "frameCapture.start",
+            tabId,
+            cause: new Error("Cannot start preview frame capture while the main window is closed."),
+          });
+        }
         const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
         if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
           return yield* new PreviewTabNotFoundError({ tabId });
