@@ -242,22 +242,29 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
+export interface TextMatch {
+  readonly textIndex: number;
+  readonly occurrenceIndex: number;
+}
+
 export function findTextMatches(
   texts: ReadonlyArray<string | null | undefined>,
   query: string,
-): number[] {
+): TextMatch[] {
   const needle = query.toLowerCase();
   if (!needle) return [];
 
-  const matches: number[] = [];
-  texts.forEach((text, index) => {
+  const matches: TextMatch[] = [];
+  texts.forEach((text, textIndex) => {
     const haystack = text?.toLowerCase() ?? "";
+    let occurrenceIndex = 0;
     for (
       let offset = 0;
       (offset = haystack.indexOf(needle, offset)) !== -1;
       offset += needle.length
     ) {
-      matches.push(index);
+      matches.push({ textIndex, occurrenceIndex });
+      occurrenceIndex += 1;
     }
   });
   return matches;

@@ -10,8 +10,12 @@ import {
 } from "./MessagesTimeline.logic";
 
 describe("findTextMatches", () => {
-  it("finds every case-insensitive occurrence and returns its text index", () => {
-    expect(findTextMatches(["One one", null, "another ONE"], "one")).toEqual([0, 0, 2]);
+  it("finds every case-insensitive occurrence and identifies it within its text", () => {
+    expect(findTextMatches(["One one", null, "another ONE"], "one")).toEqual([
+      { textIndex: 0, occurrenceIndex: 0 },
+      { textIndex: 0, occurrenceIndex: 1 },
+      { textIndex: 2, occurrenceIndex: 0 },
+    ]);
     expect(findTextMatches(["anything"], "")).toEqual([]);
   });
 });
