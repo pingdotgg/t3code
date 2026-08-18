@@ -43,10 +43,7 @@ export function buildDevinAcpSpawnInput(
   const args: string[] = ["acp", ...tokenizeCliArgs(devinSettings?.launchArgs)];
 
   const env: NodeJS.ProcessEnv = { ...environment };
-  const permissionMode = devinSettings?.permissionMode?.trim();
-  if (permissionMode && permissionMode !== "normal") {
-    env.DEVIN_PERMISSION_MODE = permissionMode;
-  }
+  env.DEVIN_PERMISSION_MODE = devinSettings?.permissionMode?.trim() || "normal";
 
   return {
     command: devinSettings?.binaryPath || "devin",

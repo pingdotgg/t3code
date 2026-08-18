@@ -17,11 +17,13 @@ const decodeDevinSettings = Schema.decodeSync(DevinSettings);
 describe("buildDevinAcpSpawnInput", () => {
   it("spawns 'devin acp' with default settings", () => {
     const settings = decodeDevinSettings({});
-    const input = buildDevinAcpSpawnInput(settings, "/work");
+    const input = buildDevinAcpSpawnInput(settings, "/work", {
+      DEVIN_PERMISSION_MODE: "dangerous",
+    });
     expect(input.command).toBe("devin");
     expect(input.args).toEqual(["acp"]);
     expect(input.cwd).toBe("/work");
-    expect(input.env).toEqual({});
+    expect(input.env).toEqual({ DEVIN_PERMISSION_MODE: "normal" });
   });
 
   it("maps permissionMode to env var", () => {
@@ -36,12 +38,14 @@ describe("buildDevinAcpSpawnInput", () => {
     });
   });
 
-  it("omits default permissionMode", () => {
+  it("overrides an inherited permission mode with the configured default", () => {
     const settings = decodeDevinSettings({
       permissionMode: "normal",
     });
-    const input = buildDevinAcpSpawnInput(settings, "/work");
-    expect(input.env).toEqual({});
+    const input = buildDevinAcpSpawnInput(settings, "/work", {
+      DEVIN_PERMISSION_MODE: "dangerous",
+    });
+    expect(input.env).toEqual({ DEVIN_PERMISSION_MODE: "normal" });
   });
 
   it("uses the configured binaryPath", () => {
@@ -55,7 +59,7 @@ describe("buildDevinAcpSpawnInput", () => {
   it("merges environment variables", () => {
     const env = { FOO: "bar" };
     const input = buildDevinAcpSpawnInput(decodeDevinSettings({}), "/work", env);
-    expect(input.env).toStrictEqual({ FOO: "bar" });
+    expect(input.env).toStrictEqual({ FOO: "bar", DEVIN_PERMISSION_MODE: "normal" });
     expect(input.env).not.toBe(env);
   });
 });
