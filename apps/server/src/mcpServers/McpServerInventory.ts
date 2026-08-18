@@ -66,13 +66,14 @@ function trimmedOrUndefined(value: unknown): string | undefined {
 
 const REDACTED = "…";
 /**
- * Shape of an argument safe to echo verbatim: a flag, a package specifier, a
- * subcommand, or a filesystem path (POSIX, home-relative, or Windows drive).
- * Anything with other punctuation — a quoted header, a connection string, a
- * token containing `+`, `$`, or `:` — fails and is redacted.
+ * Shape of an argument safe to echo verbatim: a flag, a package specifier
+ * (including a scoped `@scope/name`, with or without a version), a subcommand,
+ * or a filesystem path (POSIX, home-relative, or Windows drive). Anything with
+ * other punctuation — a quoted header, a connection string, a token containing
+ * `+`, `$`, or `:` — fails and is redacted.
  */
 const SAFE_ARGUMENT_PATTERN =
-  /^(?:-{0,2}[A-Za-z0-9]|[.~]?[\\/]|[A-Za-z]:[\\/])[A-Za-z0-9._/\\@_-]*$/;
+  /^(?:-{0,2}[A-Za-z0-9]|@[A-Za-z0-9][A-Za-z0-9._-]*[\\/]|[.~]?[\\/]|[A-Za-z]:[\\/])[A-Za-z0-9._/\\@_-]*$/;
 /** Flag names whose value is a credential. Over-matching here is harmless. */
 const SECRET_HINT_PATTERN =
   /(token|key|secret|password|passwd|credential|auth|bearer|pat|dsn|cookie|session|header)/i;

@@ -20,6 +20,19 @@ describe("stdioDetail", () => {
     );
   });
 
+  it("keeps scoped package specifiers, the usual shape of an MCP command", () => {
+    assert.equal(
+      stdioDetail("npx", ["-y", "@modelcontextprotocol/server-filesystem"]),
+      "npx -y @modelcontextprotocol/server-filesystem",
+    );
+    assert.equal(
+      stdioDetail("npx", ["@modelcontextprotocol/server-memory@2025.8.5"]),
+      "npx @modelcontextprotocol/server-memory@2025.8.5",
+    );
+    // A leading `@` alone is not package-shaped: no slash, no scope.
+    assert.equal(stdioDetail("server", ["@hunter2"]), "server …");
+  });
+
   it("redacts secrets passed as flag values", () => {
     assert.equal(
       stdioDetail("server", ["--token", "abc123", "--port", "8080"]),
