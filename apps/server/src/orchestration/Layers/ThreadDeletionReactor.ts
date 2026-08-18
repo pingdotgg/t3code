@@ -103,7 +103,7 @@ const make = Effect.gen(function* () {
       { discard: true },
     );
 
-  const stopArchiveProviderSession = Effect.fn("stopArchiveProviderSession")(function* (
+  const stopProviderSessionRequired = Effect.fn("stopProviderSessionRequired")(function* (
     threadId: ThreadArchivedEvent["payload"]["threadId"],
   ) {
     const binding = yield* providerSessionDirectory.getBinding(threadId);
@@ -121,7 +121,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* Effect.logDebug("archive cleanup found no provider binding for a settled thread", {
+    yield* Effect.logDebug("lifecycle cleanup found no provider binding for a settled thread", {
       threadId,
       projectedSessionStatus: status,
     });
@@ -143,7 +143,8 @@ const make = Effect.gen(function* () {
       yield* threadColdStorage.archiveThread(
         threadId,
         Effect.gen(function* () {
-          yield* stopArchiveProviderSession(threadId);
+          yield* closeThreadPreviews(threadId);
+          yield* stopProviderSessionRequired(threadId);
           // Provider runtime ingestion normally clears this process-local state
           // when it observes session.exited. Archive cleanup can also reach a
           // settled legacy/subagent shell with no provider binding, so clear it
@@ -159,7 +160,7 @@ const make = Effect.gen(function* () {
     // closed. processLifecycleJobSafely records the failure and requests a
     // durable rescan instead of deleting while a provider, terminal, or log
     // writer may still be active.
-    yield* providerService.stopSession({ threadId });
+    yield* stopProviderSessionRequired(threadId);
     yield* terminalManager.close({ threadId, deleteHistory: true });
     yield* closeProviderLogWritersRequired(threadId);
     yield* threadColdStorage.deleteThread(threadId);
@@ -229,11 +230,7 @@ const make = Effect.gen(function* () {
           );
         }
         if (event.type === "thread.archived") {
-          return closeThreadPreviews(event.payload.threadId).pipe(
-            Effect.andThen(
-              enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId }),
-            ),
-          );
+          return enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId });
         }
         return Effect.void;
       }),

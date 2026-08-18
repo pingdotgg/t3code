@@ -208,7 +208,14 @@ effectIt.effect("does not delete while provider quiescence is failing", () =>
             ),
           ),
         ),
-      getBinding: () => Effect.succeed(Option.none()),
+      getBinding: () =>
+        Effect.succeed(
+          Option.some({
+            threadId,
+            provider: ProviderDriverKind.make("codex"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          }),
+        ),
       getProjectedSession: () => Effect.succeed(Option.none()),
       archiveThread: () => Effect.void,
       deleteThread: () => Ref.update(deleteCalls, (count) => count + 1),
@@ -222,6 +229,34 @@ effectIt.effect("does not delete while provider quiescence is failing", () =>
       yield* reactor.drain;
 
       expect(yield* Ref.get(deleteCalls)).toBe(0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("deletes a settled thread when its provider binding is already absent", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-delete-missing-binding");
+    const deleted = yield* Deferred.make<void>();
+    const stopCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Ref.update(stopCalls, (count) => count + 1),
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      archiveThread: () => Effect.void,
+      deleteThread: () => Deferred.succeed(deleted, undefined).pipe(Effect.asVoid),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, deletedEvent(threadId));
+      yield* Deferred.await(deleted);
+      yield* reactor.drain;
+
+      expect(yield* Ref.get(stopCalls)).toBe(0);
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -399,54 +434,29 @@ effectIt.effect("does not close a restored preview from a delayed archive job", 
   Effect.gen(function* () {
     const events = yield* PubSub.unbounded<OrchestrationEvent>();
     const subscription = yield* PubSub.subscribe(events);
-    const blockingThreadId = ThreadId.make("thread-blocking-archive");
-    const restoredThreadId = ThreadId.make("thread-restored-before-archive-job");
-    const blockingArchiveStarted = yield* Deferred.make<void>();
-    const releaseBlockingArchive = yield* Deferred.make<void>();
-    const restoredPreviewClosed = yield* Deferred.make<void>();
-    const restoredArchiveStarted = yield* Deferred.make<void>();
-    const restored = yield* Ref.make(false);
-    const latePreviewCloseCalls = yield* Ref.make(0);
+    const threadId = ThreadId.make("thread-restored-before-archive-job");
+    const staleArchiveChecked = yield* Deferred.make<void>();
+    const previewCloseCalls = yield* Ref.make(0);
     const layer = testReactorLayer({
       eventStream: Stream.fromSubscription(subscription),
       stopSession: () => Effect.void,
       getBinding: () => Effect.succeed(Option.none()),
       getProjectedSession: () => Effect.succeed(Option.none()),
-      closePreview: ({ threadId }) =>
-        Ref.get(restored).pipe(
-          Effect.flatMap((isRestored) =>
-            threadId === restoredThreadId && isRestored
-              ? Ref.update(latePreviewCloseCalls, (count) => count + 1)
-              : Effect.void,
-          ),
-          Effect.andThen(
-            threadId === restoredThreadId
-              ? Deferred.succeed(restoredPreviewClosed, undefined).pipe(Effect.asVoid)
-              : Effect.void,
-          ),
-        ),
-      archiveThread: (threadId) =>
-        threadId === blockingThreadId
-          ? Deferred.succeed(blockingArchiveStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseBlockingArchive)),
-            )
-          : Deferred.succeed(restoredArchiveStarted, undefined).pipe(Effect.asVoid),
+      closePreview: () => Ref.update(previewCloseCalls, (count) => count + 1),
+      archiveThread: () => Deferred.succeed(staleArchiveChecked, undefined).pipe(Effect.asVoid),
+      // Models cold storage rejecting a queued archive after its locked
+      // eligibility recheck because the thread has already been restored.
+      runArchiveQuiesce: false,
     });
 
     yield* Effect.gen(function* () {
       const reactor = yield* ThreadDeletionReactor;
       yield* reactor.start();
-      yield* PubSub.publish(events, archivedEvent(blockingThreadId));
-      yield* Deferred.await(blockingArchiveStarted);
-
-      yield* PubSub.publish(events, archivedEvent(restoredThreadId));
-      yield* Deferred.await(restoredPreviewClosed);
-      yield* Ref.set(restored, true);
-      yield* Deferred.succeed(releaseBlockingArchive, undefined);
-      yield* Deferred.await(restoredArchiveStarted);
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(staleArchiveChecked);
       yield* reactor.drain;
 
-      expect(yield* Ref.get(latePreviewCloseCalls)).toBe(0);
+      expect(yield* Ref.get(previewCloseCalls)).toBe(0);
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -607,7 +617,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
     const projectId = ProjectId.make("project-force-delete-cold");
     const threadId = ThreadId.make("thread-force-delete-cold");
     const commandId = CommandId.make("command-force-delete-cold");
-    const deleteStarted = yield* Deferred.make<void>();
+    const terminalCloseStarted = yield* Deferred.make<void>();
     const previewCloseCalls = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
 
     const orchestrationEngineLayer = Layer.succeed(OrchestrationEngineService, {
@@ -617,10 +627,10 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
       latestSequence: Effect.succeed(0),
     });
     const providerLayer = Layer.mock(ProviderService)({
-      stopSession: () => Deferred.succeed(deleteStarted, undefined).pipe(Effect.asVoid),
+      stopSession: () => Effect.void,
     });
     const terminalLayer = Layer.mock(TerminalManager.TerminalManager)({
-      close: () => Effect.void,
+      close: () => Deferred.succeed(terminalCloseStarted, undefined).pipe(Effect.asVoid),
     });
     const previewLayer = Layer.mock(PreviewManager)({
       close: ({ threadId: closedThreadId }) =>
@@ -768,7 +778,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
 
       yield* reactor.start();
       yield* PubSub.publish(events, { ...deletedEvent, sequence: 4 });
-      yield* Deferred.await(deleteStarted);
+      yield* Deferred.await(terminalCloseStarted);
       yield* reactor.drain;
       expect(yield* Ref.get(previewCloseCalls)).toEqual([threadId]);
 
