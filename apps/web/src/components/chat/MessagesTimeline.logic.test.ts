@@ -3,7 +3,7 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
-  findCaseInsensitiveTextRanges,
+  findTextRanges,
   findTextMatches,
   normalizeCompactToolLabel,
   renderMarkdownSearchText,
@@ -22,7 +22,16 @@ describe("findTextMatches", () => {
   });
 
   it("uses original string offsets when case folding expands a Unicode character", () => {
-    expect(findCaseInsensitiveTextRanges("İstanbul", "İ")).toEqual([{ start: 0, end: 1 }]);
+    expect(findTextRanges("İstanbul", "İ")).toEqual([{ start: 0, end: 1 }]);
+  });
+
+  it("optionally matches exact casing", () => {
+    expect(findTextMatches(["One one ONE"], "One", true)).toEqual([
+      { textIndex: 0, occurrenceIndex: 0 },
+    ]);
+    expect(findTextMatches(["One one ONE"], "one", true)).toEqual([
+      { textIndex: 0, occurrenceIndex: 0 },
+    ]);
   });
 
   it("searches rendered Markdown text rather than hidden link destinations", () => {

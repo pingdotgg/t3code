@@ -262,7 +262,16 @@ export function renderMarkdownSearchText(markdown: string): string {
   return toString(markdownSearchTextProcessor.parse(markdown), { includeImageAlt: false });
 }
 
-export function findCaseInsensitiveTextRanges(text: string, query: string): TextRange[] {
+export function findTextRanges(text: string, query: string, caseSensitive = false): TextRange[] {
+  if (caseSensitive) {
+    if (!query) return [];
+    const ranges: TextRange[] = [];
+    for (let offset = 0; (offset = text.indexOf(query, offset)) !== -1; offset += query.length) {
+      ranges.push({ start: offset, end: offset + query.length });
+    }
+    return ranges;
+  }
+
   const normalizedOffsets: TextRange[] = [];
   let normalizedText = "";
   for (let start = 0; start < text.length; ) {
@@ -295,12 +304,13 @@ export function findCaseInsensitiveTextRanges(text: string, query: string): Text
 export function findTextMatches(
   texts: ReadonlyArray<string | null | undefined>,
   query: string,
+  caseSensitive = false,
 ): TextMatch[] {
   if (!query) return [];
 
   const matches: TextMatch[] = [];
   texts.forEach((text, textIndex) => {
-    findCaseInsensitiveTextRanges(text ?? "", query).forEach((_, occurrenceIndex) => {
+    findTextRanges(text ?? "", query, caseSensitive).forEach((_, occurrenceIndex) => {
       matches.push({ textIndex, occurrenceIndex });
     });
   });

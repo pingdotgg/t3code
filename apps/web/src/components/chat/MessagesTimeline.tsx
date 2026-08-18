@@ -69,6 +69,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -78,7 +79,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
-  findCaseInsensitiveTextRanges,
+  findTextRanges,
   findTextMatches,
   normalizeCompactToolLabel,
   renderMarkdownSearchText,
@@ -431,6 +432,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const rows = useStableRows(rawRows);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findMatchCursor, setFindMatchIndex] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
@@ -444,15 +446,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => findMessageEntries.map((entry) => renderMarkdownSearchText(entry.message.text)),
     [findMessageEntries],
   );
-  const findMatches = useMemo(() => findTextMatches(findTexts, findQuery), [findQuery, findTexts]);
+  const findMatches = useMemo(
+    () => findTextMatches(findTexts, findQuery, findCaseSensitive),
+    [findCaseSensitive, findQuery, findTexts],
+  );
   const findMatchIndex = Math.min(findMatchCursor, Math.max(0, findMatches.length - 1));
   const updateFindQuery = useCallback(
     (query: string) => {
       setFindQuery(query);
       setFindMatchIndex(0);
-      if (findTextMatches(findTexts, query).length > 0) onManualNavigation();
+      if (findTextMatches(findTexts, query, findCaseSensitive).length > 0) onManualNavigation();
     },
-    [findTexts, onManualNavigation],
+    [findCaseSensitive, findTexts, onManualNavigation],
   );
   const goToFindMatch = useCallback(
     (delta: number) => {
@@ -554,9 +559,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           });
           text += value;
         }
-        for (const [occurrenceIndex, textRange] of findCaseInsensitiveTextRanges(
+        for (const [occurrenceIndex, textRange] of findTextRanges(
           text,
           findQuery,
+          findCaseSensitive,
         ).entries()) {
           const startNode = textNodes.find(
             ({ start, end }) => start <= textRange.start && textRange.start < end,
@@ -618,6 +624,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [
     expandedTurnIds,
+    findCaseSensitive,
     findMatchIndex,
     findMatches,
     findMessageEntries,
@@ -796,6 +803,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   placeholder="Find in thread"
                 />
                 <InputGroupAddon align="inline-end" className="gap-1">
+                  <label className="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+                    <Checkbox
+                      checked={findCaseSensitive}
+                      onCheckedChange={(checked) => {
+                        setFindCaseSensitive(checked === true);
+                        setFindMatchIndex(0);
+                        onManualNavigation();
+                      }}
+                      aria-label="Match case"
+                    />
+                    Match case
+                  </label>
                   <span className="min-w-12 text-center text-xs text-muted-foreground">
                     {findQuery
                       ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
