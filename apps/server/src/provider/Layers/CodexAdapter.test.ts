@@ -614,6 +614,49 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("preserves Codex's structured overloaded error for shared retry classification", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-server-overloaded"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "turn/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turn: {
+            id: "turn-1",
+            items: [],
+            status: "failed",
+            error: {
+              message: "The request could not be completed",
+              codexErrorInfo: "serverOverloaded",
+            },
+          },
+        },
+      });
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "turn.completed");
+      if (firstEvent.value.type === "turn.completed") {
+        NodeAssert.equal(firstEvent.value.payload.state, "failed");
+        NodeAssert.equal(
+          firstEvent.value.payload.errorMessage,
+          "The request could not be completed (server overloaded)",
+        );
+      }
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

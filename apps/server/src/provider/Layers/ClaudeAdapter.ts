@@ -354,15 +354,40 @@ function resultErrorsText(result: SDKResultMessage): string {
 }
 
 /**
- * First user-facing error from a non-success result. "[ede_diagnostic] ..."
+ * First user-facing error from a failed result. "[ede_diagnostic] ..."
  * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
  * so they must never become the error banner.
  */
 function resultUserFacingError(result: SDKResultMessage): string | undefined {
-  if (result.subtype === "success" || !Array.isArray(result.errors)) {
-    return undefined;
+  if ("errors" in result && Array.isArray(result.errors)) {
+    const error = result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+    if (error) {
+      return error;
+    }
   }
-  return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+
+  // Claude Code can exhaust its internal API retries, then return a nominal
+  // `success` result with `is_error: true` and the actual API error in
+  // `result` (for example, a 529 capacity failure). Preserve that message so
+  // the canonical failed turn can be classified by the shared retry policy.
+  const isApiError =
+    result.is_error === true ||
+    (result as { readonly terminal_reason?: string }).terminal_reason === "api_error";
+  if (isApiError && "result" in result && typeof result.result === "string") {
+    const message = result.result.trim();
+    if (message.length === 0) {
+      return undefined;
+    }
+    const status =
+      "api_error_status" in result && typeof result.api_error_status === "number"
+        ? result.api_error_status
+        : undefined;
+    return status !== undefined && !message.includes(String(status))
+      ? `API Error ${status}: ${message}`
+      : message;
+  }
+
+  return undefined;
 }
 
 function isInterruptedResult(result: SDKResultMessage): boolean {
@@ -1286,10 +1311,6 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 });
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
-  if (result.subtype === "success") {
-    return "completed";
-  }
-
   const errors = resultErrorsText(result);
   if (isInterruptedResult(result)) {
     return "interrupted";
@@ -1297,7 +1318,10 @@ function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStat
   if (errors.includes("cancel")) {
     return "cancelled";
   }
-  return "failed";
+  const terminalReason = (result as { readonly terminal_reason?: string }).terminal_reason;
+  return result.subtype === "success" && result.is_error !== true && terminalReason !== "api_error"
+    ? "completed"
+    : "failed";
 }
 
 function claudeUsageLimit(
@@ -2886,6 +2910,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (owningAgent && snapshotModel) {
         owningAgent.model = snapshotModel;
       }
+      context.lastAssistantUuid = message.uuid;
+      yield* updateResumeCursor(context);
+      return;
+    }
+
+    // The CLI emits API failures as synthetic assistant text immediately
+    // before the result carrying the same error. Let the result produce the
+    // canonical failed turn so automatic retries can suppress intermediate
+    // failures instead of leaking one assistant row per attempt.
+    if (
+      context.turnState &&
+      (message as { is_api_error_message?: boolean }).is_api_error_message === true
+    ) {
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
       return;

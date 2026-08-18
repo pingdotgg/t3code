@@ -30,9 +30,11 @@ const eventBase = {
 describe("ProviderTurnRetryPolicy", () => {
   it.each([
     "OpenAI is currently over capacity",
+    "Model is at capacity. Try again in a moment.",
     "HTTP 429: Too many requests",
     "503 Service Unavailable",
     "API Error: overloaded_error",
+    "API Error: Repeated 529 Overloaded errors. The API is at capacity.",
     "Claude runtime stream failed.",
     "WebSocket connection reset by peer",
   ])("retries transient runtime failures: %s", (message) => {

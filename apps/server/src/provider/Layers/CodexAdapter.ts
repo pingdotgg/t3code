@@ -1091,7 +1091,12 @@ function mapToRuntimeEvents(
     if (!payload) {
       return [];
     }
-    const errorMessage = trimText(payload.turn.error?.message);
+    const rawErrorMessage = trimText(payload.turn.error?.message);
+    const errorMessage =
+      payload.turn.error?.codexErrorInfo === "serverOverloaded" &&
+      !rawErrorMessage?.toLowerCase().includes("overload")
+        ? `${rawErrorMessage ?? "Codex request failed"} (server overloaded)`
+        : rawErrorMessage;
     const reachedSubscriptionLimit =
       latestRateLimits?.rateLimitReachedType == null ||
       latestRateLimits.rateLimitReachedType === "rate_limit_reached";
