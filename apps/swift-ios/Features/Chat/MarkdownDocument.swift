@@ -117,6 +117,23 @@ struct MarkdownImageReference: Equatable, Sendable {
             .map(String.init)
     }
 
+    private static func unescapedIndex(
+        of target: Character,
+        in characters: [Character],
+        from start: Int
+    ) -> Int? {
+        var cursor = start
+        while cursor < characters.count {
+            if characters[cursor] == "\\" {
+                cursor += 2
+                continue
+            }
+            if characters[cursor] == target { return cursor }
+            cursor += 1
+        }
+        return nil
+    }
+
     /// Set `ignoringQuotedText` for a link destination: a quoted title may hold
     /// an unbalanced parenthesis, as in `(out/plot.png "generated (final")`, and
     /// counting those would hide the real closing delimiter.
@@ -152,6 +169,21 @@ struct MarkdownImageReference: Equatable, Sendable {
                 if followsWhitespace, character == "\"" || character == "'" {
                     openQuote = character
                     cursor += 1
+                    followsWhitespace = false
+                    continue
+                }
+                // CommonMark wraps an awkward destination in angle brackets, as
+                // in `(<out/plot).png>)`. Everything inside is literal, so a
+                // parenthesis there is part of the file name.
+                if character == "<", cursor == start + 1 {
+                    guard let closingAngle = unescapedIndex(
+                        of: ">",
+                        in: characters,
+                        from: cursor + 1
+                    ) else {
+                        return nil
+                    }
+                    cursor = closingAngle + 1
                     followsWhitespace = false
                     continue
                 }

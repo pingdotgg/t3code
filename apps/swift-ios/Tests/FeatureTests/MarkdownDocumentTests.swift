@@ -492,6 +492,24 @@ struct MarkdownDocumentTests {
     }
 
     @Test
+    func readsAngleBracketedDestinationsLiterally() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![plot](<out/plot).png>)
+
+            ![spaced](<out/my render.png> "a title")
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/plot).png", alt: "plot"),
+                .image(source: "out/my render.png", alt: "spaced"),
+            ]
+        )
+    }
+
+    @Test
     func treatsQuotesInsideFileNamesAsPathCharacters() {
         let document = MarkdownDocument(
             parsing: """
