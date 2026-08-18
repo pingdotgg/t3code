@@ -211,7 +211,7 @@ export function ProviderModelsSection({
         spellCheck={false}
       />
       <div ref={listRef} className="mt-2 max-h-40 overflow-y-auto pb-1">
-        {filteredModels.length === 0 ? (
+        {isFiltering && filteredModels.length === 0 ? (
           <div className="py-1 text-xs text-muted-foreground">No models match your search.</div>
         ) : null}
         {filteredModels.map((model) => {
