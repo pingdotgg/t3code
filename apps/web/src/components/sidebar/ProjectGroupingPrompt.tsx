@@ -2,7 +2,7 @@ import { GitMergeIcon } from "lucide-react";
 
 import { resolveProjectGroupingEnvironmentLabels } from "../../projectGroupingPrompt.logic";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 
 interface ProjectGroupingPromptProps {
@@ -34,15 +34,15 @@ export function ProjectGroupingPrompt({
           {group.displayName} is available on {environmentDescription}. Grouping keeps one project
           and lets new threads choose where to run.
         </span>
+        <div className="flex flex-wrap justify-end gap-1">
+          <Button size="xs" variant="outline" onClick={onKeepSeparate}>
+            Keep separate
+          </Button>
+          <Button size="xs" onClick={onGroup}>
+            Group projects
+          </Button>
+        </div>
       </AlertDescription>
-      <AlertAction className="mt-1 flex-wrap justify-end">
-        <Button size="xs" variant="outline" onClick={onKeepSeparate}>
-          Keep separate
-        </Button>
-        <Button size="xs" onClick={onGroup}>
-          Group projects
-        </Button>
-      </AlertAction>
     </Alert>
   );
 }

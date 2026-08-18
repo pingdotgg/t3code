@@ -1,9 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { MachineProfileRow } from "./MachineProfileRow";
+import { MACHINE_PROFILE_POPUP_CLASS, MachineProfileRow } from "./MachineProfileRow";
 
 describe("MachineProfileRow", () => {
+  it("caps machine profile menus to the viewport at the shared detail width", () => {
+    expect(MACHINE_PROFILE_POPUP_CLASS).toBe("w-[min(28rem,calc(100vw-2rem))]");
+  });
+
   it("renders the machine path and draft execution details", () => {
     const markup = renderToStaticMarkup(
       <MachineProfileRow
@@ -29,7 +33,9 @@ describe("MachineProfileRow", () => {
     expect(markup).toContain("feature/remote");
     expect(markup).toContain("gpt-5.4");
     expect(markup).toContain("Full access");
-    expect(markup).toContain('aria-label="C:/Users/lucas/Projects/t3code"');
+    expect(markup.match(/data-slot="tooltip-trigger"/gu)).toHaveLength(7);
+    expect(markup).not.toContain("title=");
+    expect(markup).not.toContain("aria-label=");
   });
 
   it("marks a disconnected machine as unavailable", () => {

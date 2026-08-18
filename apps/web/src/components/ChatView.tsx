@@ -183,7 +183,12 @@ import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -1900,13 +1905,23 @@ function ChatViewContent(props: ChatViewProps) {
       if (seen.has(p.environmentId)) continue;
       seen.add(p.environmentId);
       const isPrimary = p.environmentId === primaryEnvironmentId;
-      const label = environmentById.get(p.environmentId)?.label ?? p.environmentId;
+      const environment = environmentById.get(p.environmentId);
+      const label = environment?.label ?? p.environmentId;
       const profileKey = physicalProjectProfileKey(p.environmentId, p.id);
       const profile =
         profileKey === activeDraftProfileKey
           ? activeDraftMachineProfile
           : (draftThread?.machineProfilesByProjectKey[profileKey] ?? null);
-      const connectionPhase = environmentById.get(p.environmentId)?.connection.phase;
+      const connectionPhase = environment?.connection.phase;
+      const targetServerConfig = environment?.serverConfig;
+      const providerEntries = targetServerConfig
+        ? sortProviderInstanceEntries(
+            applyProviderInstanceSettings(
+              deriveProviderInstanceEntries(targetServerConfig.providers),
+              targetServerConfig.settings,
+            ),
+          )
+        : null;
       envs.push(
         buildEnvironmentOption({
           environmentId: p.environmentId,
@@ -1916,6 +1931,8 @@ function ChatViewContent(props: ChatViewProps) {
           workspaceRoot: p.workspaceRoot,
           defaultModelSelection: p.defaultModelSelection,
           profile,
+          fallbackExecutionProfile: activeDraftMachineProfile,
+          providerEntries,
           isAvailable: connectionPhase === "connected",
         }),
       );

@@ -37,8 +37,21 @@ const remoteProfile: MachineDraftProfile = {
 describe("machine draft profiles", () => {
   it("keys profiles by physical environment and project", () => {
     expect(physicalProjectProfileKey(remoteEnvironmentId, remoteProjectId)).toBe(
-      "env-remote:project-remote",
+      '["env-remote","project-remote"]',
     );
+  });
+
+  it("does not collide when environment and project ids contain separators", () => {
+    const left = physicalProjectProfileKey(
+      EnvironmentId.make("environment:project"),
+      ProjectId.make("repo"),
+    );
+    const right = physicalProjectProfileKey(
+      EnvironmentId.make("environment"),
+      ProjectId.make("project:repo"),
+    );
+
+    expect(left).not.toBe(right);
   });
 
   it("summarizes a saved profile without leaking another machine's path", () => {
@@ -56,18 +69,20 @@ describe("machine draft profiles", () => {
     });
   });
 
-  it("falls back to physical project defaults on a first visit", () => {
+  it("previews the execution settings preserved on a first visit", () => {
     expect(
       resolveMachineProfileSummary({
         workspaceRoot: "C:/repo",
         defaultModelSelection: { instanceId: codexInstanceId, model: "sonnet" },
         profile: null,
+        fallbackExecutionProfile: remoteProfile,
       }),
     ).toMatchObject({
       branchLabel: "Current checkout",
       workspaceLabel: "Current checkout",
       modelLabel: "sonnet",
-      executionLabel: "Project defaults",
+      executionLabel: "Approval required · Plan · origin",
+      startFromOrigin: true,
     });
   });
 });

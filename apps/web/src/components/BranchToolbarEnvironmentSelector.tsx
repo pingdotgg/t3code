@@ -3,7 +3,7 @@ import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
-import { MachineProfileRow } from "./MachineProfileRow";
+import { MACHINE_PROFILE_POPUP_CLASS, MachineProfileRow } from "./MachineProfileRow";
 import {
   Select,
   SelectGroup,
@@ -104,7 +104,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           </span>
         </span>
       </SelectTrigger>
-      <SelectPopup popupClassName="w-[min(28rem,calc(100vw-2rem))]">
+      <SelectPopup popupClassName={MACHINE_PROFILE_POPUP_CLASS}>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
           {availableEnvironments.map((env) => (

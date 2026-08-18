@@ -28,7 +28,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
-import { MachineProfileRow } from "./MachineProfileRow";
+import { MACHINE_PROFILE_POPUP_CLASS, MachineProfileRow } from "./MachineProfileRow";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -142,7 +142,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         {triggerContent}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
-      <MenuPopup align="start" side="top" className="w-64">
+      <MenuPopup align="start" side="top" className={MACHINE_PROFILE_POPUP_CLASS}>
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>

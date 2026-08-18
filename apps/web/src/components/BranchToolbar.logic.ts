@@ -2,6 +2,10 @@ import type { EnvironmentId, ModelSelection, ProjectId, VcsRef } from "@t3tools/
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 import {
+  resolveSelectableProviderInstanceEntry,
+  type ProviderInstanceEntry,
+} from "../providerInstances";
+import {
   resolveMachineProfileSummary,
   type MachineDraftProfile,
   type MachineProfileSummary,
@@ -26,6 +30,37 @@ export interface EnvironmentOption {
   profile: MachineProfileSummary;
 }
 
+function resolveEnvironmentModelSelection(input: {
+  defaultModelSelection: ModelSelection | null | undefined;
+  profile: MachineDraftProfile | null | undefined;
+  providerEntries: readonly ProviderInstanceEntry[];
+}): ModelSelection | null {
+  const profile = input.profile ?? null;
+  const candidateInstanceIds = [profile?.activeProvider, input.defaultModelSelection?.instanceId];
+  let selectedEntry: ProviderInstanceEntry | undefined;
+  for (const candidateInstanceId of candidateInstanceIds) {
+    if (!candidateInstanceId) continue;
+    selectedEntry = input.providerEntries.find(
+      (entry) => entry.instanceId === candidateInstanceId && entry.enabled && entry.isAvailable,
+    );
+    if (selectedEntry) break;
+  }
+  selectedEntry ??= resolveSelectableProviderInstanceEntry(input.providerEntries, undefined);
+  if (!selectedEntry) return null;
+
+  const savedSelection = profile?.modelSelectionByProvider[selectedEntry.instanceId];
+  if (savedSelection) return savedSelection;
+  if (input.defaultModelSelection?.instanceId === selectedEntry.instanceId) {
+    return input.defaultModelSelection;
+  }
+
+  const defaultModel =
+    selectedEntry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    selectedEntry.models.find((model) => !model.isCustom)?.slug ??
+    selectedEntry.models[0]?.slug;
+  return defaultModel ? { instanceId: selectedEntry.instanceId, model: defaultModel } : null;
+}
+
 export function buildEnvironmentOption(input: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
@@ -34,8 +69,20 @@ export function buildEnvironmentOption(input: {
   workspaceRoot: string;
   defaultModelSelection: ModelSelection | null | undefined;
   profile: MachineDraftProfile | null | undefined;
+  fallbackExecutionProfile?: Pick<
+    MachineDraftProfile,
+    "runtimeMode" | "interactionMode" | "startFromOrigin"
+  > | null;
+  providerEntries?: readonly ProviderInstanceEntry[] | null;
   isAvailable: boolean;
 }): EnvironmentOption {
+  const modelSelectionOverride = input.providerEntries
+    ? resolveEnvironmentModelSelection({
+        defaultModelSelection: input.defaultModelSelection,
+        profile: input.profile,
+        providerEntries: input.providerEntries,
+      })
+    : undefined;
   return {
     environmentId: input.environmentId,
     projectId: input.projectId,
@@ -47,6 +94,10 @@ export function buildEnvironmentOption(input: {
       workspaceRoot: input.workspaceRoot,
       defaultModelSelection: input.defaultModelSelection,
       profile: input.profile,
+      ...(modelSelectionOverride !== undefined ? { modelSelectionOverride } : {}),
+      ...(input.fallbackExecutionProfile !== undefined
+        ? { fallbackExecutionProfile: input.fallbackExecutionProfile }
+        : {}),
     }),
   };
 }

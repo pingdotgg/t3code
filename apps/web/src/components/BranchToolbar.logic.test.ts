@@ -1,5 +1,12 @@
-import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type VcsRef,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { deriveProviderInstanceEntries } from "../providerInstances";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -25,6 +32,35 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+function provider(input: {
+  instanceId: string;
+  driver: "codex" | "claudeAgent";
+  enabled: boolean;
+  defaultModel: string;
+}): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(input.instanceId),
+    driver: ProviderDriverKind.make(input.driver),
+    enabled: input.enabled,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: input.defaultModel,
+        name: input.defaultModel,
+        isCustom: false,
+        isDefault: true,
+        capabilities: {},
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  };
+}
 
 describe("buildEnvironmentOption", () => {
   it("joins physical project defaults with the saved machine profile", () => {
@@ -78,6 +114,53 @@ describe("buildEnvironmentOption", () => {
         isAvailable: false,
       }),
     ).toMatchObject({ connection: "unavailable", profile: { branchLabel: "Current checkout" } });
+  });
+
+  it("does not preview a saved model from a disabled target provider", () => {
+    const staleInstanceId = ProviderInstanceId.make("codex_disabled");
+    const fallbackInstanceId = ProviderInstanceId.make("claudeAgent");
+    const option = buildEnvironmentOption({
+      environmentId: remoteEnvironmentId,
+      projectId: "project-remote" as never,
+      label: "Mini PC",
+      isPrimary: false,
+      workspaceRoot: "C:/repo",
+      defaultModelSelection: { instanceId: fallbackInstanceId, model: "sonnet" },
+      profile: {
+        environmentId: remoteEnvironmentId,
+        projectId: "project-remote" as never,
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        startFromOrigin: false,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        activeProvider: staleInstanceId,
+        modelSelectionByProvider: {
+          [staleInstanceId]: { instanceId: staleInstanceId, model: "stale-model" },
+        },
+      },
+      providerEntries: deriveProviderInstanceEntries([
+        provider({
+          instanceId: staleInstanceId,
+          driver: "codex",
+          enabled: false,
+          defaultModel: "gpt-5.4",
+        }),
+        provider({
+          instanceId: fallbackInstanceId,
+          driver: "claudeAgent",
+          enabled: true,
+          defaultModel: "sonnet",
+        }),
+      ]),
+      isAvailable: true,
+    });
+
+    expect(option.profile).toMatchObject({
+      providerLabel: "claudeAgent",
+      modelLabel: "sonnet",
+    });
   });
 });
 

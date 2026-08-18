@@ -3790,21 +3790,84 @@ export const useComposerDraftStore = composerDraftStore;
 export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): void {
   useComposerDraftStore.setState((state) => {
     const removedThreadKeys = new Set<string>();
+    const rehomedThreadKeys = new Set<string>();
+    const nextDraftThreads = { ...state.draftThreadsByThreadKey };
+    const nextDrafts = { ...state.draftsByThreadKey };
 
     for (const [threadKey, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
-      if (draftThread.environmentId === environmentId) {
+      const survivingProfiles = Object.values(draftThread.machineProfilesByProjectKey).filter(
+        (profile) => profile.environmentId !== environmentId,
+      );
+      const survivingProfilesByProjectKey: MachineDraftProfileMap = {};
+      for (const profile of survivingProfiles) {
+        survivingProfilesByProjectKey[
+          physicalProjectProfileKey(profile.environmentId, profile.projectId)
+        ] = profile;
+      }
+
+      if (draftThread.environmentId !== environmentId) {
+        if (
+          survivingProfiles.length !== Object.keys(draftThread.machineProfilesByProjectKey).length
+        ) {
+          nextDraftThreads[threadKey] = {
+            ...draftThread,
+            machineProfilesByProjectKey: survivingProfilesByProjectKey,
+          };
+        }
+        continue;
+      }
+
+      const fallbackProfile = survivingProfiles[0];
+      if (!fallbackProfile) {
         removedThreadKeys.add(threadKey);
+        continue;
+      }
+
+      const nextDraftThread: DraftThreadState = {
+        ...draftThread,
+        environmentId: fallbackProfile.environmentId,
+        projectId: fallbackProfile.projectId,
+        branch: fallbackProfile.branch,
+        worktreePath: fallbackProfile.worktreePath,
+        envMode: fallbackProfile.envMode,
+        startFromOrigin: fallbackProfile.startFromOrigin,
+        runtimeMode: fallbackProfile.runtimeMode,
+        interactionMode: fallbackProfile.interactionMode,
+        machineProfilesByProjectKey: survivingProfilesByProjectKey,
+      };
+      nextDraftThreads[threadKey] = nextDraftThread;
+      rehomedThreadKeys.add(threadKey);
+
+      const nextComposerDraft: ComposerThreadDraftState = {
+        ...(state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft()),
+        modelSelectionByProvider: cloneModelSelectionByProvider(
+          fallbackProfile.modelSelectionByProvider,
+        ),
+        activeProvider: fallbackProfile.activeProvider,
+        runtimeMode: fallbackProfile.runtimeMode,
+        interactionMode: fallbackProfile.interactionMode,
+      };
+      if (shouldRemoveDraft(nextComposerDraft)) {
+        delete nextDrafts[threadKey];
+      } else {
+        nextDrafts[threadKey] = nextComposerDraft;
       }
     }
     for (const threadKey of Object.keys(state.draftsByThreadKey)) {
-      if (parseScopedThreadKey(threadKey)?.environmentId === environmentId) {
+      if (
+        parseScopedThreadKey(threadKey)?.environmentId === environmentId &&
+        !rehomedThreadKeys.has(threadKey)
+      ) {
         removedThreadKeys.add(threadKey);
       }
     }
     for (const [logicalProjectKey, threadKey] of Object.entries(
       state.logicalProjectDraftThreadKeyByLogicalProjectKey,
     )) {
-      if (parseScopedProjectKey(logicalProjectKey)?.environmentId === environmentId) {
+      if (
+        parseScopedProjectKey(logicalProjectKey)?.environmentId === environmentId &&
+        !rehomedThreadKeys.has(threadKey)
+      ) {
         removedThreadKeys.add(threadKey);
       }
     }
@@ -3812,25 +3875,19 @@ export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): vo
     const nextLogicalMappings = Object.fromEntries(
       Object.entries(state.logicalProjectDraftThreadKeyByLogicalProjectKey).filter(
         ([logicalProjectKey, threadKey]) =>
-          parseScopedProjectKey(logicalProjectKey)?.environmentId !== environmentId &&
+          (parseScopedProjectKey(logicalProjectKey)?.environmentId !== environmentId ||
+            rehomedThreadKeys.has(threadKey)) &&
           !removedThreadKeys.has(threadKey),
       ),
     ) as Record<string, string>;
-    const nextDraftThreads = Object.fromEntries(
-      Object.entries(state.draftThreadsByThreadKey).filter(
-        ([threadKey, draftThread]) =>
-          draftThread.environmentId !== environmentId && !removedThreadKeys.has(threadKey),
-      ),
-    ) as Record<string, DraftThreadState>;
-    const nextDrafts = Object.fromEntries(
-      Object.entries(state.draftsByThreadKey).filter(([threadKey, draft]) => {
-        if (!removedThreadKeys.has(threadKey)) {
-          return true;
-        }
-        revokeDraftThreadPreviewUrls(draft);
-        return false;
-      }),
-    ) as Record<string, ComposerThreadDraftState>;
+    for (const threadKey of removedThreadKeys) {
+      const removedDraft = nextDrafts[threadKey];
+      if (removedDraft) {
+        revokeDraftThreadPreviewUrls(removedDraft);
+      }
+      delete nextDrafts[threadKey];
+      delete nextDraftThreads[threadKey];
+    }
 
     return {
       draftsByThreadKey: nextDrafts,

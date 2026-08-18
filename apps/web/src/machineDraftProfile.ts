@@ -48,7 +48,7 @@ export function physicalProjectProfileKey(
   environmentId: EnvironmentId,
   projectId: ProjectId,
 ): string {
-  return `${environmentId}:${projectId}`;
+  return JSON.stringify([environmentId, projectId]);
 }
 
 function resolveProfileModel(profile: MachineDraftProfile): ModelSelection | null {
@@ -63,9 +63,20 @@ export function resolveMachineProfileSummary(input: {
   workspaceRoot: string;
   defaultModelSelection: ModelSelection | null | undefined;
   profile: MachineDraftProfile | null | undefined;
+  modelSelectionOverride?: ModelSelection | null;
+  fallbackExecutionProfile?: Pick<
+    MachineDraftProfile,
+    "runtimeMode" | "interactionMode" | "startFromOrigin"
+  > | null;
 }): MachineProfileSummary {
   const profile = input.profile ?? null;
-  const modelSelection = profile ? resolveProfileModel(profile) : null;
+  const executionProfile = profile ?? input.fallbackExecutionProfile ?? null;
+  const modelSelection =
+    input.modelSelectionOverride !== undefined
+      ? input.modelSelectionOverride
+      : profile
+        ? resolveProfileModel(profile)
+        : null;
   const branchLabel = profile?.branch ?? "Current checkout";
   const workspaceLabel = profile
     ? (profile.worktreePath ??
@@ -75,8 +86,8 @@ export function resolveMachineProfileSummary(input: {
     modelSelection?.model ?? input.defaultModelSelection?.model ?? "Project default";
   const providerLabel =
     modelSelection?.instanceId ?? input.defaultModelSelection?.instanceId ?? "Project default";
-  const executionLabel = profile
-    ? `${RUNTIME_MODE_LABELS[profile.runtimeMode]} \u00b7 ${INTERACTION_MODE_LABELS[profile.interactionMode]}${profile.startFromOrigin ? " \u00b7 origin" : ""}`
+  const executionLabel = executionProfile
+    ? `${RUNTIME_MODE_LABELS[executionProfile.runtimeMode]} \u00b7 ${INTERACTION_MODE_LABELS[executionProfile.interactionMode]}${executionProfile.startFromOrigin ? " \u00b7 origin" : ""}`
     : "Project defaults";
 
   return {
@@ -85,6 +96,6 @@ export function resolveMachineProfileSummary(input: {
     providerLabel,
     modelLabel,
     executionLabel,
-    startFromOrigin: profile?.startFromOrigin ?? false,
+    startFromOrigin: executionProfile?.startFromOrigin ?? false,
   };
 }

@@ -787,6 +787,45 @@ describe("composerDraftStore project draft thread mapping", () => {
     }
   });
 
+  it("rehomes a grouped draft when its active environment is removed", () => {
+    const store = useComposerDraftStore.getState();
+    const logicalProjectKey = "github.com/pingdotgg/t3code";
+    store.setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, sharedDraftId, {
+      threadId,
+      branch: "feature/local",
+      worktreePath: "/repo/.t3/worktrees/local",
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      startFromOrigin: true,
+    });
+    store.setPrompt(sharedDraftId, "keep this grouped draft");
+    store.setModelSelection(sharedDraftId, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    store.switchDraftProject(sharedDraftId, remoteProjectRef);
+
+    clearComposerDraftsEnvironment(OTHER_TEST_ENVIRONMENT_ID);
+
+    const next = useComposerDraftStore.getState();
+    expect(next.getDraftSessionByLogicalProjectKey(logicalProjectKey)).toMatchObject({
+      draftId: sharedDraftId,
+      environmentId: TEST_ENVIRONMENT_ID,
+      projectId,
+      branch: "feature/local",
+      worktreePath: "/repo/.t3/worktrees/local",
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      startFromOrigin: true,
+    });
+    expect(next.getComposerDraft(sharedDraftId)).toMatchObject({
+      prompt: "keep this grouped draft",
+      activeProvider: CODEX_INSTANCE,
+      modelSelectionByProvider: {
+        [CODEX_INSTANCE]: { model: "gpt-5.4" },
+      },
+    });
+  });
+
   it("stores and reads project draft thread ids via actions", () => {
     const store = useComposerDraftStore.getState();
     expect(store.getDraftThreadByProjectRef(projectRef)).toBeNull();
