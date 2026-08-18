@@ -3510,7 +3510,7 @@ export default function Sidebar() {
                     render={
                       <SidebarMenuButton
                         aria-label="Filter threads by project"
-                        className="min-w-0 flex-1 ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                        className="group/project-scope min-w-0 flex-1 ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       />
                     }
                   >
@@ -3532,8 +3532,9 @@ export default function Sidebar() {
                         desktopLocal={scopedProjectGroup.allRemoteMembersAreDesktopLocal}
                         labels={scopedProjectGroup.remoteEnvironmentLabels}
                         // Follow SidebarMenuButton's icon contract, which only
-                        // reaches direct svg children (ui/sidebar.tsx).
-                        className="text-[var(--sidebar-icon-color)] hover:text-sidebar-foreground"
+                        // reaches direct svg children (ui/sidebar.tsx), keyed
+                        // off the button's own hover/active states.
+                        className="text-[var(--sidebar-icon-color)] group-hover/project-scope:text-sidebar-foreground group-active/project-scope:text-sidebar-foreground"
                       />
                     ) : null}
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
