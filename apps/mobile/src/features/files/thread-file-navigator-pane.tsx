@@ -70,6 +70,8 @@ export function ThreadFileNavigatorPane(props: {
 
   const fileTree = (
     <FileTreeBrowser
+      cwd={props.cwd}
+      environmentId={props.environmentId}
       entries={entriesData?.entries ?? []}
       error={entriesQuery.error}
       isPending={entriesQuery.isPending}
