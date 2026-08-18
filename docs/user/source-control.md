@@ -53,6 +53,18 @@ T3 Code works with the platforms your team already uses:
 - Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
 
+### See local changes in the Files panel
+
+The Files tree marks working-tree changes with letters:
+
+- **U** untracked: a new file Git has not added yet
+- **A** added: a new file already staged
+- **M** modified: a tracked file with uncommitted edits
+- **D** deleted
+- **R** renamed
+
+Folders pick up a mark when anything inside them changed. A deleted file drops out of the tree; its parent folder keeps the mark. Marks clear when you commit or discard those changes. This works on web, desktop, and mobile. If marks never appear, update both the app and the T3 Code server in that environment.
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:
