@@ -33,6 +33,19 @@ public final class T3NativeControlsModule: Module {
       return arguments[flagIndex + 1]
     }
 
+    // The palette is fixed for the whole capture, so it only ever arrives as a
+    // launch argument — unlike the scene, which the runner rewrites in place.
+    Function("getShowcaseTheme") { () -> String? in
+      let arguments = ProcessInfo.processInfo.arguments
+      guard
+        let flagIndex = arguments.firstIndex(of: "--showcaseTheme"),
+        arguments.indices.contains(flagIndex + 1)
+      else {
+        return nil as String?
+      }
+      return arguments[flagIndex + 1]
+    }
+
     Function("getShowcaseOrientation") { () -> String? in
       let arguments = ProcessInfo.processInfo.arguments
       guard
@@ -86,17 +99,6 @@ public final class T3NativeControlsModule: Module {
     Function("markShowcaseReady") { (scene: String) in
       let readyPath = NSHomeDirectory() + "/Library/Caches/T3ShowcaseReadyScene"
       try? scene.write(toFile: readyPath, atomically: true, encoding: .utf8)
-    }
-
-    View(T3HeaderButtonView.self) {
-      Prop("label") { (view: T3HeaderButtonView, label: String) in
-        view.setLabel(label)
-      }
-      Prop("systemImage") { (view: T3HeaderButtonView, systemImage: String) in
-        view.setSystemImage(systemImage)
-      }
-
-      Events("onTriggered")
     }
   }
 }

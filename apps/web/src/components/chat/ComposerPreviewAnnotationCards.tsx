@@ -5,6 +5,7 @@ import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
 import { summarizePreviewAnnotationTargets } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 
 interface ComposerPreviewAnnotationCardsProps {
   annotations: ReadonlyArray<PreviewAnnotationPayload>;
@@ -69,14 +70,15 @@ export function ComposerPreviewAnnotationCards({
                   .join(" · ")}
               </p>
             </div>
-            <button
-              type="button"
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
               aria-label="Remove preview annotation"
-              className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded text-icon-muted transition hover:bg-muted hover:text-foreground"
+              className="absolute right-1.5 top-1.5 [--control-icon-color:currentColor] rounded text-icon-muted hover:bg-muted"
               onClick={() => onRemove(annotation.id)}
             >
               <X className="size-3" />
-            </button>
+            </Button>
           </section>
         );
       })}
