@@ -956,6 +956,24 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
 
+/**
+ * Tab creation carries the client's configured browser defaults so the guest
+ * is born already zoomed and color-scheme-emulated. Applying them after
+ * creation instead would paint one frame at 100%/system first, which reads as
+ * a flash on every tab open. Both fields are optional so an older renderer
+ * still gets the historical defaults.
+ */
+export const DesktopPreviewCreateTabInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  zoomFactor: Schema.optional(Schema.Number.check(Schema.isGreaterThan(0))),
+  colorScheme: Schema.optional(DesktopPreviewColorSchemeSchema),
+});
+
+export interface DesktopPreviewTabDefaults {
+  readonly zoomFactor?: number | undefined;
+  readonly colorScheme?: DesktopPreviewColorScheme | undefined;
+}
+
 export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -1109,7 +1127,7 @@ export interface DesktopBridge {
 }
 
 export interface DesktopPreviewBridge {
-  createTab: (tabId: string) => Promise<void>;
+  createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
   navigate: (tabId: string, url: string) => Promise<void>;
