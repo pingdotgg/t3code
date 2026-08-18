@@ -65,10 +65,11 @@ function measuredSvgSize(
 
 export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverlayProps) {
   const overlayDomId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  const sceneRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<MermaidViewport>(resetMermaidViewport());
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const userAdjustedRef = useRef(false);
+  const [sceneEl, setSceneEl] = useState<HTMLDivElement | null>(null);
   const [viewport, setViewport] = useState<MermaidViewport>(resetMermaidViewport);
   const [panning, setPanning] = useState(false);
 
@@ -78,15 +79,19 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
   );
   const contentSize = useMemo(() => mermaidSvgContentSize(svg), [svg]);
 
+  const setSceneNode = (node: HTMLDivElement | null) => {
+    sceneRef.current = node;
+    setSceneEl((current) => (current === node ? current : node));
+  };
+
   const commitViewport = (next: MermaidViewport, userAdjusted: boolean) => {
     if (userAdjusted) userAdjustedRef.current = true;
     viewportRef.current = next;
     setViewport(next);
   };
 
-  const fitToScene = () => {
-    const scene = sceneRef.current;
-    if (!scene) return;
+  const fitToScene = (scene: HTMLElement) => {
+    if (scene.clientWidth <= 0 || scene.clientHeight <= 0) return;
     const size = contentSize ?? measuredSvgSize(scene, viewportRef.current.zoom);
     if (!size) return;
     userAdjustedRef.current = false;
@@ -103,27 +108,20 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
       commitViewport(resetMermaidViewport(), false);
       return;
     }
-    fitToScene();
-    // Fit once the dialog geometry is available; user pan/zoom must win after that.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- opening or a new svg is the only reason to refit
-  }, [open, svg]);
+    if (sceneEl) fitToScene(sceneEl);
+  }, [open, svg, sceneEl, contentSize]);
 
   useEffect(() => {
-    if (!open) return;
-    const scene = sceneRef.current;
-    if (!scene || typeof ResizeObserver === "undefined") return;
+    if (!open || sceneEl == null || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (!userAdjustedRef.current) fitToScene();
+      if (!userAdjustedRef.current) fitToScene(sceneEl);
     });
-    observer.observe(scene);
+    observer.observe(sceneEl);
     return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- observer is bound to the open scene
-  }, [open, svg]);
+  }, [open, svg, sceneEl, contentSize]);
 
   useEffect(() => {
-    if (!open) return;
-    const scene = sceneRef.current;
-    if (!scene) return;
+    if (!open || sceneEl == null) return;
 
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
@@ -133,15 +131,15 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
         zoomMermaidViewportAtPoint(
           viewportRef.current,
           viewportRef.current.zoom * factor,
-          scenePoint(scene, event.clientX, event.clientY),
+          scenePoint(sceneEl, event.clientX, event.clientY),
         ),
         true,
       );
     };
 
-    scene.addEventListener("wheel", onWheel, { passive: false });
-    return () => scene.removeEventListener("wheel", onWheel);
-  }, [open]);
+    sceneEl.addEventListener("wheel", onWheel, { passive: false });
+    return () => sceneEl.removeEventListener("wheel", onWheel);
+  }, [open, sceneEl]);
 
   const zoomByStep = (direction: 1 | -1) => {
     const scene = sceneRef.current;
@@ -196,7 +194,7 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
     }
     if (event.key === "0") {
       event.preventDefault();
-      fitToScene();
+      if (sceneRef.current) fitToScene(sceneRef.current);
     }
   };
 
@@ -275,7 +273,9 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
                     className="chat-markdown-chrome-action"
                     aria-label="Reset view"
                     data-mermaid-overlay-reset=""
-                    onClick={() => fitToScene()}
+                    onClick={() => {
+                      if (sceneRef.current) fitToScene(sceneRef.current);
+                    }}
                   />
                 }
               >
@@ -303,7 +303,7 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
           </div>
         </DialogHeader>
         <div
-          ref={sceneRef}
+          ref={setSceneNode}
           className="chat-markdown-mermaid-overlay-scene"
           data-mermaid-overlay-scene=""
           data-panning={panning ? "true" : undefined}
