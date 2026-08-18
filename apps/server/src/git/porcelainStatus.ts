@@ -62,8 +62,9 @@ export function unquoteGitPath(raw: string): string {
       i += 2;
       continue;
     }
-    pushUtf8Bytes(bytes, ch ?? "");
-    i++;
+    const codePoint = String.fromCodePoint(raw.codePointAt(i) ?? 0);
+    pushUtf8Bytes(bytes, codePoint);
+    i += codePoint.length;
   }
   return raw;
 }
@@ -106,7 +107,7 @@ function parsePorcelainPath(line: string): string | null {
     return decoded.length > 0 ? decoded : null;
   }
 
-  const dest = unquoteGitPath(restAfterFields(line, line.startsWith("u ") ? 11 : 8).trim());
+  const dest = unquoteGitPath(restAfterFields(line, line.startsWith("u ") ? 10 : 8).trim());
   return dest.length > 0 ? dest : null;
 }
 

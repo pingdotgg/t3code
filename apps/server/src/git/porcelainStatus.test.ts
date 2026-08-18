@@ -80,5 +80,9 @@ describe("parsePorcelainStatus", () => {
       ),
     ).toEqual({ path: "new file.ts", status: "renamed" });
     expect(unquoteGitPath('"caf\\303\\251.ts"')).toBe("café.ts");
+    expect(unquoteGitPath('"hello 😀.ts"')).toBe("hello 😀.ts");
+    expect(
+      parsePorcelainStatus("u UU N... 100644 100644 100644 100644 abc1 abc2 abc3 my conflict.ts"),
+    ).toEqual({ path: "my conflict.ts", status: "modified" });
   });
 });
