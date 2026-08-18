@@ -7,7 +7,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 function TruncatedMachineValue({ value, className }: { value: string; className: string }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className={className} />}>{value}</TooltipTrigger>
+      <TooltipTrigger render={<span className={`pointer-events-auto ${className}`} />}>
+        {value}
+      </TooltipTrigger>
       <TooltipPopup side="top" className="max-w-[min(36rem,calc(100vw-2rem))] wrap-anywhere">
         {value}
       </TooltipPopup>

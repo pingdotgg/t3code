@@ -34,7 +34,7 @@ describe("MachineProfileRow", () => {
     expect(markup).not.toContain("aria-label=");
   });
 
-  it("marks a disconnected machine as unavailable", () => {
+  it("keeps disconnected machine details hoverable while marking the machine unavailable", () => {
     const markup = renderToStaticMarkup(
       <MachineProfileRow
         environment={{
@@ -55,5 +55,6 @@ describe("MachineProfileRow", () => {
     );
 
     expect(markup).toContain("Unavailable");
+    expect(markup.match(/pointer-events-auto/gu)).toHaveLength(7);
   });
 });
