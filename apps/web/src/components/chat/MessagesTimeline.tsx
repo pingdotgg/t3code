@@ -804,8 +804,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       <TimelineRowActivityCtx value={activityState}>
         <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
           {findOpen ? (
-            <div className="absolute right-4 top-3 z-30 rounded-[var(--control-radius)] shadow-lg">
-              <InputGroup className="w-auto dark:bg-background **:[input]:w-48">
+            <div className="absolute inset-x-4 top-3 z-30 rounded-[var(--control-radius)] shadow-lg">
+              <InputGroup className="ml-auto w-full max-w-sm dark:bg-background">
                 <InputGroupAddon>
                   <SearchIcon aria-hidden="true" />
                 </InputGroupAddon>
