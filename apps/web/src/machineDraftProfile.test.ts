@@ -85,4 +85,18 @@ describe("machine draft profiles", () => {
       startFromOrigin: true,
     });
   });
+
+  it("does not show a stale project default when no target provider is selectable", () => {
+    expect(
+      resolveMachineProfileSummary({
+        workspaceRoot: "C:/repo",
+        defaultModelSelection: { instanceId: codexInstanceId, model: "stale-default" },
+        profile: null,
+        modelSelectionOverride: null,
+      }),
+    ).toMatchObject({
+      providerLabel: "No provider available",
+      modelLabel: "No model available",
+    });
+  });
 });

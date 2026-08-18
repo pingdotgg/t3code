@@ -71,21 +71,26 @@ export function resolveMachineProfileSummary(input: {
 }): MachineProfileSummary {
   const profile = input.profile ?? null;
   const executionProfile = profile ?? input.fallbackExecutionProfile ?? null;
-  const modelSelection =
-    input.modelSelectionOverride !== undefined
-      ? input.modelSelectionOverride
-      : profile
-        ? resolveProfileModel(profile)
-        : null;
+  const hasModelSelectionOverride = input.modelSelectionOverride !== undefined;
+  const modelSelection = hasModelSelectionOverride
+    ? input.modelSelectionOverride
+    : profile
+      ? resolveProfileModel(profile)
+      : null;
+  const defaultModelSelection = hasModelSelectionOverride ? null : input.defaultModelSelection;
   const branchLabel = profile?.branch ?? "Current checkout";
   const workspaceLabel = profile
     ? (profile.worktreePath ??
       (profile.envMode === "worktree" ? "New worktree" : "Current checkout"))
     : "Current checkout";
   const modelLabel =
-    modelSelection?.model ?? input.defaultModelSelection?.model ?? "Project default";
+    modelSelection?.model ??
+    defaultModelSelection?.model ??
+    (hasModelSelectionOverride ? "No model available" : "Project default");
   const providerLabel =
-    modelSelection?.instanceId ?? input.defaultModelSelection?.instanceId ?? "Project default";
+    modelSelection?.instanceId ??
+    defaultModelSelection?.instanceId ??
+    (hasModelSelectionOverride ? "No provider available" : "Project default");
   const executionLabel = executionProfile
     ? `${RUNTIME_MODE_LABELS[executionProfile.runtimeMode]} \u00b7 ${INTERACTION_MODE_LABELS[executionProfile.interactionMode]}${executionProfile.startFromOrigin ? " \u00b7 origin" : ""}`
     : "Project defaults";
