@@ -1692,6 +1692,20 @@ describe("composerDraftStore sticky composer settings", () => {
     });
   });
 
+  it("replaceExisting clears a seeded model when sticky state is empty", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-sticky-clear-empty");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+    store.applyStickyState(threadRef, { replaceExisting: true });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
   it("keeps a draft's existing model when applying sticky without replaceExisting", () => {
     const store = useComposerDraftStore.getState();
     const threadId = ThreadId.make("thread-sticky-keep-existing");
