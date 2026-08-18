@@ -162,8 +162,16 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
-  mode: Schema.optional(Schema.Literals(["async", "wait"])),
-  timeoutMs: Schema.optional(Schema.Number),
+  mode: Schema.optional(
+    Schema.Literals(["async", "wait"]).annotate({
+      description:
+        "Defaults to async. Use wait only when this turn needs the child's result before you can continue.",
+    }),
+  ),
+  timeoutMs: Schema.optional(Schema.Number).annotate({
+    description:
+      "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
+  }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
@@ -180,7 +188,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
-  waitTimedOut: Schema.Boolean,
+  waitTimedOut: Schema.Boolean.annotate({
+    description:
+      "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
+  }),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
