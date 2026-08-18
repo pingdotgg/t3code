@@ -90,13 +90,9 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
       <TooltipTrigger
         delay={200}
         render={
-          <button
-            type="button"
-            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            aria-label="Background policy details"
-          >
+          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
             <InfoIcon className="size-3.5" />
-          </button>
+          </Button>
         }
       />
       <TooltipPopup side="top" className="max-w-72">
@@ -216,11 +212,10 @@ export function SettingResetButton({
       <TooltipTrigger
         render={
           <Button
-            size="icon-xs"
-            variant="ghost"
+            size="icon-micro"
+            variant="ghost-muted"
             aria-label={`Reset ${label} to default`}
             disabled={disabled}
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
             onClick={(event) => {
               event.stopPropagation();
               onClick();
@@ -251,7 +246,10 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
-      <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
+      <div
+        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10"
+        data-settings-page-scroll
+      >
         <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
           {children}
         </div>
