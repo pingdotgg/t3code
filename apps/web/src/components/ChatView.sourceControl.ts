@@ -379,6 +379,7 @@ export function createSourceControlServerMetadataUpdateQueue() {
           if (
             !observedDuringRequest ||
             latestExpectedBranchState.latestObservationIsStale ||
+            requestStaleBranches.has(latestExpectedBranchState.latestObservedBranch) ||
             latestExpectedBranchState.latestObservedBranch === requestExpectedBranch
           ) {
             const staleBranches = new Set(requestStaleBranches);
