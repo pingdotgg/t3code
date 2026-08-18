@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parsePorcelainStatus, workingTreeStatusFromPorcelainXy } from "./porcelainStatus.ts";
+import {
+  parsePorcelainStatus,
+  unquoteGitPath,
+  workingTreeStatusFromPorcelainXy,
+} from "./porcelainStatus.ts";
 
 describe("workingTreeStatusFromPorcelainXy", () => {
   it.each([
@@ -49,5 +53,32 @@ describe("parsePorcelainStatus", () => {
       path: "added.ts",
       status: "added",
     });
+  });
+
+  it("keeps spaces in unquoted porcelain-2 paths and unquotes C-style names", () => {
+    expect(
+      parsePorcelainStatus(
+        "1 .M N... 100644 100644 100644 bd4269ff9d6818e647e89bacacf357bc8b8eb33c bd4269ff9d6818e647e89bacacf357bc8b8eb33c my file.ts",
+      ),
+    ).toEqual({
+      path: "my file.ts",
+      status: "modified",
+    });
+    expect(parsePorcelainStatus('? "my file.ts"')).toEqual({
+      path: "my file.ts",
+      status: "untracked",
+    });
+    expect(
+      parsePorcelainStatus('1 M. N... 100644 100644 100644 abcd efgh\t"src/my file.ts"'),
+    ).toEqual({
+      path: "src/my file.ts",
+      status: "modified",
+    });
+    expect(
+      parsePorcelainStatus(
+        "2 R. N... 100644 100644 100644 abcd efgh R100 new file.ts\told file.ts",
+      ),
+    ).toEqual({ path: "new file.ts", status: "renamed" });
+    expect(unquoteGitPath('"caf\\303\\251.ts"')).toBe("café.ts");
   });
 });
