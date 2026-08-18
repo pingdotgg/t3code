@@ -964,6 +964,7 @@ struct FeatureThreadRow: View {
                     .font(.system(size: 11, weight: .semibold))
             }
             Text(thread.homeRowStatusLabel(at: now))
+                .lineLimit(1)
             if let duration = thread.homeWorkingDuration(at: now) {
                 Text(duration)
                     .font(.system(.footnote, design: .monospaced, weight: .semibold))
@@ -1056,7 +1057,11 @@ struct FeatureThreadRow: View {
     }
 
     private func accessibilityValue(at now: Date) -> String {
-        var values = [thread.homeStatusLabel ?? "Ready", "Project \(context.projectName)"]
+        var status = thread.homeStatusLabel ?? "Ready"
+        if let duration = thread.homeDoneAccessibilityDuration(at: now) {
+            status += " for \(duration)"
+        }
+        var values = [status, "Project \(context.projectName)"]
         values.append("Harness \(context.providerName)")
         if let duration = thread.homeWorkingDuration(at: now) {
             values.append("for \(duration)")

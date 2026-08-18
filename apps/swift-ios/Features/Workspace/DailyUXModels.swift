@@ -738,6 +738,47 @@ enum HomeWorkingDuration {
     }
 }
 
+/// How long a task has been finished, for the home row's "Done for …" label.
+///
+/// Deliberately minute-granular: home rows repaint on the 60s tick, so a
+/// second-precision label would sit stale for most of its first minute.
+enum HomeDoneDuration {
+    static func compact(since date: Date, now: Date) -> String {
+        let minutes = elapsedMinutes(since: date, now: now)
+        guard minutes >= 1 else { return "<1m" }
+        guard minutes >= 60 else { return "\(minutes)m" }
+        let hours = minutes / 60
+        guard hours >= 24 else { return "\(hours)h \(minutes % 60)m" }
+        return "\(hours / 24)d \(hours % 24)h"
+    }
+
+    static func accessibility(since date: Date, now: Date) -> String {
+        let minutes = elapsedMinutes(since: date, now: now)
+        guard minutes >= 1 else { return "less than a minute" }
+        guard minutes >= 60 else { return unit(minutes, singular: "minute") }
+
+        let hours = minutes / 60
+        guard hours >= 24 else {
+            let remainingMinutes = minutes % 60
+            guard remainingMinutes > 0 else { return unit(hours, singular: "hour") }
+            return "\(unit(hours, singular: "hour")), \(unit(remainingMinutes, singular: "minute"))"
+        }
+
+        let days = hours / 24
+        let remainingHours = hours % 24
+        guard remainingHours > 0 else { return unit(days, singular: "day") }
+        return "\(unit(days, singular: "day")), \(unit(remainingHours, singular: "hour"))"
+    }
+
+    private static func elapsedMinutes(since date: Date, now: Date) -> Int {
+        max(0, Int(now.timeIntervalSince(date))) / 60
+    }
+
+    private static func unit(_ value: Int, singular: String) -> String {
+        "\(value) \(singular)\(value == 1 ? "" : "s")"
+    }
+}
+
 extension FeatureThread {
     var homeStatus: HomeThreadStatus {
         switch state {
@@ -794,7 +835,13 @@ extension FeatureThread {
 
     func homeRowStatusLabel(at now: Date) -> String {
         switch homeStatus {
-        case .done, .ready:
+        case .done:
+            if let duration = homeDoneDuration(at: now) {
+                "Done for \(duration)"
+            } else {
+                SidebarRelativeAge.compact(since: updatedAt, now: now)
+            }
+        case .ready:
             SidebarRelativeAge.compact(since: updatedAt, now: now)
         case .approval, .input, .working, .monitoring, .failed:
             homeStatusLabel ?? SidebarRelativeAge.compact(since: updatedAt, now: now)
@@ -804,6 +851,16 @@ extension FeatureThread {
     func homeWorkingDuration(at now: Date) -> String? {
         guard homeStatus == .working, let workingStartedAt else { return nil }
         return HomeWorkingDuration.compact(since: workingStartedAt, now: now)
+    }
+
+    func homeDoneDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.compact(since: latestTurnCompletedAt, now: now)
+    }
+
+    func homeDoneAccessibilityDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.accessibility(since: latestTurnCompletedAt, now: now)
     }
 
     var hasLiveWorkingDuration: Bool {
