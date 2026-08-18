@@ -1423,6 +1423,10 @@ function ChatViewContent(props: ChatViewProps) {
     preSendLatestTurnCompletedAt: string | null;
     preSendSessionUpdatedAt: string | null;
   } | null>(null);
+  // Bumped after a snapshot is armed so the recovery effect re-evaluates even
+  // when `activeServerThread` has not changed since it last ran (e.g. the
+  // failing session state already landed while the send RPCs were awaiting).
+  const [recoveryReevaluateTick, setRecoveryReevaluateTick] = useState(0);
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -5003,7 +5007,12 @@ function ChatViewContent(props: ChatViewProps) {
       restoreComposerContentFromSnapshot(pending);
     }
     pendingSendRecoveryRef.current = null;
-  }, [activeServerThread, composerDraftTarget, restoreComposerContentFromSnapshot]);
+  }, [
+    activeServerThread,
+    composerDraftTarget,
+    recoveryReevaluateTick,
+    restoreComposerContentFromSnapshot,
+  ]);
 
   const onSend = async (
     e?: { preventDefault: () => void },
@@ -5302,23 +5311,6 @@ function ChatViewContent(props: ChatViewProps) {
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
-    // Arm recovery BEFORE the async send RPCs: a turn can be accepted and then
-    // fail (or fail outright) while those awaits are in flight, and the effect
-    // that restores the composer keys off `activeServerThread`, not this ref —
-    // so the snapshot has to already be present when that failure lands. A
-    // synchronous send failure clears it again below.
-    pendingSendRecoveryRef.current = {
-      threadId: threadIdForSend,
-      prompt: promptForSend,
-      images: composerImagesSnapshot,
-      terminalContexts: composerTerminalContextsSnapshot,
-      elementContexts: composerElementContextsSnapshot,
-      previewAnnotations: composerPreviewAnnotationsSnapshot,
-      reviewComments: composerReviewCommentsSnapshot,
-      preSendTurnId: preSendLatestTurnId,
-      preSendLatestTurnCompletedAt,
-      preSendSessionUpdatedAt,
-    };
 
     let firstComposerImageName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
@@ -5438,8 +5430,24 @@ function ChatViewContent(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         acknowledgeActiveThreadWoke();
-        // The recovery snapshot armed before these RPCs stays in place so an
-        // async turn failure can restore it; a clean turn drops it later.
+        // The turn was accepted; keep the composed text recoverable until the
+        // turn is confirmed clean, so an async failure can restore it. Bump the
+        // tick so the recovery effect re-evaluates even if the failing session
+        // state already arrived while these RPCs were in flight (a ref write
+        // alone would not re-run the effect).
+        pendingSendRecoveryRef.current = {
+          threadId: threadIdForSend,
+          prompt: promptForSend,
+          images: composerImagesSnapshot,
+          terminalContexts: composerTerminalContextsSnapshot,
+          elementContexts: composerElementContextsSnapshot,
+          previewAnnotations: composerPreviewAnnotationsSnapshot,
+          reviewComments: composerReviewCommentsSnapshot,
+          preSendTurnId: preSendLatestTurnId,
+          preSendLatestTurnCompletedAt,
+          preSendSessionUpdatedAt,
+        };
+        setRecoveryReevaluateTick((tick) => tick + 1);
       }
     }
 
@@ -5472,10 +5480,6 @@ function ChatViewContent(props: ChatViewProps) {
           reviewComments: composerReviewCommentsSnapshot,
         });
       }
-      // The turn never started: drop the snapshot armed before the RPCs so the
-      // async recovery effect can't later restore this same message again. Only
-      // this send's snapshot can be here — it was just overwritten above.
-      pendingSendRecoveryRef.current = null;
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(

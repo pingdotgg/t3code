@@ -549,8 +549,13 @@ export function deriveTurnFailureRecoveryAction(input: {
   if (!input.hasPendingSnapshot) {
     return "wait";
   }
+  // "Fresh" = the session moved past the pre-send snapshot, so an error now is
+  // this send's, not a prior one still showing. A changed `sessionUpdatedAt`
+  // is the usual signal; a changed `latestTurnId` also counts, covering an
+  // accept-then-fail that lands in the same millisecond as the pre-send state.
   const sessionAdvanced =
-    input.sessionUpdatedAt !== null && input.sessionUpdatedAt !== input.preSendSessionUpdatedAt;
+    (input.sessionUpdatedAt !== null && input.sessionUpdatedAt !== input.preSendSessionUpdatedAt) ||
+    (input.latestTurnId !== null && input.latestTurnId !== input.preSendTurnId);
   if (input.sessionStatus === "error" && sessionAdvanced) {
     // Never clobber text the user has started typing since the send; the
     // failed attempt is still in the transcript for them to copy from.

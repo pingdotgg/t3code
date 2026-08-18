@@ -604,15 +604,32 @@ describe("deriveTurnFailureRecoveryAction", () => {
 
   it("waits on a stale pre-send error that has not advanced since the send", () => {
     // The session was already in "error" when the user sent (lastError is
-    // carried forward until "ready"); without a fresh session update this must
-    // not spuriously restore before the new turn has begun.
+    // carried forward until "ready"); with neither the session timestamp nor
+    // the turn id advancing, this must not spuriously restore before the new
+    // turn has begun.
     expect(
       deriveTurnFailureRecoveryAction({
         ...base,
+        preSendTurnId: TurnId.make("turn-1"),
+        latestTurnId: TurnId.make("turn-1"),
         sessionStatus: "error",
         sessionUpdatedAt: base.preSendSessionUpdatedAt,
       }),
     ).toBe("wait");
+  });
+
+  it("restores an accept-then-fail landing in the same millisecond via a new turn id", () => {
+    // The failing session.set can share the pre-send millisecond timestamp; a
+    // freshly advanced turn id is enough to know the failure is this send's.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-1"),
+        latestTurnId: TurnId.make("turn-2"),
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("restore");
   });
 
   it("drops the snapshot once a fresh turn completes cleanly", () => {
