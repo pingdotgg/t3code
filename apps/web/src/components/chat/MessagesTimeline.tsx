@@ -69,7 +69,6 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -473,19 +472,37 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
       const key = event.key.toLowerCase();
       if (
-        (key !== "f" && key !== "g") ||
-        (!event.metaKey && !event.ctrlKey) ||
-        event.altKey ||
         !timelineViewportElement ||
         timelineViewportElement.getBoundingClientRect().width === 0 ||
-        timelineViewportElement.closest('[data-chat-column-maximized-away="true"]') ||
-        (event.target instanceof Element &&
-          event.target !== document.body &&
-          (event.target.closest("[data-terminal-owner]") ||
-            !timelineViewportElement
-              .closest("[data-chat-column-maximized-away]")
-              ?.contains(event.target)))
+        timelineViewportElement.closest('[data-chat-column-maximized-away="true"]')
       ) {
+        return;
+      }
+
+      if (key === "escape") {
+        if (
+          !findOpen ||
+          (event.target instanceof Element &&
+            event.target.closest('[role="dialog"], [data-terminal-owner]'))
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setFindOpen(false);
+        return;
+      }
+      if (
+        event.target instanceof Element &&
+        event.target !== document.body &&
+        (event.target.closest("[data-terminal-owner]") ||
+          !timelineViewportElement
+            .closest("[data-chat-column-maximized-away]")
+            ?.contains(event.target))
+      ) {
+        return;
+      }
+      if ((key !== "f" && key !== "g") || (!event.metaKey && !event.ctrlKey) || event.altKey) {
         return;
       }
 
@@ -797,24 +814,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   onChange={(event) => updateFindQuery(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") goToFindMatch(event.shiftKey ? -1 : 1);
-                    if (event.key === "Escape") setFindOpen(false);
                   }}
                   aria-label="Find in thread"
                   placeholder="Find in thread"
                 />
                 <InputGroupAddon align="inline-end" className="gap-1">
-                  <label className="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground">
-                    <Checkbox
-                      checked={findCaseSensitive}
-                      onCheckedChange={(checked) => {
-                        setFindCaseSensitive(checked === true);
-                        setFindMatchIndex(0);
-                        onManualNavigation();
-                      }}
-                      aria-label="Match case"
-                    />
-                    Match case
-                  </label>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    data-pressed={findCaseSensitive || undefined}
+                    aria-label="Match case"
+                    aria-pressed={findCaseSensitive}
+                    title="Match case"
+                    onClick={() => {
+                      setFindCaseSensitive(!findCaseSensitive);
+                      setFindMatchIndex(0);
+                      onManualNavigation();
+                    }}
+                  >
+                    <span className="text-[11px] font-semibold leading-none">Aa</span>
+                  </Button>
                   <span className="min-w-12 text-center text-xs text-muted-foreground">
                     {findQuery
                       ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
