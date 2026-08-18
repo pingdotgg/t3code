@@ -6262,7 +6262,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {(rightPanelOpen || rightPanelMaximized) && !shouldUseRightPanelSheet
+      {(rightPanelOpen || retainClosedRightPanelContent) && !shouldUseRightPanelSheet
         ? panelLayoutControls
         : null}
       <div
@@ -6288,7 +6288,7 @@ function ChatViewContent(props: ChatViewProps) {
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {!rightPanelOpen && !rightPanelMaximized ? panelLayoutControls : null}
+          {!rightPanelOpen && !retainClosedRightPanelContent ? panelLayoutControls : null}
           <ChatHeader
             {...(!supportsPullRequests || threadRepository === null
               ? {}
