@@ -7,11 +7,12 @@
  */
 import type { GrokSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { spawnAndCollect } from "../providerSnapshot.ts";
+import { DEFAULT_TIMEOUT_MS, spawnAndCollect } from "../providerSnapshot.ts";
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
@@ -102,7 +103,11 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
       shell: spawnCommand.shell,
       ...(cwd ? { cwd } : {}),
     }),
-  ).pipe(Effect.orElseSucceed(() => null));
+  ).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.map((inspect) => (Option.isSome(inspect) ? inspect.value : null)),
+    Effect.orElseSucceed(() => null),
+  );
   if (!result || result.code !== 0) {
     return [];
   }
