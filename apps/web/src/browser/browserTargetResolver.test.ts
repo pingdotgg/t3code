@@ -194,8 +194,11 @@ describe("browser target resolver", () => {
   });
 
   it("keeps the dev runner loopback listener and proxy reachable to local preview guests", async () => {
+    expect(DEV_LOOPBACK_HOST).toBe("127.0.0.1");
+    expect(DEV_BROWSER_LOOPBACK_HOST).toBe("localhost");
+
     const proxyTarget = resolveDevProxyTarget("13773", undefined, undefined);
-    expect(proxyTarget).toBe(`http://${DEV_LOOPBACK_HOST}:13773/`);
+    expect(proxyTarget).toBe("http://127.0.0.1:13773/");
     readPreparedConnection.mockReturnValue({ httpBaseUrl: proxyTarget });
 
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
@@ -205,7 +208,7 @@ describe("browser target resolver", () => {
         port: 5733,
         path: "/pair#token=example",
       }).resolvedUrl,
-    ).toBe(`http://${DEV_BROWSER_LOOPBACK_HOST}:5733/pair#token=example`);
+    ).toBe("http://localhost:5733/pair#token=example");
   });
 
   it("leaves malformed input for the normal navigation error path", async () => {
