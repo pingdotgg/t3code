@@ -1,16 +1,54 @@
-import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection, ProjectId, VcsRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
+import {
+  resolveMachineProfileSummary,
+  type MachineDraftProfile,
+  type MachineProfileSummary,
+} from "../machineDraftProfile";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
 } from "@t3tools/shared/git";
+
+export { resolveMachineProfileSummary } from "../machineDraftProfile";
+export type { MachineDraftProfile, MachineProfileSummary } from "../machineDraftProfile";
+
+export type EnvironmentConnectionState = "connected" | "unavailable";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   label: string;
   isPrimary: boolean;
+  workspaceRoot: string;
+  connection: EnvironmentConnectionState;
+  profile: MachineProfileSummary;
+}
+
+export function buildEnvironmentOption(input: {
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+  label: string;
+  isPrimary: boolean;
+  workspaceRoot: string;
+  defaultModelSelection: ModelSelection | null | undefined;
+  profile: MachineDraftProfile | null | undefined;
+  isAvailable: boolean;
+}): EnvironmentOption {
+  return {
+    environmentId: input.environmentId,
+    projectId: input.projectId,
+    label: input.label,
+    isPrimary: input.isPrimary,
+    workspaceRoot: input.workspaceRoot,
+    connection: input.isAvailable ? "connected" : "unavailable",
+    profile: resolveMachineProfileSummary({
+      workspaceRoot: input.workspaceRoot,
+      defaultModelSelection: input.defaultModelSelection,
+      profile: input.profile,
+    }),
+  };
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);

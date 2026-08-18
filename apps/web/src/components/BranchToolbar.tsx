@@ -28,6 +28,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { MachineProfileRow } from "./MachineProfileRow";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -151,17 +152,13 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
               >
                 {availableEnvironments.map((env) => {
-                  const Icon = env.isPrimary ? MonitorIcon : CloudIcon;
                   return (
                     <MenuRadioItem
                       key={env.environmentId}
-                      disabled={envLocked}
+                      disabled={envLocked || env.connection !== "connected"}
                       value={env.environmentId}
                     >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <Icon className="size-3" />
-                        <span className="min-w-0 truncate">{env.label}</span>
-                      </span>
+                      <MachineProfileRow environment={env} />
                     </MenuRadioItem>
                   );
                 })}

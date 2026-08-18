@@ -4,6 +4,7 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
+  buildEnvironmentOption,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
@@ -24,6 +25,61 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("buildEnvironmentOption", () => {
+  it("joins physical project defaults with the saved machine profile", () => {
+    const option = buildEnvironmentOption({
+      environmentId: remoteEnvironmentId,
+      projectId: "project-remote" as never,
+      label: "Mini PC",
+      isPrimary: false,
+      workspaceRoot: "C:/repo",
+      defaultModelSelection: { instanceId: "codex" as never, model: "gpt-5.4" },
+      profile: {
+        environmentId: remoteEnvironmentId,
+        projectId: "project-remote" as never,
+        branch: "feature/remote",
+        worktreePath: "C:/repo/.t3/worktrees/remote",
+        envMode: "worktree",
+        startFromOrigin: true,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        activeProvider: "codex" as never,
+        modelSelectionByProvider: {
+          ["codex" as never]: { instanceId: "codex" as never, model: "o3" },
+        },
+      },
+      isAvailable: true,
+    });
+
+    expect(option).toMatchObject({
+      label: "Mini PC",
+      workspaceRoot: "C:/repo",
+      connection: "connected",
+      profile: {
+        branchLabel: "feature/remote",
+        workspaceLabel: "C:/repo/.t3/worktrees/remote",
+        modelLabel: "o3",
+        executionLabel: "Full access · Build · origin",
+      },
+    });
+  });
+
+  it("marks an unavailable remote without hiding its profile", () => {
+    expect(
+      buildEnvironmentOption({
+        environmentId: remoteEnvironmentId,
+        projectId: "project-remote" as never,
+        label: "Mini PC",
+        isPrimary: false,
+        workspaceRoot: "C:/repo",
+        defaultModelSelection: null,
+        profile: null,
+        isAvailable: false,
+      }),
+    ).toMatchObject({ connection: "unavailable", profile: { branchLabel: "Current checkout" } });
+  });
+});
 
 describe("resolvePreviousWorktreeSeed", () => {
   it("picks the most recently updated worktree thread", () => {

@@ -27,6 +27,7 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveEnvironmentSwitch,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
@@ -38,6 +39,30 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("resolveEnvironmentSwitch", () => {
+  it("does not switch a started thread", () => {
+    expect(
+      resolveEnvironmentSwitch({
+        envLocked: true,
+        draftId: "draft-1",
+        nextEnvironmentId: "env-2" as never,
+        environments: [{ environmentId: "env-2" as never, projectId: "project-2" as never }],
+      }),
+    ).toBeNull();
+  });
+
+  it("resolves a target physical project for an unlocked draft", () => {
+    expect(
+      resolveEnvironmentSwitch({
+        envLocked: false,
+        draftId: "draft-1",
+        nextEnvironmentId: "env-2" as never,
+        environments: [{ environmentId: "env-2" as never, projectId: "project-2" as never }],
+      }),
+    ).toEqual({ environmentId: "env-2", projectId: "project-2" });
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());

@@ -1238,6 +1238,57 @@ describe("composerDraftStore project draft thread mapping", () => {
       startFromOrigin: true,
     });
   });
+
+  it("restores a draft's branch, worktree, model, and modes per machine", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "feature/laptop",
+      worktreePath: "/repo/.t3/worktrees/laptop",
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      startFromOrigin: true,
+    });
+    store.setModelSelection(draftId, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+
+    store.switchDraftProject(draftId, remoteProjectRef);
+
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      environmentId: OTHER_TEST_ENVIRONMENT_ID,
+      projectId,
+      branch: null,
+      worktreePath: null,
+      envMode: "worktree",
+      startFromOrigin: true,
+    });
+    expect(store.getComposerDraft(draftId)?.modelSelectionByProvider ?? {}).toEqual({});
+
+    store.setDraftThreadContext(draftId, {
+      branch: "feature/minipc",
+      worktreePath: "/repo/.t3/worktrees/minipc",
+      envMode: "worktree",
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      startFromOrigin: false,
+    });
+    store.setModelSelection(draftId, modelSelection(CLAUDE_AGENT_DRIVER, "sonnet"));
+    store.switchDraftProject(draftId, projectRef);
+
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      environmentId: TEST_ENVIRONMENT_ID,
+      projectId,
+      branch: "feature/laptop",
+      worktreePath: "/repo/.t3/worktrees/laptop",
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      startFromOrigin: true,
+    });
+    expect(store.getComposerDraft(draftId)?.modelSelectionByProvider).toMatchObject({
+      [CODEX_INSTANCE]: { model: "gpt-5.4" },
+    });
+  });
 });
 
 describe("composerDraftStore modelSelection", () => {

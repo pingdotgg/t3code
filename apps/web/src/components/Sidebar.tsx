@@ -94,13 +94,18 @@ import {
   buildSidebarProjectSnapshots,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import {
+  acknowledgeProjectGroupingPrompt,
+  findProjectGroupingPromptCandidate,
+  separateProjectGroup,
+} from "../projectGroupingPrompt.logic";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -161,6 +166,7 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ProjectGroupingPrompt } from "./sidebar/ProjectGroupingPrompt";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
@@ -193,6 +199,9 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Keep the v2 key so existing preferences survive the v2-to-default rename.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
+const PROJECT_GROUPING_PROMPT_ACKNOWLEDGED_KEY = "t3code:sidebar:project-grouping-prompts";
+const PROJECT_GROUPING_PROMPT_ACKNOWLEDGEMENTS_SCHEMA = Schema.Array(Schema.String);
+const EMPTY_PROJECT_GROUPING_PROMPT_ACKNOWLEDGEMENTS: string[] = [];
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -1708,6 +1717,13 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const updateClientSettings = useUpdateClientSettings();
+  const [acknowledgedProjectGroupingPrompts, setAcknowledgedProjectGroupingPrompts] =
+    useLocalStorage(
+      PROJECT_GROUPING_PROMPT_ACKNOWLEDGED_KEY,
+      EMPTY_PROJECT_GROUPING_PROMPT_ACKNOWLEDGEMENTS,
+      PROJECT_GROUPING_PROMPT_ACKNOWLEDGEMENTS_SCHEMA,
+    );
   const {
     settleThread,
     unsettleThread,
@@ -1858,6 +1874,43 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  const acknowledgedProjectGroupingPromptKeys = useMemo(
+    () => new Set(acknowledgedProjectGroupingPrompts),
+    [acknowledgedProjectGroupingPrompts],
+  );
+  const projectGroupingPromptCandidate = useMemo(
+    () => findProjectGroupingPromptCandidate(projectGroups, acknowledgedProjectGroupingPromptKeys),
+    [acknowledgedProjectGroupingPromptKeys, projectGroups],
+  );
+  const acknowledgeProjectGroupingPromptCandidate = useCallback(
+    (projectKey: string) => {
+      setAcknowledgedProjectGroupingPrompts((current) =>
+        acknowledgeProjectGroupingPrompt(current, projectKey),
+      );
+    },
+    [setAcknowledgedProjectGroupingPrompts],
+  );
+  const handleGroupProjectPrompt = useCallback(() => {
+    const candidate = projectGroupingPromptCandidate;
+    if (!candidate) return;
+    acknowledgeProjectGroupingPromptCandidate(candidate.projectKey);
+  }, [acknowledgeProjectGroupingPromptCandidate, projectGroupingPromptCandidate]);
+  const handleKeepSeparateProjectPrompt = useCallback(() => {
+    const candidate = projectGroupingPromptCandidate;
+    if (!candidate) return;
+    updateClientSettings({
+      sidebarProjectGroupingOverrides: separateProjectGroup(
+        candidate,
+        projectGroupingSettings.sidebarProjectGroupingOverrides,
+      ),
+    });
+    acknowledgeProjectGroupingPromptCandidate(candidate.projectKey);
+  }, [
+    acknowledgeProjectGroupingPromptCandidate,
+    projectGroupingPromptCandidate,
+    projectGroupingSettings.sidebarProjectGroupingOverrides,
+    updateClientSettings,
+  ]);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
     () =>
@@ -3553,6 +3606,13 @@ export default function Sidebar() {
                   <TooltipPopup side="right">New project</TooltipPopup>
                 </Tooltip>
               </div>
+            ) : null}
+            {projectGroupingPromptCandidate ? (
+              <ProjectGroupingPrompt
+                group={projectGroupingPromptCandidate}
+                onGroup={handleGroupProjectPrompt}
+                onKeepSeparate={handleKeepSeparateProjectPrompt}
+              />
             ) : null}
           </SidebarGroup>
         }

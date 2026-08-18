@@ -53,6 +53,11 @@ import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
+import {
+  physicalProjectProfileKey,
+  type MachineDraftProfile,
+  type MachineDraftProfileMap,
+} from "./machineDraftProfile";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
@@ -225,8 +230,22 @@ const PersistedDraftThreadState = Schema.Struct({
       }),
     ),
   ),
+  // Profiles are normalized at the draft boundary so legacy and readonly
+  // model-option payloads can be recovered safely.
+  machineProfilesByProjectKey: Schema.optionalKey(Schema.Unknown),
 });
 type PersistedDraftThreadState = typeof PersistedDraftThreadState.Type;
+
+function serializeMachineDraftProfiles(profiles: MachineDraftProfileMap): unknown {
+  const serialized: Record<string, unknown> = {};
+  for (const [key, profile] of Object.entries(profiles)) {
+    serialized[key] = {
+      ...profile,
+      modelSelectionByProvider: compactModelSelectionByProvider(profile.modelSelectionByProvider),
+    };
+  }
+  return serialized;
+}
 
 const PersistedComposerDraftStoreState = Schema.Struct({
   draftsByThreadKey: Schema.Record(Schema.String, PersistedComposerThreadDraftState),
@@ -321,10 +340,31 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  machineProfilesByProjectKey: MachineDraftProfileMap;
   promotedTo?: ScopedThreadRef | null;
 }
 
 export type DraftThreadState = DraftSessionState;
+
+function snapshotMachineDraftProfile(
+  draftThread: DraftSessionState,
+  composerDraft: ComposerThreadDraftState | undefined,
+): MachineDraftProfile {
+  return {
+    environmentId: draftThread.environmentId,
+    projectId: draftThread.projectId,
+    branch: draftThread.branch,
+    worktreePath: draftThread.worktreePath,
+    envMode: draftThread.envMode,
+    startFromOrigin: draftThread.startFromOrigin,
+    runtimeMode: draftThread.runtimeMode,
+    interactionMode: draftThread.interactionMode,
+    modelSelectionByProvider: cloneModelSelectionByProvider(
+      composerDraft?.modelSelectionByProvider ?? {},
+    ),
+    activeProvider: composerDraft?.activeProvider ?? null,
+  };
+}
 
 /**
  * Draft session metadata paired with its stable draft-session identity.
@@ -416,6 +456,7 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  switchDraftProject: (draftId: DraftId, projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadById: (
     projectRef: ScopedProjectRef,
@@ -1239,6 +1280,79 @@ function logicalProjectDraftKey(logicalProjectKey: string): string {
   return logicalProjectKey.trim();
 }
 
+function cloneModelSelectionByProvider(
+  selections: Partial<Record<ProviderInstanceId, ModelSelection>>,
+): Partial<Record<ProviderInstanceId, ModelSelection>> {
+  const cloned: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
+  for (const [instanceId, selection] of Object.entries(selections)) {
+    if (!selection) continue;
+    cloned[instanceId as ProviderInstanceId] = {
+      ...selection,
+      ...(selection.options ? { options: selection.options.map((option) => ({ ...option })) } : {}),
+    };
+  }
+  return cloned;
+}
+
+function normalizeMachineDraftProfiles(value: unknown): MachineDraftProfileMap {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const normalized: MachineDraftProfileMap = {};
+  for (const rawProfile of Object.values(value as Record<string, unknown>)) {
+    if (!rawProfile || typeof rawProfile !== "object") continue;
+    const candidate = rawProfile as Record<string, unknown>;
+    const environmentId = candidate.environmentId;
+    const projectId = candidate.projectId;
+    if (
+      typeof environmentId !== "string" ||
+      environmentId.length === 0 ||
+      typeof projectId !== "string" ||
+      projectId.length === 0
+    ) {
+      continue;
+    }
+    if (!isRuntimeMode(candidate.runtimeMode)) continue;
+    if (candidate.interactionMode !== "plan" && candidate.interactionMode !== "default") {
+      continue;
+    }
+    if (candidate.envMode !== "local" && candidate.envMode !== "worktree") continue;
+
+    const modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
+    if (
+      candidate.modelSelectionByProvider &&
+      typeof candidate.modelSelectionByProvider === "object"
+    ) {
+      for (const [instanceId, rawSelection] of Object.entries(
+        candidate.modelSelectionByProvider as Record<string, unknown>,
+      )) {
+        const selection = normalizeModelSelection(rawSelection, { provider: instanceId });
+        if (selection) {
+          modelSelectionByProvider[selection.instanceId] = selection;
+        }
+      }
+    }
+
+    const activeProvider = normalizeProviderInstanceId(candidate.activeProvider);
+    const profile: MachineDraftProfile = {
+      environmentId: environmentId as EnvironmentId,
+      projectId: projectId as ProjectId,
+      branch: typeof candidate.branch === "string" ? candidate.branch : null,
+      worktreePath: typeof candidate.worktreePath === "string" ? candidate.worktreePath : null,
+      envMode: candidate.envMode as DraftThreadEnvMode,
+      startFromOrigin: candidate.startFromOrigin === true,
+      runtimeMode: candidate.runtimeMode,
+      interactionMode: candidate.interactionMode,
+      modelSelectionByProvider,
+      activeProvider:
+        activeProvider && modelSelectionByProvider[activeProvider] ? activeProvider : null,
+    };
+    normalized[physicalProjectProfileKey(profile.environmentId, profile.projectId)] = profile;
+  }
+  return normalized;
+}
+
 /**
  * Runtime composer storage key for app-facing identities only.
  *
@@ -1413,6 +1527,7 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    machineProfilesByProjectKey: existingThread?.machineProfilesByProjectKey ?? {},
     promotedTo: null,
   };
 }
@@ -1445,6 +1560,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    Equal.equals(left.machineProfilesByProjectKey, right.machineProfilesByProjectKey) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1588,6 +1704,9 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        machineProfilesByProjectKey: serializeMachineDraftProfiles(
+          normalizeMachineDraftProfiles(candidateDraftThread.machineProfilesByProjectKey),
+        ),
         promotedTo,
       };
     }
@@ -1634,6 +1753,7 @@ function normalizePersistedDraftThreads(
           worktreePath: null,
           envMode: "local",
           startFromOrigin: false,
+          machineProfilesByProjectKey: {},
           promotedTo: null,
         };
       } else if (
@@ -1976,7 +2096,15 @@ function partializeComposerDraftStoreState(
     if (!keptSessionKeys.has(threadKey)) {
       continue;
     }
-    persistedDraftThreadsByThreadKey[threadKey] = draftThread;
+    const { machineProfilesByProjectKey, ...persistedDraftThread } = draftThread;
+    persistedDraftThreadsByThreadKey[threadKey] = {
+      ...persistedDraftThread,
+      ...(Object.keys(machineProfilesByProjectKey).length > 0
+        ? {
+            machineProfilesByProjectKey: serializeMachineDraftProfiles(machineProfilesByProjectKey),
+          }
+        : {}),
+    } as unknown as never;
   }
   return {
     draftsByThreadKey: persistedDraftsByThreadKey,
@@ -2237,6 +2365,9 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    machineProfilesByProjectKey: normalizeMachineDraftProfiles(
+      persistedDraftThread.machineProfilesByProjectKey,
+    ),
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2471,6 +2602,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              machineProfilesByProjectKey: existing.machineProfilesByProjectKey ?? {},
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2489,6 +2621,83 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [threadKey]: nextDraftThread,
+              },
+            };
+          });
+        },
+        switchDraftProject: (draftId, projectRef) => {
+          const threadKey = resolveComposerDraftKey(get(), draftId) ?? "";
+          if (
+            threadKey.length === 0 ||
+            projectRef.environmentId.length === 0 ||
+            projectRef.projectId.length === 0
+          ) {
+            return;
+          }
+          set((state) => {
+            const existingThread = state.draftThreadsByThreadKey[threadKey];
+            if (!existingThread) {
+              return state;
+            }
+            if (
+              existingThread.environmentId === projectRef.environmentId &&
+              existingThread.projectId === projectRef.projectId
+            ) {
+              return state;
+            }
+
+            const currentComposerDraft = state.draftsByThreadKey[threadKey];
+            const currentProfileKey = physicalProjectProfileKey(
+              existingThread.environmentId,
+              existingThread.projectId,
+            );
+            const targetProfileKey = physicalProjectProfileKey(
+              projectRef.environmentId,
+              projectRef.projectId,
+            );
+            const nextProfiles: MachineDraftProfileMap = {
+              ...existingThread.machineProfilesByProjectKey,
+              [currentProfileKey]: snapshotMachineDraftProfile(
+                existingThread,
+                currentComposerDraft,
+              ),
+            };
+            const targetProfile = nextProfiles[targetProfileKey];
+            const nextDraftThread: DraftThreadState = {
+              ...existingThread,
+              environmentId: projectRef.environmentId,
+              projectId: projectRef.projectId,
+              branch: targetProfile?.branch ?? null,
+              worktreePath: targetProfile?.worktreePath ?? null,
+              envMode: targetProfile?.envMode ?? existingThread.envMode,
+              startFromOrigin: targetProfile?.startFromOrigin ?? existingThread.startFromOrigin,
+              runtimeMode: targetProfile?.runtimeMode ?? existingThread.runtimeMode,
+              interactionMode: targetProfile?.interactionMode ?? existingThread.interactionMode,
+              machineProfilesByProjectKey: nextProfiles,
+            };
+
+            const baseComposerDraft = currentComposerDraft ?? createEmptyThreadDraft();
+            const nextComposerDraft: ComposerThreadDraftState = {
+              ...baseComposerDraft,
+              modelSelectionByProvider: targetProfile
+                ? cloneModelSelectionByProvider(targetProfile.modelSelectionByProvider)
+                : {},
+              activeProvider: targetProfile?.activeProvider ?? null,
+              runtimeMode: nextDraftThread.runtimeMode,
+              interactionMode: nextDraftThread.interactionMode,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextComposerDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextComposerDraft;
+            }
+
+            return {
+              draftsByThreadKey: nextDraftsByThreadKey,
               draftThreadsByThreadKey: {
                 ...state.draftThreadsByThreadKey,
                 [threadKey]: nextDraftThread,
