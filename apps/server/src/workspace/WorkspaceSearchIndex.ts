@@ -167,11 +167,18 @@ function toDirectoryEntry(item: DirItem): ProjectEntry | null {
 
 function uniqueProjectEntries(entries: Iterable<ProjectEntry | null>): ProjectEntry[] {
   const uniqueEntries: ProjectEntry[] = [];
-  const paths = new Set<string>();
+  const indexByPath = new Map<string, number>();
   for (const entry of entries) {
-    if (entry === null || paths.has(entry.path)) continue;
-    paths.add(entry.path);
-    uniqueEntries.push(entry);
+    if (entry === null) continue;
+    const existingIndex = indexByPath.get(entry.path);
+    if (existingIndex === undefined) {
+      indexByPath.set(entry.path, uniqueEntries.length);
+      uniqueEntries.push(entry);
+      continue;
+    }
+    if (entry.kind === "directory" && uniqueEntries[existingIndex]?.kind === "file") {
+      uniqueEntries[existingIndex] = entry;
+    }
   }
   return uniqueEntries;
 }

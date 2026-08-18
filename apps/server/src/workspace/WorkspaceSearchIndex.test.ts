@@ -79,7 +79,9 @@ it.effect("deduplicates paths using their wire-normalized value", () =>
 it.effect("trims wire whitespace before removing directory separators", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const items = [mixedDirectoryItem("pkg/"), mixedFileItem("pkg/ ")];
+      // The file ranks first to prove that a later directory upgrades the
+      // collision instead of leaving the file kind attached to a real folder.
+      const items = [mixedFileItem("pkg/ "), mixedDirectoryItem("pkg/")];
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
