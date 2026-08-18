@@ -48,7 +48,20 @@ the agent keeps its built-in tools. Routing built-ins through MCP as well is
 later hardening — it buys per-action review instead of standing grants, and is
 not needed to ship.
 
-### 3. Broker PTY adapter — documented, not recommended
+### 3. Peer fabric — proposal
+
+[t3-p2p-proposal.md](./t3-p2p-proposal.md)
+
+What a P2P layer for T3 should do, at the level of intent rather than
+mechanism. The gap it addresses is **provisioning**, not transport: before a
+client can connect to a machine, something has to be running there, and today
+that means opening a shell and configuring an address by hand.
+
+Central principle: a peer offers *capabilities* ("this machine will run a
+broker for you"), never access. A peer that runs arbitrary commands is a remote
+shell wearing a fabric costume.
+
+### 4. Broker PTY adapter — documented, not recommended
 
 [agy-broker-pty.md](./agy-broker-pty.md)
 
