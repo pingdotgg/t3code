@@ -314,6 +314,14 @@ describe("ArchivedThreadsPanel", () => {
     expect(markup).not.toContain("aria-sort");
   });
 
+  it("reveals row actions for keyboard focus without pinning mouse focus", () => {
+    const markup = renderPopulatedArchive("Archived");
+
+    expect(markup).toContain("has-[:focus-visible]:bg-accent");
+    expect(markup).toContain("group-has-[:focus-visible]:opacity-100");
+    expect(markup).not.toContain("focus-within");
+  });
+
   it("requests a destructive confirmation for a project bulk delete", async () => {
     testDoubles.contextMenuResult = "delete-all";
     renderPopulatedArchive();

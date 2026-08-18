@@ -749,7 +749,7 @@ export function ArchivedThreadsPanel() {
                       return (
                         <div
                           key={thread.id}
-                          className="group relative grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-within:bg-accent focus-within:text-foreground"
+                          className="group relative grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground has-[:focus-visible]:bg-accent has-[:focus-visible]:text-foreground"
                           aria-busy={threadHasInFlightAction}
                           onContextMenu={(event) => {
                             event.preventDefault();
@@ -768,18 +768,18 @@ export function ArchivedThreadsPanel() {
                           <div className="min-w-0 truncate text-[13px] font-medium text-current">
                             {thread.title}
                           </div>
-                          <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
+                          <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-has-[:focus-visible]:opacity-0 group-has-[:focus-visible]:text-current">
                             {formatRelativeTimeLabel(
                               archivedThreadTimestampValue(thread, "archivedAt"),
                             )}
                           </div>
-                          <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
+                          <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-has-[:focus-visible]:opacity-0 group-has-[:focus-visible]:text-current">
                             {formatRelativeTimeLabel(thread.createdAt)}
                           </div>
                           {/* Keeps row text columns aligned with the header action column. */}
                           <div aria-hidden="true" />
                           <div
-                            className="pointer-events-none absolute top-1/2 right-1 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md bg-accent/95 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                            className="pointer-events-none absolute top-1/2 right-1 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md bg-accent/95 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100"
                             onClick={(event) => event.stopPropagation()}
                           >
                             <ArchivedIconButton
