@@ -2338,30 +2338,46 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     if (timeoutMs !== undefined) {
-      const wc = yield* requireWebContents(tabId);
-      yield* withControlSession(
-        tabId,
-        wc,
-        "set-color-scheme",
-        (send) =>
-          send("Emulation.setEmulatedMedia", {
-            features: [
-              {
-                name: "prefers-color-scheme",
-                value: colorScheme === "system" ? "" : colorScheme,
-              },
-            ],
-          }),
-        timeoutMs,
-      );
-      const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-      if (!currentTab) {
-        return yield* new PreviewTabNotFoundError({ tabId });
+      const deadline = (yield* currentMillis) + timeoutMs;
+      let target = yield* requireWebContents(tabId);
+      while (true) {
+        const remainingTimeoutMs = deadline - (yield* currentMillis);
+        if (remainingTimeoutMs <= 0) {
+          return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
+        }
+        yield* withControlSession(
+          tabId,
+          target,
+          "set-color-scheme",
+          (send) =>
+            send("Emulation.setEmulatedMedia", {
+              features: [
+                {
+                  name: "prefers-color-scheme",
+                  value: colorScheme === "system" ? "" : colorScheme,
+                },
+              ],
+            }),
+          remainingTimeoutMs,
+        );
+        const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (!currentTab) {
+          return yield* new PreviewTabNotFoundError({ tabId });
+        }
+        if (currentTab.webContentsId !== target.id) {
+          target = yield* requireWebContents(tabId);
+          continue;
+        }
+        if (currentTab.colorScheme !== colorScheme) {
+          yield* update(tabId, { colorScheme });
+        }
+        const appliedTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (!appliedTab) {
+          return yield* new PreviewTabNotFoundError({ tabId });
+        }
+        if (appliedTab.webContentsId === target.id) return;
+        target = yield* requireWebContents(tabId);
       }
-      if (currentTab.colorScheme !== colorScheme) {
-        yield* update(tabId, { colorScheme });
-      }
-      return;
     }
     if (tab.colorScheme !== colorScheme) {
       // Record the choice even when the CDP call below can't run yet (no

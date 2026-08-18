@@ -1861,6 +1861,89 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("reapplies a bounded color scheme after the webview is replaced", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let finishFirstGuest: (() => void) | undefined;
+        const firstSendCommand = vi.fn(
+          async (method: string, parameters?: { features?: ReadonlyArray<{ value: string }> }) => {
+            if (
+              method === "Emulation.setEmulatedMedia" &&
+              parameters?.features?.[0]?.value === "dark"
+            ) {
+              await new Promise<void>((resolve) => {
+                finishFirstGuest = resolve;
+              });
+            }
+            return undefined;
+          },
+        );
+        const replacementSendCommand = vi.fn(async () => undefined);
+        const makeWebContents = (
+          id: number,
+          sendCommand: typeof firstSendCommand | typeof replacementSendCommand,
+        ) => {
+          let attached = false;
+          return {
+            id,
+            isDestroyed: () => false,
+            isDevToolsOpened: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => attached,
+              attach: vi.fn(() => {
+                attached = true;
+              }),
+              detach: vi.fn(() => {
+                attached = false;
+              }),
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          } as never;
+        };
+        const first = makeWebContents(42, firstSendCommand);
+        const replacement = makeWebContents(43, replacementSendCommand);
+        fromId.mockImplementation((id) => (id === 42 ? first : id === 43 ? replacement : null));
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_scheme_replacement");
+        yield* manager.registerWebview("tab_scheme_replacement", 42);
+        yield* Effect.yieldNow;
+
+        const mutation = yield* manager
+          .setColorScheme("tab_scheme_replacement", "dark", 1_000)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* manager.registerWebview("tab_scheme_replacement", 43);
+        yield* Effect.yieldNow;
+        finishFirstGuest?.();
+        yield* Fiber.join(mutation);
+
+        expect(replacementSendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+        expect(states.at(-1)?.colorScheme).toBe("dark");
+      }),
+    ),
+  );
+
   effectIt.effect("blocks late webview and capture starts during tab close", () =>
     withManager((manager) =>
       Effect.gen(function* () {

@@ -526,6 +526,58 @@ describe("browser recording", () => {
     expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
   });
 
+  it("shares an in-flight artifact save with a retry after the renderer deadline", async () => {
+    vi.useFakeTimers();
+    let finishSaving: ((artifact: Awaited<ReturnType<typeof save>>) => void) | undefined;
+    save.mockImplementationOnce(
+      async () =>
+        await new Promise<Awaited<ReturnType<typeof save>>>((resolve) => {
+          finishSaving = resolve;
+        }),
+    );
+    await startBrowserRecording("recording-tab");
+
+    const firstStop = stopBrowserRecording("recording-tab", 40);
+    const rejection = expect(firstStop).rejects.toMatchObject({ operation: "stop-deadline" });
+    await vi.advanceTimersByTimeAsync(40);
+    await rejection;
+
+    const retry = stopBrowserRecording("recording-tab");
+    expect(save).toHaveBeenCalledOnce();
+    finishSaving?.({
+      id: "recording-test",
+      tabId: "recording-tab",
+      path: "/tmp/recording-test.webm",
+      mimeType: "video/webm",
+      sizeBytes: 0,
+      createdAt: "2026-06-26T00:00:00.000Z",
+    });
+
+    await expect(retry).resolves.toMatchObject({ id: "recording-test" });
+    expect(save).toHaveBeenCalledOnce();
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
+  it("keeps recording state retryable when the desktop stop deadline rejects first", async () => {
+    stopScreencast.mockRejectedValueOnce({
+      _tag: "PreviewAutomationTimeoutError",
+      tabId: "recording-tab",
+      timeoutMs: 40,
+    });
+    await startBrowserRecording("recording-tab");
+
+    await expect(stopBrowserRecording("recording-tab", 40)).rejects.toMatchObject({
+      operation: "stop-deadline",
+      tabId: "recording-tab",
+    });
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab"]));
+
+    await expect(stopBrowserRecording("recording-tab")).resolves.toMatchObject({
+      tabId: "recording-tab",
+    });
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
   it("finishes startup before stopping so an active recording yields an artifact", async () => {
     let finishStartingScreencast: (() => void) | undefined;
     startScreencast.mockImplementationOnce(async () => {

@@ -95,6 +95,7 @@ interface ActiveRecording {
   readonly startupSettled: Promise<void>;
   readonly firstFrameSize: Promise<"frame" | "cancelled">;
   readonly settleFirstFrameSize: (outcome: "frame" | "cancelled") => void;
+  artifactSave: Promise<DesktopPreviewRecordingArtifact> | null;
   recorder: MediaRecorder | null;
   mimeType: string | null;
   frameSizeEstablished: boolean;
@@ -317,17 +318,38 @@ const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Prom
 const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperationError =>
   isBrowserRecordingOperationError(error) && error.operation === "wait-startup";
 
-const recordingStopDeadlineError = (tabId: string): BrowserRecordingOperationError =>
+const recordingStopDeadlineError = (
+  tabId: string,
+  cause: unknown = new Error(`Browser recording stop exceeded its deadline for tab ${tabId}.`),
+): BrowserRecordingOperationError =>
   new BrowserRecordingOperationError({
     operation: "stop-deadline",
     tabId,
-    cause: new Error(`Browser recording stop exceeded its deadline for tab ${tabId}.`),
+    cause,
   });
 
 export const isBrowserRecordingStopDeadlineError = (
   error: unknown,
 ): error is BrowserRecordingOperationError =>
   isBrowserRecordingOperationError(error) && error.operation === "stop-deadline";
+
+const isDesktopRecordingTimeout = (error: unknown): boolean => {
+  const seen = new Set<object>();
+  let current = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (
+      ("_tag" in current &&
+        (current as { readonly _tag?: unknown })._tag === "PreviewAutomationTimeoutError") ||
+      ("name" in current &&
+        (current as { readonly name?: unknown }).name === "PreviewAutomationTimeoutError")
+    ) {
+      return true;
+    }
+    current = "cause" in current ? (current as { readonly cause?: unknown }).cause : undefined;
+  }
+  return false;
+};
 
 const remainingRecordingStopBudget = (
   deadline: number | null,
@@ -422,6 +444,7 @@ export async function startBrowserRecording(
     startupSettled,
     firstFrameSize,
     settleFirstFrameSize: (outcome) => settleFirstFrameSize?.(outcome),
+    artifactSave: null,
     recorder: null,
     mimeType: null,
     frameSizeEstablished: false,
@@ -587,6 +610,7 @@ const finalizeBrowserRecording = async (
       );
     } catch (cause) {
       if (isBrowserRecordingStopDeadlineError(cause)) throw cause;
+      if (isDesktopRecordingTimeout(cause)) throw recordingStopDeadlineError(tabId, cause);
       throw new BrowserRecordingOperationError({
         operation: "stop-screencast",
         tabId,
@@ -612,20 +636,28 @@ const finalizeBrowserRecording = async (
       }
       try {
         const blob = new Blob(recording.chunks, { type: recording.mimeType });
-        const data = new Uint8Array(
-          await awaitWithinRecordingStopDeadline(blob.arrayBuffer(), deadline, tabId),
-        );
-        const saveBudget = remainingRecordingStopBudget(deadline, tabId);
-        const artifact = await awaitWithinRecordingStopDeadline(
-          saveBudget === undefined
-            ? bridge.recording.save(tabId, recording.mimeType, data)
-            : bridge.recording.save(tabId, recording.mimeType, data, saveBudget),
-          deadline,
-          tabId,
-        );
+        let artifactSave = recording.artifactSave;
+        if (!artifactSave) {
+          const data = new Uint8Array(
+            await awaitWithinRecordingStopDeadline(blob.arrayBuffer(), deadline, tabId),
+          );
+          const saveBudget = remainingRecordingStopBudget(deadline, tabId);
+          const saveOperation =
+            saveBudget === undefined
+              ? bridge.recording.save(tabId, recording.mimeType, data)
+              : bridge.recording.save(tabId, recording.mimeType, data, saveBudget);
+          const trackedSave = saveOperation.catch((cause) => {
+            if (recording.artifactSave === trackedSave) recording.artifactSave = null;
+            throw cause;
+          });
+          recording.artifactSave = trackedSave;
+          artifactSave = trackedSave;
+        }
+        const artifact = await awaitWithinRecordingStopDeadline(artifactSave, deadline, tabId);
         result = { _tag: "Success", artifact };
       } catch (cause) {
         if (isBrowserRecordingStopDeadlineError(cause)) throw cause;
+        if (isDesktopRecordingTimeout(cause)) throw recordingStopDeadlineError(tabId, cause);
         throw new BrowserRecordingOperationError({
           operation: "save-artifact",
           tabId,
