@@ -6,10 +6,12 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopDeepLinkRouter from "./DesktopDeepLinkRouter.ts";
+import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
 function makeRouterLayer(input: {
   readonly listeners: Map<string, (...args: Array<unknown>) => void>;
   readonly openedThreads: Array<{ readonly environmentId: string; readonly threadId: string }>;
+  readonly earlyOpenUrls?: DesktopPreReadyPlatform.EarlyOpenUrlBuffer;
 }) {
   const electronApp = {
     on: (eventName: string, listener: (...args: Array<unknown>) => void) =>
@@ -33,6 +35,12 @@ function makeRouterLayer(input: {
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(DesktopWindow.DesktopWindow, desktopWindow),
+        Layer.succeed(
+          DesktopPreReadyPlatform.DesktopPreReadyOpenUrls,
+          input.earlyOpenUrls ?? {
+            setHandler: () => {},
+          },
+        ),
       ),
     ),
   );
@@ -95,21 +103,63 @@ describe("DesktopDeepLinkRouter", () => {
 
   it.effect("forwards a macOS URL activation to the desktop window", () =>
     Effect.gen(function* () {
+      let openUrlListener: ((event: unknown, url: string) => void) | undefined;
+      const earlyOpenUrls = DesktopPreReadyPlatform.makeEarlyOpenUrlBuffer({
+        platform: "darwin",
+        electronApp: {
+          on: (_eventName, listener) => {
+            openUrlListener = listener;
+          },
+        },
+      });
       const listeners = new Map<string, (...args: Array<unknown>) => void>();
       const openedThreads: Array<{ readonly environmentId: string; readonly threadId: string }> =
         [];
-      const layer = makeRouterLayer({ listeners, openedThreads });
+      const layer = makeRouterLayer({ listeners, openedThreads, earlyOpenUrls });
 
       yield* Effect.scoped(
         Effect.gen(function* () {
           const router = yield* DesktopDeepLinkRouter.DesktopDeepLinkRouter;
           yield* router.configure;
-          const openUrl = listeners.get("open-url");
-          if (!openUrl) {
+          if (!openUrlListener) {
             return yield* Effect.die("open-url listener was not registered");
           }
 
-          openUrl({}, "t3code://app/#/environment-123/thread-456");
+          openUrlListener({}, "t3code://app/#/environment-123/thread-456");
+          yield* Effect.promise(() => Promise.resolve());
+          assert.deepEqual(openedThreads, [
+            { environmentId: "environment-123", threadId: "thread-456" },
+          ]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("routes a macOS URL captured before lifecycle registration", () =>
+    Effect.gen(function* () {
+      let openUrlListener: ((event: unknown, url: string) => void) | undefined;
+      const earlyOpenUrls = DesktopPreReadyPlatform.makeEarlyOpenUrlBuffer({
+        platform: "darwin",
+        electronApp: {
+          on: (_eventName, listener) => {
+            openUrlListener = listener;
+          },
+        },
+      });
+      const listeners = new Map<string, (...args: Array<unknown>) => void>();
+      const openedThreads: Array<{ readonly environmentId: string; readonly threadId: string }> =
+        [];
+      const layer = makeRouterLayer({ listeners, openedThreads, earlyOpenUrls });
+
+      if (!openUrlListener) {
+        return yield* Effect.die("open-url listener was not registered");
+      }
+      openUrlListener({}, "t3code://app/#/environment-123/thread-456");
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const router = yield* DesktopDeepLinkRouter.DesktopDeepLinkRouter;
+          yield* router.configure;
           yield* Effect.promise(() => Promise.resolve());
           assert.deepEqual(openedThreads, [
             { environmentId: "environment-123", threadId: "thread-456" },

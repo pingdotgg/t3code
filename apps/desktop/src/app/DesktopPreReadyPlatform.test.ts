@@ -64,6 +64,31 @@ describe("DesktopPreReadyPlatform", () => {
     assert.isNull(value);
   });
 
+  it("buffers a macOS URL opened before the desktop runtime is configured", () => {
+    let openUrlListener: ((event: unknown, url: string) => void) | undefined;
+    const openedUrls = DesktopPreReadyPlatform.makeEarlyOpenUrlBuffer({
+      platform: "darwin",
+      electronApp: {
+        on: (eventName, listener) => {
+          assert.equal(eventName, "open-url");
+          openUrlListener = listener;
+        },
+      },
+    });
+
+    if (!openUrlListener) {
+      throw new Error("open-url listener was not registered");
+    }
+    openUrlListener({}, "t3code://app/#/environment-123/thread-456");
+
+    const handledUrls: string[] = [];
+    openedUrls.setHandler((url) => {
+      handledUrls.push(url);
+    });
+
+    assert.deepEqual(handledUrls, ["t3code://app/#/environment-123/thread-456"]);
+  });
+
   it("returns null for missing Electron command-line switches", () => {
     const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
       {
@@ -91,7 +116,7 @@ describe("DesktopPreReadyPlatform", () => {
           events.push("pre-ready");
         });
 
-        const preReadyLayer = DesktopPreReadyPlatform.layer.pipe(
+        const preReadyLayer = DesktopPreReadyPlatform.layer({ setHandler: () => {} }).pipe(
           Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
         );
 
