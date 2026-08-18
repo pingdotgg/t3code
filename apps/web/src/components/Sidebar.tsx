@@ -379,9 +379,11 @@ function SidebarThreadTooltip({
 function RemoteProjectBadge({
   desktopLocal,
   labels,
+  className,
 }: {
   desktopLocal: boolean;
   labels: readonly string[];
+  className?: string;
 }) {
   const prefix = desktopLocal ? "Sandbox" : "Remote";
   const label = labels.length > 0 ? `${prefix}: ${labels.join(", ")}` : prefix;
@@ -390,7 +392,10 @@ function RemoteProjectBadge({
     <Tooltip>
       <TooltipTrigger
         render={
-          <span aria-label={label} className="inline-flex shrink-0 items-center text-icon-muted" />
+          <span
+            aria-label={label}
+            className={cn("inline-flex shrink-0 items-center text-icon-muted", className)}
+          />
         }
       >
         <Icon aria-hidden className="size-3" />
@@ -3526,6 +3531,9 @@ export default function Sidebar() {
                       <RemoteProjectBadge
                         desktopLocal={scopedProjectGroup.allRemoteMembersAreDesktopLocal}
                         labels={scopedProjectGroup.remoteEnvironmentLabels}
+                        // Follow SidebarMenuButton's icon contract, which only
+                        // reaches direct svg children (ui/sidebar.tsx).
+                        className="text-[var(--sidebar-icon-color)] hover:text-sidebar-foreground"
                       />
                     ) : null}
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
