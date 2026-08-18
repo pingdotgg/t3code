@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DesktopEnvironmentBootstrapSchema,
   DesktopPreviewAutomationSnapshotInputSchema,
+  DesktopPreviewRecordingSaveInputSchema,
+  DesktopPreviewRecordingStopInputSchema,
 } from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
@@ -37,6 +39,25 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("desktop recording finalization deadlines", () => {
+  it("preserves explicit stop and save timeouts", () => {
+    const decodeStop = Schema.decodeUnknownSync(DesktopPreviewRecordingStopInputSchema);
+    const decodeSave = Schema.decodeUnknownSync(DesktopPreviewRecordingSaveInputSchema);
+    const data = new Uint8Array([1, 2, 3]);
+
+    expect(decodeStop({ tabId: "tab-1", timeoutMs: 1_250 })).toEqual({
+      tabId: "tab-1",
+      timeoutMs: 1_250,
+    });
+    expect(decodeSave({ tabId: "tab-1", mimeType: "video/webm", data, timeoutMs: 1_250 })).toEqual({
+      tabId: "tab-1",
+      mimeType: "video/webm",
+      data,
+      timeoutMs: 1_250,
+    });
   });
 });
 

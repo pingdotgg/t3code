@@ -2354,7 +2354,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         timeoutMs,
       );
-      if (tab.colorScheme !== colorScheme) {
+      const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+      if (!currentTab) {
+        return yield* new PreviewTabNotFoundError({ tabId });
+      }
+      if (currentTab.colorScheme !== colorScheme) {
         yield* update(tabId, { colorScheme });
       }
       return;
@@ -2918,11 +2922,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
   });
 
-  const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (tabId: string) {
-    yield* stopFrameCapture(tabId, "recording");
+  const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (
+    tabId: string,
+    timeoutMs?: number,
+  ) {
+    const stop = stopFrameCapture(tabId, "recording");
+    if (timeoutMs === undefined) {
+      yield* stop;
+      return;
+    }
+    const result = yield* stop.pipe(Effect.timeoutOption(automationExecutionBudget(timeoutMs)));
+    if (Option.isSome(result)) return;
+    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
   });
 
-  const saveRecording = Effect.fn("PreviewManager.saveRecording")(function* (
+  const performSaveRecording = Effect.fn("PreviewManager.performSaveRecording")(function* (
     tabId: string,
     mimeType: string,
     data: Uint8Array,
@@ -2961,6 +2975,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       sizeBytes: data.byteLength,
       createdAt,
     };
+  });
+
+  const saveRecording = Effect.fn("PreviewManager.saveRecording")(function* (
+    tabId: string,
+    mimeType: string,
+    data: Uint8Array,
+    timeoutMs?: number,
+  ) {
+    const save = performSaveRecording(tabId, mimeType, data);
+    if (timeoutMs === undefined) return yield* save;
+    const result = yield* save.pipe(Effect.timeoutOption(automationExecutionBudget(timeoutMs)));
+    if (Option.isSome(result)) return result.value;
+    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
   });
 
   const automationStatus = Effect.fn("PreviewManager.automationStatus")(function* (tabId: string) {
@@ -4325,11 +4352,15 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       timeoutMs?: number,
     ) => Effect.Effect<void, PreviewManagerError>;
-    readonly stopRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly stopRecording: (
+      tabId: string,
+      timeoutMs?: number,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly saveRecording: (
       tabId: string,
       mimeType: string,
       data: Uint8Array,
+      timeoutMs?: number,
     ) => Effect.Effect<DesktopPreviewRecordingArtifact, PreviewManagerError>;
     readonly automationStatus: (
       tabId: string,

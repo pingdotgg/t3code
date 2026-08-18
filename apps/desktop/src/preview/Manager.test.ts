@@ -1788,6 +1788,79 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("re-reads color-scheme state after a bounded CDP mutation settles", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let attached = false;
+        let darkCommands = 0;
+        let finishBoundedDark: (() => void) | undefined;
+        const sendCommand = vi.fn(
+          async (method: string, parameters?: { features?: ReadonlyArray<{ value: string }> }) => {
+            if (method !== "Emulation.setEmulatedMedia") return undefined;
+            if (parameters?.features?.[0]?.value !== "dark") return undefined;
+            darkCommands += 1;
+            if (darkCommands !== 2) return undefined;
+            await new Promise<void>((resolve) => {
+              finishBoundedDark = resolve;
+            });
+            return undefined;
+          },
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => attached,
+            attach: vi.fn(() => {
+              attached = true;
+            }),
+            detach: vi.fn(() => {
+              attached = false;
+            }),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_scheme_reread");
+        yield* manager.registerWebview("tab_scheme_reread", 42);
+        yield* Effect.yieldNow;
+        yield* manager.setColorScheme("tab_scheme_reread", "dark");
+
+        const boundedDark = yield* manager
+          .setColorScheme("tab_scheme_reread", "dark", 1_000)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* manager.setColorScheme("tab_scheme_reread", "light");
+        expect(states.at(-1)?.colorScheme).toBe("light");
+
+        finishBoundedDark?.();
+        yield* Fiber.join(boundedDark);
+
+        expect(states.at(-1)?.colorScheme).toBe("dark");
+      }),
+    ),
+  );
+
   effectIt.effect("blocks late webview and capture starts during tab close", () =>
     withManager((manager) =>
       Effect.gen(function* () {

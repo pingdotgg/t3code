@@ -497,6 +497,35 @@ describe("browser recording", () => {
     expect(save).toHaveBeenCalledOnce();
   });
 
+  it("retains captured chunks when a bounded stop expires so finalization can be retried", async () => {
+    vi.useFakeTimers();
+    let finishStoppingScreencast: (() => void) | undefined;
+    stopScreencast.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        finishStoppingScreencast = resolve;
+      });
+    });
+    await startBrowserRecording("recording-tab");
+
+    const stopPromise = stopBrowserRecording("recording-tab", 40);
+    const rejection = expect(stopPromise).rejects.toMatchObject({
+      operation: "stop-deadline",
+      tabId: "recording-tab",
+    });
+    await vi.advanceTimersByTimeAsync(40);
+
+    await rejection;
+    expect(stopScreencast).toHaveBeenCalledWith("recording-tab", 40);
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab"]));
+
+    finishStoppingScreencast?.();
+    await Promise.resolve();
+    await expect(stopBrowserRecording("recording-tab")).resolves.toMatchObject({
+      tabId: "recording-tab",
+    });
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
   it("finishes startup before stopping so an active recording yields an artifact", async () => {
     let finishStartingScreencast: (() => void) | undefined;
     startScreencast.mockImplementationOnce(async () => {

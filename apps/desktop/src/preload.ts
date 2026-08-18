@@ -213,13 +213,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     recording: {
       startScreencast: (tabId, timeoutMs) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId, timeoutMs }),
-      stopScreencast: (tabId) =>
-        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, { tabId }),
-      save: (tabId, mimeType, data) =>
+      stopScreencast: (tabId, timeoutMs) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, { tabId, timeoutMs }),
+      save: (tabId, mimeType, data, timeoutMs) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL, {
           tabId,
           mimeType,
           data,
+          timeoutMs,
         }),
       onFrame: (listener) => {
         const wrappedListener = (_event: Electron.IpcRendererEvent, frame: unknown) => {

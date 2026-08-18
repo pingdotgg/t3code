@@ -12,6 +12,7 @@ import {
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingStartInputSchema,
+  DesktopPreviewRecordingStopInputSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
@@ -178,11 +179,15 @@ export const startRecording = DesktopIpc.makeIpcMethod({
     yield* manager.startRecording(tabId, timeoutMs);
   }),
 });
-export const stopRecording = tabMethod(
-  IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
-  "desktop.ipc.preview.stopRecording",
-  (manager, tabId) => manager.stopRecording(tabId),
-);
+export const stopRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
+  payload: DesktopPreviewRecordingStopInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.stopRecording")(function* ({ tabId, timeoutMs }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.stopRecording(tabId, timeoutMs);
+  }),
+});
 export const openPictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
   "desktop.ipc.preview.openPictureInPicture",
@@ -367,9 +372,14 @@ export const saveRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
   payload: DesktopPreviewRecordingSaveInputSchema,
   result: DesktopPreviewRecordingArtifactSchema,
-  handler: Effect.fn("desktop.ipc.preview.saveRecording")(function* ({ tabId, mimeType, data }) {
+  handler: Effect.fn("desktop.ipc.preview.saveRecording")(function* ({
+    tabId,
+    mimeType,
+    data,
+    timeoutMs,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.saveRecording(tabId, mimeType, data);
+    return yield* manager.saveRecording(tabId, mimeType, data, timeoutMs);
   }),
 });
 

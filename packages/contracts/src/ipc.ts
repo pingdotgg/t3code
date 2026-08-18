@@ -1012,6 +1012,8 @@ export const DesktopPreviewRecordingStartInputSchema = Schema.Struct({
   ),
 });
 
+export const DesktopPreviewRecordingStopInputSchema = DesktopPreviewRecordingStartInputSchema;
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1024,6 +1026,9 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   mimeType: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
   data: Schema.Uint8Array,
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(60_000)),
+  ),
 });
 
 export const DesktopPreviewAutomationClickInputSchema = Schema.Struct({
@@ -1199,11 +1204,12 @@ export interface DesktopPreviewBridge {
   };
   recording: {
     startScreencast: (tabId: string, timeoutMs?: number) => Promise<void>;
-    stopScreencast: (tabId: string) => Promise<void>;
+    stopScreencast: (tabId: string, timeoutMs?: number) => Promise<void>;
     save: (
       tabId: string,
       mimeType: string,
       data: Uint8Array,
+      timeoutMs?: number,
     ) => Promise<DesktopPreviewRecordingArtifact>;
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
   };

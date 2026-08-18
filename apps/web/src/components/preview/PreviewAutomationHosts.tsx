@@ -31,6 +31,7 @@ import {
 } from "~/previewStateStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
+  isBrowserRecordingStopDeadlineError,
   readActiveBrowserRecordingTargets,
   startBrowserRecording,
   stopBrowserRecording,
@@ -510,6 +511,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const input = request.input as PreviewAutomationResizeInput;
             const setting = resolvePreviewViewport(input);
             const applied = await runBrowserViewportMutation(ready.runtimeTabId, async () => {
+              remainingOperationBudget(input.timeoutMs ?? request.timeoutMs);
               const operationState = assertPreviewRuntimeCurrent(
                 threadRef,
                 ready.tabId,
@@ -710,7 +712,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const stopRuntimeTabId =
               activeRecordings.find((recording) => recording.serverTabId === stopTabId)
                 ?.runtimeTabId ?? null;
-            const artifact = stopRuntimeTabId ? await stopBrowserRecording(stopRuntimeTabId) : null;
+            let artifact = null;
+            if (stopRuntimeTabId) {
+              try {
+                artifact = await stopBrowserRecording(
+                  stopRuntimeTabId,
+                  remainingOperationBudget(request.timeoutMs),
+                );
+              } catch (cause) {
+                if (isBrowserRecordingStopDeadlineError(cause)) {
+                  remainingOperationBudget(request.timeoutMs);
+                }
+                throw cause;
+              }
+            }
             if (!artifact || !stopTabId) {
               return raisePreviewAutomationHostError(
                 new PreviewAutomationRecordingNotActiveError({
