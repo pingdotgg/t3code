@@ -1199,6 +1199,18 @@ const make = Effect.gen(function* () {
 
       const detail = formatFailureDetail(cause);
       return Effect.gen(function* () {
+        const latestThread = yield* resolveThread(event.payload.threadId);
+        const latestSession = latestThread?.session;
+        if (
+          !latestSession ||
+          latestSession.status === "stopped" ||
+          latestSession.activeTurnId === null ||
+          (event.payload.turnId !== undefined &&
+            latestSession.activeTurnId !== event.payload.turnId)
+        ) {
+          return;
+        }
+
         yield* providerService.stopSession({ threadId: event.payload.threadId }).pipe(
           Effect.catchCause((stopCause) => {
             if (Cause.hasInterruptsOnly(stopCause)) {
@@ -1214,10 +1226,22 @@ const make = Effect.gen(function* () {
             );
           }),
         );
+        const stoppedThread = yield* resolveThread(event.payload.threadId);
+        const stoppedSession = stoppedThread?.session;
+        if (
+          !stoppedSession ||
+          stoppedSession.status === "stopped" ||
+          stoppedSession.activeTurnId === null ||
+          (event.payload.turnId !== undefined &&
+            stoppedSession.activeTurnId !== event.payload.turnId)
+        ) {
+          return;
+        }
+
         yield* setThreadSession({
           threadId: event.payload.threadId,
           session: {
-            ...session,
+            ...stoppedSession,
             status: "stopped",
             activeTurnId: null,
             lastError: detail,
