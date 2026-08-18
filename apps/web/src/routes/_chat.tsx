@@ -19,6 +19,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { claimSettleThreadShortcut } from "../lib/settleThreadShortcut";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -117,17 +118,15 @@ function ChatRouteGlobalShortcuts() {
       }
 
       if (command === "thread.settle") {
-        if (routeThreadRef === null) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.repeat) return;
+        const threadRef = claimSettleThreadShortcut(event, routeThreadRef);
+        if (threadRef === null) return;
 
-        const threadKey = scopedThreadKey(routeThreadRef);
+        const threadKey = scopedThreadKey(threadRef);
         if (settlingThreadKeysRef.current.has(threadKey)) return;
         settlingThreadKeysRef.current.add(threadKey);
         void (async () => {
           try {
-            const result = await settleThread(routeThreadRef);
+            const result = await settleThread(threadRef);
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               toastManager.add(
