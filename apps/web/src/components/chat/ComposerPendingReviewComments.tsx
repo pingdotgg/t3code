@@ -27,28 +27,28 @@ export function ComposerPendingReviewComments({
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {comments.map((comment) => {
         const label = `${comment.filePath} ${comment.rangeLabel}`;
+        const chip = (
+          <span key={comment.id} className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, "pr-1")}>
+            <MessageCircle className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
+            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{label}</span>
+            <button
+              type="button"
+              aria-label={`Remove comment on ${label}`}
+              className={COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onRemove(comment.id);
+              }}
+            >
+              <X className="size-3" aria-hidden />
+            </button>
+          </span>
+        );
+        if (comment.text.length === 0) return chip;
         return (
           <Tooltip key={comment.id}>
-            <TooltipTrigger
-              render={
-                <span className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, "pr-1")}>
-                  <MessageCircle className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-                  <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{label}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove comment on ${label}`}
-                    className={COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onRemove(comment.id);
-                    }}
-                  >
-                    <X className="size-3" aria-hidden />
-                  </button>
-                </span>
-              }
-            />
+            <TooltipTrigger render={chip} />
             <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap leading-tight">
               {comment.text}
             </TooltipPopup>

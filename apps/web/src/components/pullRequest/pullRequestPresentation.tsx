@@ -22,7 +22,9 @@ import { Children, isValidElement, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 
 interface StatePresentation {
   readonly label: string;
@@ -191,6 +193,117 @@ export function pullRequestChecksState(
   return statuses.includes("success") ? "passing" : null;
 }
 
+/**
+ * How a verdict reads, in the one place every surface takes it from. The green is the green a
+ * passing check already wears in the same panel, so "approved" and "all checks passed" cannot
+ * look like two different kinds of good news.
+ *
+ * The ring runs a shade stronger than the text tones. At 16px across it is a thin arc, and the
+ * muted pairing that reads well as a word was barely there as an outline.
+ */
+const REVIEW_OUTCOME_PRESENTATION = {
+  approved: {
+    label: "Approved",
+    Icon: CircleCheckIcon,
+    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+    ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
+    staleRingClassName:
+      "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
+    badgeVariant: "success",
+  },
+  "changes-requested": {
+    label: "Changes requested",
+    Icon: CircleXIcon,
+    toneClassName: "text-destructive",
+    ringClassName: "ring-2 ring-destructive",
+    staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--destructive)_35%,var(--background))]",
+    badgeVariant: "error",
+  },
+  dismissed: {
+    label: "Review dismissed",
+    Icon: CircleDashedIcon,
+    toneClassName: "text-muted-foreground/70",
+    ringClassName: "ring-2 ring-muted-foreground/60",
+    staleRingClassName:
+      "ring-2 ring-[color-mix(in_srgb,var(--muted-foreground)_30%,var(--background))]",
+    badgeVariant: "outline",
+  },
+} as const satisfies Record<
+  PullRequestReviewOutcome,
+  {
+    label: string;
+    Icon: typeof CircleCheckIcon;
+    toneClassName: string;
+    ringClassName: string;
+    staleRingClassName: string;
+    badgeVariant: "success" | "error" | "outline";
+  }
+>;
+
+export function pullRequestReviewOutcomeToneClassName(outcome: PullRequestReviewOutcome): string {
+  return REVIEW_OUTCOME_PRESENTATION[outcome].toneClassName;
+}
+
+/** Worn by whatever wraps a reviewer's avatar, so their verdict reads without a row of its own. */
+/**
+ * A faded verdict is mixed into the background rather than made translucent. The ring is the only
+ * separator an avatar carrying one has — the summary drops the opaque `ring-background` where a
+ * verdict is drawn — and the stack overlaps by 4px, so an alpha ring would let the neighbour show
+ * straight through it and the two faces would merge.
+ */
+export function pullRequestReviewOutcomeRingClassName(
+  outcome: PullRequestReviewOutcome,
+  stale = false,
+): string {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return stale ? presentation.staleRingClassName : presentation.ringClassName;
+}
+
+/**
+ * What a superseded verdict says, which is the same word with when it applied added. Commits
+ * landed after it, so it stands for code the branch no longer has.
+ */
+export function pullRequestReviewOutcomeStaleLabel(outcome: PullRequestReviewOutcome): string {
+  return `${REVIEW_OUTCOME_PRESENTATION[outcome].label} earlier changes`;
+}
+
+/** Decorative: every caller says which verdict this is in words beside it. */
+export function PullRequestReviewOutcomeIcon({
+  outcome,
+  className,
+}: {
+  outcome: PullRequestReviewOutcome;
+  className?: string;
+}) {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return (
+    <presentation.Icon
+      aria-hidden
+      className={cn("size-3.5 shrink-0", presentation.toneClassName, className)}
+    />
+  );
+}
+
+export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
+  return REVIEW_OUTCOME_PRESENTATION[outcome].label;
+}
+
+export function PullRequestReviewOutcomeBadge({
+  outcome,
+  className,
+}: {
+  outcome: PullRequestReviewOutcome;
+  className?: string;
+}) {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return (
+    <Badge size="sm" variant={presentation.badgeVariant} className={cn("gap-1", className)}>
+      <presentation.Icon aria-hidden className="size-3" />
+      {presentation.label}
+    </Badge>
+  );
+}
+
 export function PullRequestActorAvatar({
   actor,
   className,
@@ -226,16 +339,31 @@ export function PullRequestActorAvatar({
 export function PullRequestActorLabel({
   actor,
   className,
+  tooltip = true,
 }: {
   actor: PullRequestActor | null;
   className?: string;
+  tooltip?: boolean;
 }) {
   const login = actor?.login ?? "ghost";
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)} title={login}>
+  const label = (
+    <>
       <PullRequestActorAvatar actor={actor} />
       <span className="truncate">{login}</span>
-    </span>
+    </>
+  );
+  if (!tooltip) {
+    return <span className={cn("flex min-w-0 items-center gap-1.5", className)}>{label}</span>;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className={cn("flex min-w-0 items-center gap-1.5", className)} />}
+      >
+        {label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{login}</TooltipPopup>
+    </Tooltip>
   );
 }
 

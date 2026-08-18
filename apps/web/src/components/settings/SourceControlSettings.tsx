@@ -1,4 +1,4 @@
-import { ChevronDownIcon, GitPullRequestIcon, InfoIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useState, type ReactNode } from "react";
@@ -43,6 +43,7 @@ import {
 } from "../ui/number-field";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
 import {
   AzureDevOpsIcon,
   BitbucketIcon,
@@ -54,7 +55,12 @@ import {
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
-import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import {
+  PolicyTooltip,
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -114,27 +120,6 @@ function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
-}
-
-function BackgroundPolicyTooltip({ children }: { readonly children: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            aria-label="Background policy details"
-          >
-            <InfoIcon className="size-3.5" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-72">
-        {children}
-      </TooltipPopup>
-    </Tooltip>
-  );
 }
 
 function optionLabel(value: Option.Option<string>): string | null {
@@ -316,9 +301,8 @@ function DiscoveryItemRow({
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             {hasDetails ? (
               <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                size="compact"
+                variant="ghost-muted"
                 onClick={() => setIsExpanded((open) => !open)}
                 aria-expanded={isExpanded}
                 aria-label={`Toggle ${item.label} details`}
@@ -367,11 +351,11 @@ function GitFetchIntervalSettings() {
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
             <span className="text-xs font-medium text-foreground">Fetch interval</span>
-            <BackgroundPolicyTooltip>
+            <PolicyTooltip>
               This interval is configured for Git only. The shared Background activity policy still
               decides whether Git refreshes may run when the timer fires. Custom intervals appear as
               Advanced in General settings.
-            </BackgroundPolicyTooltip>
+            </PolicyTooltip>
             <span
               className={cn(
                 "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
@@ -537,9 +521,8 @@ export function SourceControlSettingsPanel() {
       <TooltipTrigger
         render={
           <Button
-            size="icon-xs"
-            variant="ghost"
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            size="icon-micro"
+            variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
             aria-label="Rescan server environment"
