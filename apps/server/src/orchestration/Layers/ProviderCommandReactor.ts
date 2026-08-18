@@ -1204,8 +1204,9 @@ const make = Effect.gen(function* () {
         if (
           !latestSession ||
           latestSession.status === "stopped" ||
-          latestSession.activeTurnId === null ||
+          latestSession.status === "ready" ||
           (event.payload.turnId !== undefined &&
+            latestSession.activeTurnId !== null &&
             latestSession.activeTurnId !== event.payload.turnId)
         ) {
           return;
@@ -1231,8 +1232,9 @@ const make = Effect.gen(function* () {
         if (
           !stoppedSession ||
           stoppedSession.status === "stopped" ||
-          stoppedSession.activeTurnId === null ||
+          stoppedSession.status === "ready" ||
           (event.payload.turnId !== undefined &&
+            stoppedSession.activeTurnId !== null &&
             stoppedSession.activeTurnId !== event.payload.turnId)
         ) {
           return;

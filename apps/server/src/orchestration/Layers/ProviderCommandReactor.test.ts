@@ -2569,6 +2569,62 @@ describe("ProviderCommandReactor", () => {
       }),
   );
 
+  effectIt.effect("stops a starting session without a bound turn when interrupt fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          interruptTurnEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread.interrupt",
+                detail: "provider session disappeared",
+              }),
+            ),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-interrupt-starting"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "starting",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-starting-provider-failure"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => harness.drain());
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      );
+      expect(thread?.session).toMatchObject({
+        status: "stopped",
+        activeTurnId: null,
+        lastError: "provider session disappeared",
+      });
+      expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+      ).toMatchObject({ payload: { detail: "provider session disappeared" } });
+    }),
+  );
+
   effectIt.effect("does not overwrite a session that became ready while an interrupt failed", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness());
