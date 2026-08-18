@@ -456,6 +456,24 @@ struct MarkdownDocumentTests {
     }
 
     @Test
+    func resolvesBackslashEscapesInImageReferences() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![Plot \\[final\\]](out/foo\\(1\\).png)
+
+            ![C:\\\\path](out/back\\\\slash.png)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/foo(1).png", alt: "Plot [final]"),
+                .image(source: "out/back\\slash.png", alt: "C:\\path"),
+            ]
+        )
+    }
+
+    @Test
     func keepsImagesInsideProseAsParagraphText() {
         let document = MarkdownDocument(
             parsing: """

@@ -23,6 +23,20 @@ struct MarkdownWorkspaceImageTests {
     }
 
     @Test
+    func acceptsUnescapedPunctuationInFileNames() {
+        // The parser hands over an unescaped path, so a file whose name needs
+        // Markdown escaping still resolves to the file on disk.
+        #expect(
+            MarkdownWorkspaceImageReference.workspacePath(for: "out/foo(1).png")
+                == "out/foo(1).png"
+        )
+        #expect(
+            MarkdownWorkspaceImageReference.workspacePath(for: "out/a [b].png")
+                == "out/a [b].png"
+        )
+    }
+
+    @Test
     func rejectsReferencesThatAreNotWorkspaceImages() {
         for source in [
             "https://example.com/render.png",

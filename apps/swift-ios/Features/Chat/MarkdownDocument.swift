@@ -71,7 +71,35 @@ struct MarkdownImageReference: Equatable, Sendable {
 
         let destination = String(characters[(destinationStart + 1)..<destinationEnd])
         guard let source = self.source(in: destination), !source.isEmpty else { return nil }
-        return Self(source: source, alt: String(characters[2..<altEnd]))
+        return Self(
+            source: unescaped(source),
+            alt: unescaped(String(characters[2..<altEnd]))
+        )
+    }
+
+    /// CommonMark lets any ASCII punctuation be backslash-escaped, so
+    /// `out/foo\(1\).png` names the file `out/foo(1).png`. Leaving the escapes
+    /// in would ask the workspace for a file that does not exist.
+    private static func unescaped(_ source: String) -> String {
+        guard source.contains("\\") else { return source }
+        var result = ""
+        result.reserveCapacity(source.count)
+        var isEscaping = false
+        for character in source {
+            if isEscaping {
+                if !character.isASCIIPunctuation { result.append("\\") }
+                result.append(character)
+                isEscaping = false
+                continue
+            }
+            if character == "\\" {
+                isEscaping = true
+                continue
+            }
+            result.append(character)
+        }
+        if isEscaping { result.append("\\") }
+        return result
     }
 
     /// Drops the optional title and the optional angle-bracket wrapper that
@@ -714,5 +742,13 @@ private extension String {
 private extension Character {
     var isMarkdownWhitespace: Bool {
         self == " " || self == "\t"
+    }
+
+    var isASCIIPunctuation: Bool {
+        guard let ascii = asciiValue else { return false }
+        return (33...47).contains(ascii)
+            || (58...64).contains(ascii)
+            || (91...96).contains(ascii)
+            || (123...126).contains(ascii)
     }
 }

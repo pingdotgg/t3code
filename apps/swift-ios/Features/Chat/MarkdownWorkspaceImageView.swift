@@ -79,7 +79,11 @@ struct MarkdownWorkspaceImageView: View {
     @SwiftUI.Environment(\.markdownWorkspaceImageContext) private var context
     @SwiftUI.Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
-    @State private var failed = false
+    // Gated on request identity, like the sibling remote attachment thumbnail:
+    // hosted transcript cells reuse this state across recycling and path
+    // changes, so an ungated image would briefly belong to another message.
+    @State private var loadedRequest: Request?
+    @State private var failedRequest: Request?
 
     var body: some View {
         if let context, let path = MarkdownWorkspaceImageReference.workspacePath(for: source) {
@@ -98,13 +102,14 @@ struct MarkdownWorkspaceImageView: View {
         path: String,
         context: MarkdownWorkspaceImageContext
     ) -> some View {
-        Group {
-            if let image {
+        let request = request(path: path, threadID: context.threadID)
+        return Group {
+            if loadedRequest == request, let image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: 340, alignment: .leading)
-            } else if failed {
+            } else if failedRequest == request {
                 placeholder(systemImage: "photo.badge.exclamationmark", text: "Image unavailable")
             } else {
                 placeholder(systemImage: "photo", text: "Loading image…")
@@ -117,17 +122,15 @@ struct MarkdownWorkspaceImageView: View {
                 .stroke(T3Colors.border, lineWidth: 1)
         }
         .accessibilityElement()
-        .accessibilityLabel(accessibilityLabel(path: path))
+        .accessibilityLabel(accessibilityLabel(path: path, request: request))
         .accessibilityIdentifier("workspace-image-\(path)")
-        .task(
-            id: Request(
-                threadID: context.threadID,
-                path: path,
-                maximumPixelSize: maximumPixelSize
-            )
-        ) {
-            await load(path: path, context: context)
+        .task(id: request) {
+            await load(request, context: context)
         }
+    }
+
+    private func request(path: String, threadID: String) -> Request {
+        Request(threadID: threadID, path: path, maximumPixelSize: maximumPixelSize)
     }
 
     /// Bounded so a large workspace render is downsampled once, off the main
@@ -136,13 +139,13 @@ struct MarkdownWorkspaceImageView: View {
         min(1_536, max(390, Int(ceil(390 * displayScale))))
     }
 
-    private func accessibilityLabel(path: String) -> String {
+    private func accessibilityLabel(path: String, request: Request) -> String {
         let name = alt.trimmingCharacters(in: .whitespacesAndNewlines)
         let described = name.isEmpty ? URL(fileURLWithPath: path).lastPathComponent : name
-        if failed {
+        if failedRequest == request {
             return "Image unavailable, \(described)"
         }
-        return image == nil ? "Loading image, \(described)" : "Image, \(described)"
+        return loadedRequest == request ? "Image, \(described)" : "Loading image, \(described)"
     }
 
     private func placeholder(systemImage: String, text: String) -> some View {
@@ -161,35 +164,40 @@ struct MarkdownWorkspaceImageView: View {
     /// a server round trip that mints a fresh signed URL, so a recycled
     /// transcript cell would otherwise re-resolve and re-download an image it
     /// has already decoded.
-    private func cacheKey(path: String, threadID: String) -> NSString {
-        "workspace:\(threadID)/\(path)#\(maximumPixelSize)" as NSString
+    private func cacheKey(for request: Request) -> NSString {
+        "workspace:\(request.threadID)/\(request.path)#\(request.maximumPixelSize)" as NSString
     }
 
-    private func load(path: String, context: MarkdownWorkspaceImageContext) async {
-        let key = cacheKey(path: path, threadID: context.threadID)
+    private func load(_ request: Request, context: MarkdownWorkspaceImageContext) async {
+        let key = cacheKey(for: request)
         if let cached = FeatureAttachmentThumbnailCache.shared.image(for: key) {
             image = cached
-            failed = false
+            loadedRequest = request
+            failedRequest = nil
             return
         }
 
         do {
             let url = try await context.resolver.workspaceAssetURL(
-                threadID: context.threadID,
-                path: path
+                threadID: request.threadID,
+                path: request.path
             )
             let loaded = try await FeatureAttachmentThumbnailLoader.image(
                 for: url,
-                maximumPixelSize: maximumPixelSize
+                maximumPixelSize: request.maximumPixelSize
             )
-            guard !Task.isCancelled else { return }
+            try Task.checkCancellation()
             FeatureAttachmentThumbnailCache.shared.insert(loaded, for: key)
             image = loaded
-            failed = false
+            loadedRequest = request
+            failedRequest = nil
+        } catch is CancellationError {
+            return
         } catch {
             guard !Task.isCancelled else { return }
             image = nil
-            failed = true
+            loadedRequest = nil
+            failedRequest = request
         }
     }
 }
