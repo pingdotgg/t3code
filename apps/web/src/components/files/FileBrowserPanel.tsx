@@ -7,7 +7,7 @@ import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { workingTreeGitStatusByPath } from "@t3tools/shared/fileTreeGitStatus";
 import { RotateCw } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -21,6 +21,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
@@ -125,6 +126,14 @@ export default function FileBrowserPanel({
       input: { cwd },
     }),
   );
+  const refreshGitStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
+  const handleRefresh = useCallback(() => {
+    entriesQuery.refresh();
+    void refreshGitStatus({
+      environmentId,
+      input: { cwd },
+    });
+  }, [cwd, entriesQuery, environmentId, refreshGitStatus]);
   const entries = entriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
