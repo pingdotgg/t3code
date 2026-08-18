@@ -726,58 +726,60 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       <TimelineRowActivityCtx value={activityState}>
         <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
           {findOpen ? (
-            <InputGroup className="absolute right-4 top-3 z-30 w-auto shadow-lg dark:bg-background **:[input]:w-48">
-              <InputGroupAddon>
-                <SearchIcon aria-hidden="true" />
-              </InputGroupAddon>
-              <InputGroupInput
-                ref={findInputRef}
-                value={findQuery}
-                onChange={(event) => updateFindQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") goToFindMatch(event.shiftKey ? -1 : 1);
-                  if (event.key === "Escape") setFindOpen(false);
-                }}
-                aria-label="Find in thread"
-                placeholder="Find in thread"
-              />
-              <InputGroupAddon align="inline-end" className="gap-1">
-                <span className="min-w-12 text-center text-xs text-muted-foreground">
-                  {findQuery
-                    ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
-                    : ""}
-                </span>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  disabled={findMatches.length === 0}
-                  aria-label="Previous match"
-                  onClick={() => goToFindMatch(-1)}
-                >
-                  <ChevronUpIcon />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  disabled={findMatches.length === 0}
-                  aria-label="Next match"
-                  onClick={() => goToFindMatch(1)}
-                >
-                  <ChevronDownIcon />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Close find"
-                  onClick={() => setFindOpen(false)}
-                >
-                  <XIcon />
-                </Button>
-              </InputGroupAddon>
-            </InputGroup>
+            <div className="absolute right-4 top-3 z-30 rounded-[var(--control-radius)] shadow-lg">
+              <InputGroup className="w-auto dark:bg-background **:[input]:w-48">
+                <InputGroupAddon>
+                  <SearchIcon aria-hidden="true" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  ref={findInputRef}
+                  value={findQuery}
+                  onChange={(event) => updateFindQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") goToFindMatch(event.shiftKey ? -1 : 1);
+                    if (event.key === "Escape") setFindOpen(false);
+                  }}
+                  aria-label="Find in thread"
+                  placeholder="Find in thread"
+                />
+                <InputGroupAddon align="inline-end" className="gap-1">
+                  <span className="min-w-12 text-center text-xs text-muted-foreground">
+                    {findQuery
+                      ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
+                      : ""}
+                  </span>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    disabled={findMatches.length === 0}
+                    aria-label="Previous match"
+                    onClick={() => goToFindMatch(-1)}
+                  >
+                    <ChevronUpIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    disabled={findMatches.length === 0}
+                    aria-label="Next match"
+                    onClick={() => goToFindMatch(1)}
+                  >
+                    <ChevronDownIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Close find"
+                    onClick={() => setFindOpen(false)}
+                  >
+                    <XIcon />
+                  </Button>
+                </InputGroupAddon>
+              </InputGroup>
+            </div>
           ) : null}
           <LegendList<MessagesTimelineRow>
             ref={listRef}
