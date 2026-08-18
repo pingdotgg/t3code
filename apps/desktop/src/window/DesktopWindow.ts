@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
@@ -269,6 +270,7 @@ export const make = Effect.gen(function* () {
   // createMainIfBackendReady, which gates the post-readiness window
   // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
+  const mainWindowCreation = yield* Semaphore.make(1);
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -276,6 +278,9 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  // A cold-start deep link is consumed by the window that loads it. A newer
+  // link arriving during creation remains pending and navigates that window
+  // once it is registered as main.
   let pendingApplicationUrl: string | null = null;
 
   const dismissConnectingSplash = Effect.gen(function* () {
@@ -309,7 +314,7 @@ export const make = Effect.gen(function* () {
     DesktopWindowError
   > {
     yield* previewManager.getBrowserSession();
-    const applicationUrl = pendingApplicationUrl ?? getDesktopUrl(environment.isDevelopment);
+    let applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -356,6 +361,8 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
       },
     });
+    applicationUrl = pendingApplicationUrl ?? applicationUrl;
+    pendingApplicationUrl = null;
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
@@ -720,13 +727,17 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
 
-  const ensureMain = Effect.gen(function* () {
+  const ensureMainUnserialized = Effect.gen(function* () {
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) {
       return existingWindow.value;
     }
     return yield* createMain;
-  }).pipe(Effect.withSpan("desktop.window.ensureMain"));
+  });
+
+  const ensureMain = mainWindowCreation
+    .withPermits(1)(ensureMainUnserialized)
+    .pipe(Effect.withSpan("desktop.window.ensureMain"));
 
   const revealOrCreateMain = Effect.gen(function* () {
     const window = yield* ensureMain;
@@ -737,9 +748,7 @@ export const make = Effect.gen(function* () {
   const createMainIfBackendReady = Effect.gen(function* () {
     const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
-    const existingWindow = yield* currentMainWindow;
-    if (Option.isSome(existingWindow)) return;
-    yield* createMain;
+    yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const openThread = Effect.fn("desktop.window.openThread")(function* (thread: DesktopThreadLink) {
@@ -749,13 +758,21 @@ export const make = Effect.gen(function* () {
       threadId: thread.threadId,
     });
     pendingApplicationUrl = applicationUrl;
-    const existingWindow = yield* currentMainWindow;
-    if (Option.isSome(existingWindow)) {
-      void existingWindow.value.loadURL(applicationUrl).catch(() => undefined);
-      yield* electronWindow.reveal(existingWindow.value);
-      return;
-    }
-    yield* createMainIfBackendReady;
+    yield* mainWindowCreation.withPermits(1)(
+      Effect.gen(function* () {
+        const existingWindow = yield* currentMainWindow;
+        const window = Option.isSome(existingWindow)
+          ? existingWindow.value
+          : (yield* Ref.get(backendReadyRef))
+            ? yield* createMain
+            : null;
+        if (window === null || pendingApplicationUrl !== applicationUrl) return;
+
+        pendingApplicationUrl = null;
+        void window.loadURL(applicationUrl).catch(() => undefined);
+        yield* electronWindow.reveal(window);
+      }),
+    );
   });
 
   const showConnectingSplash = Effect.gen(function* () {
