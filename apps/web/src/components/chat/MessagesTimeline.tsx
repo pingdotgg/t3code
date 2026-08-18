@@ -151,6 +151,7 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
+  activeFindMessageId: MessageId | null;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
 }
@@ -451,6 +452,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [findCaseSensitive, findQuery, findTexts],
   );
   const findMatchIndex = Math.min(findMatchCursor, Math.max(0, findMatches.length - 1));
+  const activeFindMessageId =
+    findOpen && findQuery
+      ? (findMessageEntries[findMatches[findMatchIndex]?.textIndex ?? -1]?.message.id ?? null)
+      : null;
   const updateFindQuery = useCallback(
     (query: string) => {
       setFindQuery(query);
@@ -746,6 +751,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      activeFindMessageId,
       agentPanelModel,
       onOpenAgents,
     }),
@@ -762,6 +768,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      activeFindMessageId,
       agentPanelModel,
       onOpenAgents,
     ],
@@ -824,7 +831,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     pressed={findCaseSensitive}
                     size="xs"
                     variant="primary"
-                    className="font-mono text-[11px]"
+                    className="font-mono text-[11px] sm:text-[11px]"
                     aria-label="Match case"
                     title="Match case"
                     onPressedChange={(pressed) => {
@@ -1333,6 +1340,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
+          forceExpanded={ctx.activeFindMessageId === row.message.id}
         />
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -1902,9 +1910,13 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
+  forceExpanded?: boolean;
   footer?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (props.forceExpanded) setExpanded(true);
+  }, [props.forceExpanded]);
   const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
   const isCollapsed = canCollapse && !expanded;
