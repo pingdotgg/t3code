@@ -59,10 +59,12 @@ import {
   PaintbrushIcon,
   MinusIcon,
   SquarePenIcon,
+  SearchIcon,
   TerminalIcon,
   Undo2Icon,
   WrenchIcon,
   XIcon,
+  ChevronUpIcon,
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
@@ -74,6 +76,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
+  findTextMatches,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
@@ -188,6 +191,7 @@ function TimelineLoadEarlierHeader({
   );
 }
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const THREAD_FIND_HIGHLIGHT = "thread-find";
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
@@ -420,6 +424,103 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatchIndex, setFindMatchIndex] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const findTexts = useMemo(
+    () => rows.map((row) => (row.kind === "message" ? row.message.text : null)),
+    [rows],
+  );
+  const findMatches = useMemo(() => findTextMatches(findTexts, findQuery), [findQuery, findTexts]);
+  const updateFindQuery = useCallback(
+    (query: string) => {
+      setFindQuery(query);
+      setFindMatchIndex(0);
+      const firstMatch = findTextMatches(findTexts, query)[0];
+      if (firstMatch === undefined) return;
+      onManualNavigation();
+      void listRef.current?.scrollToIndex({ index: firstMatch, animated: false, viewOffset: 80 });
+    },
+    [findTexts, listRef, onManualNavigation],
+  );
+  const goToFindMatch = useCallback(
+    (delta: number) => {
+      if (findMatches.length === 0) return;
+      const next = (findMatchIndex + delta + findMatches.length) % findMatches.length;
+      setFindMatchIndex(next);
+      onManualNavigation();
+      void listRef.current?.scrollToIndex({
+        index: findMatches[next]!,
+        animated: false,
+        viewOffset: 80,
+      });
+    },
+    [findMatchIndex, findMatches, listRef, onManualNavigation],
+  );
+
+  useEffect(() => {
+    const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "f" ||
+        (!event.metaKey && !event.ctrlKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        (event.target instanceof Element && event.target.closest("[data-terminal-owner]"))
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setFindOpen(true);
+    };
+    window.addEventListener("keydown", handleFindShortcut, true);
+    return () => window.removeEventListener("keydown", handleFindShortcut, true);
+  }, []);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    const frame = requestAnimationFrame(() => findInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [findOpen]);
+
+  useEffect(() => {
+    CSS.highlights.delete(THREAD_FIND_HIGHLIGHT);
+    const rowIndex = findMatches[findMatchIndex];
+    const rowId = rowIndex === undefined ? undefined : rows[rowIndex]?.id;
+    if (!findOpen || !findQuery || !rowId) return;
+
+    let paintFrame = 0;
+    const mountFrame = requestAnimationFrame(() => {
+      paintFrame = requestAnimationFrame(() => {
+        const root = document.querySelector(`[data-timeline-row-id="${CSS.escape(rowId)}"]`);
+        if (!root) return;
+
+        const ranges: Range[] = [];
+        const needle = findQuery.toLowerCase();
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const text = node.textContent?.toLowerCase() ?? "";
+          for (
+            let offset = 0;
+            (offset = text.indexOf(needle, offset)) !== -1;
+            offset += needle.length
+          ) {
+            const range = new Range();
+            range.setStart(node, offset);
+            range.setEnd(node, offset + needle.length);
+            ranges.push(range);
+          }
+        }
+        CSS.highlights.set(THREAD_FIND_HIGHLIGHT, new Highlight(...ranges));
+      });
+    });
+    return () => {
+      cancelAnimationFrame(mountFrame);
+      cancelAnimationFrame(paintFrame);
+      CSS.highlights.delete(THREAD_FIND_HIGHLIGHT);
+    };
+  }, [findMatchIndex, findMatches, findOpen, findQuery, rows]);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -573,6 +674,57 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
         <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+          {findOpen ? (
+            <div className="absolute right-4 top-3 z-30 flex h-9 items-center gap-1 rounded-lg border bg-background/95 px-2 shadow-lg backdrop-blur">
+              <SearchIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <input
+                ref={findInputRef}
+                value={findQuery}
+                onChange={(event) => updateFindQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") goToFindMatch(event.shiftKey ? -1 : 1);
+                  if (event.key === "Escape") setFindOpen(false);
+                }}
+                aria-label="Find in thread"
+                placeholder="Find in thread"
+                className="w-48 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+              <span className="min-w-12 text-center text-xs text-muted-foreground">
+                {findQuery
+                  ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
+                  : ""}
+              </span>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                disabled={findMatches.length === 0}
+                aria-label="Previous match"
+                onClick={() => goToFindMatch(-1)}
+              >
+                <ChevronUpIcon />
+              </Button>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                disabled={findMatches.length === 0}
+                aria-label="Next match"
+                onClick={() => goToFindMatch(1)}
+              >
+                <ChevronDownIcon />
+              </Button>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Close find"
+                onClick={() => setFindOpen(false)}
+              >
+                <XIcon />
+              </Button>
+            </div>
+          ) : null}
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}

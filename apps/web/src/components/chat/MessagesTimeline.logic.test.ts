@@ -3,10 +3,18 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  findTextMatches,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
+
+describe("findTextMatches", () => {
+  it("finds every case-insensitive occurrence and returns its text index", () => {
+    expect(findTextMatches(["One one", null, "another ONE"], "one")).toEqual([0, 0, 2]);
+    expect(findTextMatches(["anything"], "")).toEqual([]);
+  });
+});
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {

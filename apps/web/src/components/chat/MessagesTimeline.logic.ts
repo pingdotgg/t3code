@@ -242,6 +242,27 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
+export function findTextMatches(
+  texts: ReadonlyArray<string | null | undefined>,
+  query: string,
+): number[] {
+  const needle = query.toLowerCase();
+  if (!needle) return [];
+
+  const matches: number[] = [];
+  texts.forEach((text, index) => {
+    const haystack = text?.toLowerCase() ?? "";
+    for (
+      let offset = 0;
+      (offset = haystack.indexOf(needle, offset)) !== -1;
+      offset += needle.length
+    ) {
+      matches.push(index);
+    }
+  });
+  return matches;
+}
+
 export function resolveAssistantMessageCopyState({
   text,
   showCopyButton,
