@@ -61,6 +61,11 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
+import { NotificationEdgeBusLive } from "./orchestration/Layers/NotificationEdgeBus.ts";
+import { NotificationReactorLive } from "./orchestration/Layers/NotificationReactor.ts";
+import { NotificationTransportLive } from "./orchestration/Layers/NotificationTransport.ts";
+import { NotificationOutboxRepositoryLive } from "./persistence/Layers/NotificationOutbox.ts";
+import { ProjectionStateRepositoryLive } from "./persistence/Layers/ProjectionState.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
@@ -251,7 +256,16 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+  Layer.provideMerge(NotificationReactorLive),
+  // The transport surface and the reactor must share one bus instance: the
+  // reactor publishes decided edges, `notifications.subscribe` consumes them.
+  Layer.provideMerge(NotificationTransportLive),
+  Layer.provideMerge(NotificationEdgeBusLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
+  // The outbox repository is merged rather than hidden: the notification
+  // transports read decided edges out of it over the WS surface.
+  Layer.provideMerge(NotificationOutboxRepositoryLive),
+  Layer.provideMerge(ProjectionStateRepositoryLive),
 );
 
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(

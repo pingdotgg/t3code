@@ -179,6 +179,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
   );
 
+  it.effect("round-trips the notifications toggle, which starts on", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const initial = yield* serverSettings.getSettings;
+      assert.isTrue(initial.notificationsEnabled);
+
+      const off = yield* serverSettings.updateSettings({ notificationsEnabled: false });
+      assert.isFalse(off.notificationsEnabled);
+      // Read back through the service (not the update's return value): both
+      // transports learn the setting this way, so it has to survive the cache.
+      assert.isFalse((yield* serverSettings.getSettings).notificationsEnabled);
+
+      const on = yield* serverSettings.updateSettings({ notificationsEnabled: true });
+      assert.isTrue(on.notificationsEnabled);
+      assert.isTrue((yield* serverSettings.getSettings).notificationsEnabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("deep merges nested settings updates without dropping siblings", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

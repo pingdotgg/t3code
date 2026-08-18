@@ -624,6 +624,13 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // The single notification knob: global on/off for every transport, default on.
+  // Server-authoritative deliberately — the desktop transport lives in the
+  // Electron main process and cannot read browser-local client settings, and two
+  // transports disagreeing about whether notifications are on is the bug this
+  // placement prevents. Per-kind toggles, the focus rule, per-project mute and
+  // quiet hours are hard-coded on purpose; the OS owns Do Not Disturb.
+  notificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `t3-code` server (and with it every
@@ -849,6 +856,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
+  notificationsEnabled: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

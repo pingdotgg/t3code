@@ -34,6 +34,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
+  NOTIFICATION_WS_METHODS,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
   type ProjectEntriesFailure,
@@ -79,6 +80,7 @@ import {
   cleanupFailedUploadedAttachments,
   normalizeDispatchCommand,
 } from "./orchestration/Normalizer.ts";
+import { NotificationTransport } from "./orchestration/Services/NotificationTransport.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -461,6 +463,7 @@ const makeWsRpcLayer = (
         }
       };
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const notificationTransport = yield* NotificationTransport;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
@@ -1571,6 +1574,18 @@ const makeWsRpcLayer = (
               );
             }),
             { "rpc.aggregate": "orchestration" },
+          ),
+        [NOTIFICATION_WS_METHODS.subscribe]: (input) =>
+          observeRpcStreamEffect(
+            NOTIFICATION_WS_METHODS.subscribe,
+            notificationTransport.subscribe(input),
+            { "rpc.aggregate": "notifications" },
+          ),
+        [NOTIFICATION_WS_METHODS.reportTransportOutcome]: (input) =>
+          observeRpcEffect(
+            NOTIFICATION_WS_METHODS.reportTransportOutcome,
+            notificationTransport.reportTransportOutcome(input),
+            { "rpc.aggregate": "notifications" },
           ),
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {

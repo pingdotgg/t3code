@@ -87,7 +87,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, ThreadId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
@@ -406,6 +406,17 @@ export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   ),
 });
 export type PersistedSavedEnvironmentRecord = typeof PersistedSavedEnvironmentRecordSchema.Type;
+
+/**
+ * A thread a desktop notification points at, in both directions: main parks one
+ * when a notification is clicked, and the renderer reports one so main knows
+ * which thread is on screen (the focus suppression rule is per-thread).
+ */
+export const DesktopNotificationTargetSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+});
+export type DesktopNotificationTarget = typeof DesktopNotificationTargetSchema.Type;
 
 export type DesktopServerExposureMode = "local-only" | "network-accessible";
 
@@ -1145,6 +1156,18 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  // Reports which thread the renderer currently has open, or null when none is.
+  // Main suppresses a notification only for the thread that is already on
+  // screen, so it has to be told; nothing else in main knows about threads.
+  reportActiveThread: (target: DesktopNotificationTarget | null) => Promise<void>;
+  // Click routing is signal-then-pull: main parks the clicked thread and pokes
+  // the renderer over a payload-free channel, and the renderer pulls the target
+  // when it is ready. That survives a click landing before any window exists —
+  // cold start, or a window recreated after the last one closed — which a plain
+  // "push the payload" would drop on the floor. Consuming clears the parked
+  // target so a remounting renderer cannot navigate twice.
+  consumePendingDesktopNotificationTarget: () => Promise<DesktopNotificationTarget | null>;
+  onDesktopNotificationTargetAvailable: (listener: () => void) => () => void;
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.

@@ -1,18 +1,29 @@
+/**
+ * Agent awareness — the one phase deriver.
+ *
+ * A phase is a *level*: "what is this thread doing right now". Edge detection
+ * ("did something notification-worthy just happen") is a different question and
+ * lives in the server-side `NotificationReactor`. Keeping the level function
+ * pure and shared is what stops every consumer from growing its own state
+ * machine, which is the whole bug class this module exists to prevent.
+ *
+ * @module agentAwareness
+ */
 import type {
   EnvironmentId,
+  NotificationKind,
+  NotificationThreadPhase,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
 
-export type AgentAwarenessPhase =
-  | "starting"
-  | "running"
-  | "waiting_for_approval"
-  | "waiting_for_input"
-  | "completed"
-  | "failed"
-  | "stale";
+/**
+ * Every phase a surface can render. `stale` is presentation-only — the relay
+ * marks a published card stale when its updates stop arriving — so the deriver
+ * below never returns it and notification rows never record it.
+ */
+export type AgentAwarenessPhase = NotificationThreadPhase | "stale";
 
 export interface AgentAwarenessState {
   readonly environmentId: EnvironmentId;
@@ -23,24 +34,30 @@ export interface AgentAwarenessState {
   readonly headline: string;
   readonly detail?: string;
   readonly modelTitle: string;
+  /**
+   * Presentation only. `updatedAt` must never reach a notification identity
+   * key: it is the last domain-event timestamp, not a write clock.
+   */
   readonly updatedAt: string;
   readonly deepLink: string;
 }
 
+export type AgentAwarenessThreadShell = Pick<
+  OrchestrationThreadShell,
+  | "id"
+  | "title"
+  | "modelSelection"
+  | "session"
+  | "latestTurn"
+  | "updatedAt"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+>;
+
 export interface ProjectThreadAwarenessInput {
   readonly environmentId: EnvironmentId;
   readonly project: Pick<OrchestrationProjectShell, "title">;
-  readonly thread: Pick<
-    OrchestrationThreadShell,
-    | "id"
-    | "title"
-    | "modelSelection"
-    | "session"
-    | "latestTurn"
-    | "updatedAt"
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-  >;
+  readonly thread: AgentAwarenessThreadShell;
 }
 
 export function buildAgentAwarenessDeepLink(input: {
@@ -74,9 +91,17 @@ export function projectThreadAwareness(
   };
 }
 
-function resolveThreadAwarenessPhase(
-  thread: ProjectThreadAwarenessInput["thread"],
-): AgentAwarenessPhase | null {
+/**
+ * Priority-ordered phase derivation.
+ *
+ * The order is load-bearing, and so is its consequence: a thread with both a
+ * pending approval and pending input only ever reports `waiting_for_approval`.
+ * Edge detectors must therefore read attention from the raw booleans, never from
+ * this phase, or one of two simultaneous attentions is silently swallowed.
+ */
+export function resolveThreadAwarenessPhase(
+  thread: AgentAwarenessThreadShell,
+): NotificationThreadPhase | null {
   if (thread.hasPendingApprovals) {
     return "waiting_for_approval";
   }
@@ -116,7 +141,53 @@ function resolveThreadAwarenessPhase(
   return null;
 }
 
-function headlineForPhase(phase: AgentAwarenessPhase): string {
+/**
+ * Everything that counts as "the agent is blocked on the user for an approval".
+ *
+ * Read as raw booleans, never off the phase: `resolveThreadAwarenessPhase` is
+ * priority-ordered, and an actionable proposed plan is not one of its inputs at
+ * all. The notification reactor and the sidebar's raise-hand predicate share
+ * this function so the OS surface and the inbox can never disagree about whether
+ * a thread is waiting on the user.
+ */
+export function threadHasPendingApproval(
+  thread: Pick<OrchestrationThreadShell, "hasPendingApprovals" | "hasActionableProposedPlan">,
+): boolean {
+  return thread.hasPendingApprovals || thread.hasActionableProposedPlan;
+}
+
+/**
+ * Whether the latest turn traces back to a human prompt, or `null` when there is
+ * no turn to classify.
+ *
+ * Providers surface background and subagent output as synthetic turns with no
+ * corresponding user message. Steering can append a later user message to a real
+ * turn, so user activity at or after `requestedAt` still counts.
+ *
+ * Both sides are `IsoDateTime`, so the comparison is a string compare — the same
+ * one `ProjectionPipeline` uses to compute `latestUserMessageAt`. No `Date`
+ * parsing, and no clock.
+ *
+ * Never consults the command id: handoff seed turns arrive under
+ * `server:handoff-turn-start:*` and are genuinely user-initiated, while other
+ * `server:*` families (`server:checkpoint-*`) are not.
+ *
+ * Shared with the sidebar's raise-hand predicate: a background turn's completion
+ * neither notifies nor wakes a snoozed thread.
+ */
+export function isUserInitiatedTurn(
+  thread: Pick<OrchestrationThreadShell, "latestTurn" | "latestUserMessageAt">,
+): boolean | null {
+  if (thread.latestTurn === null) {
+    return null;
+  }
+  if (thread.latestUserMessageAt === null) {
+    return false;
+  }
+  return thread.latestUserMessageAt >= thread.latestTurn.requestedAt;
+}
+
+export function headlineForPhase(phase: AgentAwarenessPhase): string {
   switch (phase) {
     case "starting":
       return "Starting agent";
@@ -135,9 +206,29 @@ function headlineForPhase(phase: AgentAwarenessPhase): string {
   }
 }
 
-function detailForPhase(
+/**
+ * Notification copy keys on the *kind*, not the phase.
+ *
+ * The phase is priority-ordered, so a `user-input-required` edge raised on a
+ * thread that also has a pending approval would otherwise be captioned
+ * "Approval needed".
+ */
+export function headlineForNotificationKind(kind: NotificationKind): string {
+  switch (kind) {
+    case "turn-completed":
+      return "Agent finished";
+    case "turn-failed":
+      return "Agent failed";
+    case "approval-required":
+      return "Approval needed";
+    case "user-input-required":
+      return "Waiting for input";
+  }
+}
+
+export function detailForPhase(
   phase: AgentAwarenessPhase,
-  thread: ProjectThreadAwarenessInput["thread"],
+  thread: AgentAwarenessThreadShell,
 ): string | undefined {
   if (phase === "failed") {
     return thread.session?.lastError ?? undefined;

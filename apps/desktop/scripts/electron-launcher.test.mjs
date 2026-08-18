@@ -1,6 +1,7 @@
 import { assert, describe, it } from "vite-plus/test";
 
 import {
+  APP_BUNDLE_ID,
   makeDevelopmentLauncherScript,
   resolveElectronBinaryPath,
   resolveMacLauncherIconPaths,
@@ -29,6 +30,22 @@ describe("electron development launcher", () => {
       script,
       "exec '/repo/node_modules/electron/Electron' --t3code-dev-root='/repo/apps/desktop' '/repo/apps/desktop/dist-electron/main.cjs' \"$@\"",
     );
+  });
+
+  it("gives the bundle a T3 Code-owned identifier and passes it to the app", () => {
+    // Native notifications are attributed to the bundle identifier: an unpatched
+    // dev bundle shows toasts as "Electron" and files them under Electron's own
+    // notification permission, so this is the regression guard for that.
+    assert.match(APP_BUNDLE_ID, /^com\.t3tools\.t3code(\.dev\.[a-z0-9]+)?$/);
+
+    const script = makeDevelopmentLauncherScript({
+      electronBinaryPath: "/repo/node_modules/electron/Electron",
+      mainEntryPath: "/repo/apps/desktop/dist-electron/main.cjs",
+      desktopRoot: "/repo/apps/desktop",
+      environment: {},
+    });
+
+    assert.include(script, `export T3CODE_DESKTOP_APP_USER_MODEL_ID='${APP_BUNDLE_ID}'`);
   });
 
   it("repairs Electron before loading the package entrypoint", () => {

@@ -147,6 +147,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     };
   },
+  reportActiveThread: (target) =>
+    ipcRenderer.invoke(IpcChannels.REPORT_ACTIVE_THREAD_CHANNEL, target),
+  consumePendingDesktopNotificationTarget: () =>
+    ipcRenderer.invoke(IpcChannels.CONSUME_NOTIFICATION_TARGET_CHANNEL),
+  onDesktopNotificationTargetAvailable: (listener) => {
+    const wrappedListener = () => {
+      listener();
+    };
+
+    ipcRenderer.on(IpcChannels.NOTIFICATION_TARGET_AVAILABLE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.NOTIFICATION_TARGET_AVAILABLE_CHANNEL, wrappedListener);
+    };
+  },
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),

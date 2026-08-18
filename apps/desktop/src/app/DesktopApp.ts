@@ -19,6 +19,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
+import * as DesktopNotificationWatcher from "../notifications/DesktopNotificationWatcher.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
@@ -148,6 +149,7 @@ const bootstrap = Effect.gen(function* () {
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const notificationWatcher = yield* DesktopNotificationWatcher.DesktopNotificationWatcher;
   yield* logBootstrapInfo("bootstrap start");
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
@@ -215,6 +217,10 @@ const bootstrap = Effect.gen(function* () {
     // in parallel rather than blocking primary readiness on a possibly
     // slow first wsl.exe spawn.
     yield* Effect.forkScoped(wslBackend.reconcile);
+    // Notifications have to outlive the window, so main subscribes itself.
+    // Forked rather than awaited because the watcher waits for the backend it
+    // was just asked to start.
+    yield* Effect.forkScoped(notificationWatcher.run);
   }
 }).pipe(Effect.withSpan("desktop.bootstrap"));
 

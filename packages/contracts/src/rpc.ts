@@ -75,6 +75,15 @@ import {
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
 import {
+  NOTIFICATION_WS_METHODS,
+  NotificationReportTransportOutcomeError,
+  NotificationReportTransportOutcomeInput,
+  NotificationStreamItem,
+  NotificationSubscribeError,
+  NotificationSubscribeInput,
+  NotificationTransportOutcomeReport,
+} from "./notifications.ts";
+import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -1003,6 +1012,26 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+/**
+ * The notification transport stream. Cursor-resumable for reconnect gaps only;
+ * a subscription without `afterSequence` starts empty by design.
+ */
+export const WsNotificationsSubscribeRpc = Rpc.make(NOTIFICATION_WS_METHODS.subscribe, {
+  payload: NotificationSubscribeInput,
+  success: NotificationStreamItem,
+  error: Schema.Union([NotificationSubscribeError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsNotificationsReportTransportOutcomeRpc = Rpc.make(
+  NOTIFICATION_WS_METHODS.reportTransportOutcome,
+  {
+    payload: NotificationReportTransportOutcomeInput,
+    success: NotificationTransportOutcomeReport,
+    error: Schema.Union([NotificationReportTransportOutcomeError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsSubscribeBackgroundPolicyRpc = Rpc.make(WS_METHODS.subscribeBackgroundPolicy, {
   payload: Schema.Struct({}),
   success: BackgroundPolicySnapshot,
@@ -1120,4 +1149,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsNotificationsSubscribeRpc,
+  WsNotificationsReportTransportOutcomeRpc,
 );

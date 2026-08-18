@@ -26,15 +26,20 @@ function makeShell(input: {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
   readonly sessionStatus?: "starting" | "running" | "ready" | "error";
-  readonly pending?: "approval" | "user-input";
+  readonly pending?: "approval" | "user-input" | "proposed-plan";
   readonly turnCompletedAt?: string | null;
+  /** Omitted means "the user prompted this turn"; null makes it a background turn. */
+  readonly latestUserMessageAt?: string | null;
 }): ThreadSnoozeShell {
   const threadId = ThreadId.make("thread-1");
   return {
     snoozedUntil: input.snoozedUntil ?? null,
     snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
     hasPendingApprovals: input.pending === "approval",
+    hasActionableProposedPlan: input.pending === "proposed-plan",
     hasPendingUserInput: input.pending === "user-input",
+    latestUserMessageAt:
+      input.latestUserMessageAt === undefined ? SNOOZED_AT : input.latestUserMessageAt,
     session:
       input.sessionStatus === undefined
         ? null
@@ -158,6 +163,34 @@ describe("threadRaisedHandWhileSnoozed", () => {
         makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "error" }),
       ),
     ).toBe(true);
+  });
+
+  // The reactor notifies `approval-required` for an actionable proposed plan, so
+  // the inbox has to wake for it too — one predicate, two surfaces.
+  it("is true for an actionable proposed plan", () => {
+    expect(
+      threadRaisedHandWhileSnoozed(
+        makeShell({ snoozedUntil: FUTURE_WAKE, pending: "proposed-plan" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores a background turn's completion, exactly as detection does", () => {
+    const completedAt = "2026-04-10T11:30:00.000Z";
+    expect(
+      threadRaisedHandWhileSnoozed(
+        makeShell({ snoozedUntil: FUTURE_WAKE, turnCompletedAt: completedAt }),
+      ),
+    ).toBe(true);
+    expect(
+      threadRaisedHandWhileSnoozed(
+        makeShell({
+          snoozedUntil: FUTURE_WAKE,
+          turnCompletedAt: completedAt,
+          latestUserMessageAt: null,
+        }),
+      ),
+    ).toBe(false);
   });
 });
 

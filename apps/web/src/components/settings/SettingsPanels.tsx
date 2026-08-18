@@ -514,6 +514,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
         ? ["Stream token by token"]
         : []),
+      ...(settings.notificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.notificationsEnabled
+        ? ["Notifications"]
+        : []),
       ...(settings.enableProviderUpdateChecks !==
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
@@ -572,6 +575,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
+      settings.notificationsEnabled,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
@@ -661,6 +665,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      notificationsEnabled: DEFAULT_UNIFIED_SETTINGS.notificationsEnabled,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2103,6 +2108,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
               }
               aria-label="Show skills in slash menu"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("notifications")}
+          description="Announce finished turns and requests that need you."
+          resetAction={
+            settings.notificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.notificationsEnabled ? (
+              <SettingResetButton
+                label="notifications"
+                onClick={() =>
+                  updateSettings({
+                    notificationsEnabled: DEFAULT_UNIFIED_SETTINGS.notificationsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.notificationsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ notificationsEnabled: Boolean(checked) })
+              }
+              aria-label="Show notifications"
             />
           }
         />

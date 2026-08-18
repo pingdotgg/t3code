@@ -106,6 +106,13 @@ export class DesktopWindow extends Context.Service<
     // guest page instead of the app UI. The menu routes here to always target
     // the main window.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
+    // Sends `args` to the renderer on `channel`, revealing (or creating) a
+    // window first. Notification clicks land here: the window that must receive
+    // them may not exist yet, which is why this both creates and reveals.
+    readonly dispatchRendererEvent: (
+      channel: string,
+      ...args: readonly unknown[]
+    ) => Effect.Effect<void, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -779,6 +786,33 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
+  const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
+    channel: string,
+    ...args: readonly unknown[]
+  ) {
+    yield* Effect.annotateCurrentSpan({ channel });
+    const existingWindow = yield* focusedMainWindow;
+    if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
+      return;
+    }
+    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+
+    const send = () => {
+      if (targetWindow.isDestroyed()) return;
+      targetWindow.webContents.send(channel, ...args);
+      void runPromise(electronWindow.reveal(targetWindow));
+    };
+
+    // A window still loading its main frame has no listeners yet, so the
+    // message would be dropped silently. Wait for the load instead.
+    if (targetWindow.webContents.isLoadingMainFrame()) {
+      targetWindow.webContents.once("did-finish-load", send);
+      return;
+    }
+
+    send();
+  });
+
   const createMainIfBackendReady = Effect.gen(function* () {
     const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
@@ -871,27 +905,12 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
-    dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
-      yield* Effect.annotateCurrentSpan({ action });
-      const existingWindow = yield* focusedMainWindow;
-      if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
-        return;
-      }
-      const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-
-      const send = () => {
-        if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
-      };
-
-      if (targetWindow.webContents.isLoadingMainFrame()) {
-        targetWindow.webContents.once("did-finish-load", send);
-        return;
-      }
-
-      send();
-    }),
+    dispatchMenuAction: (action) =>
+      Effect.annotateCurrentSpan({ action }).pipe(
+        Effect.andThen(dispatchRendererEvent(MENU_ACTION_CHANNEL, action)),
+        Effect.withSpan("desktop.window.dispatchMenuAction"),
+      ),
+    dispatchRendererEvent,
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
       const window = yield* focusedMainWindow;

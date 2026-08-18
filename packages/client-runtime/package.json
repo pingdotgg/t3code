@@ -75,6 +75,10 @@
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
     },
+    "./state/notifications": {
+      "types": "./src/state/notifications.ts",
+      "default": "./src/state/notifications.ts"
+    },
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"

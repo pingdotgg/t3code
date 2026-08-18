@@ -86,6 +86,8 @@ export class ElectronWindow extends Context.Service<
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    /** Whether any window of this app currently has OS focus. */
+    readonly isAnyFocused: Effect.Effect<boolean>;
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
@@ -165,6 +167,18 @@ export const make = Effect.gen(function* () {
     return yield* currentMainOrFirst;
   });
 
+  const isAnyFocused = Effect.try({
+    try: () => Electron.BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    catch: (cause) =>
+      new ElectronWindowOperationError({
+        operation: "get-focused-window",
+        platform,
+        windowId: null,
+        channel: null,
+        cause,
+      }),
+  }).pipe(Effect.orDie);
+
   return ElectronWindow.of({
     create: (options) => {
       const webPreferences = options.webPreferences;
@@ -198,6 +212,7 @@ export const make = Effect.gen(function* () {
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
+    isAnyFocused,
     setMain: (window) => Ref.set(mainWindowRef, Option.some(window)),
     clearMain: (window) =>
       Ref.update(mainWindowRef, (current) => {

@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import { isUserInitiatedTurn, threadHasPendingApproval } from "@t3tools/shared/agentAwareness";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
@@ -170,22 +171,30 @@ export type ThreadSnoozeShell = Pick<
   | "snoozedUntil"
   | "snoozedAt"
   | "hasPendingApprovals"
+  | "hasActionableProposedPlan"
   | "hasPendingUserInput"
   | "session"
   | "latestTurn"
+  | "latestUserMessageAt"
 >;
 
 /**
  * A snoozed thread "raises its hand" when something happens that outranks
  * the user's snooze: the agent is blocked on them (approval / user input),
- * the session failed, or a run completed after the snooze was set — the
- * v1 taste of event-based snooze ("something happened" wakes early).
+ * the session failed, or a user-initiated run completed after the snooze was
+ * set — the v1 taste of event-based snooze ("something happened" wakes early).
  * Raising a hand never clears the server-side snooze fields; it only stops
  * the thread from CLASSIFYING as snoozed, exactly like blocked work and
  * effectiveSettled.
+ *
+ * Snooze and notification detection are the same fact (SPEC §3), so the four
+ * conditions here are exactly the four notification kinds and they are read
+ * through the same shared predicates the reactor uses: an actionable proposed
+ * plan is an approval, and a background turn's completion is neither notified
+ * nor woken.
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
+  if (threadHasPendingApproval(shell) || shell.hasPendingUserInput) return true;
   // Only a FRESH failure raises the hand: a thread snoozed while already
   // failed stays snoozed — that snooze was the user saying "I saw it, not
   // now". session.updatedAt stamps the status edge, so an error newer than
@@ -196,15 +205,24 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   ) {
     return true;
   }
-  if (
-    shell.snoozedAt != null &&
-    shell.latestTurn?.state === "completed" &&
-    shell.latestTurn.completedAt != null &&
-    Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
-  ) {
-    return true;
-  }
-  return false;
+  return userInitiatedCompletionAfterSnooze(shell) !== null;
+}
+
+/**
+ * When a user-initiated turn completed after the snooze was set, or null.
+ *
+ * The initiator filter mirrors the reactor's `turn-completed` guard: a
+ * background/subagent turn finishing is not a notification and must not wake a
+ * snoozed thread either. `null` from `isUserInitiatedTurn` means "cannot tell",
+ * which notifies (and wakes) — the deliberate fail-safe direction.
+ */
+function userInitiatedCompletionAfterSnooze(shell: ThreadSnoozeShell): string | null {
+  if (shell.snoozedAt == null) return null;
+  const turn = shell.latestTurn;
+  if (turn?.state !== "completed" || turn.completedAt == null) return null;
+  if (Date.parse(turn.completedAt) <= Date.parse(shell.snoozedAt)) return null;
+  if (isUserInitiatedTurn(shell) === false) return null;
+  return turn.completedAt;
 }
 
 /**
@@ -269,13 +287,9 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
-    if (
-      shell.snoozedAt != null &&
-      shell.latestTurn?.state === "completed" &&
-      shell.latestTurn.completedAt != null &&
-      Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
-    ) {
-      return shell.latestTurn.completedAt;
+    const completedAt = userInitiatedCompletionAfterSnooze(shell);
+    if (completedAt !== null) {
+      return completedAt;
     }
     return shell.session?.updatedAt ?? shell.snoozedAt ?? null;
   }

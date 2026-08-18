@@ -11,6 +11,7 @@ import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Socket from "effect/unstable/socket/Socket";
 
 import * as Electron from "electron";
 
@@ -24,6 +25,7 @@ import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
+import * as ElectronNotification from "./electron/ElectronNotification.ts";
 import * as ElectronPowerMonitor from "./electron/ElectronPowerMonitor.ts";
 import * as ElectronProtocol from "./electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "./electron/ElectronSafeStorage.ts";
@@ -44,6 +46,8 @@ import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
+import * as DesktopNotifications from "./notifications/DesktopNotifications.ts";
+import * as DesktopNotificationWatcher from "./notifications/DesktopNotificationWatcher.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
@@ -118,6 +122,7 @@ const electronLayer = Layer.mergeAll(
   ElectronApp.layer,
   ElectronDialog.layer,
   ElectronMenu.layer,
+  ElectronNotification.layer,
   ElectronPowerMonitor.layer,
   ElectronProtocol.layer,
   ElectronSafeStorage.layer,
@@ -182,16 +187,26 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(desktopBackendLayer),
 );
 
-const desktopApplicationLayer = Layer.mergeAll(
+const desktopServicesLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
+  DesktopNotifications.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
 ).pipe(
   Layer.provideMerge(DesktopUpdates.layer),
   Layer.provideMerge(desktopWslBackendLayer),
   Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
+);
+
+// The watcher stacks on top of the rest rather than merging alongside it: it has
+// to reach the same DesktopNotifications instance every other caller uses, since
+// that service's dedupe, window-cap and focus state is per-instance. Electron's
+// main process runs on Node 22, so the global WebSocket is real.
+const desktopApplicationLayer = DesktopNotificationWatcher.layer.pipe(
+  Layer.provide(Socket.layerWebSocketConstructorGlobal),
+  Layer.provideMerge(desktopServicesLayer),
 );
 
 const desktopClerkLayer = DesktopClerk.layer.pipe(

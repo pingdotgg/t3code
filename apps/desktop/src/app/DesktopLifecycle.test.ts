@@ -67,6 +67,7 @@ function makeElectronWindowLayer(destroyAll: Effect.Effect<void> = Effect.void) 
     main: Effect.die("unexpected main window read"),
     currentMainOrFirst: Effect.die("unexpected current window read"),
     focusedMainOrFirst: Effect.die("unexpected focused window read"),
+    isAnyFocused: Effect.succeed(false),
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
     reveal: () => Effect.void,
@@ -93,6 +94,7 @@ function makeDesktopWindowLayer(
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
     dispatchMenuAction: () => Effect.void,
+    dispatchRendererEvent: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
   });

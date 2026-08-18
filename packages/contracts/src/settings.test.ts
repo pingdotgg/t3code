@@ -162,6 +162,24 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ServerSettings.notificationsEnabled", () => {
+  it("defaults notifications on", () => {
+    expect(DEFAULT_SERVER_SETTINGS.notificationsEnabled).toBe(true);
+    expect(decodeServerSettings({}).notificationsEnabled).toBe(true);
+  });
+
+  it("round-trips the off state through decode, encode, and patch", () => {
+    const decoded = decodeServerSettings({ notificationsEnabled: false });
+    expect(decoded.notificationsEnabled).toBe(false);
+    expect(encodeServerSettings(decoded).notificationsEnabled).toBe(false);
+    expect(decodeServerSettingsPatch({ notificationsEnabled: false }).notificationsEnabled).toBe(
+      false,
+    );
+    // Absent from a patch means "leave it alone", not "turn it off".
+    expect(decodeServerSettingsPatch({}).notificationsEnabled).toBeUndefined();
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
