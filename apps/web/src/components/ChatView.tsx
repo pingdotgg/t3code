@@ -6288,7 +6288,9 @@ function ChatViewContent(props: ChatViewProps) {
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {!rightPanelOpen && !retainClosedRightPanelContent ? panelLayoutControls : null}
+          {!rightPanelOpen && (shouldUseRightPanelSheet || !retainClosedRightPanelContent)
+            ? panelLayoutControls
+            : null}
           <ChatHeader
             {...(!supportsPullRequests || threadRepository === null
               ? {}
