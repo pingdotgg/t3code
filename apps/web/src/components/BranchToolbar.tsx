@@ -476,7 +476,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         "group/composer-context min-w-0 items-center overflow-x-clip overflow-y-visible text-muted-foreground",
         placement === "header"
           ? "flex max-w-80 shrink gap-1"
-          : "flex h-8 shrink-0 gap-2 border-border/40 border-b bg-background px-3 sm:px-5",
+          : "flex h-8 shrink-0 gap-2 border-border/40 border-b bg-background ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]",
       )}
     >
       {isMobile && showGitControls ? (
