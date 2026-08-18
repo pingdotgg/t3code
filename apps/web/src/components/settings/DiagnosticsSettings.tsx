@@ -273,14 +273,14 @@ function TraceIdCell({ traceId }: { traceId: string }) {
       <Tooltip>
         <TooltipTrigger
           render={
-            <button
-              type="button"
-              className="cursor-pointer inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
               aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
               onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
-            </button>
+            </Button>
           }
         />
         <TooltipPopup side="top">{copied ? "Copied" : "Copy full trace ID"}</TooltipPopup>
@@ -322,14 +322,14 @@ function ProcessNameCell({
       style={{ paddingLeft: `${Math.min(process.depth, 6) * 10}px` }}
     >
       {hasChildren ? (
-        <button
-          type="button"
-          className="cursor-pointer inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
           onClick={() => onToggle(process.pid)}
         >
           <ChevronIcon className="size-3.5" />
-        </button>
+        </Button>
       ) : (
         <span className="size-5 shrink-0" aria-hidden="true" />
       )}
@@ -793,9 +793,8 @@ function DiagnosticsRefreshButton({
       <TooltipTrigger
         render={
           <Button
-            size="icon-xs"
-            variant="ghost"
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            size="icon-micro"
+            variant="ghost-muted"
             disabled={isPending}
             onClick={onClick}
             aria-label={label}
@@ -1130,9 +1129,8 @@ export function DiagnosticsSettingsPanel() {
               <TooltipTrigger
                 render={
                   <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    size="icon-micro"
+                    variant="ghost-muted"
                     disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
                     onClick={openLogsDirectory}
                     aria-label="Open logs folder"

@@ -4,6 +4,7 @@ import { vi } from "vite-plus/test";
 
 const composerDraftFileMocks = vi.hoisted(() => {
   let document = "";
+  let writeError: Error | null = null;
   let releaseRead: (() => void) | null = null;
   let readBarrier = Promise.resolve();
 
@@ -17,16 +18,25 @@ const composerDraftFileMocks = vi.hoisted(() => {
       releaseRead?.();
       releaseRead = null;
     },
+    getDocument() {
+      return document;
+    },
     setDocument(value: unknown) {
       document = JSON.stringify(value);
+    },
+    setWriteError(error: Error | null) {
+      writeError = error;
     },
     Directory: class {
       create() {}
     },
     File: class {
       exists = true;
+      parentDirectory = null;
 
       create() {}
+
+      moveSync() {}
 
       async text() {
         await readBarrier;
@@ -34,6 +44,9 @@ const composerDraftFileMocks = vi.hoisted(() => {
       }
 
       write(value: string) {
+        if (writeError) {
+          throw writeError;
+        }
         document = value;
       }
     },
@@ -49,15 +62,18 @@ vi.mock("expo-file-system", () => ({
 import { appAtomRegistry } from "./atom-registry";
 import {
   clearComposerDraftContentState,
+  ComposerDraftPersistenceError,
   composerDraftsAtom,
   copyComposerDraftContentIfEmpty,
   copyComposerDraftContentState,
   decodePersistedComposerDrafts,
   type ComposerDraft,
+  flushComposerDrafts,
   getComposerDraftSnapshot,
   mergeComposerDraftContentState,
   removeComposerDraftsForEnvironment,
   restoreComposerDraftSnapshotState,
+  setComposerDraftText,
 } from "./use-composer-drafts";
 
 const DRAFT: ComposerDraft = {
@@ -392,5 +408,28 @@ describe("mobile composer drafts", () => {
       [targetKey]: target,
       [unrelatedKey]: unrelated,
     });
+  });
+
+  it("lands a still-debounced draft write when flushed", async () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "typed right before the restart");
+
+    await flushComposerDrafts();
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument())).toMatchObject({
+      drafts: { [draftKey]: { text: "typed right before the restart" } },
+    });
+  });
+
+  it("propagates a flush write failure instead of resolving as saved", async () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "unsaved");
+    composerDraftFileMocks.setWriteError(new Error("storage unavailable"));
+
+    try {
+      await expect(flushComposerDrafts()).rejects.toBeInstanceOf(ComposerDraftPersistenceError);
+    } finally {
+      composerDraftFileMocks.setWriteError(null);
+    }
   });
 });

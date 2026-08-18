@@ -7,11 +7,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
+
 import {
-  CLI_EXTERNAL_PACKAGE_PREFIXES,
-  CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS,
   CLI_RUNTIME_EXTERNAL_PREFIXES,
   findInlinedExternalPackages,
+  selectCliRuntimeExternalDependencies,
   shouldBundleCliDependency,
 } from "./cli-external-packages.ts";
 
@@ -60,39 +61,41 @@ describe("shouldBundleCliDependency", () => {
   });
 
   // The real package is `node-gyp-build-optional-packages`, reached by prefix.
-  // Matching it as external while failing to unpack it is invisible on the
-  // Windows primary (which reads app.asar) and breaks only under WSL.
+  // It is transitive to a selected dependency root, so the runtime closure test
+  // below ensures it follows that root into the sidecar.
   it("treats prefix-matched siblings as external", () => {
     assert.strictEqual(shouldBundleCliDependency("node-gyp-build-optional-packages"), false);
   });
 });
 
-describe("CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS", () => {
-  it("unpacks every external prefix from both the top level and the pnpm store", () => {
-    for (const prefix of CLI_EXTERNAL_PACKAGE_PREFIXES) {
-      assert.include(CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS, `node_modules/${prefix}*/**/*`, prefix);
-      assert.include(
-        CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS,
-        `node_modules/.pnpm/**/node_modules/${prefix}*/**/*`,
-        prefix,
-      );
-    }
+describe("selectCliRuntimeExternalDependencies", () => {
+  it("keeps only runtime-external dependency roots for the Windows sidecar", () => {
+    assert.deepStrictEqual(
+      selectCliRuntimeExternalDependencies({
+        "@effect/platform-bun": "1.0.0",
+        "@ff-labs/fff-node": "2.0.0",
+        effect: "3.0.0",
+        "node-pty": "4.0.0",
+      }),
+      {
+        "@ff-labs/fff-node": "2.0.0",
+        "node-pty": "4.0.0",
+      },
+    );
   });
 
-  // Without the trailing `*` the globs stop covering prefix-matched siblings,
-  // which is exactly how a package ends up external but not unpacked.
-  it("keeps the trailing wildcard that matches prefix siblings", () => {
-    assert.include(CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS, "node_modules/node-gyp-build*/**/*");
+  it("selects every external root declared by the server", () => {
+    assert.deepStrictEqual(
+      Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
+      ["@ff-labs/fff-node", "msgpackr-extract", "node-pty"],
+    );
   });
 });
 
-// The failure this guards is invisible on Windows and fatal under WSL.
-//
 // An external package is loaded from the real filesystem, so its own `require`
 // also resolves from the real filesystem. If one of its dependencies was
-// bundled away instead of left external, that dependency exists only inside
-// app.asar — which the Windows primary reads transparently under
-// ELECTRON_RUN_AS_NODE, and plain `node` under WSL cannot.
+// bundled away instead of left external, that dependency does not follow the
+// selected root into the sidecar.
 //
 // Found the hard way: node-gyp-build-optional-packages requires detect-libc,
 // which was bundled. Windows was fine; WSL got MODULE_NOT_FOUND.
@@ -103,8 +106,8 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   // by name from this file at all, and an `exports` map can refuse the
   // `/package.json` subpath outright (@ff-labs/fff-node). Both surface as "not
   // installed", which would let this test skip everything and pass while
-  // checking nothing. The store is also what asarUnpack globs target, so this
-  // reads the same tree the build packages.
+  // checking nothing. The store contains the dependency graph the sidecar's
+  // minimal production install resolves.
   const readInstalledPackages = Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

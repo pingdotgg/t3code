@@ -78,6 +78,7 @@ import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { Button } from "../components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../components/ui/menu";
 import { SidebarInset } from "../components/ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import {
   selectActiveRightPanelSurface,
@@ -971,7 +972,6 @@ function PullRequestsRouteView() {
   useLiveRefresh(
     () => {
       refreshList();
-      baselineQuery.refresh();
       authoredQuery.refresh();
       reviewingQuery.refresh();
     },
@@ -1303,7 +1303,14 @@ function PullRequestsRouteView() {
     />
   );
   const openPanelControls = (
-    <div className="workspace-titlebar-controls right-2 z-50 gap-1 [-webkit-app-region:no-drag] wco:right-[var(--workspace-controls-right)]">
+    <div
+      // The bare workspace-titlebar-controls inset plus mr-px: the same
+      // anchor the thread view's controls and the sidebar trigger use, so
+      // every titlebar cluster in the app sits one shared inset from its
+      // edge.
+      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      data-workspace-titlebar-controls
+    >
       {panelToggleControls}
     </div>
   );
@@ -1484,7 +1491,13 @@ function PullRequestsRouteView() {
     searchInput,
     filtersMenu,
     rightPanelControl:
-      !pullRequestsSupported || rightPanelState.isOpen ? null : panelToggleControls,
+      // Footprint reserve while the panel is closed: the toggle itself stays
+      // mounted at the fixed titlebar inset in both states so it cannot move
+      // on toggle, and this spacer keeps refresh from sliding underneath it
+      // (sized per header padding so refresh ends a normal gap short of it).
+      !pullRequestsSupported || rightPanelState.isOpen ? null : (
+        <span aria-hidden className="w-7 shrink-0 sm:w-5" />
+      ),
     rightPanelOpen: rightPanelState.isOpen,
     listBody,
   };
@@ -1526,7 +1539,7 @@ function PullRequestsRouteView() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="relative flex min-h-0 flex-1">
-        {pullRequestsSupported && rightPanelState.isOpen ? openPanelControls : null}
+        {pullRequestsSupported ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} />
 
         {rightPanelState.isOpen && activePullRequestSurface && panelEnvironmentId !== null ? (
@@ -1626,22 +1639,33 @@ function CompactFilterMenu<Value extends string>({
       </MenuTrigger>
       <MenuPopup align="start" side="bottom" className="min-w-40">
         <MenuRadioGroup value={value} onValueChange={(next) => onChange(next as Value)}>
-          {options.map((option) => (
-            <MenuRadioItem
-              key={option.value}
-              value={option.value}
-              // A host the server has already said it cannot read is not a choice here either.
-              // The pills disable it; a menu that offers it would answer the press by replacing
-              // a working list with the same failure the pill row exists to explain.
-              disabled={option.unavailable !== undefined}
-              title={option.unavailable}
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <option.Icon aria-hidden className="size-3.5" />
-                {option.label}
-              </span>
-            </MenuRadioItem>
-          ))}
+          {options.map((option) => {
+            // A host the server has already said it cannot read is not a choice here either.
+            // The pills disable it; a menu that offers it would answer the press by replacing
+            // a working list with the same failure the pill row exists to explain.
+            const item = (
+              <MenuRadioItem
+                key={option.value}
+                value={option.value}
+                className={option.unavailable ? "data-disabled:pointer-events-auto" : undefined}
+                disabled={option.unavailable !== undefined}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <option.Icon aria-hidden className="size-3.5" />
+                  {option.label}
+                </span>
+              </MenuRadioItem>
+            );
+            if (!option.unavailable) return item;
+            return (
+              <Tooltip key={option.value}>
+                <TooltipTrigger render={item} />
+                <TooltipPopup side="top" className="max-w-80">
+                  {option.unavailable}
+                </TooltipPopup>
+              </Tooltip>
+            );
+          })}
         </MenuRadioGroup>
       </MenuPopup>
     </Menu>
@@ -1816,7 +1840,7 @@ function PullRequestsColumn({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <header
         className={cn(
-          "workspace-topbar drag-region gap-1.5 px-3 sm:px-5",
+          "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1.5 px-3 sm:px-5",
           // A closed right panel leaves this column full-width, so its header runs
           // underneath the native window controls on Windows; reserve the inset the
           // way Settings and the chat view do. While the panel is open the column
@@ -1891,7 +1915,7 @@ function PullRequestsColumn({
 
       <div
         ref={scrollRef}
-        className="pull-requests-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
+        className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
       >
         {/* The top padding is the fade band's own height (1.5rem here), the same pairing the
             settings page makes: at rest the controls sit fully below the mask, and only

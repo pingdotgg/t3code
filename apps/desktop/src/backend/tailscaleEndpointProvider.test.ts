@@ -5,7 +5,6 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
   resolveTailscaleAdvertisedEndpoints,
 } from "./tailscaleEndpointProvider.ts";
@@ -22,13 +21,6 @@ const unusedTailscaleExternalServicesLayer = Layer.mergeAll(
 );
 
 describe("tailscale endpoint provider", () => {
-  it("detects Tailnet IPv4 addresses", () => {
-    assert.equal(isTailscaleIpv4Address("100.64.0.1"), true);
-    assert.equal(isTailscaleIpv4Address("100.127.255.254"), true);
-    assert.equal(isTailscaleIpv4Address("100.128.0.1"), false);
-    assert.equal(isTailscaleIpv4Address("192.168.1.44"), false);
-  });
-
   it.effect("parses MagicDNS names from tailscale status", () =>
     Effect.gen(function* () {
       const dnsName = yield* parseTailscaleMagicDnsName(

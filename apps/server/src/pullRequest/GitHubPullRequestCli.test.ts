@@ -1,9 +1,11 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
 
@@ -16,6 +18,7 @@ const layer = it.layer(
         execute: mockedExecute,
       }),
     ),
+    Layer.provide(GitHubGraphQlBudget.layer),
   ),
 );
 
@@ -107,9 +110,16 @@ function threadCommentsPage(
   ids: ReadonlyArray<string>,
   endCursor: string | null,
   totalCount: number,
+  pullRequestId = "PR_7",
 ): string {
   return JSON.stringify({
-    data: { node: { comments: threadComments(ids, endCursor, totalCount) } },
+    data: {
+      repository: { pullRequest: { id: "PR_7" } },
+      node: {
+        pullRequest: { id: pullRequestId },
+        comments: threadComments(ids, endCursor, totalCount),
+      },
+    },
   });
 }
 
@@ -1601,6 +1611,41 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("accounts for the avatar lookup in the GraphQL budget", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              data: {
+                nodes: [{ login: "octocat", avatarUrl: "https://avatars/octocat" }],
+                rateLimit: {
+                  cost: 1,
+                  limit: 5_000,
+                  remaining: 4_999,
+                  resetAt: "2099-08-13T14:00:00Z",
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const avatars = yield* cli.listActorAvatars({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        ids: ["MDQ6VXNlcjE="],
+      });
+
+      expect(callAt(0).args).toContain("ids[]=MDQ6VXNlcjE=");
+      expect(callAt(0).args.at(-1)).toContain("rateLimit { cost limit remaining resetAt }");
+      expect(avatars.get("octocat")).toBe("https://avatars/octocat");
+    }),
+  );
+
   it.effect("fails when the authenticated account has no login", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
@@ -1624,7 +1669,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
         verdict: "approve",
         body: "Looks right.",
-        comments: [{ path: "src/a.ts", line: 4, side: "right", body: "nit" }],
+        comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
       });
 
       expect(callAt(0).args).toEqual([
@@ -2144,7 +2189,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("finishes a thread longer than one page from the thread's own node", () =>
+  it.effect("leaves a long thread paged until the reader asks for more", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -2156,9 +2201,6 @@ layer("GitHubPullRequestCli.layer", (it) => {
           ),
         ),
       );
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(threadCommentsPage(["c2", "c3"], null, 3))),
-      );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       const conversation = yield* cli.listReviewThreadComments({
@@ -2168,10 +2210,62 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
       });
 
-      expect(callAt(1).args).toContain("threadId=PRRT_1");
-      expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2", "c3"]);
-      // GitHub's own count, which is what the page shows however much of it was read.
-      assert.strictEqual(conversation.commentCount, 3);
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1"]);
+      expect(conversation.reviewThreads[0]).toMatchObject({
+        commentCount: 3,
+        nextCommentsCursor: "Y3Vyc29yOjI",
+      });
+      assert.isTrue(conversation.truncated);
+    }),
+  );
+
+  it.effect("reads one requested page from a review thread cursor", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(threadCommentsPage(["c2", "c3"], null, 3))),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const page = yield* cli.getReviewThreadComments({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        threadId: "PRRT_1",
+        cursor: "Y3Vyc29yOjI",
+      });
+
+      expect(callAt(0).args).toContain("owner=acme");
+      expect(callAt(0).args).toContain("name=web");
+      expect(callAt(0).args).toContain("number=7");
+      expect(callAt(0).args).toContain("threadId=PRRT_1");
+      expect(callAt(0).args).toContain("cursor=Y3Vyc29yOjI");
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      expect(page.comments.map((comment) => comment.id)).toEqual(["c2", "c3"]);
+      expect(page.nextCursor).toBeNull();
+    }),
+  );
+
+  it.effect("refuses a review thread from another pull request", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(threadCommentsPage(["foreign"], null, 1, "PR_8"))),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getReviewThreadComments({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          threadId: "PRRT_FOREIGN",
+          cursor: "Y3Vyc29yOjI",
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubSubjectScopeError");
     }),
   );
 
@@ -2242,7 +2336,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       // The tuples are flattened straight into argv, so a variable without its flag is a
       // positional argument gh refuses outright.
       const args = callAt(0).args;
-      expect(args).toEqual([
+      expect(args.slice(0, -2)).toEqual([
         "api",
         "graphql",
         "--hostname",
@@ -2255,10 +2349,122 @@ layer("GitHubPullRequestCli.layer", (it) => {
         "number=7",
         "-f",
         "headRef=fork:feat/page",
-        "-f",
-        `query=${BASE_COMPARISON_GRAPHQL_QUERY}`,
       ]);
       expect(comparison).toEqual({ behindBy: 4, viewerCanUpdate: true });
+      expect(args.at(-2)).toBe("-f");
+      expect(args.at(-1)).toContain(`query=${BASE_COMPARISON_GRAPHQL_QUERY.slice(0, -2)}`);
+    }),
+  );
+
+  it.effect("stops GraphQL reads at the protected reserve until reset", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    viewerCanUpdateBranch: true,
+                    baseRef: { compare: { behindBy: 4 } },
+                  },
+                },
+                rateLimit: {
+                  cost: 1,
+                  limit: 5_000,
+                  remaining: 500,
+                  resetAt: "2099-08-13T14:00:00Z",
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        headRef: "fork:feat/page",
+      } as const;
+
+      yield* cli.getPullRequestBaseComparison(input);
+      expect(callAt(0).args.at(-1)).toContain("rateLimit { cost limit remaining resetAt }");
+
+      const error = yield* Effect.flip(cli.getPullRequestBaseComparison(input));
+
+      assert.strictEqual(error._tag, "SourceControlRateLimitPausedError");
+      if (error._tag !== "SourceControlRateLimitPausedError") return;
+      assert.strictEqual(error.host, "github.com");
+      assert.strictEqual(error.retryAt, Date.parse("2099-08-13T14:00:00Z"));
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
+    }),
+  );
+
+  it.effect("lets an interactive permission read use the protected reserve", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      viewerCanUpdateBranch: true,
+                      baseRef: { compare: { behindBy: 4 } },
+                    },
+                  },
+                  rateLimit: {
+                    cost: 1,
+                    limit: 5_000,
+                    remaining: 500,
+                    resetAt: "2099-08-13T14:00:00Z",
+                  },
+                },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                data: {
+                  repository: {
+                    viewerPermission: "READ",
+                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.getPullRequestBaseComparison({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        headRef: "fork:feat/page",
+      });
+      const access = yield* cli.getViewerAccess({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        allowReserve: true,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(access).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+      yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
     }),
   );
 

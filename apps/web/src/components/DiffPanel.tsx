@@ -134,6 +134,9 @@ export default function DiffPanel({
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const activeRepositoryRoot = activeThread?.worktreePath
+    ? undefined
+    : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -443,6 +446,7 @@ export default function DiffPanel({
         threadRef: routeThreadRef,
         filePath,
         activeCwd,
+        repositoryRoot: activeRepositoryRoot,
         openInEditor: (targetPath) => {
           void (async () => {
             const result = await openInPreferredEditor(targetPath);
@@ -462,7 +466,7 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, openInPreferredEditor, routeThreadRef],
+    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
   );
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
@@ -579,11 +583,19 @@ export default function DiffPanel({
         {selectedTurnId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-            title={`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
             aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
           >
-            <span className="min-w-0 max-w-48 truncate">{selectedGitSource.headRef ?? "HEAD"}</span>
-            <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+            <Tooltip>
+              <TooltipTrigger render={<span className="flex min-w-0 items-center gap-2" />}>
+                <span className="min-w-0 max-w-48 truncate">
+                  {selectedGitSource.headRef ?? "HEAD"}
+                </span>
+                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
+              </TooltipPopup>
+            </Tooltip>
             <Combobox
               items={baseRefItems}
               filteredItems={filteredBaseRefItems}
@@ -673,12 +685,20 @@ export default function DiffPanel({
                               />
                             </div>
                           ) : choice.remote ? (
-                            <span
-                              className="flex justify-end text-muted-foreground"
-                              title="Remote only"
-                            >
-                              <CheckIcon aria-hidden="true" className="size-3" />
-                            </span>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span className="flex justify-end text-muted-foreground">
+                                    <CheckIcon
+                                      role="img"
+                                      aria-label="Remote only"
+                                      className="size-3"
+                                    />
+                                  </span>
+                                }
+                              />
+                              <TooltipPopup side="top">Remote only</TooltipPopup>
+                            </Tooltip>
                           ) : null}
                         </div>
                       </ComboboxItem>
@@ -825,7 +845,7 @@ export default function DiffPanel({
         </div>
       ) : (
         <>
-          <div className="diff-panel-viewport flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
             {isSelectedPatchTruncated && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are
@@ -907,10 +927,11 @@ export default function DiffPanel({
                       <Tooltip>
                         <TooltipTrigger
                           render={
-                            <button
-                              type="button"
+                            <Button
+                              size="icon-micro"
+                              variant="ghost"
                               className={cn(
-                                "-ms-0.5 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
                                 getDiffCollapseIconClassName(fileDiff),
                               )}
                               aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
