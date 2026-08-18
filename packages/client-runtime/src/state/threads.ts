@@ -321,24 +321,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     SubscriptionRef.modify(lastSequence, (current) =>
       incoming < current ? ([false, current] as const) : ([true, incoming] as const),
     );
-  const setDisconnected = Effect.gen(function* () {
-    yield* Ref.set(awaitingCompletion, false);
-    yield* SubscriptionRef.update(state, (current) => ({
+  // Keep the first-open marker fence. Clearing it here lets a remake or
+  // supervisor ready flip publish live after HTTP has already painted data.
+  const setDisconnected = SubscriptionRef.update(state, (current) => ({
+    ...current,
+    status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
+  }));
+  const setStreamError = (cause: Cause.Cause<unknown>) =>
+    SubscriptionRef.update(state, (current) => ({
       ...current,
       status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
+      error: Option.some(formatThreadError(cause)),
     }));
-  });
-  const setStreamError = (cause: Cause.Cause<unknown>) =>
-    Ref.set(awaitingCompletion, false).pipe(
-      Effect.andThen(
-        SubscriptionRef.update(state, (current) => ({
-          ...current,
-          status:
-            current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
-          error: Option.some(formatThreadError(cause)),
-        })),
-      ),
-    );
 
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationV2ThreadProjection,

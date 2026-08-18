@@ -2078,6 +2078,114 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("keeps a cold HTTP seed synchronizing across supervisor offline", () =>
+    Effect.gen(function* () {
+      const httpProjection: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "HTTP seed" },
+      };
+      const harness = yield* makeHarness({
+        completionMarker: true,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 1, projection: httpProjection },
+        },
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.thread.title === "HTTP seed",
+      );
+
+      yield* SubscriptionRef.set(harness.supervisorState, {
+        desired: false,
+        network: "offline",
+        phase: "offline",
+        stage: null,
+        attempt: 1,
+        generation: 1,
+        lastFailure: null,
+        retryAt: null,
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "cached");
+
+      yield* SubscriptionRef.set(harness.supervisorState, {
+        desired: true,
+        network: "online",
+        phase: "connecting",
+        stage: "synchronizing",
+        attempt: 1,
+        generation: 2,
+        lastFailure: null,
+        retryAt: null,
+      });
+      yield* SubscriptionRef.set(harness.supervisorState, {
+        desired: true,
+        network: "online",
+        phase: "connected",
+        stage: null,
+        attempt: 1,
+        generation: 2,
+        lastFailure: null,
+        retryAt: null,
+      });
+      for (let index = 0; index < 10; index += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+
+      yield* Queue.offer(harness.inputs, synchronized());
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+      expect(Option.getOrThrow(live.data).thread.title).toBe("HTTP seed");
+    }),
+  );
+
+  it.effect("keeps a cold HTTP seed synchronizing across a stream error remake", () =>
+    Effect.gen(function* () {
+      const httpProjection: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "HTTP seed" },
+      };
+      const harness = yield* makeHarness({
+        completionMarker: true,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 1, projection: httpProjection },
+        },
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.thread.title === "HTTP seed",
+      );
+
+      yield* Queue.offer(harness.inputs, new Error("stream failed"));
+      const failed = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(failed.status).toBe("cached");
+      expect(Option.getOrThrow(failed.error)).toBe("stream failed");
+
+      yield* TestClock.adjust("250 millis");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+
+      yield* Queue.offer(harness.inputs, synchronized());
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" && Option.isSome(value.data) && Option.isNone(value.error),
+      );
+      expect(Option.getOrThrow(live.data).thread.title).toBe("HTTP seed");
+    }),
+  );
+
   it.effect("resumes replacement sessions from the latest applied sequence", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
