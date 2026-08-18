@@ -377,6 +377,12 @@ export function createSourceControlServerMetadataUpdateQueue() {
           const observedDuringRequest =
             latestExpectedBranchState.observationSequence !== observationSequence;
           if (
+            observedDuringRequest &&
+            latestExpectedBranchState.latestObservedBranch === input.metadata.branch
+          ) {
+            latestExpectedBranchState.branch = input.metadata.branch;
+            latestExpectedBranchState.pendingTransition = null;
+          } else if (
             !observedDuringRequest ||
             latestExpectedBranchState.latestObservationIsStale ||
             requestStaleBranches.has(latestExpectedBranchState.latestObservedBranch) ||
@@ -393,9 +399,6 @@ export function createSourceControlServerMetadataUpdateQueue() {
               staleBranches,
               to: input.metadata.branch,
             };
-          } else if (latestExpectedBranchState.latestObservedBranch === input.metadata.branch) {
-            latestExpectedBranchState.branch = input.metadata.branch;
-            latestExpectedBranchState.pendingTransition = null;
           }
         }
         return updateResult;
