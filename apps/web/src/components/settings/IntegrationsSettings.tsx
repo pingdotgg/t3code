@@ -614,10 +614,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 
   // A browser that is not on this machine is left out rather than listed as a
   // dead row: there is nothing to act on, and the menu is a list of things you
-  // can import from. Every other unavailable reason stays, since each names a
-  // step the user can take.
+  // can import from. An unsupported one is left out for the same reason — the
+  // blocked wizard step can't be fixed from here. Every other unavailable
+  // reason stays, since each names a step the user can take.
   const importableSources = (sources ?? []).filter(
-    (source) => source.unavailable !== "notInstalled",
+    (source) =>
+      source.unavailable !== "notInstalled" && source.unavailable !== "unsupportedPlatform",
   );
 
   // Refreshed without blanking the last result: the menu shows the cached list
