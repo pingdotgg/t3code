@@ -42,9 +42,11 @@ consumes:
 - **Route B, `agy`'s local Connect API.** Higher potential fidelity, one agent
   only, unverified.
 
-Open question that decides Route A's completeness: can the target agent run with
-built-in tools disabled, or restricted to MCP-provided ones? Settle that before
-building.
+Route A has a minimum viable form with no open prerequisites: gate the agent's
+MCP calls as ACP permission requests and take assistant prose from stdout, while
+the agent keeps its built-in tools. Routing built-ins through MCP as well is
+later hardening — it buys per-action review instead of standing grants, and is
+not needed to ship.
 
 ### 3. Broker PTY adapter — documented, not recommended
 

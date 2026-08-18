@@ -80,38 +80,56 @@ MCP is a *tool* channel, not an agent-output channel. Three gaps:
    is not TUI scraping — but it is per-agent, and it is where the
    agent-agnostic claim thins.
 2. **Built-in tools.** An agent's own file read/write and bash calls are
-   internal and never reach an MCP server. For a coding agent editing a repo
-   that is most of the interesting activity, and it would be invisible.
+   internal and never reach an MCP server, so they produce no `tool_call`
+   event.
 3. **Turn boundaries.** MCP has no notion of a turn. The broker's `/agent`
    lifecycle already supplies start and exit.
 
-Gap 2 is load-bearing. In the SciREPL case the agent drives the notebook
-*exclusively* through broker tools, so the broker sees everything. A coding
-agent editing files does not work that way.
+Gap 2 matters less than it first appears. T3's `CheckpointReactor` captures
+**workspace** checkpoints on turn start and completion — it diffs the
+filesystem, it does not reconstruct state from the tool-call stream. So file
+edits made by built-in tools still show up in T3's diff and checkpoint UI even
+with no `tool_call` event behind them. What is lost is live per-action progress
+cards during the turn, not the record of what changed.
 
-### Making it complete
+### Minimum viable bridge
 
-Disable the agent's built-in tools and have the bridge supply file and shell
-equivalents as MCP tools. The bridge then sees and gates **100%** of what the
-agent does, and emits complete, faithful `tool_call` and permission events with
-no per-agent parsing.
+None of the above is a prerequisite. The smallest useful version:
+
+- spawn the agent and expose an MCP server to it;
+- emit `tool_call` / `tool_call_update` for MCP calls;
+- turn each MCP call into `session/request_permission`;
+- emit `agent_message_chunk` from the agent's stdout.
+
+That already yields a real T3 provider — thread history, checkpoints, diffs,
+and approval cards for everything routed through MCP — while the agent keeps
+using its built-in tools normally under whatever permissions it is configured
+with.
+
+### Optional hardening: route built-ins through MCP too
+
+Disabling the agent's built-in tools and having the bridge supply file and shell
+equivalents as MCP tools is an **upgrade, not a requirement**. It changes the
+security model rather than enabling the feature:
+
+| | Built-ins active | Built-ins disabled |
+| --- | --- | --- |
+| Privileged actions governed by | the agent's own standing permission config | per-action review at the bridge |
+| Bridge sees | MCP calls only | everything |
+
+The second row is why this is worth having eventually: it is the difference
+between granting standing permissions once and reviewing each action, which is
+the posture [`docs/remote-agent-control.md`][control] argues for. Note that a
+headless agent auto-denies permissions it cannot prompt for, so without this the
+agent needs standing grants to do privileged work at all.
 
 SciREPL-MCP already has the right pattern for hardening such tools
 ([`docs/protocol.md`][protocol] §Broker-owned workbook file tools): allowlisted
 host roots, reserved `brokerRoot` / `brokerPath` fields that ordinary MCP
 callers cannot spoof, and content-free receipts.
 
-### The question that decides this route
-
-**Can each target agent be run with built-in tools disabled, or restricted to
-MCP-provided ones?**
-
-- Yes → complete visibility, genuinely agent-agnostic, full permission control.
-- No → partial visibility (MCP tools only) plus per-agent stdout parsing for
-  prose.
-
-Establish this for `agy` before building. It is cheap to check and it changes
-what the thing is.
+Whether a given agent *can* have built-ins disabled decides only whether this
+hardening is available for it — not whether the bridge works.
 
 ### Known risks
 
@@ -151,12 +169,16 @@ Route A hits the built-in-tools wall.
 
 ## Recommendation
 
-Investigate the built-in-tools question for `agy` first — one fact, cheaply
-obtained, that decides whether Route A is complete or partial.
+Build Route A's minimum viable bridge. It does not depend on any unresolved
+question: permission gating over MCP calls works with the agent's built-in tools
+left alone, and T3's workspace checkpoints already cover what the built-ins
+change.
 
-Route A is worth more even in its partial form, because permission gating works
-regardless of the gaps and applies to every MCP-speaking agent. Route B is a
-fallback for `agy` alone.
+Treat routing built-ins through MCP as later hardening, driven by wanting
+per-action review instead of standing grants — not as a gate on shipping.
+
+Route B is a fallback for `agy` alone, worth investigating only if Route A's
+fidelity proves insufficient in practice.
 
 Either route, once it emits ACP, needs the same small piece on this side: a T3
 driver modelled on `GrokDriver` + `GrokAcpSupport`, spawning the bridge instead
