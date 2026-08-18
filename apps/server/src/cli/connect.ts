@@ -5,6 +5,7 @@ import {
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -695,9 +696,13 @@ export const connectCommand = Command.make("connect", {
         // fail the command, just tell the user what happened and move on.
         const background = yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding);
         if (background) {
-          yield* Console.log(
-            "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out.",
-          );
+          // Windows starts the service at sign-in and stops it at sign-out, so
+          // the Linux promise would contradict the prompt the user just agreed to.
+          const reach =
+            (yield* HostProcessPlatform) === "win32"
+              ? "T3 Code will start again every time you sign in to Windows."
+              : "T3 Code will stay reachable after you log out.";
+          yield* Console.log(`\n✓ Background service ready\n\n${reach}`);
           return;
         }
         const serveCommand = yield* resolveCliCommand("serve");

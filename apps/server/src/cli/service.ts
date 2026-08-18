@@ -1,3 +1,4 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,12 +11,23 @@ import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
-export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
-  BootService.layer({
+export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) => {
+  const input = {
     baseDir: config.baseDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
-  }).pipe(Layer.provide(ProcessRunner.layer));
+  };
+  // Windows has no systemd, so it gets its own backend. Loading it lazily keeps
+  // the Linux path free of any Windows import.
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      if (platform !== "win32") return BootService.layer(input);
+      const windows = yield* Effect.promise(() => import("../cloud/bootServiceWindows.ts"));
+      return windows.layer(input);
+    }),
+  ).pipe(Layer.provide(ProcessRunner.layer));
+};
 
 export type ServiceReconcileResult =
   | {
@@ -48,7 +60,7 @@ export function formatServiceStatus(
   cliVersion: string,
 ): string {
   if (!status.supported) {
-    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd";
+    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, or Windows";
   }
   if (!status.installed) {
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
@@ -56,7 +68,7 @@ export function formatServiceStatus(
   return [
     "T3 Code service",
     `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
-    `  Unit: ${status.unitPath}`,
+    `  ${status.kind === "systemd" ? "Unit" : "Shortcut"}: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
   ].join("\n");
@@ -71,6 +83,30 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
   return yield* run.pipe(Effect.provide(bootServiceLayer(config)));
 });
 
+/** Windows only. The blink at sign-in looks alarming until you know what it is. */
+const WINDOWS_SERVICE_NOTICE = [
+  'A small window named "T3 Code Server" blinks once when you sign in. That is expected.',
+  "It appears under Startup apps in Windows Settings, where you can switch it off.",
+  "It starts at sign-in, not at boot, and it stops when you sign out.",
+].join("\n");
+
+/** Shared by install and update. The Linux output is unchanged. */
+const reportReconcileResult = Effect.fn("cli.service.report")(function* (
+  result: ServiceReconcileResult,
+  unchangedMessage: string,
+) {
+  if (!result.changed) {
+    yield* Console.log(unchangedMessage);
+    return;
+  }
+  yield* Console.log(
+    `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+  );
+  if ((yield* HostProcessPlatform) === "win32") {
+    yield* Console.log(WINDOWS_SERVICE_NOTICE);
+  }
+});
+
 const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe(
   Command.withDescription("Install T3 Code as a background service for this user."),
   Command.withHandler((flags) =>
@@ -78,14 +114,9 @@ const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe
       flags,
       Effect.gen(function* () {
         const result = yield* reconcileService();
-        if (!result.changed) {
-          yield* Console.log(
-            `T3 Code service is already installed with t3@${packageJson.version}.`,
-          );
-          return;
-        }
-        yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+        yield* reportReconcileResult(
+          result,
+          `T3 Code service is already installed with t3@${packageJson.version}.`,
         );
       }),
     ),
@@ -101,12 +132,9 @@ const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
       flags,
       Effect.gen(function* () {
         const result = yield* reconcileService();
-        if (!result.changed) {
-          yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
-          return;
-        }
-        yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+        yield* reportReconcileResult(
+          result,
+          `T3 Code service is already using t3@${packageJson.version}.`,
         );
       }),
     ),
@@ -152,12 +180,18 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     yield* Console.log("T3 Code is already set up to run in the background on this machine.");
     return true;
   }
+  // Windows starts the service at sign-in, not at boot, and it stops at
+  // sign-out. Promising otherwise here would be a lie.
+  const windows = (yield* HostProcessPlatform) === "win32";
   const wanted = yield* Prompt.run(
     Prompt.confirm({
       message: installed
         ? "The installed T3 Code service needs an update or repair. Update it now?"
-        : "Run T3 Code in the background whenever this machine boots? " +
-          "It stays reachable through T3 Connect even after you log out.",
+        : windows
+          ? "Run T3 Code in the background whenever you sign in to Windows? " +
+            "It starts again after every reboot, and stops when you sign out."
+          : "Run T3 Code in the background whenever this machine boots? " +
+            "It stays reachable through T3 Connect even after you log out.",
       initial: true,
     }),
   );
@@ -169,6 +203,7 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     yield* Console.log(
       `Background service ${result.previouslyInstalled ? "updated" : "installed"}. Logs: ${result.plan.logPath}`,
     );
+    if (windows) yield* Console.log(WINDOWS_SERVICE_NOTICE);
   }
   return true;
 });
@@ -187,6 +222,12 @@ export const recoverServiceOnboardingOffer = <R>(
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceUpdatePendingError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
+      // Both carry guidance the user has to act on, so print the message itself
+      // rather than the generic "did not finish" wrapper.
+      BootServicePathHasPercentError: (error) =>
+        Console.warn(`Skipping background setup: ${error.message}`).pipe(Effect.as(false)),
+      BootServiceStartupEntryDisabledError: (error) =>
+        Console.warn(`Skipping background setup: ${error.message}`).pipe(Effect.as(false)),
     }),
   );
 

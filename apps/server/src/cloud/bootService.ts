@@ -88,7 +88,7 @@ export class BootServiceUnsupportedError extends Schema.TaggedErrorClass<BootSer
   { platform: Schema.String },
 ) {
   override get message(): string {
-    return `Background setup currently supports Linux with systemd; this machine reports '${this.platform}'.`;
+    return `Background setup supports Linux with systemd and Windows; this machine reports '${this.platform}'.`;
   }
 }
 
@@ -99,13 +99,20 @@ export class BootServiceCommandError extends Schema.TaggedErrorClass<BootService
     exitCode: Schema.optional(Schema.Number),
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.optional(Schema.Number),
+    /** Windows only. The launcher that would not stop, and how long we waited. */
+    pid: Schema.optional(Schema.Number),
+    timeoutSeconds: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    const detail =
+      this.pid === undefined || this.timeoutSeconds === undefined
+        ? ""
+        : ` (process ${this.pid} did not exit within ${this.timeoutSeconds}s)`;
     return this.exitCode === undefined
-      ? `Background setup failed while ${this.step}.`
-      : `Background setup failed while ${this.step} (exit code ${this.exitCode}).`;
+      ? `Background setup failed while ${this.step}${detail}.`
+      : `Background setup failed while ${this.step}${detail} (exit code ${this.exitCode}).`;
   }
 }
 
@@ -127,16 +134,60 @@ export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootS
   }
 }
 
+/**
+ * Windows only. The command shell expands `%VAR%` on its command line, so a path
+ * holding one would be rewritten before the service could start. This carries
+ * which path is at fault, because the generic install error hides its cause and
+ * the user has to know what to move.
+ */
+export class BootServicePathHasPercentError extends Schema.TaggedErrorClass<BootServicePathHasPercentError>()(
+  "BootServicePathHasPercentError",
+  { pathLabel: Schema.String },
+) {
+  override get message(): string {
+    // The label carries what to change. Naming T3CODE_HOME here would be wrong
+    // advice for the Node executable, which that variable cannot move.
+    return (
+      `The path to ${this.pathLabel} contains a percent sign, and the Windows command ` +
+      "shell would rewrite it before the service could start. Move it to a path without " +
+      "one, then run this again."
+    );
+  }
+}
+
+/** Windows only. The Startup entry exists but Windows Settings has it switched off. */
+export class BootServiceStartupEntryDisabledError extends Schema.TaggedErrorClass<BootServiceStartupEntryDisabledError>()(
+  "BootServiceStartupEntryDisabledError",
+  { shortcutName: Schema.String },
+) {
+  override get message(): string {
+    return (
+      `"${this.shortcutName}" is switched off under Startup apps in Windows Settings. ` +
+      "Turn it back on, then run this again."
+    );
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
   | BootServiceInstallError
-  | BootServiceUpdatePendingError;
+  | BootServiceUpdatePendingError
+  | BootServicePathHasPercentError
+  | BootServiceStartupEntryDisabledError;
+
+/**
+ * Which backend answered. The name carries the platform on purpose: a bare
+ * "shortcut" would read as a macOS or Linux desktop entry just as easily.
+ */
+export type BootServiceKind = "systemd" | "win32-startup-shortcut";
 
 export interface BootServiceStatus {
   readonly supported: boolean;
   readonly installed: boolean;
   readonly current: boolean;
+  readonly kind: BootServiceKind;
+  /** The systemd unit on Linux, the Startup folder shortcut on Windows. */
   readonly unitPath: string;
   readonly logPath: string;
 }
@@ -382,11 +433,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
+    const base = { kind: "systemd", unitPath, logPath } as const;
     if (platform !== "linux" || homeDir === "") {
-      return { supported: false, installed: false, current: false, unitPath, logPath };
+      return { supported: false, installed: false, current: false, ...base };
     }
     if (!(yield* fs.exists(unitPath))) {
-      return { supported: true, installed: false, current: false, unitPath, logPath };
+      return { supported: true, installed: false, current: false, ...base };
     }
     const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
       yield* Effect.all([
@@ -408,8 +460,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         runtimeSentinel.value.trim() === input.cliVersion &&
         state?.activeVersion === input.cliVersion &&
         state?.update?.status !== "pending",
-      unitPath,
-      logPath,
+      ...base,
     };
   }).pipe(
     Effect.mapError((cause) => new BootServiceInstallError({ cause })),

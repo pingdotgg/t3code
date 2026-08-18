@@ -9,6 +9,70 @@ export const SERVICE_STATE_FILE = "service-state.json";
     the child can tell "the service is going away" from "the launcher is about
     to start my replacement" while a pending update is recorded. */
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
+/** Windows only. Set by the generated logon script because a Startup folder
+    shortcut has no supervisor. systemd never sets it, so the Linux launcher
+    keeps failing fast and letting `Restart=always` bring the whole unit back. */
+export const SERVICE_SELF_SUPERVISE_ENV = "T3_SERVICE_SELF_SUPERVISE";
+/** Windows only. Written by the CLI to ask a self-supervising launcher to stop,
+    because Windows has no SIGTERM. The launcher deletes it once it has stopped,
+    which is how the CLI learns the stop finished. */
+export const SERVICE_STOP_REQUEST_FILE = ".service-stop-request";
+/** Windows only. Holds a self-supervising launcher's process id while it runs.
+    It is what lets the CLI tell "the service stopped" apart from "no service was
+    running" and from "it is still running and did not answer". Without it, an
+    install could rewrite the runtime under a live launcher and end up with two
+    servers on one database. */
+export const SERVICE_PID_FILE = ".service-pid";
+
+/**
+ * Windows only. What the pid file records.
+ *
+ * A process id alone is not enough. The file survives a crash or a hard reboot,
+ * and the operating system reuses process ids freely, so an old file can name a
+ * live process that has nothing to do with T3 Code. Believing it would leave the
+ * launcher refusing to start for as long as that stranger runs. Recording when
+ * the machine booted makes any file written before this boot obviously stale.
+ */
+export interface ServiceLauncherPresence {
+  readonly pid: number;
+  readonly bootTimeMs: number;
+  /**
+   * The server the launcher is currently running, when it has one.
+   *
+   * Windows has no equivalent of `KillMode=mixed`, so a launcher killed
+   * outright leaves its server behind. Recording the child means whoever takes
+   * the record over can put that orphan down before starting its own, instead
+   * of quietly ending up with two servers on one database.
+   */
+  readonly childPid?: number;
+}
+
+/** Boot time is derived from uptime, which drifts by a little between reads. */
+export const SAME_BOOT_TOLERANCE_MS = 60_000;
+
+export function encodeServiceLauncherPresence(presence: ServiceLauncherPresence): string {
+  const child = presence.childPid === undefined ? "" : ` ${presence.childPid}`;
+  return `${presence.pid} ${presence.bootTimeMs}${child}\n`;
+}
+
+export function decodeServiceLauncherPresence(text: string): ServiceLauncherPresence | undefined {
+  const [rawPid, rawBoot, rawChild] = text.trim().split(/\s+/);
+  const pid = Number(rawPid);
+  const bootTimeMs = Number(rawBoot);
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isFinite(bootTimeMs)) return undefined;
+  const childPid = rawChild === undefined ? Number.NaN : Number(rawChild);
+  return Number.isInteger(childPid) && childPid > 0
+    ? { pid, bootTimeMs, childPid }
+    : { pid, bootTimeMs };
+}
+
+/** False when the file predates this boot, whatever process now holds that id. */
+export function serviceLauncherPresenceIsFromThisBoot(
+  presence: ServiceLauncherPresence,
+  currentBootTimeMs: number,
+): boolean {
+  return Math.abs(presence.bootTimeMs - currentBootTimeMs) <= SAME_BOOT_TOLERANCE_MS;
+}
 
 export interface PendingServiceUpdate {
   readonly id: string;
