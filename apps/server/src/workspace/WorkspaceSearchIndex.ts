@@ -138,7 +138,10 @@ function parentPathOf(input: string): string | undefined {
 }
 
 function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+  // ProjectEntry.path trims at the wire boundary. Normalize before the path
+  // map deduplicates entries so distinct raw names cannot collapse into a
+  // duplicate that crashes the client file tree.
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath)).trim();
   if (!normalizedPath) {
     return null;
   }

@@ -4,6 +4,7 @@ import {
   type GrepCursor,
   type GrepOptions,
   type GrepResult,
+  type MixedItem,
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -29,6 +30,39 @@ function fileItem(relativePath: string): FileItem {
     gitStatus: "clean",
   };
 }
+
+function mixedFileItem(relativePath: string): MixedItem {
+  return { type: "file", item: fileItem(relativePath) };
+}
+
+it.effect("deduplicates paths using their wire-normalized value", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const items = [mixedFileItem("pkg/notes.txt"), mixedFileItem("pkg/notes.txt\n")];
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        mixedSearch: vi.fn(() => ({
+          ok: true as const,
+          value: {
+            items,
+            scores: [],
+            totalMatched: items.length,
+            totalFiles: items.length,
+          },
+        })),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const result = yield* searchIndex.list();
+
+      expect(result.entries.filter((entry) => entry.path === "pkg/notes.txt")).toEqual([
+        { kind: "file", path: "pkg/notes.txt" },
+      ]);
+    }),
+  ),
+);
 
 it.effect("filters image searches before applying the result limit", () =>
   Effect.scoped(
