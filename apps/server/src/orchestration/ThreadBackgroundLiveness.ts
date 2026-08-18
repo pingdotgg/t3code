@@ -130,10 +130,11 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         return;
       }
 
-      // Status-free progress is a description tick, not a restart. A delayed
-      // progress event after idle must not put the task back in the live set
-      // (#7128).
-      if (input.kind === "progress" && input.status === undefined) {
+      // Status-free progress/updated is a description tick, not a restart. A
+      // delayed progress or updated event after idle must not put the task
+      // back in the live set (#7128, #7172). "started" is excluded on
+      // purpose: a genuine restart must still revive the task.
+      if ((input.kind === "progress" || input.kind === "updated") && input.status === undefined) {
         const existing = stateByThreadId.get(input.threadId);
         const stillLive =
           existing !== undefined &&
