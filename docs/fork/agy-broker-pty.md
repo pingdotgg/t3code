@@ -2,7 +2,10 @@
 
 > **Fork-local document.** This describes work specific to the `s243a/t3code`
 > fork and is not proposed for upstream. It lives under `docs/fork/` so it stays
-> out of `docs/internals/`, which upstream owns.
+> out of `docs/internals/`, which upstream owns. See [README](./README.md) for
+> how this relates to the other options, and
+> [mcp-to-acp-bridge.md](./mcp-to-acp-bridge.md) for the route that yields a
+> real T3 provider rather than a terminal.
 
 ## Status: not recommended
 
