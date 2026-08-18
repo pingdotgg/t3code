@@ -12,6 +12,7 @@ interface MermaidDiagramProps {
   readonly code: string;
   readonly theme: MermaidColorScheme;
   readonly isStreaming: boolean;
+  readonly onSvgChange?: (svg: string | null) => void;
 }
 
 type MermaidDiagramState =
@@ -19,7 +20,7 @@ type MermaidDiagramState =
   | { readonly status: "ready"; readonly svg: string }
   | { readonly status: "error"; readonly message: string };
 
-export function MermaidDiagram({ code, theme, isStreaming }: MermaidDiagramProps) {
+export function MermaidDiagram({ code, theme, isStreaming, onSvgChange }: MermaidDiagramProps) {
   const [state, setState] = useState<MermaidDiagramState>({ status: "idle" });
 
   useEffect(() => {
@@ -56,6 +57,16 @@ export function MermaidDiagram({ code, theme, isStreaming }: MermaidDiagramProps
       if (timeout != null) clearTimeout(timeout);
     };
   }, [code, isStreaming, theme]);
+
+  useEffect(() => {
+    if (state.status === "ready") {
+      onSvgChange?.(state.svg);
+      return;
+    }
+    if (state.status === "error" || code.trim().length === 0) {
+      onSvgChange?.(null);
+    }
+  }, [code, onSvgChange, state]);
 
   const copyMarkdown = mermaidSourceAsMarkdownFence(code);
 

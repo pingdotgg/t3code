@@ -2252,6 +2252,38 @@ code {
   color: color-mix(in srgb, var(--foreground) 58%, transparent);
 }
 
+.chat-markdown-mermaid-overlay-scene {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  background: color-mix(in srgb, var(--background) 88%, var(--muted));
+}
+
+.chat-markdown-mermaid-overlay-scene[data-panning="true"] {
+  cursor: grabbing;
+}
+
+.chat-markdown-mermaid-overlay-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.chat-markdown-mermaid-overlay-canvas svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  background: transparent !important;
+}
+
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
    scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single

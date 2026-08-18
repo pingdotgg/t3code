@@ -68,6 +68,7 @@ import { LRUCache } from "../lib/lruCache";
 import { isMermaidFenceLanguage } from "../lib/mermaidRendering";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
+import { MermaidOverlay } from "./chat/MermaidOverlay";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings } from "../hooks/useSettings";
@@ -622,6 +623,8 @@ function MarkdownCodeBlock({
   fenceTitle,
   theme,
   diagram,
+  canExpandDiagram = false,
+  onExpandDiagram,
   children,
 }: {
   code: string;
@@ -629,6 +632,8 @@ function MarkdownCodeBlock({
   fenceTitle: string | null;
   theme: "light" | "dark";
   diagram?: ReactNode;
+  canExpandDiagram?: boolean;
+  onExpandDiagram?: () => void;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -720,6 +725,26 @@ function MarkdownCodeBlock({
               <TooltipPopup side="top">{diagramToggleLabel}</TooltipPopup>
             </Tooltip>
           ) : null}
+          {showingDiagram && canExpandDiagram && onExpandDiagram != null ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    onClick={onExpandDiagram}
+                    aria-label="Expand diagram"
+                    data-mermaid-expand=""
+                  />
+                }
+              >
+                <Maximize2Icon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Expand diagram</TooltipPopup>
+            </Tooltip>
+          ) : null}
           {showingDiagram ? null : (
             <Tooltip>
               <TooltipTrigger
@@ -761,6 +786,64 @@ function MarkdownCodeBlock({
       </div>
       {showingDiagram ? diagram : children}
     </div>
+  );
+}
+
+function MermaidMarkdownCodeBlock({
+  code,
+  language,
+  fenceTitle,
+  theme,
+  isStreaming,
+  children,
+}: {
+  code: string;
+  language: string;
+  fenceTitle: string | null;
+  theme: "light" | "dark";
+  isStreaming: boolean;
+  children: ReactNode;
+}) {
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [svg, setSvg] = useState<string | null>(null);
+
+  return (
+    <>
+      <MarkdownCodeBlock
+        code={code}
+        language={language}
+        fenceTitle={fenceTitle}
+        theme={theme}
+        canExpandDiagram={svg != null}
+        onExpandDiagram={() => setOverlayOpen(true)}
+        diagram={
+          <RenderErrorBoundary
+            fallback={
+              <div className="chat-markdown-mermaid-error" role="alert">
+                <p>Couldn't render this diagram.</p>
+              </div>
+            }
+          >
+            <MermaidDiagram
+              code={code}
+              theme={theme}
+              isStreaming={isStreaming}
+              onSvgChange={setSvg}
+            />
+          </RenderErrorBoundary>
+        }
+      >
+        {children}
+      </MarkdownCodeBlock>
+      {svg != null ? (
+        <MermaidOverlay
+          open={overlayOpen}
+          svg={svg}
+          title={fenceTitle ?? "Diagram"}
+          onOpenChange={setOverlayOpen}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1783,40 +1866,39 @@ function ChatMarkdown({
 
         const language = extractFenceLanguage(codeBlock.className);
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+        const highlighted = (
+          <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+            <Suspense fallback={<pre {...props}>{children}</pre>}>
+              <SuspenseShikiCodeBlock
+                className={codeBlock.className}
+                code={codeBlock.code}
+                themeName={diffThemeName}
+                isStreaming={isStreaming}
+              />
+            </Suspense>
+          </RenderErrorBoundary>
+        );
+        if (isMermaidFenceLanguage(language)) {
+          return (
+            <MermaidMarkdownCodeBlock
+              code={codeBlock.code}
+              language={language}
+              fenceTitle={fenceTitle}
+              theme={resolvedTheme}
+              isStreaming={isStreaming}
+            >
+              {highlighted}
+            </MermaidMarkdownCodeBlock>
+          );
+        }
         return (
           <MarkdownCodeBlock
             code={codeBlock.code}
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
-            diagram={
-              isMermaidFenceLanguage(language) ? (
-                <RenderErrorBoundary
-                  fallback={
-                    <div className="chat-markdown-mermaid-error" role="alert">
-                      <p>Couldn't render this diagram.</p>
-                    </div>
-                  }
-                >
-                  <MermaidDiagram
-                    code={codeBlock.code}
-                    theme={resolvedTheme}
-                    isStreaming={isStreaming}
-                  />
-                </RenderErrorBoundary>
-              ) : undefined
-            }
           >
-            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </RenderErrorBoundary>
+            {highlighted}
           </MarkdownCodeBlock>
         );
       },

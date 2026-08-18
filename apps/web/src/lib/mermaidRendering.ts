@@ -119,6 +119,36 @@ export function sanitizeMermaidSvg(svg: string): string {
     );
 }
 
+/**
+ * Inline chat and the expand overlay both mount the same mermaid SVG. Rewrite
+ * ids so marker/gradient `url(#…)` refs in the overlay do not collide with the
+ * preview still on the page.
+ */
+export function remapMermaidSvgIds(svg: string, suffix: string): string {
+  if (suffix.length === 0) return svg;
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const match of svg.matchAll(/\bid="([^"]+)"/g)) {
+    const id = match[1];
+    if (id == null || id.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  ids.sort((left, right) => right.length - left.length);
+  let remapped = svg;
+  for (const id of ids) {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    remapped = remapped.replace(new RegExp(`id="${escaped}"`, "g"), `id="${id}${suffix}"`);
+    remapped = remapped.replace(new RegExp(`url\\(#${escaped}\\)`, "g"), `url(#${id}${suffix})`);
+    remapped = remapped.replace(new RegExp(`href="#${escaped}"`, "g"), `href="#${id}${suffix}"`);
+    remapped = remapped.replace(
+      new RegExp(`xlink:href="#${escaped}"`, "g"),
+      `xlink:href="#${id}${suffix}"`,
+    );
+  }
+  return remapped;
+}
+
 export class MermaidRenderError extends Error {
   override readonly name = "MermaidRenderError";
 

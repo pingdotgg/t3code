@@ -5,6 +5,7 @@ import {
   __setMermaidLoaderForTests,
   isMermaidFenceLanguage,
   mermaidSourceAsMarkdownFence,
+  remapMermaidSvgIds,
   renderMermaidSvg,
   sanitizeMermaidSvg,
   type MermaidRuntime,
@@ -56,6 +57,22 @@ describe("sanitizeMermaidSvg", () => {
   it("leaves mermaid marker urls and ordinary attributes alone", () => {
     const svg = `<svg><path marker-end="url(#arrow)" class="edge" /></svg>`;
     expect(sanitizeMermaidSvg(svg)).toBe(svg);
+  });
+});
+
+describe("remapMermaidSvgIds", () => {
+  it("suffixes ids and url/href references so overlay clones do not collide", () => {
+    const svg = `<svg id="t3-mermaid-1"><defs><marker id="arrow" /></defs><path marker-end="url(#arrow)" href="#arrow" xlink:href="#arrow" /></svg>`;
+    expect(remapMermaidSvgIds(svg, "-ov")).toBe(
+      `<svg id="t3-mermaid-1-ov"><defs><marker id="arrow-ov" /></defs><path marker-end="url(#arrow-ov)" href="#arrow-ov" xlink:href="#arrow-ov" /></svg>`,
+    );
+  });
+
+  it("rewrites longer ids first so prefixes are not partially replaced", () => {
+    const svg = `<svg id="flowchart" ><g id="flowchart-A" /></svg>`;
+    expect(remapMermaidSvgIds(svg, "-x")).toBe(
+      `<svg id="flowchart-x" ><g id="flowchart-A-x" /></svg>`,
+    );
   });
 });
 
