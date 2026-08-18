@@ -504,6 +504,47 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("retries the external thread URL after a development load failure", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.openThread({
+          environmentId: "environment-123",
+          threadId: "thread-456",
+        });
+        const didFailLoad = fakeWindow.webContentsListeners.get("did-fail-load");
+        if (!didFailLoad) {
+          return yield* Effect.die("renderer load listener was not registered");
+        }
+
+        didFailLoad(
+          {},
+          -9,
+          "ERR_UNEXPECTED",
+          "t3code-dev://app/#/environment-123/thread-456",
+          true,
+        );
+        yield* TestClock.adjust(100);
+
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["t3code-dev://app/"],
+          ["t3code-dev://app/#/environment-123/thread-456"],
+          ["t3code-dev://app/#/environment-123/thread-456"],
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("opens the normal app URL after a deep-link window is closed", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

@@ -278,6 +278,7 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  const applicationUrls = new WeakMap<Electron.BrowserWindow, string>();
   // A cold-start deep link is consumed by the window that loads it. A newer
   // link arriving during creation remains pending and navigates that window
   // once it is registered as main.
@@ -363,6 +364,8 @@ export const make = Effect.gen(function* () {
     });
     applicationUrl = pendingApplicationUrl ?? applicationUrl;
     pendingApplicationUrl = null;
+    applicationUrls.set(window, applicationUrl);
+    const getApplicationUrl = () => applicationUrls.get(window) ?? applicationUrl;
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
@@ -526,7 +529,7 @@ export const make = Effect.gen(function* () {
     window.webContents.on("will-navigate", (event, url) => {
       if (
         isSameOriginRendererNavigation({
-          applicationUrl,
+          applicationUrl: getApplicationUrl(),
           navigationUrl: url,
         })
       ) {
@@ -587,7 +590,7 @@ export const make = Effect.gen(function* () {
       if (window.isDestroyed()) {
         return;
       }
-      void window.loadURL(applicationUrl).catch(() => undefined);
+      void window.loadURL(getApplicationUrl()).catch(() => undefined);
     };
     const scheduleDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber !== undefined || window.isDestroyed()) {
@@ -619,7 +622,7 @@ export const make = Effect.gen(function* () {
       if (
         environment.isDevelopment &&
         !isSameOriginRendererNavigation({
-          applicationUrl,
+          applicationUrl: getApplicationUrl(),
           navigationUrl: window.webContents.getURL(),
         })
       ) {
@@ -638,7 +641,7 @@ export const make = Effect.gen(function* () {
         const retryInMs =
           environment.isDevelopment &&
           isRetryableDevelopmentRendererLoadFailure({
-            applicationUrl,
+            applicationUrl: getApplicationUrl(),
             errorCode,
             isMainFrame,
             validatedUrl: validatedURL,
@@ -769,6 +772,7 @@ export const make = Effect.gen(function* () {
         if (window === null || pendingApplicationUrl !== applicationUrl) return;
 
         pendingApplicationUrl = null;
+        applicationUrls.set(window, applicationUrl);
         void window.loadURL(applicationUrl).catch(() => undefined);
         yield* electronWindow.reveal(window);
       }),
