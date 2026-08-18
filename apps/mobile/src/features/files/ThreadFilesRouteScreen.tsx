@@ -344,7 +344,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
   }
 
-  if (cwd === null) {
+  if (cwd === null || environmentId === null) {
     return <FilesUnavailable />;
   }
 
@@ -449,6 +449,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         </>
       )}
       <FileTreeBrowser
+        cwd={cwd}
+        environmentId={environmentId}
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}
         isPending={entriesQuery.isPending}
@@ -553,7 +555,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
 
-  if (cwd === null) {
+  if (cwd === null || environmentId === null) {
     return <FilesUnavailable />;
   }
 
