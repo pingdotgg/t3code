@@ -178,6 +178,13 @@ describe("sanitizeThreadTitle", () => {
     expect(sanitizeThreadTitle(raw)).toBe(raw);
   });
 
+  it("unwraps a JSON envelope that models decorated with surrounding quotes", () => {
+    expect(sanitizeThreadTitle('"{"title": "Fix the flaky login test"}"')).toBe(
+      "Fix the flaky login test",
+    );
+    expect(sanitizeThreadTitle('`{"name": "Add dark mode toggle"}`')).toBe("Add dark mode toggle");
+  });
+
   it("unwraps a JSON envelope wrapped in a code fence", () => {
     expect(sanitizeThreadTitle('```json\n{"title": "Add dark mode toggle"}\n```')).toBe(
       "Add dark mode toggle",
@@ -212,6 +219,12 @@ describe("sanitizeThreadTitle", () => {
 describe("sanitizePrTitle", () => {
   it("unwraps a self-wrapped JSON envelope emitted as the title value", () => {
     expect(sanitizePrTitle('{"title": "fix(auth): reject expired tokens"}')).toBe(
+      "fix(auth): reject expired tokens",
+    );
+  });
+
+  it("unwraps a quote-decorated JSON envelope (PR titles are not quote-stripped)", () => {
+    expect(sanitizePrTitle('"{"title": "fix(auth): reject expired tokens"}"')).toBe(
       "fix(auth): reject expired tokens",
     );
   });
