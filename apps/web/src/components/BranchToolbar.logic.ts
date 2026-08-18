@@ -10,6 +10,7 @@ import {
   type MachineDraftProfile,
   type MachineProfileSummary,
 } from "../machineDraftProfile";
+import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -36,11 +37,11 @@ export interface EnvironmentOption {
   profile: MachineProfileSummary;
 }
 
-function resolveEnvironmentModelSelection(input: {
+function resolveEnvironmentModelPreview(input: {
   defaultModelSelection: ModelSelection | null | undefined;
   profile: MachineDraftProfile | null | undefined;
   providerEntries: readonly ProviderInstanceEntry[];
-}): ModelSelection | null {
+}): { selection: ModelSelection; providerLabel: string; modelLabel: string } | null {
   const profile = input.profile ?? null;
   const candidateInstanceIds = [profile?.activeProvider, input.defaultModelSelection?.instanceId];
   let selectedEntry: ProviderInstanceEntry | undefined;
@@ -55,16 +56,26 @@ function resolveEnvironmentModelSelection(input: {
   if (!selectedEntry) return null;
 
   const savedSelection = profile?.modelSelectionByProvider[selectedEntry.instanceId];
-  if (savedSelection) return savedSelection;
-  if (input.defaultModelSelection?.instanceId === selectedEntry.instanceId) {
-    return input.defaultModelSelection;
+  let selection =
+    savedSelection ??
+    (input.defaultModelSelection?.instanceId === selectedEntry.instanceId
+      ? input.defaultModelSelection
+      : null);
+  if (!selection) {
+    const defaultModel =
+      selectedEntry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+      selectedEntry.models.find((model) => !model.isCustom)?.slug ??
+      selectedEntry.models[0]?.slug;
+    selection = defaultModel ? { instanceId: selectedEntry.instanceId, model: defaultModel } : null;
   }
+  if (!selection) return null;
 
-  const defaultModel =
-    selectedEntry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    selectedEntry.models.find((model) => !model.isCustom)?.slug ??
-    selectedEntry.models[0]?.slug;
-  return defaultModel ? { instanceId: selectedEntry.instanceId, model: defaultModel } : null;
+  const selectedModel = selectedEntry.models.find((model) => model.slug === selection.model);
+  return {
+    selection,
+    providerLabel: selectedEntry.displayName,
+    modelLabel: selectedModel ? getTriggerDisplayModelLabel(selectedModel) : selection.model,
+  };
 }
 
 export function buildEnvironmentOption(input: {
@@ -82,13 +93,24 @@ export function buildEnvironmentOption(input: {
   providerEntries?: readonly ProviderInstanceEntry[] | null;
   isAvailable: boolean;
 }): EnvironmentOption {
-  const modelSelectionOverride = input.providerEntries
-    ? resolveEnvironmentModelSelection({
+  const modelPreview = input.providerEntries
+    ? resolveEnvironmentModelPreview({
         defaultModelSelection: input.defaultModelSelection,
         profile: input.profile,
         providerEntries: input.providerEntries,
       })
     : undefined;
+  const summary = resolveMachineProfileSummary({
+    workspaceRoot: input.workspaceRoot,
+    defaultModelSelection: input.defaultModelSelection,
+    profile: input.profile,
+    ...(modelPreview !== undefined
+      ? { modelSelectionOverride: modelPreview?.selection ?? null }
+      : {}),
+    ...(input.fallbackExecutionProfile !== undefined
+      ? { fallbackExecutionProfile: input.fallbackExecutionProfile }
+      : {}),
+  });
   return {
     environmentId: input.environmentId,
     projectId: input.projectId,
@@ -96,15 +118,13 @@ export function buildEnvironmentOption(input: {
     isPrimary: input.isPrimary,
     workspaceRoot: input.workspaceRoot,
     connection: input.isAvailable ? "connected" : "unavailable",
-    profile: resolveMachineProfileSummary({
-      workspaceRoot: input.workspaceRoot,
-      defaultModelSelection: input.defaultModelSelection,
-      profile: input.profile,
-      ...(modelSelectionOverride !== undefined ? { modelSelectionOverride } : {}),
-      ...(input.fallbackExecutionProfile !== undefined
-        ? { fallbackExecutionProfile: input.fallbackExecutionProfile }
-        : {}),
-    }),
+    profile: modelPreview
+      ? {
+          ...summary,
+          providerLabel: modelPreview.providerLabel,
+          modelLabel: modelPreview.modelLabel,
+        }
+      : summary,
   };
 }
 

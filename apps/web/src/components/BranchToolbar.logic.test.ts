@@ -39,6 +39,9 @@ function provider(input: {
   driver: "codex" | "claudeAgent";
   enabled: boolean;
   defaultModel: string;
+  displayName?: string;
+  modelName?: string;
+  modelShortName?: string;
 }): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(input.instanceId),
@@ -49,10 +52,12 @@ function provider(input: {
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
+    ...(input.displayName ? { displayName: input.displayName } : {}),
     models: [
       {
         slug: input.defaultModel,
-        name: input.defaultModel,
+        name: input.modelName ?? input.defaultModel,
+        ...(input.modelShortName ? { shortName: input.modelShortName } : {}),
         isCustom: false,
         isDefault: true,
         capabilities: {},
@@ -126,7 +131,7 @@ describe("buildEnvironmentOption", () => {
       label: "Mini PC",
       isPrimary: false,
       workspaceRoot: "C:/repo",
-      defaultModelSelection: { instanceId: fallbackInstanceId, model: "sonnet" },
+      defaultModelSelection: { instanceId: fallbackInstanceId, model: "claude-sonnet-4" },
       profile: {
         environmentId: remoteEnvironmentId,
         projectId: "project-remote" as never,
@@ -152,15 +157,18 @@ describe("buildEnvironmentOption", () => {
           instanceId: fallbackInstanceId,
           driver: "claudeAgent",
           enabled: true,
-          defaultModel: "sonnet",
+          defaultModel: "claude-sonnet-4",
+          displayName: "Remote Claude",
+          modelName: "Claude Sonnet 4",
+          modelShortName: "Sonnet 4",
         }),
       ]),
       isAvailable: true,
     });
 
     expect(option.profile).toMatchObject({
-      providerLabel: "claudeAgent",
-      modelLabel: "sonnet",
+      providerLabel: "Remote Claude",
+      modelLabel: "Sonnet 4",
     });
   });
 });
