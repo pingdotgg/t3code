@@ -8,10 +8,8 @@ pkgrel="${PKGREL:-1}"
 
 if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   pkgname='t3code-bin'
-  icon_path='assets/prod/black-universal-1024.png'
 elif [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
   pkgname='t3code-nightly-bin'
-  icon_path='assets/nightly/nightly-universal-1024.png'
 else
   echo "Release $tag does not publish an AUR package."
   exit 0
@@ -33,10 +31,7 @@ fi
 work_dir="$(mktemp -d)"
 trap 'rm -rf -- "$work_dir"' EXIT
 gh api -H 'Accept: application/vnd.github.raw' \
-  "repos/$repo/contents/$icon_path?ref=$tag" > "$work_dir/icon.png"
-gh api -H 'Accept: application/vnd.github.raw' \
   "repos/$repo/contents/LICENSE?ref=$tag" > "$work_dir/LICENSE"
-icon_sha256="$(sha256sum "$work_dir/icon.png" | awk '{print $1}')"
 license_sha256="$(sha256sum "$work_dir/LICENSE" | awk '{print $1}')"
 
 package_dir="$repo_root/packaging/aur/$pkgname"
@@ -45,7 +40,6 @@ sed -Ei \
   -e "s/^pkgver=.*/pkgver=$pkgver/" \
   -e "s/^pkgrel=.*/pkgrel=$pkgrel/" \
   -e "/# AppImage$/s/'[0-9a-f]{64}'/'$appimage_sha256'/" \
-  -e "/# icon$/s/'[0-9a-f]{64}'/'$icon_sha256'/" \
   -e "/# upstream license$/s/'[0-9a-f]{64}'/'$license_sha256'/" \
   PKGBUILD
 
