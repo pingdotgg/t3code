@@ -34,7 +34,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -259,10 +259,16 @@ export function terminalSelectionLineRange(position: {
 export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
 
 /** Post-selection popup: just the two selection actions, always enabled. */
-export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
+export function terminalSelectionMenuItems(
+  platform = navigator.platform,
+): ContextMenuItem<"add-to-chat" | "copy">[] {
   return [
     { id: "add-to-chat", label: "Add to chat" },
-    { id: "copy", label: "Copy" },
+    {
+      id: "copy",
+      label: "Copy",
+      accelerator: isMacPlatform(platform) ? "Command+C" : "Ctrl+Shift+C",
+    },
   ];
 }
 
@@ -274,13 +280,19 @@ export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "c
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  platform?: string;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
+  const platform = options.platform ?? navigator.platform;
   return [
-    ...terminalSelectionMenuItems().map((item) => ({
+    ...terminalSelectionMenuItems(platform).map((item) => ({
       ...item,
       disabled: !options.hasSelection,
     })),
-    { id: "paste", label: "Paste" },
+    {
+      id: "paste",
+      label: "Paste",
+      accelerator: isMacPlatform(platform) ? "Command+V" : "Ctrl+Shift+V",
+    },
   ];
 }
 
@@ -808,9 +820,8 @@ export function TerminalViewport({
         });
         if (!shouldClear) return;
         clearSelectionAction();
-        // A copy shortcut that clears the selection (Ctrl+C) must also close
-        // the context menu that appears with the selection, but a clear that
-        // never opened a menu must not dismiss an unrelated one.
+        // Clearing the selection must also close the menu that belongs to it,
+        // but a clear that never opened a menu must not dismiss an unrelated one.
         if (openSelectionMenuRequestIdRef.current !== null) {
           void localApi?.contextMenu.close();
         }

@@ -4,8 +4,10 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  terminalContextMenuItems,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
+  terminalSelectionMenuItems,
 } from "./ThreadTerminalDrawer";
 
 describe("resolveTerminalSelectionActionPosition", () => {
@@ -88,5 +90,25 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+
+  it("advertises native terminal clipboard accelerators for each platform", () => {
+    expect(terminalSelectionMenuItems("Linux x86_64")).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Ctrl+Shift+C",
+    });
+    expect(
+      terminalContextMenuItems({ hasSelection: true, platform: "Linux x86_64" }),
+    ).toContainEqual({
+      id: "paste",
+      label: "Paste",
+      accelerator: "Ctrl+Shift+V",
+    });
+    expect(terminalSelectionMenuItems("MacIntel")).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Command+C",
+    });
   });
 });

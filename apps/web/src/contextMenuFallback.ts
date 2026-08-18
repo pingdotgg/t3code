@@ -101,6 +101,51 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
   return false;
 }
 
+export function matchesContextMenuAccelerator(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  accelerator: string,
+): boolean {
+  const parts = accelerator
+    .split("+")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  const key = parts.pop();
+  if (!key) return false;
+
+  const modifiers = new Set(parts);
+  const commandOrControl = modifiers.has("cmdorctrl") || modifiers.has("commandorcontrol");
+  const expectsControl = modifiers.has("ctrl") || modifiers.has("control");
+  const expectsCommand = modifiers.has("cmd") || modifiers.has("command");
+  const controlMatches = commandOrControl
+    ? event.ctrlKey !== event.metaKey
+    : event.ctrlKey === expectsControl && event.metaKey === expectsCommand;
+
+  return (
+    controlMatches &&
+    event.shiftKey === modifiers.has("shift") &&
+    event.altKey === (modifiers.has("alt") || modifiers.has("option")) &&
+    event.key.toLowerCase() === key
+  );
+}
+
+function findContextMenuAccelerator<T extends string>(
+  items: readonly ContextMenuItem<T>[],
+  event: KeyboardEvent,
+): T | null {
+  for (const item of items) {
+    if (item.disabled === true || item.header === true) continue;
+    if (item.children && item.children.length > 0) {
+      const child = findContextMenuAccelerator(item.children, event);
+      if (child !== null) return child;
+      continue;
+    }
+    if (item.accelerator && matchesContextMenuAccelerator(event, item.accelerator)) {
+      return item.id;
+    }
+  }
+  return null;
+}
+
 // Only one fallback menu exists at a time in the renderer; the active one is
 // tracked so a state change (for example a terminal selection clearing) can
 // dismiss it with the same result as an outside click or Escape.
@@ -139,7 +184,7 @@ export function showContextMenuFallback<T extends string>(
       if (activeContextMenuDismiss === dismiss) {
         activeContextMenuDismiss = null;
       }
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("contextmenu", onContextMenu, true);
       for (const menu of menuStack) {
@@ -151,8 +196,16 @@ export function showContextMenuFallback<T extends string>(
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         cleanup(null);
+        return;
       }
+      if (event.defaultPrevented) return;
+      const acceleratedItem = findContextMenuAccelerator(items, event);
+      if (acceleratedItem === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cleanup(acceleratedItem);
     };
 
     const onPointerDown = (event: PointerEvent) => {
@@ -246,6 +299,15 @@ export function showContextMenuFallback<T extends string>(
         label.textContent = item.label;
         button.appendChild(label);
 
+        if (item.accelerator) {
+          const accelerator = document.createElement("span");
+          accelerator.className = "ms-auto shrink-0 text-xs text-muted-foreground";
+          accelerator.style.cssText =
+            "margin-inline-start:auto;color:var(--muted-foreground);font-size:0.75rem;white-space:nowrap;";
+          accelerator.textContent = item.accelerator;
+          button.appendChild(accelerator);
+        }
+
         if (hasChildren) {
           const chevron = document.createElement("span");
           chevron.className = "ms-auto shrink-0 text-muted-foreground/80 text-sm leading-none";
@@ -315,7 +377,7 @@ export function showContextMenuFallback<T extends string>(
       });
     };
 
-    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);

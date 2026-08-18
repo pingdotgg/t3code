@@ -1,4 +1,4 @@
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "../../lib/utils";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -332,8 +332,13 @@ export function isTerminalCopyShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  if (event.key.toLowerCase() !== "c") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
+  const key = event.key.toLowerCase();
+  if (key === "insert" && !isMacPlatform(platform)) {
+    return event.ctrlKey && !event.shiftKey && !event.metaKey;
+  }
+  if (key !== "c") return false;
+  if (isMacPlatform(platform)) return event.metaKey && !event.ctrlKey;
+  return event.ctrlKey && (event.shiftKey || isWindowsPlatform(platform)) && !event.metaKey;
 }
 
 export function isTerminalPasteShortcut(
@@ -935,56 +940,46 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
-      // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
-      // onCopyEvent; not preventing the default keeps that path alive. WebKit
-      // omits the keyboard copy event without a DOM selection, so race the
-      // clipboard write against it the same way paste races its read. The
-      // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
-      // inspect), so synthesize one with execCommand("copy").
-      if (event.shiftKey) {
+      // Cmd+C can fire the browser's native copy event, caught in onCopyEvent.
+      // Chrome reserves Ctrl+Shift+C, and Ctrl+Insert is not consistent across
+      // browsers, so those explicit copy chords synthesize the same event.
+      // Every path also races a Clipboard API write against the native event
+      // because WebKit may omit it when there is no DOM selection.
+      const key = event.key.toLowerCase();
+      this.clearSelectionAfterCopy =
+        key === "c" && !event.shiftKey && isWindowsPlatform(navigator.platform);
+      const token = ++this.copyShortcutToken;
+      const selection = this.getSelection();
+      if (event.shiftKey || key === "insert") {
         event.preventDefault();
-        document.execCommand("copy");
-      } else {
-        // A plain Ctrl+C is also SIGINT on non-mac: clear the selection once
-        // it copies so the next Ctrl+C reaches the shell. The Shift chord and
-        // Cmd+C are copy-only, so they keep the selection; resetting the flag
-        // up front also drops any clear owed by an earlier gesture that never
-        // completed.
-        this.clearSelectionAfterCopy = !event.shiftKey && !isMacPlatform(navigator.platform);
-        const clipboard = navigator.clipboard;
-        if (typeof clipboard?.writeText === "function") {
-          // Defer the write past the default action: the native copy event
-          // (dispatched synchronously with the default action) claims the
-          // token first when it fires, and the write covers browsers whose
-          // shortcut produces no copy event. Skipping a write the native
-          // event already handled stops a stale resolution from clobbering a
-          // clipboard the user filled after this copy.
-          const token = ++this.copyShortcutToken;
-          const selection = this.getSelection();
-          void Promise.resolve().then(() => {
-            if (this.disposed || this.copyShortcutToken !== token) return;
-            void clipboard.writeText(selection).then(
-              () => {
-                // The write may have been superseded while in flight; only
-                // touch the selection if this gesture still owns the token.
-                if (this.disposed || this.copyShortcutToken !== token) return;
-                if (this.clearSelectionAfterCopy) {
-                  this.clearSelectionAfterCopy = false;
-                  this.clearSelection();
-                }
-              },
-              () => {
-                // The write failed and the native event has already had its
-                // chance, so nothing copied and no clear is owed by this
-                // gesture; a newer one may have just set the flag, so only
-                // drop it if this gesture still owns the token.
-                if (this.copyShortcutToken === token) {
-                  this.clearSelectionAfterCopy = false;
-                }
-              },
-            );
-          });
+        try {
+          document.execCommand("copy");
+        } catch {
+          // The Clipboard API fallback below still gets the same user gesture.
         }
+      }
+      const clipboard = navigator.clipboard;
+      if (typeof clipboard?.writeText === "function") {
+        // Defer the write past the default action: a native copy event claims
+        // the token first. Skipping a write already handled by that event
+        // avoids replacing clipboard content copied by a later gesture.
+        void Promise.resolve().then(() => {
+          if (this.disposed || this.copyShortcutToken !== token) return;
+          void clipboard.writeText(selection).then(
+            () => {
+              if (this.disposed || this.copyShortcutToken !== token) return;
+              if (this.clearSelectionAfterCopy) {
+                this.clearSelectionAfterCopy = false;
+                this.clearSelection();
+              }
+            },
+            () => {
+              if (this.copyShortcutToken === token) {
+                this.clearSelectionAfterCopy = false;
+              }
+            },
+          );
+        });
       }
       this.suppressedKeyCodes.add(event.code);
       return;

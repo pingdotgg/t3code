@@ -6,6 +6,7 @@ type FakeListener = (event: FakeDomEvent) => void;
 
 class FakeDomEvent {
   defaultPrevented = false;
+  propagationStopped?: boolean;
 
   constructor(
     readonly type: string,
@@ -16,6 +17,10 @@ class FakeDomEvent {
 
   preventDefault() {
     this.defaultPrevented = true;
+  }
+
+  stopPropagation() {
+    this.propagationStopped = true;
   }
 }
 
@@ -139,6 +144,13 @@ class FakeDocument {
     }
   }
 
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
@@ -234,6 +246,25 @@ describe("showContextMenuFallback", () => {
     childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename:project-b");
+  });
+
+  it("resolves a menu accelerator while the popup owns keyboard input", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
+    ]);
+    const shortcut = new KeyboardEvent("keydown", {
+      altKey: false,
+      ctrlKey: true,
+      key: "c",
+      metaKey: false,
+      shiftKey: true,
+    }) as unknown as FakeDomEvent;
+
+    (document as unknown as FakeDocument).dispatchEvent(shortcut);
+
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(shortcut.propagationStopped).toBe(true);
+    await expect(selectionPromise).resolves.toBe("copy");
   });
 });
 
