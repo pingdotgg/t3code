@@ -64,6 +64,12 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import {
+  findPromptStashUndoTransaction,
+  mergePromptStashUndoImages,
+  type PromptStashUndoTransaction,
+  undoPromptStashSideEffects,
+} from "./promptStashUndo";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -677,6 +683,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
+  const composerDraftTargetKey =
+    typeof composerDraftTarget === "string"
+      ? `draft:${composerDraftTarget}`
+      : `thread:${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`;
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -988,6 +998,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * thread) can still be stashed while an earlier encode is running.
    */
   const stashInFlightRef = useRef<Set<string>>(new Set());
+  const stashUndoStackRef = useRef<PromptStashUndoTransaction[]>([]);
   /**
    * Count of pasted images still being compressed, per thread. Reserved
    * against the attachment limit so concurrent pastes can't overshoot it,
@@ -1143,6 +1154,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const isComposerApprovalState = activePendingApproval !== null;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
+  const composerEditorHistoryScopeKey = activePendingProgress
+    ? `pending:${activePendingUserInput?.requestId ?? "unknown"}:${activePendingProgress.activeQuestion?.id ?? activePendingProgress.questionIndex}`
+    : isComposerApprovalState
+      ? "approval"
+      : composerDraftTargetKey;
   const hasComposerHeader =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
@@ -1957,6 +1973,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
   const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
 
+  const consumeStashUndoEntry = useCallback((entryId: string) => {
+    for (const transaction of stashUndoStackRef.current) {
+      if (transaction.entryId === entryId && transaction.state === "available") {
+        transaction.state = "consumed";
+      }
+    }
+    stashUndoStackRef.current = stashUndoStackRef.current.filter(
+      (transaction) => transaction.entryId !== entryId,
+    );
+  }, []);
+
   useEffect(() => {
     return () => {
       if (stashPulseTimeoutRef.current !== null) {
@@ -1983,6 +2010,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // Remove first so a double activation (click + Enter) can't restore twice.
       const { entry: taken, durable } = takeStashEntry(entry.id);
       if (!taken) return;
+      consumeStashUndoEntry(entry.id);
       if (!durable) {
         toastManager.add({
           type: "warning",
@@ -2087,6 +2115,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftImages,
       composerDraftTarget,
       composerImagesRef,
+      consumeStashUndoEntry,
       promptRef,
       setComposerDraftPrompt,
       takeStashEntry,
@@ -2095,7 +2124,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const deleteStashEntry = useCallback(
     (entry: PromptStashEntry) => {
-      const { durable } = takeStashEntry(entry.id);
+      const { entry: taken, durable } = takeStashEntry(entry.id);
+      if (!taken) return;
+      consumeStashUndoEntry(entry.id);
       if (!durable) {
         toastManager.add({
           type: "warning",
@@ -2106,7 +2137,70 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
     },
-    [takeStashEntry],
+    [consumeStashUndoEntry, takeStashEntry],
+  );
+
+  const undoLastPromptStash = useCallback(
+    (historyEntryId: number | null) => {
+      if (
+        isComposerApprovalState ||
+        pendingUserInputs.length > 0 ||
+        activePendingProgress !== null
+      ) {
+        return;
+      }
+      const transaction = findPromptStashUndoTransaction(stashUndoStackRef.current, historyEntryId);
+      const result = undoPromptStashSideEffects({
+        transaction,
+        currentTargetKey: composerDraftTargetKey,
+        takeEntry: takeStashEntry,
+        restoreImages: (images) => {
+          const merged = mergePromptStashUndoImages({
+            currentImages: composerImagesRef.current,
+            restoredImages: images,
+            maxImages: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          });
+          for (const image of merged.unusedImages) {
+            URL.revokeObjectURL(image.previewUrl);
+          }
+          composerImagesRef.current = merged.images;
+          addComposerDraftImages(composerDraftTarget, merged.addedImages);
+          if (merged.overflowImageNames.length > 0) {
+            toastManager.add({
+              type: "warning",
+              title: "Some images were not restored",
+              description: `${merged.overflowImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-image limit.`,
+            });
+          }
+        },
+      });
+      if (!transaction || (!result.undone && transaction.state === "available")) return;
+
+      stashUndoStackRef.current = stashUndoStackRef.current.filter(
+        (candidate) => candidate !== transaction,
+      );
+      if (!result.undone) return;
+      setIsStashMenuOpen(false);
+      if (!result.durable) {
+        toastManager.add({
+          type: "warning",
+          title: "Undone prompt may reappear in the stash",
+          description:
+            "Browser storage rejected the update, so this entry could still be there after a reload.",
+          data: { hideCopyButton: true },
+        });
+      }
+    },
+    [
+      activePendingProgress,
+      addComposerDraftImages,
+      composerDraftTarget,
+      composerDraftTargetKey,
+      composerImagesRef,
+      isComposerApprovalState,
+      pendingUserInputs.length,
+      takeStashEntry,
+    ],
   );
 
   const stashCurrentPrompt = useCallback(async () => {
@@ -2174,16 +2268,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
 
+      const undoTransaction: PromptStashUndoTransaction = {
+        entryId,
+        targetKey: composerDraftTargetKey,
+        historyEntryId: composerEditorRef.current?.captureCurrentHistoryEntry("") ?? null,
+        images,
+        state: "available",
+      };
+      stashUndoStackRef.current.push(undoTransaction);
+
       // Only the prompt and images are cleared — terminal/element contexts,
       // preview annotations, and review comments are not stashable, so
       // destroying them here would be unrecoverable.
       promptRef.current = "";
+      composerImagesRef.current = [];
       clearComposerDraftPromptAndImages(stashTarget);
       setComposerCursor(0);
       setComposerTrigger(null);
       pulseStashBadge();
 
       if (evicted) {
+        consumeStashUndoEntry(evicted.id);
         toastManager.add({
           type: "warning",
           title: "Oldest stashed prompt discarded",
@@ -2240,7 +2345,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             data: { hideCopyButton: true },
           });
         }
-      } else if (kept.length > 0) {
+      } else if (kept.length > 0 && undoTransaction.state !== "undone") {
         // The entry was restored or deleted before its images finished
         // encoding, so they have nowhere to land. Say so rather than letting
         // them evaporate.
@@ -2259,7 +2364,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     clearComposerDraftPromptAndImages,
     composerDraftTarget,
+    composerDraftTargetKey,
     composerImagesRef,
+    consumeStashUndoEntry,
     finalizeStashEntryImages,
     promptRef,
     pulseStashBadge,
@@ -3052,6 +3159,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : prompt
                 }
                 cursor={composerCursor}
+                historyScopeKey={composerEditorHistoryScopeKey}
                 terminalContexts={
                   !isComposerApprovalState && pendingUserInputs.length === 0
                     ? composerTerminalContexts
@@ -3062,6 +3170,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}
+                onBeforeUndo={undoLastPromptStash}
                 onPaste={onComposerPaste}
                 placeholder={
                   isComposerApprovalState

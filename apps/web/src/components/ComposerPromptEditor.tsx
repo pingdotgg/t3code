@@ -2,7 +2,11 @@ import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalC
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
-import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import {
+  createEmptyHistoryState,
+  HistoryPlugin,
+  type HistoryState,
+} from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { type ServerProviderSkill } from "@t3tools/contracts";
@@ -27,6 +31,7 @@ import {
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
+  UNDO_COMMAND,
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_LOW,
   KEY_BACKSPACE_COMMAND,
@@ -82,6 +87,7 @@ import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTermin
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import { captureComposerHistoryEntry } from "./composerHistory";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 const SURROUND_SYMBOLS: [string, string][] = [
@@ -869,6 +875,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  captureCurrentHistoryEntry: (nextValue: string) => number;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -883,6 +890,7 @@ interface ComposerPromptEditorProps {
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
+  historyScopeKey: string;
   placeholder: string;
   className?: string;
   onRemoveTerminalContext: (contextId: string) => void;
@@ -897,6 +905,7 @@ interface ComposerPromptEditorProps {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  onBeforeUndo?: (historyEntryId: number | null) => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -959,6 +968,33 @@ function ComposerCommandKeyPlugin(props: {
       unregisterTab();
     };
   }, [editor, props]);
+
+  return null;
+}
+
+function ComposerBeforeUndoPlugin(props: {
+  historyState: HistoryState;
+  getHistoryEntryId: (editorState: EditorState) => number;
+  onBeforeUndo?: (historyEntryId: number | null) => void;
+}) {
+  const [editor] = useLexicalComposerContext();
+  const getHistoryEntryId = props.getHistoryEntryId;
+  const historyState = props.historyState;
+  const onBeforeUndo = props.onBeforeUndo;
+
+  useEffect(() => {
+    return editor.registerCommand(
+      UNDO_COMMAND,
+      () => {
+        const nextHistoryEntry = historyState.undoStack.at(-1);
+        onBeforeUndo?.(nextHistoryEntry ? getHistoryEntryId(nextHistoryEntry.editorState) : null);
+        // Lexical still owns the text history. This hook only lets the
+        // composer reverse side state that lives outside the editor.
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor, getHistoryEntryId, historyState, onBeforeUndo]);
 
   return null;
 }
@@ -1532,16 +1568,30 @@ function ComposerPromptEditorInner({
   terminalContexts,
   skills,
   disabled,
+  historyScopeKey,
   placeholder,
   className,
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onBeforeUndo,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
   const [editor] = useLexicalComposerContext();
   const onChangeRef = useRef(onChange);
+  const historyState = useMemo(() => createEmptyHistoryState(), []);
+  const historyEntryIdsRef = useRef(new WeakMap<EditorState, number>());
+  const nextHistoryEntryIdRef = useRef(1);
+  const getHistoryEntryId = useCallback((editorState: EditorState): number => {
+    const existing = historyEntryIdsRef.current.get(editorState);
+    if (existing !== undefined) return existing;
+    const next = nextHistoryEntryIdRef.current;
+    nextHistoryEntryIdRef.current += 1;
+    historyEntryIdsRef.current.set(editorState, next);
+    return next;
+  }, []);
+  const historyScopeKeyRef = useRef(historyScopeKey);
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
   const terminalContextsSignatureRef = useRef(terminalContextsSignature);
@@ -1616,6 +1666,20 @@ function ComposerPromptEditorInner({
       isApplyingControlledUpdateRef.current = false;
     });
   }, [cursor, editor, skillsSignature, terminalContexts, terminalContextsSignature, value]);
+
+  // Draft prompts and pending answers share one Lexical instance, but they
+  // must not share undo entries. Seed the new scope with its controlled value
+  // so the first edit in that scope remains undoable.
+  useLayoutEffect(() => {
+    if (historyScopeKeyRef.current === historyScopeKey) return;
+    historyScopeKeyRef.current = historyScopeKey;
+    historyState.undoStack.length = 0;
+    historyState.redoStack.length = 0;
+    historyState.current = {
+      editor,
+      editorState: editor.getEditorState(),
+    };
+  }, [editor, historyScopeKey, historyState]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
@@ -1692,9 +1756,13 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      captureCurrentHistoryEntry: (nextValue) => {
+        const editorState = captureComposerHistoryEntry({ editor, historyState, nextValue });
+        return getHistoryEntryId(editorState);
+      },
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [editor, focusAt, getHistoryEntryId, historyState, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {
@@ -1774,6 +1842,11 @@ function ComposerPromptEditorInner({
         />
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+        <ComposerBeforeUndoPlugin
+          historyState={historyState}
+          getHistoryEntryId={getHistoryEntryId}
+          {...(onBeforeUndo ? { onBeforeUndo } : {})}
+        />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
@@ -1781,7 +1854,7 @@ function ComposerPromptEditorInner({
         <ComposerInlineTokenBackspacePlugin />
         <ComposerInlineTokenPastePlugin />
         <ComposerChipSelectionPlugin />
-        <HistoryPlugin />
+        <HistoryPlugin externalHistoryState={historyState} />
       </div>
     </ComposerTerminalContextActionsContext>
   );
@@ -1793,11 +1866,13 @@ export function ComposerPromptEditor({
   terminalContexts,
   skills,
   disabled,
+  historyScopeKey,
   placeholder,
   className,
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onBeforeUndo,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1831,9 +1906,11 @@ export function ComposerPromptEditor({
         terminalContexts={terminalContexts}
         skills={skills}
         disabled={disabled}
+        historyScopeKey={historyScopeKey}
         placeholder={placeholder}
         onRemoveTerminalContext={onRemoveTerminalContext}
         onChange={onChange}
+        {...(onBeforeUndo ? { onBeforeUndo } : {})}
         onPaste={onPaste}
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
