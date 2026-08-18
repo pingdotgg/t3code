@@ -429,7 +429,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const rows = useStableRows(rawRows);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
-  const [findMatchIndex, setFindMatchIndex] = useState(0);
+  const [findMatchCursor, setFindMatchIndex] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -443,6 +443,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [findMessageEntries],
   );
   const findMatches = useMemo(() => findTextMatches(findTexts, findQuery), [findQuery, findTexts]);
+  const findMatchIndex = Math.min(findMatchCursor, Math.max(0, findMatches.length - 1));
   const updateFindQuery = useCallback(
     (query: string) => {
       setFindQuery(query);
