@@ -87,6 +87,16 @@ export class DesktopPreReadyOpenUrls extends Context.Service<
   EarlyOpenUrlBuffer
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyOpenUrls") {}
 
+const makeOpenUrls = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  return yield* Effect.sync(() =>
+    makeEarlyOpenUrlBuffer({
+      platform,
+      electronApp: Electron.app,
+    }),
+  );
+});
+
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
@@ -109,9 +119,8 @@ export const make = Effect.gen(function* () {
 
 // Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
 // observe app readiness before scheme privileges and command-line switches exist.
-export const layer = (openUrls: EarlyOpenUrlBuffer) =>
-  Layer.mergeAll(
-    ElectronProtocol.layerSchemePrivileges,
-    Layer.effect(DesktopPreReadyElectronOptions, make),
-    Layer.succeed(DesktopPreReadyOpenUrls, openUrls),
-  );
+export const layer = Layer.mergeAll(
+  ElectronProtocol.layerSchemePrivileges,
+  Layer.effect(DesktopPreReadyElectronOptions, make),
+  Layer.effect(DesktopPreReadyOpenUrls, makeOpenUrls),
+);

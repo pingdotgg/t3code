@@ -64,11 +64,6 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
-const earlyOpenUrls = DesktopPreReadyPlatform.makeEarlyOpenUrlBuffer({
-  platform: process.platform,
-  electronApp: Electron.app,
-});
-
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
@@ -214,11 +209,21 @@ const desktopApplicationRuntimeLayer = desktopApplicationLayer.pipe(
 
 // Acquire strict pre-ready setup before Clerk, whose userData resolution can
 // yield and let Electron emit ready.
-const desktopRuntimeLayer = desktopClerkLayer.pipe(
-  Layer.flatMap((clerkContext) =>
-    desktopApplicationRuntimeLayer.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
+const desktopRuntimeLayer = DesktopPreReadyPlatform.layer.pipe(
+  Layer.flatMap((preReadyContext) =>
+    desktopClerkLayer.pipe(
+      Layer.flatMap((clerkContext) =>
+        desktopApplicationRuntimeLayer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.succeedContext(preReadyContext),
+              Layer.succeedContext(clerkContext),
+            ),
+          ),
+        ),
+      ),
+    ),
   ),
-  Layer.provideMerge(DesktopPreReadyPlatform.layer(earlyOpenUrls)),
 );
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);
