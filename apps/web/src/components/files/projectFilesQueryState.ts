@@ -131,12 +131,12 @@ export function useProjectEntriesQuery(
   const runRefresh = useAtomCommand(projectEnvironment.refreshEntries);
   const refreshRequestId = useRef(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    setIsRefreshing(false);
+    return () => {
       refreshRequestId.current += 1;
-    },
-    [],
-  );
+    };
+  }, [cwd, environmentId]);
   const refresh = useCallback(() => {
     const requestId = ++refreshRequestId.current;
     setIsRefreshing(true);

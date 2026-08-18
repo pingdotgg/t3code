@@ -12,12 +12,12 @@ export function useProjectEntriesRefresh(
   const requestIdRef = useRef(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    setIsRefreshing(false);
+    return () => {
       requestIdRef.current += 1;
-    },
-    [],
-  );
+    };
+  }, [cwd, environmentId]);
 
   const refresh = useCallback(() => {
     if (environmentId === null || cwd === null) return;
