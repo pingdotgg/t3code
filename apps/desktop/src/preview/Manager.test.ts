@@ -1871,6 +1871,12 @@ describe("PreviewManager", () => {
         closeMainWindow?.();
         const racedStart = yield* Effect.exit(manager.startRecording("tab_window_close_race"));
         expect(Exit.isFailure(racedStart)).toBe(true);
+        if (Exit.isFailure(racedStart)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(racedStart.cause))).toMatchObject({
+            _tag: "PreviewMainWindowClosedError",
+            tabId: "tab_window_close_race",
+          });
+        }
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
 

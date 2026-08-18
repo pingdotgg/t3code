@@ -2644,11 +2644,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const created = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
       return Effect.gen(function* () {
         if (!frameCaptureWindowOpen) {
-          return yield* new PreviewOperationError({
-            operation: "frameCapture.start",
-            tabId,
-            cause: new Error("Cannot start preview frame capture while the main window is closed."),
-          });
+          return yield* new PreviewMainWindowClosedError({ tabId });
         }
         const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
         if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
@@ -3780,6 +3776,15 @@ export class PreviewWebviewNotInitializedError extends Schema.TaggedErrorClass<P
   }
 }
 
+export class PreviewMainWindowClosedError extends Schema.TaggedErrorClass<PreviewMainWindowClosedError>()(
+  "PreviewMainWindowClosedError",
+  { tabId: Schema.String },
+) {
+  override get message(): string {
+    return `Cannot start preview frame capture while the main window is closed: ${this.tabId}`;
+  }
+}
+
 export class PreviewOperationError extends Schema.TaggedErrorClass<PreviewOperationError>()(
   "PreviewOperationError",
   {
@@ -3986,6 +3991,7 @@ export const PreviewManagerError = Schema.Union([
   PreviewTabNotFoundError,
   PreviewWebContentsNotFoundError,
   PreviewWebviewNotInitializedError,
+  PreviewMainWindowClosedError,
   PreviewOperationError,
   PreviewArtifactPathOutsideDirectoryError,
   PreviewArtifactImageLoadError,
