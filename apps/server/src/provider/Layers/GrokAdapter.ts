@@ -41,7 +41,7 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { makeAcpFileResourceLink, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -957,7 +957,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               });
 
               const text = input.input?.trim();
-              const imagePromptParts = yield* Effect.forEach(
+              const attachmentPromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
                   Effect.gen(function* () {
@@ -971,6 +971,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         method: "session/prompt",
                         detail: `Invalid attachment id '${attachment.id}'.`,
                       });
+                    }
+                    if (attachment.type === "pdf") {
+                      return makeAcpFileResourceLink({
+                        path: attachmentPath,
+                        name: attachment.name,
+                        mimeType: attachment.mimeType,
+                        sizeBytes: attachment.sizeBytes,
+                      }) satisfies EffectAcpSchema.ContentBlock;
                     }
                     const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
                       Effect.mapError(
@@ -992,7 +1000,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               );
               const promptParts: Array<EffectAcpSchema.ContentBlock> = [
                 ...(text ? [{ type: "text" as const, text }] : []),
-                ...imagePromptParts,
+                ...attachmentPromptParts,
               ];
 
               if (promptParts.length === 0) {

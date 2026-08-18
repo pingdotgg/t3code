@@ -52,6 +52,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  FileTextIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -955,7 +956,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const userImages = row.message.attachments ?? [];
+  const userAttachments = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
@@ -971,8 +972,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
   ];
-  const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
-  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const previewImages = userAttachments.filter(
+    (attachment) =>
+      attachment.type === "image" && attachment.name.startsWith("preview-annotation-"),
+  );
+  const regularImages = userAttachments.filter(
+    (attachment) =>
+      attachment.type === "image" && !attachment.name.startsWith("preview-annotation-"),
+  );
+  const pdfs = userAttachments.filter((attachment) => attachment.type === "pdf");
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
@@ -1011,6 +1019,25 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
+        {pdfs.length > 0 ? (
+          <div className="mb-2 flex max-w-[420px] flex-wrap gap-2">
+            {pdfs.map((pdf) => (
+              <a
+                key={pdf.id}
+                href={pdf.previewUrl}
+                download={pdf.name}
+                target="_blank"
+                rel="noreferrer"
+                className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-border/80 bg-background/70 px-3 py-2 text-xs hover:bg-background"
+              >
+                <FileTextIcon className="size-5 shrink-0 text-red-500" />
+                <span className="truncate" title={pdf.name}>
+                  {pdf.name}
+                </span>
+              </a>
+            ))}
+          </div>
+        ) : null}
         {previewAnnotations.map((annotation, index) => (
           <UserMessagePreviewAnnotationCard
             key={annotation.id}
@@ -1105,6 +1132,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const pdfs = (row.message.attachments ?? []).filter((attachment) => attachment.type === "pdf");
 
   return (
     <>
@@ -1117,6 +1145,25 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
           skills={ctx.skills}
         />
+        {pdfs.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {pdfs.map((pdf) => (
+              <a
+                key={pdf.id}
+                href={pdf.previewUrl}
+                download={pdf.name}
+                target="_blank"
+                rel="noreferrer"
+                className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-border/80 bg-background/70 px-3 py-2 text-xs hover:bg-background"
+              >
+                <FileTextIcon className="size-5 shrink-0 text-red-500" />
+                <span className="truncate" title={pdf.name}>
+                  {pdf.name}
+                </span>
+              </a>
+            ))}
+          </div>
+        ) : null}
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}

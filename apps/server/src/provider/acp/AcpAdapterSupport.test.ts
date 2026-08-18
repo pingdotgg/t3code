@@ -2,13 +2,34 @@ import { describe, expect, it } from "vite-plus/test";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
-import { acpPermissionOutcome, mapAcpToAdapterError } from "./AcpAdapterSupport.ts";
+import {
+  acpPermissionOutcome,
+  makeAcpFileResourceLink,
+  mapAcpToAdapterError,
+} from "./AcpAdapterSupport.ts";
 
 describe("AcpAdapterSupport", () => {
   it("maps ACP approval decisions to permission outcomes", () => {
     expect(acpPermissionOutcome("accept")).toBe("allow-once");
     expect(acpPermissionOutcome("acceptForSession")).toBe("allow-always");
     expect(acpPermissionOutcome("decline")).toBe("reject-once");
+  });
+
+  it("builds file resource links for non-image attachments", () => {
+    expect(
+      makeAcpFileResourceLink({
+        path: "/tmp/spec.pdf",
+        name: "spec.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 42,
+      }),
+    ).toEqual({
+      type: "resource_link",
+      name: "spec.pdf",
+      mimeType: "application/pdf",
+      size: 42,
+      uri: "file:///tmp/spec.pdf",
+    });
   });
 
   it("maps ACP request errors to provider adapter request errors", () => {

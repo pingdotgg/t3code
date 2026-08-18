@@ -227,6 +227,39 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
   }),
 );
 
+it.effect("decodes PDF attachments in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-pdf",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-pdf",
+        role: "user",
+        text: "Review this document",
+        attachments: [
+          {
+            type: "pdf",
+            id: "thread-pdf-12345678-1234-1234-1234-123456789abc",
+            name: "spec.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 4,
+            dataUrl: "data:application/pdf;base64,JVBERg==",
+          },
+        ],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.message.attachments[0], {
+      type: "pdf",
+      id: "thread-pdf-12345678-1234-1234-1234-123456789abc",
+      name: "spec.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 4,
+    });
+  }),
+);
+
 it.effect("preserves explicit provider and runtime mode in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

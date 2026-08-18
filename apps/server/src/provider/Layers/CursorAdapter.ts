@@ -49,7 +49,11 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import {
+  acpPermissionOutcome,
+  makeAcpFileResourceLink,
+  mapAcpToAdapterError,
+} from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -982,6 +986,17 @@ export function makeCursorAdapter(
                   method: "session/prompt",
                   detail: `Invalid attachment id '${attachment.id}'.`,
                 });
+              }
+              if (attachment.type === "pdf") {
+                promptParts.push(
+                  makeAcpFileResourceLink({
+                    path: attachmentPath,
+                    name: attachment.name,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes,
+                  }),
+                );
+                continue;
               }
               const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
                 Effect.mapError(

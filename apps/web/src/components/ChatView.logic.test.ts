@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
@@ -38,6 +39,40 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("attachment preview handoff", () => {
+  it("keeps image and PDF blob previews alive until server assets are ready", () => {
+    const message = {
+      id: MessageId.make("message-attachments"),
+      role: "user" as const,
+      text: "",
+      attachments: [
+        {
+          type: "image" as const,
+          id: "image-attachment",
+          name: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+          previewUrl: "blob:image",
+        },
+        {
+          type: "pdf" as const,
+          id: "pdf-attachment",
+          name: "spec.pdf",
+          mimeType: "application/pdf" as const,
+          sizeBytes: 4,
+          previewUrl: "blob:pdf",
+        },
+      ],
+      turnId: null,
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(collectUserMessageBlobPreviewUrls(message)).toEqual(["blob:image", "blob:pdf"]);
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());

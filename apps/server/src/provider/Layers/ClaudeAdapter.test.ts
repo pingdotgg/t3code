@@ -736,7 +736,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("embeds image attachments in Claude user messages", () => {
+  it.effect("embeds image and PDF attachments in Claude user messages", () => {
     const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
     const harness = makeHarness({
       cwd: "/tmp/project-claude-attachments",
@@ -762,9 +762,21 @@ describe("ClaudeAdapterLive", () => {
         mimeType: "image/png",
         sizeBytes: 4,
       };
+      const pdfAttachment = {
+        type: "pdf" as const,
+        id: "thread-claude-pdf-12345678-1234-1234-1234-123456789abc",
+        name: "spec.pdf",
+        mimeType: "application/pdf" as const,
+        sizeBytes: 4,
+      };
       const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      const pdfAttachmentPath = NodePath.join(
+        attachmentsDir,
+        attachmentRelativePath(pdfAttachment),
+      );
       NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
       NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+      NodeFS.writeFileSync(pdfAttachmentPath, Uint8Array.from([5, 6, 7, 8]));
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
@@ -775,7 +787,7 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "What's in this image?",
-        attachments: [attachment],
+        attachments: [attachment, pdfAttachment],
       });
 
       const createInput = harness.getLastCreateQueryInput();
@@ -792,6 +804,14 @@ describe("ClaudeAdapterLive", () => {
             type: "base64",
             media_type: "image/png",
             data: "AQIDBA==",
+          },
+        },
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: "BQYHCA==",
           },
         },
       ]);

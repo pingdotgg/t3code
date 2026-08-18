@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type UploadChatAttachment,
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
@@ -113,6 +114,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type ChatAttachment,
   type SessionPhase,
   type Thread,
   type TurnDiffSummary,
@@ -204,6 +206,7 @@ import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
+  type ComposerPdfAttachment,
   type DraftThreadEnvMode,
   useComposerDraftStore,
   type DraftId,
@@ -352,8 +355,8 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 
-const IMAGE_ONLY_BOOTSTRAP_PROMPT =
-  "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Respond using the conversation context and the attached file(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -1311,6 +1314,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const addComposerDraftPdfs = useComposerDraftStore((store) => store.addPdfs);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
@@ -1337,6 +1341,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerPdfsRef = useRef<ComposerPdfAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
@@ -2453,10 +2458,9 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+        attachment.previewUrl ? [attachment.previewUrl] : [],
       );
       if (
-        serverPreviewUrls.length === 0 ||
         serverPreviewUrls.length !== handoffPreviewUrls.length ||
         serverPreviewUrls.some((previewUrl) => previewUrl.startsWith("blob:"))
       ) {
@@ -2468,8 +2472,11 @@ function ChatViewContent(props: ChatViewProps) {
       let cancelled = false;
       const imageInstances: HTMLImageElement[] = [];
 
+      const serverImagePreviewUrls = serverMessage.attachments.flatMap((attachment) =>
+        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+      );
       const preloadServerPreviews = Promise.all(
-        serverPreviewUrls.map(
+        serverImagePreviewUrls.map(
           (previewUrl) =>
             new Promise<void>((resolve, reject) => {
               const image = new Image();
@@ -2534,13 +2541,10 @@ function ChatViewContent(props: ChatViewProps) {
             }
 
             let changed = false;
-            let imageIndex = 0;
+            let attachmentIndex = 0;
             const attachments = message.attachments.map((attachment) => {
-              if (attachment.type !== "image") {
-                return attachment;
-              }
-              const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
-              imageIndex += 1;
+              const handoffPreviewUrl = handoffPreviewUrls[attachmentIndex];
+              attachmentIndex += 1;
               if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
                 return attachment;
               }
@@ -4291,6 +4295,7 @@ function ChatViewContent(props: ChatViewProps) {
       draft &&
       (draft.prompt.trim().length > 0 ||
         draft.images.length > 0 ||
+        draft.pdfs.length > 0 ||
         draft.terminalContexts.length > 0 ||
         draft.elementContexts.length > 0 ||
         draft.previewAnnotations.length > 0 ||
@@ -4959,6 +4964,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const {
       images: sendContextImages,
+      pdfs: sendContextPdfs,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
       previewAnnotations: sendContextPreviewAnnotations,
@@ -4974,6 +4980,15 @@ function ChatViewContent(props: ChatViewProps) {
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
         ? [...sendContextImages, directAnnotation.image]
         : sendContextImages;
+    const composerPdfs = sendContextPdfs;
+    if (ctxSelectedProvider === "codex" && composerPdfs.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: "PDF attachments are unavailable with Codex",
+        description: "Choose Claude, Cursor, Grok, or OpenCode before sending this message.",
+      });
+      return;
+    }
     const composerPreviewAnnotations =
       directAnnotation &&
       !sendContextPreviewAnnotations.some(
@@ -4997,7 +5012,7 @@ function ChatViewContent(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length,
+      imageCount: composerImages.length + composerPdfs.length,
       terminalContexts: composerTerminalContexts,
       elementContextCount:
         composerElementContexts.length +
@@ -5033,6 +5048,7 @@ function ChatViewContent(props: ChatViewProps) {
     const standaloneSlashCommand =
       settings.planModeEnabled &&
       composerImages.length === 0 &&
+      composerPdfs.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
@@ -5089,6 +5105,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     const composerImagesSnapshot = [...composerImages];
+    const composerPdfsSnapshot = [...composerPdfs];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
@@ -5110,7 +5127,7 @@ function ChatViewContent(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
@@ -5137,22 +5154,51 @@ function ChatViewContent(props: ChatViewProps) {
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
+      [...composerImagesSnapshot, ...composerPdfsSnapshot].map(
+        async (attachment): Promise<UploadChatAttachment> => {
+          const dataUrl = await readFileAsDataUrl(attachment.file);
+          if (attachment.type === "pdf") {
+            return {
+              type: "pdf",
+              name: attachment.name,
+              mimeType: "application/pdf",
+              sizeBytes: attachment.sizeBytes,
+              dataUrl,
+            };
+          }
+          return {
+            type: "image",
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            dataUrl,
+          };
+        },
+      ),
     );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+    const optimisticAttachments: ChatAttachment[] = [
+      ...composerImagesSnapshot,
+      ...composerPdfsSnapshot,
+    ].map((attachment) => {
+      if (attachment.type === "pdf") {
+        return {
+          type: "pdf",
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: "application/pdf",
+          sizeBytes: attachment.sizeBytes,
+          previewUrl: attachment.previewUrl,
+        };
+      }
+      return {
+        type: "image",
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        previewUrl: attachment.previewUrl,
+      };
+    });
     // Sending always returns to the live edge. The new row becomes the
     // anchored end-space target so it lands near the top while the response
     // streams into the reserved space below it.
@@ -5199,17 +5245,18 @@ function ChatViewContent(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let firstComposerImageName: string | null = null;
-    if (composerImagesSnapshot.length > 0) {
-      const firstComposerImage = composerImagesSnapshot[0];
-      if (firstComposerImage) {
-        firstComposerImageName = firstComposerImage.name;
+    let firstComposerAttachment: { readonly type: "image" | "pdf"; readonly name: string } | null =
+      null;
+    if (composerImagesSnapshot.length > 0 || composerPdfsSnapshot.length > 0) {
+      const firstAttachment = [...composerImagesSnapshot, ...composerPdfsSnapshot][0];
+      if (firstAttachment) {
+        firstComposerAttachment = { type: firstAttachment.type, name: firstAttachment.name };
       }
     }
     let titleSeed = trimmed;
     if (!titleSeed) {
-      if (firstComposerImageName) {
-        titleSeed = `Image: ${firstComposerImageName}`;
+      if (firstComposerAttachment) {
+        titleSeed = `${firstComposerAttachment.type === "pdf" ? "PDF" : "Image"}: ${firstComposerAttachment.name}`;
       } else if (composerTerminalContextsSnapshot.length > 0) {
         titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
       } else if (composerElementContextsSnapshot.length > 0) {
@@ -5324,6 +5371,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
+        composerPdfsRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
         composerElementContextsRef.current.length === 0 &&
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
@@ -5341,11 +5389,19 @@ function ChatViewContent(props: ChatViewProps) {
         });
         promptRef.current = promptForSend;
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+        const retryComposerPdfs = composerPdfsSnapshot.map((pdf) => ({
+          ...pdf,
+          previewUrl: pdf.previewUrl.startsWith("blob:")
+            ? URL.createObjectURL(pdf.file)
+            : pdf.previewUrl,
+        }));
         composerImagesRef.current = retryComposerImages;
+        composerPdfsRef.current = retryComposerPdfs;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
+        addComposerDraftPdfs(composerDraftTarget, retryComposerPdfs);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
@@ -6463,6 +6519,7 @@ function ChatViewContent(props: ChatViewProps) {
                             gitCwd={gitCwd}
                             promptRef={promptRef}
                             composerImagesRef={composerImagesRef}
+                            composerPdfsRef={composerPdfsRef}
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}

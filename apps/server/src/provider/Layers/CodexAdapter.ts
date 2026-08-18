@@ -1772,6 +1772,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     input: ProviderSendTurnInput,
     attachment: NonNullable<ProviderSendTurnInput["attachments"]>[number],
   ) {
+    if (attachment.type === "pdf") {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "turn/start",
+        detail:
+          "Codex does not support PDF attachments yet. Use Claude, Cursor, Grok, or OpenCode for PDF messages.",
+      });
+    }
     const attachmentPath = resolveAttachmentPath({
       attachmentsDir: serverConfig.attachmentsDir,
       attachment,

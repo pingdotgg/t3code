@@ -66,6 +66,7 @@ import {
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
   type ComposerImageAttachment,
+  type ComposerPdfAttachment,
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
@@ -98,6 +99,20 @@ function makeImage(input: {
     id: input.id,
     name,
     mimeType,
+    sizeBytes: file.size,
+    previewUrl: input.previewUrl,
+    file,
+  };
+}
+
+function makePdf(input: { id: string; previewUrl: string; name?: string }): ComposerPdfAttachment {
+  const name = input.name ?? "document.pdf";
+  const file = new File([new Uint8Array([1, 2, 3, 4])], name, { type: "application/pdf" });
+  return {
+    type: "pdf",
+    id: input.id,
+    name,
+    mimeType: "application/pdf",
     sizeBytes: file.size,
     previewUrl: input.previewUrl,
     file,
@@ -254,6 +269,24 @@ describe("composerDraftStore addImages", () => {
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft?.images.map((image) => image.id)).toEqual(["img-shared"]);
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:shared");
+  });
+});
+
+describe("composerDraftStore addPdfs", () => {
+  const threadId = ThreadId.make("thread-pdf");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("keeps PDF attachments in the composer draft", () => {
+    const pdf = makePdf({ id: "pdf-1", previewUrl: "blob:pdf" });
+
+    useComposerDraftStore.getState().addPdfs(threadRef, [pdf]);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.pdfs).toEqual([pdf]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.images).toEqual([]);
   });
 });
 

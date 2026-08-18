@@ -6,12 +6,25 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  attachmentRelativePath,
   createAttachmentId,
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
+  it("stores PDF attachments with a stable PDF extension", () => {
+    expect(
+      attachmentRelativePath({
+        type: "pdf",
+        id: "thread-1-attachment",
+        name: "spec.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 4,
+      }),
+    ).toBe("thread-1-attachment.pdf");
+  });
+
   it("sanitizes thread ids when creating attachment ids", () => {
     const attachmentId = createAttachmentId("thread.folder/unsafe space");
     expect(attachmentId).toBeTruthy();

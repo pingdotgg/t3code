@@ -33,7 +33,12 @@ import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model"
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type ChatImageAttachment,
+  type ChatPdfAttachment,
+} from "./types";
 import {
   type TerminalContextDraft,
   ensureInlineTerminalContextPlaceholders,
@@ -81,17 +86,27 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
 
 export const PersistedComposerImageAttachment = Schema.Struct({
   id: Schema.String,
+  type: Schema.optional(Schema.Literals(["image", "pdf"])),
   name: Schema.String,
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
   dataUrl: Schema.String,
 });
 export type PersistedComposerImageAttachment = typeof PersistedComposerImageAttachment.Type;
+export type PersistedComposerAttachment = PersistedComposerImageAttachment;
 
-export interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"> {
+interface ComposerAttachmentPreviewState {
   previewUrl: string;
   file: File;
 }
+
+export interface ComposerImageAttachment
+  extends Omit<ChatImageAttachment, "previewUrl">, ComposerAttachmentPreviewState {}
+
+export interface ComposerPdfAttachment
+  extends Omit<ChatPdfAttachment, "previewUrl">, ComposerAttachmentPreviewState {}
+
+type ComposerAttachment = ComposerImageAttachment | ComposerPdfAttachment;
 
 const PersistedTerminalContextDraft = Schema.Struct({
   id: Schema.String,
@@ -251,7 +266,9 @@ const PersistedComposerDraftStoreStorage = Schema.Struct({
 export interface ComposerThreadDraftState {
   prompt: string;
   images: ComposerImageAttachment[];
+  pdfs: ComposerPdfAttachment[];
   nonPersistedImageIds: string[];
+  nonPersistedPdfIds: string[];
   persistedAttachments: PersistedComposerImageAttachment[];
   terminalContexts: TerminalContextDraft[];
   /**
@@ -472,6 +489,8 @@ interface ComposerDraftStoreState {
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => void;
   addImages: (threadRef: ComposerThreadTarget, images: ComposerImageAttachment[]) => void;
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
+  addPdfs: (threadRef: ComposerThreadTarget, pdfs: ComposerPdfAttachment[]) => void;
+  removePdf: (threadRef: ComposerThreadTarget, pdfId: string) => void;
   insertTerminalContext: (
     threadRef: ComposerThreadTarget,
     prompt: string,
@@ -603,6 +622,7 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE = Object.freeze<PersistedComposerDraftSt
 });
 
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
+const EMPTY_PDFS: ComposerPdfAttachment[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
 const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
@@ -610,6 +630,7 @@ const EMPTY_ELEMENT_CONTEXTS: ElementContextDraft[] = [];
 const EMPTY_PREVIEW_ANNOTATIONS: PreviewAnnotationPayload[] = [];
 const EMPTY_REVIEW_COMMENTS: ReviewCommentContext[] = [];
 Object.freeze(EMPTY_IMAGES);
+Object.freeze(EMPTY_PDFS);
 Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
 Object.freeze(EMPTY_ELEMENT_CONTEXTS);
@@ -625,7 +646,9 @@ const EMPTY_COMPOSER_DRAFT_MODEL_STATE = Object.freeze<ComposerDraftModelState>(
 const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   prompt: "",
   images: EMPTY_IMAGES,
+  pdfs: EMPTY_PDFS,
   nonPersistedImageIds: EMPTY_IDS,
+  nonPersistedPdfIds: EMPTY_IDS,
   persistedAttachments: EMPTY_PERSISTED_ATTACHMENTS,
   terminalContexts: EMPTY_TERMINAL_CONTEXTS,
   elementContexts: EMPTY_ELEMENT_CONTEXTS,
@@ -647,7 +670,9 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
     prompt: "",
     images: [],
+    pdfs: [],
     nonPersistedImageIds: [],
+    nonPersistedPdfIds: [],
     persistedAttachments: [],
     terminalContexts: [],
     elementContexts: [],
@@ -660,10 +685,14 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
   };
 }
 
-function composerImageDedupKey(image: ComposerImageAttachment): string {
+function composerAttachmentDedupKey(attachment: {
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly name: string;
+}): string {
   // Keep this independent from File.lastModified so dedupe is stable for hydrated
-  // images reconstructed from localStorage (which get a fresh lastModified value).
-  return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
+  // attachments reconstructed from localStorage (which get a fresh lastModified value).
+  return `${attachment.mimeType}\u0000${attachment.sizeBytes}\u0000${attachment.name}`;
 }
 
 function terminalContextDedupKey(context: TerminalContextDraft): string {
@@ -721,6 +750,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
+    draft.pdfs.length === 0 &&
     draft.persistedAttachments.length === 0 &&
     draft.terminalContexts.length === 0 &&
     draft.elementContexts.length === 0 &&
@@ -1079,12 +1109,41 @@ function revokeObjectPreviewUrl(previewUrl: string): void {
   URL.revokeObjectURL(previewUrl);
 }
 
+function dedupeComposerAttachments<T extends ComposerAttachment>(
+  existing: ReadonlyArray<T>,
+  incoming: ReadonlyArray<T>,
+): T[] {
+  const existingIds = new Set(existing.map((attachment) => attachment.id));
+  const existingDedupKeys = new Set(
+    existing.map((attachment) => composerAttachmentDedupKey(attachment)),
+  );
+  const acceptedPreviewUrls = new Set(existing.map((attachment) => attachment.previewUrl));
+  const dedupedIncoming: T[] = [];
+  for (const attachment of incoming) {
+    const dedupKey = composerAttachmentDedupKey(attachment);
+    if (existingIds.has(attachment.id) || existingDedupKeys.has(dedupKey)) {
+      if (!acceptedPreviewUrls.has(attachment.previewUrl)) {
+        revokeObjectPreviewUrl(attachment.previewUrl);
+      }
+      continue;
+    }
+    dedupedIncoming.push(attachment);
+    existingIds.add(attachment.id);
+    existingDedupKeys.add(dedupKey);
+    acceptedPreviewUrls.add(attachment.previewUrl);
+  }
+  return dedupedIncoming;
+}
+
 function revokeDraftThreadPreviewUrls(draft: ComposerThreadDraftState | undefined): void {
   if (!draft) {
     return;
   }
   for (const image of draft.images) {
     revokeObjectPreviewUrl(image.previewUrl);
+  }
+  for (const pdf of draft.pdfs) {
+    revokeObjectPreviewUrl(pdf.previewUrl);
   }
 }
 
@@ -1094,6 +1153,7 @@ function normalizePersistedAttachment(value: unknown): PersistedComposerImageAtt
   }
   const candidate = value as Record<string, unknown>;
   const id = candidate.id;
+  const type = candidate.type;
   const name = candidate.name;
   const mimeType = candidate.mimeType;
   const sizeBytes = candidate.sizeBytes;
@@ -1112,6 +1172,10 @@ function normalizePersistedAttachment(value: unknown): PersistedComposerImageAtt
   }
   return {
     id,
+    type:
+      type === "pdf" || mimeType === "application/pdf" || name.toLowerCase().endsWith(".pdf")
+        ? "pdf"
+        : "image",
     name,
     mimeType,
     sizeBytes,
@@ -2105,20 +2169,30 @@ function verifyPersistedAttachments(
     if (!current) {
       return state;
     }
-    const imageIdSet = new Set(current.images.map((image) => image.id));
+    const attachmentIdSet = new Set([
+      ...current.images.map((image) => image.id),
+      ...current.pdfs.map((pdf) => pdf.id),
+    ]);
     const persistedAttachments = attachments.filter(
-      (attachment) => imageIdSet.has(attachment.id) && persistedIdSet.has(attachment.id),
+      (attachment) => attachmentIdSet.has(attachment.id) && persistedIdSet.has(attachment.id),
     );
     const nonPersistedImageIds: string[] = [];
+    const nonPersistedPdfIds: string[] = [];
     for (const image of current.images) {
       if (!persistedIdSet.has(image.id)) {
         nonPersistedImageIds.push(image.id);
+      }
+    }
+    for (const pdf of current.pdfs) {
+      if (!persistedIdSet.has(pdf.id)) {
+        nonPersistedPdfIds.push(pdf.id);
       }
     }
     const nextDraft: ComposerThreadDraftState = {
       ...current,
       persistedAttachments,
       nonPersistedImageIds,
+      nonPersistedPdfIds,
     };
     const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
     if (shouldRemoveDraft(nextDraft)) {
@@ -2162,25 +2236,53 @@ function hydratePersistedComposerImageAttachment(
   }
 }
 
-export function hydrateImagesFromPersisted(
+function hydrateComposerAttachmentsFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
-): ComposerImageAttachment[] {
-  return attachments.flatMap((attachment) => {
+): Array<ComposerImageAttachment | ComposerPdfAttachment> {
+  const hydrated: Array<ComposerImageAttachment | ComposerPdfAttachment> = [];
+  for (const attachment of attachments) {
     const file = hydratePersistedComposerImageAttachment(attachment);
-    if (!file) return [];
+    if (!file) continue;
 
-    return [
-      {
-        type: "image" as const,
+    if (attachment.type === "pdf" || attachment.mimeType === "application/pdf") {
+      hydrated.push({
+        type: "pdf",
         id: attachment.id,
         name: attachment.name,
-        mimeType: attachment.mimeType,
+        mimeType: "application/pdf",
         sizeBytes: attachment.sizeBytes,
         previewUrl: attachment.dataUrl,
         file,
-      } satisfies ComposerImageAttachment,
-    ];
-  });
+      });
+      continue;
+    }
+    hydrated.push({
+      type: "image",
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      previewUrl: attachment.dataUrl,
+      file,
+    });
+  }
+  return hydrated;
+}
+
+export function hydrateImagesFromPersisted(
+  attachments: ReadonlyArray<PersistedComposerImageAttachment>,
+): ComposerImageAttachment[] {
+  return hydrateComposerAttachmentsFromPersisted(attachments).filter(
+    (attachment): attachment is ComposerImageAttachment => attachment.type === "image",
+  );
+}
+
+export function hydratePdfsFromPersisted(
+  attachments: ReadonlyArray<PersistedComposerImageAttachment>,
+): ComposerPdfAttachment[] {
+  return hydrateComposerAttachmentsFromPersisted(attachments).filter(
+    (attachment): attachment is ComposerPdfAttachment => attachment.type === "pdf",
+  );
 }
 
 function toHydratedThreadDraft(
@@ -2194,7 +2296,9 @@ function toHydratedThreadDraft(
   return {
     prompt: persistedDraft.prompt,
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
+    pdfs: hydratePdfsFromPersisted(persistedDraft.attachments),
     nonPersistedImageIds: [],
+    nonPersistedPdfIds: [],
     persistedAttachments: [...persistedDraft.attachments],
     terminalContexts:
       persistedDraft.terminalContexts?.map((context) => ({
@@ -2970,26 +3074,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
-            const existingIds = new Set(existing.images.map((image) => image.id));
-            const existingDedupKeys = new Set(
-              existing.images.map((image) => composerImageDedupKey(image)),
-            );
-            const acceptedPreviewUrls = new Set(existing.images.map((image) => image.previewUrl));
-            const dedupedIncoming: ComposerImageAttachment[] = [];
-            for (const image of images) {
-              const dedupKey = composerImageDedupKey(image);
-              if (existingIds.has(image.id) || existingDedupKeys.has(dedupKey)) {
-                // Avoid revoking a blob URL that's still referenced by an accepted image.
-                if (!acceptedPreviewUrls.has(image.previewUrl)) {
-                  revokeObjectPreviewUrl(image.previewUrl);
-                }
-                continue;
-              }
-              dedupedIncoming.push(image);
-              existingIds.add(image.id);
-              existingDedupKeys.add(dedupKey);
-              acceptedPreviewUrls.add(image.previewUrl);
-            }
+            const dedupedIncoming = dedupeComposerAttachments(existing.images, images);
             if (dedupedIncoming.length === 0) {
               return state;
             }
@@ -2999,6 +3084,28 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 [threadKey]: {
                   ...existing,
                   images: [...existing.images, ...dedupedIncoming],
+                },
+              },
+            };
+          });
+        },
+        addPdfs: (threadRef, pdfs) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0 || pdfs.length === 0) {
+            return;
+          }
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const dedupedIncoming = dedupeComposerAttachments(existing.pdfs, pdfs);
+            if (dedupedIncoming.length === 0) {
+              return state;
+            }
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  pdfs: [...existing.pdfs, ...dedupedIncoming],
                 },
               },
             };
@@ -3028,6 +3135,41 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nonPersistedImageIds: current.nonPersistedImageIds.filter((id) => id !== imageId),
               persistedAttachments: current.persistedAttachments.filter(
                 (attachment) => attachment.id !== imageId,
+              ),
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        removePdf: (threadRef, pdfId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          const existing = get().draftsByThreadKey[threadKey];
+          if (!existing) {
+            return;
+          }
+          const removedPdf = existing.pdfs.find((pdf) => pdf.id === pdfId);
+          if (removedPdf) {
+            revokeObjectPreviewUrl(removedPdf.previewUrl);
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              pdfs: current.pdfs.filter((pdf) => pdf.id !== pdfId),
+              nonPersistedPdfIds: current.nonPersistedPdfIds.filter((id) => id !== pdfId),
+              persistedAttachments: current.persistedAttachments.filter(
+                (attachment) => attachment.id !== pdfId,
               ),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
@@ -3384,6 +3526,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...current,
               persistedAttachments: [],
               nonPersistedImageIds: [],
+              nonPersistedPdfIds: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -3410,6 +3553,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               // Stage attempted attachments so persist middleware can try writing them.
               persistedAttachments: attachments,
               nonPersistedImageIds: current.nonPersistedImageIds.filter(
+                (id) => !attachmentIdSet.has(id),
+              ),
+              nonPersistedPdfIds: current.nonPersistedPdfIds.filter(
                 (id) => !attachmentIdSet.has(id),
               ),
             };
@@ -3439,7 +3585,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...current,
               prompt: "",
               images: [],
+              pdfs: [],
               nonPersistedImageIds: [],
+              nonPersistedPdfIds: [],
               persistedAttachments: [],
               terminalContexts: [],
               elementContexts: [],
@@ -3468,11 +3616,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             for (const image of current.images) {
               revokeObjectPreviewUrl(image.previewUrl);
             }
+            for (const pdf of current.pdfs) {
+              revokeObjectPreviewUrl(pdf.previewUrl);
+            }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
               prompt: ensureInlineTerminalContextPlaceholders("", current.terminalContexts.length),
               images: [],
+              pdfs: [],
               nonPersistedImageIds: [],
+              nonPersistedPdfIds: [],
               persistedAttachments: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };

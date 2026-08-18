@@ -7,7 +7,7 @@ import {
   type IsoDateTime,
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENT_BYTES,
 } from "@t3tools/contracts";
 
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
@@ -109,16 +109,24 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       (attachment) =>
         Effect.gen(function* () {
           const parsed = parseBase64DataUrl(attachment.dataUrl);
-          if (!parsed || !parsed.mimeType.startsWith("image/")) {
+          const isValidPayload =
+            parsed !== null &&
+            (attachment.type === "image"
+              ? parsed.mimeType.startsWith("image/")
+              : parsed.mimeType === "application/pdf");
+          if (!isValidPayload || !parsed) {
             return yield* new OrchestrationDispatchCommandError({
-              message: `Invalid image attachment payload for '${attachment.name}'.`,
+              message: `Invalid ${attachment.type} attachment payload for '${attachment.name}'.`,
             });
           }
 
           const bytes = Buffer.from(parsed.base64, "base64");
-          if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+          if (
+            bytes.byteLength === 0 ||
+            bytes.byteLength > PROVIDER_SEND_TURN_MAX_ATTACHMENT_BYTES
+          ) {
             return yield* new OrchestrationDispatchCommandError({
-              message: `Image attachment '${attachment.name}' is empty or too large.`,
+              message: `${attachment.type === "pdf" ? "PDF" : "Image"} attachment '${attachment.name}' is empty or too large.`,
             });
           }
 
@@ -129,13 +137,22 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             });
           }
 
-          const persistedAttachment = {
-            type: "image" as const,
-            id: attachmentId,
-            name: attachment.name,
-            mimeType: parsed.mimeType.toLowerCase(),
-            sizeBytes: bytes.byteLength,
-          };
+          const persistedAttachment =
+            attachment.type === "pdf"
+              ? {
+                  type: "pdf" as const,
+                  id: attachmentId,
+                  name: attachment.name,
+                  mimeType: "application/pdf" as const,
+                  sizeBytes: bytes.byteLength,
+                }
+              : {
+                  type: "image" as const,
+                  id: attachmentId,
+                  name: attachment.name,
+                  mimeType: parsed.mimeType.toLowerCase(),
+                  sizeBytes: bytes.byteLength,
+                };
 
           const attachmentPath = resolveAttachmentPath({
             attachmentsDir: serverConfig.attachmentsDir,
