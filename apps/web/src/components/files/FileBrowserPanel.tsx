@@ -7,7 +7,7 @@ import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { workingTreeGitStatusByPath } from "@t3tools/shared/fileTreeGitStatus";
 import { RotateCw } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -20,6 +20,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
@@ -120,6 +121,14 @@ export default function FileBrowserPanel({
       input: { cwd },
     }),
   );
+  const refreshGitStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
+  const handleRefresh = useCallback(() => {
+    entriesQuery.refresh();
+    void refreshGitStatus({
+      environmentId,
+      input: { cwd },
+    });
+  }, [cwd, entriesQuery, environmentId, refreshGitStatus]);
   const entries = entriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
@@ -375,7 +384,7 @@ export default function FileBrowserPanel({
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
-        <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={entriesQuery.refresh} />
+        <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={handleRefresh} />
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
