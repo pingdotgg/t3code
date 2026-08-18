@@ -378,6 +378,7 @@ export function createSourceControlServerMetadataUpdateQueue() {
             latestExpectedBranchState.observationSequence !== observationSequence;
           if (
             observedDuringRequest &&
+            !latestExpectedBranchState.latestObservationIsStale &&
             latestExpectedBranchState.latestObservedBranch === input.metadata.branch
           ) {
             latestExpectedBranchState.branch = input.metadata.branch;
