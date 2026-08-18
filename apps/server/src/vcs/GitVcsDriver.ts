@@ -73,6 +73,7 @@ export interface GitStatusDetails {
 
 export interface GitRemoteStatusDetails {
   isRepo: boolean;
+  defaultBranch: string | null;
   isDefaultBranch: boolean;
   branch: string | null;
   upstreamRef: string | null;
