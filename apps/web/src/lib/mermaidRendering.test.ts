@@ -5,6 +5,7 @@ import {
   __setMermaidLoaderForTests,
   isMermaidFenceLanguage,
   mermaidSourceAsMarkdownFence,
+  prepareMermaidOverlaySvg,
   remapMermaidSvgIds,
   renderMermaidSvg,
   sanitizeMermaidSvg,
@@ -72,6 +73,22 @@ describe("remapMermaidSvgIds", () => {
     const svg = `<svg id="flowchart" ><g id="flowchart-A" /></svg>`;
     expect(remapMermaidSvgIds(svg, "-x")).toBe(
       `<svg id="flowchart-x" ><g id="flowchart-A-x" /></svg>`,
+    );
+  });
+
+  it("rewrites mermaid theme selectors so overlay labels keep their colors", () => {
+    const svg = `<svg id="t3-mermaid-1"><style>#t3-mermaid-1{fill:#1a1a1a;}#t3-mermaid-1 .nodeLabel{color:#ccc;}</style></svg>`;
+    expect(remapMermaidSvgIds(svg, "-ov")).toBe(
+      `<svg id="t3-mermaid-1-ov"><style>#t3-mermaid-1-ov{fill:#1a1a1a;}#t3-mermaid-1-ov .nodeLabel{color:#ccc;}</style></svg>`,
+    );
+  });
+});
+
+describe("prepareMermaidOverlaySvg", () => {
+  it("pins intrinsic width/height and drops mermaid's shrink-to-fit sizing", () => {
+    const svg = `<svg id="t3-mermaid-1" width="100%" viewBox="0 0 240 80" style="max-width: 240px; background: white;"></svg>`;
+    expect(prepareMermaidOverlaySvg(svg, "-ov")).toBe(
+      `<svg width="240" height="80" id="t3-mermaid-1-ov" viewBox="0 0 240 80" style="background: white"></svg>`,
     );
   });
 });

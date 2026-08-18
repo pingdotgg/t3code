@@ -3,8 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampMermaidZoom,
   fitMermaidViewport,
+  keepMermaidViewportInScene,
   MAX_MERMAID_OVERLAY_ZOOM,
+  mermaidOverlayZoomPercent,
   mermaidSvgContentSize,
+  mermaidViewportContentCenter,
   MIN_MERMAID_OVERLAY_ZOOM,
   panMermaidViewport,
   resetMermaidViewport,
@@ -17,10 +20,10 @@ describe("clampMermaidZoom", () => {
     expect(clampMermaidZoom(2.5)).toBe(2.5);
   });
 
-  it("clamps to the overlay min and max", () => {
-    expect(clampMermaidZoom(0)).toBe(MIN_MERMAID_OVERLAY_ZOOM);
-    expect(clampMermaidZoom(100)).toBe(MAX_MERMAID_OVERLAY_ZOOM);
-    expect(clampMermaidZoom(Number.NaN)).toBe(1);
+  it("clamps relative to the fitted zoom", () => {
+    expect(clampMermaidZoom(0, 0.5)).toBe(0.5 * MIN_MERMAID_OVERLAY_ZOOM);
+    expect(clampMermaidZoom(100, 0.5)).toBe(0.5 * MAX_MERMAID_OVERLAY_ZOOM);
+    expect(clampMermaidZoom(Number.NaN, 0.5)).toBe(0.5);
   });
 });
 
@@ -71,6 +74,38 @@ describe("fitMermaidViewport", () => {
     expect(fitMermaidViewport({ width: 0, height: 100 }, { width: 10, height: 10 })).toEqual(
       resetMermaidViewport(),
     );
+  });
+});
+
+describe("mermaidOverlayZoomPercent", () => {
+  it("treats the fitted zoom as 100%", () => {
+    expect(mermaidOverlayZoomPercent(0.75, 0.75)).toBe(100);
+    expect(mermaidOverlayZoomPercent(1.5, 0.75)).toBe(200);
+  });
+});
+
+describe("keepMermaidViewportInScene", () => {
+  it("pulls a diagram that was translated fully off-canvas back into view", () => {
+    const next = keepMermaidViewportInScene(
+      { x: -4000, y: -4000, zoom: 2 },
+      { width: 400, height: 300 },
+      { width: 200, height: 80 },
+      40,
+    );
+    expect(next.x).toBe(40 - 400);
+    expect(next.y).toBe(40 - 160);
+  });
+});
+
+describe("zoomMermaidViewportAtPoint around the content center", () => {
+  it("keeps the diagram center fixed when zooming from a fitted view", () => {
+    const content = { width: 800, height: 100 };
+    const fitted = fitMermaidViewport({ width: 400, height: 300 }, content, 0);
+    const center = mermaidViewportContentCenter(fitted, content);
+    const next = zoomMermaidViewportAtPoint(fitted, fitted.zoom * 2, center, fitted.zoom);
+    const nextCenter = mermaidViewportContentCenter(next, content);
+    expect(nextCenter.x).toBeCloseTo(center.x);
+    expect(nextCenter.y).toBeCloseTo(center.y);
   });
 });
 

@@ -2262,7 +2262,12 @@ code {
   touch-action: none;
   cursor: grab;
   user-select: none;
-  background: color-mix(in srgb, var(--background) 88%, var(--muted));
+  /* Same surface as the inline mermaid code block, so theme fills stay readable. */
+  background: var(--secondary);
+}
+
+.dark .chat-markdown-mermaid-overlay-scene {
+  background: color-mix(in srgb, var(--input) 32%, transparent);
 }
 
 .chat-markdown-mermaid-overlay-scene[data-panning="true"] {
@@ -2274,13 +2279,15 @@ code {
   top: 0;
   left: 0;
   transform-origin: 0 0;
+  color: unset;
 }
 
 .chat-markdown-mermaid-overlay-canvas svg {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
   max-width: none;
+  overflow: visible;
   background: transparent !important;
 }
 

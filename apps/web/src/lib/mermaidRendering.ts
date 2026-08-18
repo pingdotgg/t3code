@@ -6,6 +6,7 @@
  */
 import { fnv1a32 } from "./diffRendering";
 import { LRUCache } from "./lruCache";
+import { mermaidSvgContentSize } from "./mermaidViewport";
 
 const MAX_MERMAID_CACHE_ENTRIES = 80;
 const MAX_MERMAID_CACHE_MEMORY_BYTES = 8 * 1024 * 1024;
@@ -121,8 +122,10 @@ export function sanitizeMermaidSvg(svg: string): string {
 
 /**
  * Inline chat and the expand overlay both mount the same mermaid SVG. Rewrite
- * ids so marker/gradient `url(#…)` refs in the overlay do not collide with the
- * preview still on the page.
+ * ids so marker/gradient `url(#…)` refs and the `<style>` selectors mermaid
+ * emits (`#t3-mermaid-1 .nodeLabel`) do not collide with the preview still on
+ * the page. Skipping the stylesheet is what turned overlay nodes into black
+ * boxes with inherited (also black) label text.
  */
 export function remapMermaidSvgIds(svg: string, suffix: string): string {
   if (suffix.length === 0) return svg;
@@ -138,15 +141,50 @@ export function remapMermaidSvgIds(svg: string, suffix: string): string {
   let remapped = svg;
   for (const id of ids) {
     const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    remapped = remapped.replace(new RegExp(`id="${escaped}"`, "g"), `id="${id}${suffix}"`);
-    remapped = remapped.replace(new RegExp(`url\\(#${escaped}\\)`, "g"), `url(#${id}${suffix})`);
-    remapped = remapped.replace(new RegExp(`href="#${escaped}"`, "g"), `href="#${id}${suffix}"`);
+    const next = `${id}${suffix}`;
+    remapped = remapped.replace(new RegExp(`id="${escaped}"`, "g"), `id="${next}"`);
+    remapped = remapped.replace(new RegExp(`url\\(#${escaped}\\)`, "g"), `url(#${next})`);
+    remapped = remapped.replace(new RegExp(`href="#${escaped}"`, "g"), `href="#${next}"`);
     remapped = remapped.replace(
       new RegExp(`xlink:href="#${escaped}"`, "g"),
-      `xlink:href="#${id}${suffix}"`,
+      `xlink:href="#${next}"`,
     );
+    // Mermaid themes live in a <style> block keyed by the root svg id.
+    remapped = remapped.replace(new RegExp(`#${escaped}(?=[^A-Za-z0-9_-]|$)`, "g"), `#${next}`);
   }
   return remapped;
+}
+
+/**
+ * Mermaid emits `width="100%"` plus an inline max-width so the chat preview can
+ * shrink. The overlay needs a real pixel box or scale() has nothing to zoom.
+ */
+export function pinMermaidSvgIntrinsicSize(svg: string): string {
+  const size = mermaidSvgContentSize(svg);
+  if (size == null) return svg;
+  return svg.replace(/<svg\b([^>]*)>/i, (_full, attrs: string) => {
+    let next = attrs
+      .replace(/\swidth\s*=\s*("[^"]*"|'[^']*')/i, "")
+      .replace(/\sheight\s*=\s*("[^"]*"|'[^']*')/i, "");
+    next = next.replace(
+      /\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i,
+      (_styleFull, _quoted, double: string | undefined, single: string | undefined) => {
+        const style = (double ?? single ?? "")
+          .replace(/max-width\s*:\s*[^;]+;?/gi, "")
+          .replace(/max-height\s*:\s*[^;]+;?/gi, "")
+          .replace(/(?:^|;)\s*width\s*:\s*[^;]+;?/gi, ";")
+          .replace(/(?:^|;)\s*height\s*:\s*[^;]+;?/gi, ";")
+          .replace(/^;+|;+$/g, "")
+          .trim();
+        return style.length > 0 ? ` style="${style}"` : "";
+      },
+    );
+    return `<svg width="${size.width}" height="${size.height}"${next}>`;
+  });
+}
+
+export function prepareMermaidOverlaySvg(svg: string, suffix: string): string {
+  return pinMermaidSvgIntrinsicSize(remapMermaidSvgIds(svg, suffix));
 }
 
 export class MermaidRenderError extends Error {

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -10,17 +11,21 @@ import {
 } from "react";
 import { RotateCcwIcon, XIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
 
-import { remapMermaidSvgIds } from "~/lib/mermaidRendering";
+import { prepareMermaidOverlaySvg } from "~/lib/mermaidRendering";
 import {
   fitMermaidViewport,
+  keepMermaidViewportInScene,
   MAX_MERMAID_OVERLAY_ZOOM,
+  mermaidOverlayZoomPercent,
   mermaidSvgContentSize,
+  mermaidViewportContentCenter,
   MERMAID_OVERLAY_ZOOM_STEP,
   MIN_MERMAID_OVERLAY_ZOOM,
   panMermaidViewport,
   resetMermaidViewport,
   zoomMermaidViewportAtPoint,
   type MermaidViewport,
+  type Size,
 } from "~/lib/mermaidViewport";
 import { Button } from "~/components/ui/button";
 import {
@@ -50,75 +55,83 @@ function scenePoint(
   return { x: clientX - rect.left, y: clientY - rect.top };
 }
 
-function measuredSvgSize(
-  scene: HTMLElement,
-  zoom: number,
-): { width: number; height: number } | null {
-  const svg = scene.querySelector("svg");
-  if (!(svg instanceof SVGElement) || zoom === 0) return null;
-  const rect = svg.getBoundingClientRect();
-  const width = rect.width / zoom;
-  const height = rect.height / zoom;
-  if (width <= 0 || height <= 0) return null;
-  return { width, height };
+function sceneSize(scene: HTMLElement): Size {
+  return { width: scene.clientWidth, height: scene.clientHeight };
 }
 
 export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverlayProps) {
   const overlayDomId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<MermaidViewport>(resetMermaidViewport());
+  const fitZoomRef = useRef(1);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const userAdjustedRef = useRef(false);
   const [sceneEl, setSceneEl] = useState<HTMLDivElement | null>(null);
   const [viewport, setViewport] = useState<MermaidViewport>(resetMermaidViewport);
+  const [fitZoom, setFitZoom] = useState(1);
   const [panning, setPanning] = useState(false);
 
   const overlaySvg = useMemo(
-    () => remapMermaidSvgIds(svg, `-${overlayDomId}`),
+    () => prepareMermaidOverlaySvg(svg, `-${overlayDomId}`),
     [overlayDomId, svg],
   );
-  const contentSize = useMemo(() => mermaidSvgContentSize(svg), [svg]);
+  const contentSize = useMemo(() => mermaidSvgContentSize(overlaySvg), [overlaySvg]);
 
-  const setSceneNode = (node: HTMLDivElement | null) => {
+  const lastSceneSizeRef = useRef<Size | null>(null);
+
+  const setSceneNode = useCallback((node: HTMLDivElement | null) => {
     sceneRef.current = node;
     setSceneEl((current) => (current === node ? current : node));
-  };
+  }, []);
 
   const commitViewport = (next: MermaidViewport, userAdjusted: boolean) => {
+    const scene = sceneRef.current;
+    const clamped =
+      scene != null && contentSize != null
+        ? keepMermaidViewportInScene(next, sceneSize(scene), contentSize)
+        : next;
     if (userAdjusted) userAdjustedRef.current = true;
-    viewportRef.current = next;
-    setViewport(next);
+    viewportRef.current = clamped;
+    setViewport(clamped);
   };
 
   const fitToScene = (scene: HTMLElement) => {
-    if (scene.clientWidth <= 0 || scene.clientHeight <= 0) return;
-    const size = contentSize ?? measuredSvgSize(scene, viewportRef.current.zoom);
-    if (!size) return;
+    if (scene.clientWidth <= 0 || scene.clientHeight <= 0 || contentSize == null) return;
+    const next = fitMermaidViewport(sceneSize(scene), contentSize);
+    lastSceneSizeRef.current = sceneSize(scene);
     userAdjustedRef.current = false;
-    commitViewport(
-      fitMermaidViewport({ width: scene.clientWidth, height: scene.clientHeight }, size),
-      false,
-    );
+    fitZoomRef.current = next.zoom;
+    setFitZoom(next.zoom);
+    viewportRef.current = next;
+    setViewport(next);
   };
 
   useLayoutEffect(() => {
     if (!open) {
       userAdjustedRef.current = false;
       pointerRef.current = null;
-      commitViewport(resetMermaidViewport(), false);
+      fitZoomRef.current = 1;
+      viewportRef.current = resetMermaidViewport();
+      setFitZoom(1);
+      setViewport(resetMermaidViewport());
       return;
     }
-    if (sceneEl) fitToScene(sceneEl);
-  }, [open, svg, sceneEl, contentSize]);
+    if (sceneEl && !userAdjustedRef.current) fitToScene(sceneEl);
+  }, [open, overlaySvg, sceneEl, contentSize]);
 
   useEffect(() => {
     if (!open || sceneEl == null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (!userAdjustedRef.current) fitToScene(sceneEl);
+    const observer = new ResizeObserver((entries) => {
+      if (userAdjustedRef.current) return;
+      const size = entries[0]?.contentRect;
+      if (size == null) return;
+      const last = lastSceneSizeRef.current;
+      if (last != null && last.width === size.width && last.height === size.height) return;
+      fitToScene(sceneEl);
     });
     observer.observe(sceneEl);
     return () => observer.disconnect();
-  }, [open, svg, sceneEl, contentSize]);
+  }, [open, overlaySvg, sceneEl, contentSize]);
 
   useEffect(() => {
     if (!open || sceneEl == null) return;
@@ -132,6 +145,7 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
           viewportRef.current,
           viewportRef.current.zoom * factor,
           scenePoint(sceneEl, event.clientX, event.clientY),
+          fitZoomRef.current,
         ),
         true,
       );
@@ -139,18 +153,18 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
 
     sceneEl.addEventListener("wheel", onWheel, { passive: false });
     return () => sceneEl.removeEventListener("wheel", onWheel);
-  }, [open, sceneEl]);
+  }, [open, sceneEl, contentSize]);
 
   const zoomByStep = (direction: 1 | -1) => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-    const rect = scene.getBoundingClientRect();
+    if (contentSize == null) return;
     const step = direction === 1 ? MERMAID_OVERLAY_ZOOM_STEP : 1 / MERMAID_OVERLAY_ZOOM_STEP;
     commitViewport(
-      zoomMermaidViewportAtPoint(viewportRef.current, viewportRef.current.zoom * step, {
-        x: rect.width / 2,
-        y: rect.height / 2,
-      }),
+      zoomMermaidViewportAtPoint(
+        viewportRef.current,
+        viewportRef.current.zoom * step,
+        mermaidViewportContentCenter(viewportRef.current, contentSize),
+        fitZoomRef.current,
+      ),
       true,
     );
   };
@@ -198,9 +212,9 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
     }
   };
 
-  const zoomPercent = Math.round(viewport.zoom * 100);
-  const zoomInDisabled = viewport.zoom >= MAX_MERMAID_OVERLAY_ZOOM;
-  const zoomOutDisabled = viewport.zoom <= MIN_MERMAID_OVERLAY_ZOOM;
+  const zoomPercent = mermaidOverlayZoomPercent(viewport.zoom, fitZoom);
+  const zoomInDisabled = viewport.zoom >= fitZoom * MAX_MERMAID_OVERLAY_ZOOM - 1e-6;
+  const zoomOutDisabled = viewport.zoom <= fitZoom * MIN_MERMAID_OVERLAY_ZOOM + 1e-6;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
