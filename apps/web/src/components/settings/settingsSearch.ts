@@ -163,6 +163,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "sound-notifications",
+    title: "Turn completion chime",
+    to: "/settings/general",
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/general",
@@ -185,6 +190,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "legacy-sidebar",
     title: "Sidebar (legacy)",
+    to: "/settings/general",
+  },
+  {
+    id: "workspace-tabs",
+    title: "Workspace tabs",
     to: "/settings/general",
   },
   {

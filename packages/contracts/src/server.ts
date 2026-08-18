@@ -97,6 +97,57 @@ export const ServerProviderSkill = Schema.Struct({
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 /**
+ * The Codex app-server exposes these fields as part of its account/rate-limit
+ * response. Keep this projection provider-agnostic at the transport boundary
+ * so clients can render the same information as Codex's `/status` without
+ * depending on the generated app-server protocol package.
+ */
+export const ServerProviderCodexRateLimitWindow = Schema.Struct({
+  usedPercent: Schema.Int,
+  resetsAt: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  windowDurationMins: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+});
+export type ServerProviderCodexRateLimitWindow = typeof ServerProviderCodexRateLimitWindow.Type;
+
+export const ServerProviderCodexStatus = Schema.Struct({
+  account: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        type: TrimmedNonEmptyString,
+        email: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        planType: Schema.optionalKey(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
+  rateLimits: Schema.optionalKey(
+    Schema.Struct({
+      limitName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+      primary: Schema.optionalKey(Schema.NullOr(ServerProviderCodexRateLimitWindow)),
+      secondary: Schema.optionalKey(Schema.NullOr(ServerProviderCodexRateLimitWindow)),
+    }),
+  ),
+});
+export type ServerProviderCodexStatus = typeof ServerProviderCodexStatus.Type;
+
+/** Live Claude Code plan rate-limit windows returned by the Agent SDK. */
+export const ServerProviderClaudeRateLimitWindow = Schema.Struct({
+  usedPercent: Schema.Int,
+  resetsAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+});
+export type ServerProviderClaudeRateLimitWindow = typeof ServerProviderClaudeRateLimitWindow.Type;
+
+export const ServerProviderClaudeStatus = Schema.Struct({
+  rateLimits: Schema.optionalKey(
+    Schema.Struct({
+      currentSession: Schema.optionalKey(Schema.NullOr(ServerProviderClaudeRateLimitWindow)),
+      currentWeek: Schema.optionalKey(Schema.NullOr(ServerProviderClaudeRateLimitWindow)),
+      currentWeekPromo: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+    }),
+  ),
+});
+export type ServerProviderClaudeStatus = typeof ServerProviderClaudeStatus.Type;
+
+/**
  * Availability of a configured provider instance from the runtime's POV.
  *
  *  - `available` — the build ships this driver and an instance is wired
@@ -192,6 +243,10 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Live account and rate-limit data returned by Codex app-server. */
+  codexStatus: Schema.optionalKey(ServerProviderCodexStatus),
+  /** Live plan rate-limit data returned by Claude Code's Agent SDK. */
+  claudeStatus: Schema.optionalKey(ServerProviderClaudeStatus),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });

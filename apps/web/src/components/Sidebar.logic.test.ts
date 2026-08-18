@@ -22,6 +22,7 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
+  mergeSidebarThreadSearchResults,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -752,6 +753,107 @@ describe("searchSidebarThreadsByTitle", () => {
 
   it("returns no results for an empty query", () => {
     expect(searchSidebarThreadsByTitle(threads, "   ")).toEqual([]);
+  });
+});
+
+describe("mergeSidebarThreadSearchResults", () => {
+  const threads = [
+    { id: "thread-1", environmentId: "env-1", title: "Fix workspace search" },
+    { id: "thread-2", environmentId: "env-1", title: "Review providers" },
+    { id: "thread-3", environmentId: "env-1", title: "Refactor engine" },
+  ];
+
+  it("returns title matches when there are no content matches", () => {
+    const results = mergeSidebarThreadSearchResults(threads, "workspace", []);
+    expect(results).toEqual([
+      {
+        thread: threads[0],
+        contentMatch: undefined,
+      },
+    ]);
+  });
+
+  it("returns content matches for threads whose title does not match", () => {
+    const contentMatches = [
+      {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("thread-3"),
+        projectId: ProjectId.make("proj-1"),
+        source: "user" as const,
+        snippet: "Need to refactor the search engine",
+        messageCreatedAt: "2026-03-09T10:00:00.000Z",
+      },
+    ];
+    const results = mergeSidebarThreadSearchResults(threads, "engine", contentMatches);
+    expect(results).toEqual([
+      {
+        thread: threads[2],
+        contentMatch: {
+          source: "user",
+          snippet: "Need to refactor the search engine",
+          query: "engine",
+        },
+      },
+    ]);
+  });
+
+  it("prioritizes title matches and attaches content match info when thread matches both", () => {
+    const contentMatches = [
+      {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("thread-2"),
+        projectId: ProjectId.make("proj-1"),
+        source: "assistant" as const,
+        snippet: "Here is the search result for providers",
+        messageCreatedAt: "2026-03-09T11:00:00.000Z",
+      },
+      {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("thread-1"),
+        projectId: ProjectId.make("proj-1"),
+        source: "user" as const,
+        snippet: "Let's test search functionality",
+        messageCreatedAt: "2026-03-09T12:00:00.000Z",
+      },
+    ];
+    const results = mergeSidebarThreadSearchResults(threads, "search", contentMatches);
+    expect(results).toEqual([
+      {
+        thread: threads[0],
+        contentMatch: {
+          source: "user",
+          snippet: "Let's test search functionality",
+          query: "search",
+        },
+      },
+      {
+        thread: threads[1],
+        contentMatch: {
+          source: "assistant",
+          snippet: "Here is the search result for providers",
+          query: "search",
+        },
+      },
+    ]);
+  });
+
+  it("ignores content matches for threads not in the given thread collection", () => {
+    const contentMatches = [
+      {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("deleted-thread"),
+        projectId: ProjectId.make("proj-1"),
+        source: "user" as const,
+        snippet: "some search match",
+        messageCreatedAt: "2026-03-09T10:00:00.000Z",
+      },
+    ];
+    const results = mergeSidebarThreadSearchResults(threads, "match", contentMatches);
+    expect(results).toEqual([]);
+  });
+
+  it("returns empty array for empty query", () => {
+    expect(mergeSidebarThreadSearchResults(threads, "   ", [])).toEqual([]);
   });
 });
 

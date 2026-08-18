@@ -20,7 +20,7 @@ function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
-function HighlightedSearchText(props: { text: string; query: string }) {
+export function HighlightedSearchText(props: { text: string; query: string }) {
   const query = props.query.trim();
   if (query.length === 0) return props.text;
 

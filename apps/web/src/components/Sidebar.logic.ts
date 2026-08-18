@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
+import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -566,6 +567,86 @@ export function searchSidebarThreadsByTitle<T extends { readonly title: string }
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return [];
   return threads.filter((thread) => thread.title.toLowerCase().includes(normalizedQuery));
+}
+
+export interface SidebarThreadContentMatch {
+  readonly source: "user" | "assistant";
+  readonly snippet: string;
+  readonly query: string;
+}
+
+export interface SidebarSearchResult<T> {
+  readonly thread: T;
+  readonly contentMatch?: SidebarThreadContentMatch | undefined;
+}
+
+export function mergeSidebarThreadSearchResults<
+  T extends {
+    readonly id: string;
+    readonly environmentId?: string | undefined;
+    readonly title: string;
+  },
+>(
+  threads: readonly T[],
+  query: string,
+  contentMatches: ReadonlyArray<EnvironmentThreadSearchMatch> = [],
+): SidebarSearchResult<T>[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.length === 0) return [];
+
+  const titleMatches = searchSidebarThreadsByTitle(threads, query);
+  const contentMatchByThreadKey = new Map<string, EnvironmentThreadSearchMatch>();
+  for (const match of contentMatches) {
+    const key = `${match.environmentId}:${match.threadId}`;
+    if (!contentMatchByThreadKey.has(key)) {
+      contentMatchByThreadKey.set(key, match);
+    }
+  }
+
+  const threadByKey = new Map<string, T>();
+  for (const thread of threads) {
+    const key = `${thread.environmentId ?? ""}:${thread.id}`;
+    if (!threadByKey.has(key)) {
+      threadByKey.set(key, thread);
+    }
+  }
+
+  const seenKeys = new Set<string>();
+  const results: SidebarSearchResult<T>[] = [];
+
+  for (const thread of titleMatches) {
+    const key = `${thread.environmentId ?? ""}:${thread.id}`;
+    seenKeys.add(key);
+    const contentMatch = contentMatchByThreadKey.get(key);
+    results.push({
+      thread,
+      contentMatch: contentMatch
+        ? {
+            source: contentMatch.source,
+            snippet: contentMatch.snippet,
+            query,
+          }
+        : undefined,
+    });
+  }
+
+  for (const match of contentMatches) {
+    const key = `${match.environmentId}:${match.threadId}`;
+    if (seenKeys.has(key)) continue;
+    const thread = threadByKey.get(key);
+    if (!thread) continue;
+    seenKeys.add(key);
+    results.push({
+      thread,
+      contentMatch: {
+        source: match.source,
+        snippet: match.snippet,
+        query,
+      },
+    });
+  }
+
+  return results;
 }
 
 type SettledTimestampInput = Pick<

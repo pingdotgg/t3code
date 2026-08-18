@@ -34,6 +34,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   preferShortName?: boolean;
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
+  isHandoff?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: () => void;
@@ -73,6 +74,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
               aria-label="New model"
             >
               New
+            </span>
+          ) : null}
+          {props.isHandoff ? (
+            <span
+              className="shrink-0 rounded border border-primary/30 bg-primary/10 px-1 py-0.5 text-[10px] font-medium leading-none text-primary"
+              aria-label="Handoff to new thread"
+            >
+              Handoff
             </span>
           ) : null}
         </div>

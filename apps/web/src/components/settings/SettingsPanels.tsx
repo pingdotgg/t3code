@@ -496,6 +496,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
+      ...(settings.tabsEnabled !== DEFAULT_UNIFIED_SETTINGS.tabsEnabled ? ["Workspace tabs"] : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
@@ -529,6 +530,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit
         ? ["Quit confirmation"]
         : []),
+      ...(settings.soundNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled
+        ? ["Turn completion chime"]
+        : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
       ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
@@ -546,6 +550,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmQuit,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.soundNotificationsEnabled,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -566,6 +571,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
+      settings.tabsEnabled,
       settings.timestampFormat,
       settings.wordWrap,
       followSystem,
@@ -646,6 +652,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      tabsEnabled: DEFAULT_UNIFIED_SETTINGS.tabsEnabled,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -658,6 +665,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
+      soundNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -1856,6 +1864,28 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("workspace-tabs")}
+          description="Show open conversations as tabs in the workspace topbar."
+          resetAction={
+            settings.tabsEnabled !== DEFAULT_UNIFIED_SETTINGS.tabsEnabled ? (
+              <SettingResetButton
+                label="workspace tabs"
+                onClick={() =>
+                  updateSettings({ tabsEnabled: DEFAULT_UNIFIED_SETTINGS.tabsEnabled })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.tabsEnabled}
+              onCheckedChange={(checked) => updateSettings({ tabsEnabled: Boolean(checked) })}
+              aria-label="Workspace tabs"
+            />
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("auto-settle-merged-threads")}
           description="Settle a thread when its pull request merges. Closed pull requests still settle automatically."
           resetAction={
@@ -2279,6 +2309,33 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("sound-notifications")}
+          description="Play a subtle sound when an agent completes a turn."
+          resetAction={
+            settings.soundNotificationsEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled ? (
+              <SettingResetButton
+                label="turn completion chime"
+                onClick={() =>
+                  updateSettings({
+                    soundNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.soundNotificationsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.soundNotificationsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ soundNotificationsEnabled: Boolean(checked) })
+              }
+              aria-label="Play sound when agent completes a turn"
+            />
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("text-generation-model")}

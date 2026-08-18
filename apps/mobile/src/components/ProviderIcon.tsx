@@ -23,6 +23,17 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "antigravity") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          fill="#1A73E8"
+          d="M12 24C12 17.3726 17.3726 12 24 12C17.3726 12 12 6.62742 12 0C12 6.62742 6.62742 12 0 12C6.62742 12 12 17.3726 12 24Z"
+        />
+      </Svg>
+    );
+  }
+
   if (props.provider === "grok") {
     const fill = isDarkMode ? "#F5F5F5" : "#0F0F0F";
     return (

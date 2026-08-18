@@ -3,7 +3,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { beforeEach, vi } from "vite-plus/test";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 const { appendSwitchMock, getSwitchValueMock, hasSwitchMock, registerSchemesMock } = vi.hoisted(
   () => ({
@@ -35,6 +35,10 @@ describe("DesktopPreReadyPlatform", () => {
     getSwitchValueMock.mockReset();
     hasSwitchMock.mockReset();
     registerSchemesMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("reads an explicit Electron command-line switch value", () => {
@@ -77,6 +81,23 @@ describe("DesktopPreReadyPlatform", () => {
 
     assert.isNull(value);
   });
+
+  it.effect("appends the packaged Linux window class before Electron is ready", () =>
+    Effect.gen(function* () {
+      vi.stubEnv("VITE_DEV_SERVER_URL", "");
+      hasSwitchMock.mockReturnValue(false);
+
+      const preReadyLayer = DesktopPreReadyPlatform.layer.pipe(
+        Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+      );
+      const options = yield* Effect.gen(function* () {
+        return yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+      }).pipe(Effect.provide(preReadyLayer));
+
+      assert.equal(options.linux?.linuxWmClass, "t3code");
+      assert.deepEqual(appendSwitchMock.mock.calls[0], ["class", "t3code"]);
+    }),
+  );
 
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",

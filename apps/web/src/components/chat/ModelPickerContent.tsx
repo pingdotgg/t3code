@@ -73,30 +73,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
    * between the default Codex and a custom Codex Personal).
    */
   lockedProvider: ProviderDriverKind | null;
-  lockedContinuationGroupKey?: string | null;
-  /**
-   * All configured provider instances in display order. Used to render
-   * the sidebar (one button per instance) and to resolve display names
-   * for the locked-mode header.
-   */
+  lockedContinuationGroupKey?: string | null | undefined;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
-  keybindings?: ResolvedKeybindingsConfig;
-  /**
-   * Model options per instance. Keyed by `ProviderInstanceId` so the
-   * default Codex instance and any custom Codex instances each have their
-   * own list (custom instances typically start with the same built-in
-   * model set but are free to diverge via customModels).
-   */
+  keybindings?: ResolvedKeybindingsConfig | undefined;
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   terminalOpen: boolean;
-  onRequestClose?: () => void;
-  getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  onRequestClose?: (() => void) | undefined;
+  allowHandoff?: boolean | undefined;
+  getModelDisabledReason?:
+    | ((instanceId: ProviderInstanceId, model: string) => string | null)
+    | undefined;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const {
     keybindings: providedKeybindings,
     modelOptionsByInstance,
     instanceEntries,
+    allowHandoff = true,
     getModelDisabledReason,
     onInstanceModelChange,
   } = props;
@@ -235,7 +228,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return out;
   }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
 
-  const isLocked = props.lockedProvider !== null;
+  const isLocked = props.lockedProvider !== null && !allowHandoff;
   const isSearching = searchQuery.trim().length > 0;
   const lockedDisabledInstanceIds = useMemo(() => {
     if (!isLocked) {
@@ -314,7 +307,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       // When searching, we only respect locked provider (by driver kind),
       // ignoring sidebar selection so account-scoped searches can find a
       // model before the user chooses a specific instance rail item.
-      if (props.lockedProvider !== null) {
+      if (!allowHandoff && props.lockedProvider !== null) {
         const lockedProviderMatches: Array<(typeof rankedMatches)[number]> = [];
         for (const rankedModel of rankedMatches) {
           if (matchesLockedProvider(rankedModel.model)) {
@@ -349,7 +342,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         .map((rankedModel) => rankedModel.model);
     }
 
-    if (props.lockedProvider !== null) {
+    if (!allowHandoff && props.lockedProvider !== null) {
       result = result.filter((m) => matchesLockedProvider(m));
       if (selectedInstanceId === "favorites") {
         result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
@@ -747,8 +740,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     if (!model) {
                       return null;
                     }
-                    const disabledReason =
-                      getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                    const isCrossProvider =
+                      props.lockedProvider !== null && !matchesLockedProvider(model);
+                    const disabledReason = isCrossProvider
+                      ? null
+                      : (getModelDisabledReason?.(model.instanceId, model.slug) ?? null);
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -768,6 +764,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         preferShortName={!isLocked}
                         useTriggerLabel={false}
                         showNewBadge={isModelPickerNewModel(model.driverKind, model.slug)}
+                        isHandoff={isCrossProvider}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}
                         onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}

@@ -50,6 +50,28 @@ describe("sidebar interactive cursors", () => {
     expect(html).toContain("size-[var(--workspace-titlebar-control-size)]!");
   });
 
+  it("renders unread badge when unreadCount is greater than zero", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <SidebarTrigger unreadCount={3} />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('data-testid="sidebar-unread-badge"');
+    expect(html).toContain(">3</span>");
+    expect(html).toContain('aria-label="Toggle Sidebar (3 unread)"');
+  });
+
+  it("preserves explicit aria-label when unreadCount is present", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <SidebarTrigger aria-label="Expand sidebar (3 unread)" unreadCount={3} />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('aria-label="Expand sidebar (3 unread)"');
+  });
+
   it("uses shared geometry and icon constraints for menu buttons by default", () => {
     const html = renderSidebarButton();
 

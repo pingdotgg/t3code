@@ -39,6 +39,10 @@
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
     },
+    "./handoff": {
+      "types": "./src/handoff/index.ts",
+      "default": "./src/handoff/index.ts"
+    },
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
