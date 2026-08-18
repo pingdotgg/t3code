@@ -151,6 +151,24 @@ describe("sanitizeThreadTitle", () => {
     );
   });
 
+  it("unwraps a single string value regardless of the key name", () => {
+    expect(sanitizeThreadTitle('{"name": "Add dark mode toggle"}')).toBe("Add dark mode toggle");
+    expect(sanitizeThreadTitle('{"summary": "Investigate reconnect regressions"}')).toBe(
+      "Investigate reconnect regressions",
+    );
+  });
+
+  it("prefers the title key when several string values are ambiguous", () => {
+    expect(
+      sanitizeThreadTitle('{"summary": "restate the request", "title": "Real thread name"}'),
+    ).toBe("Real thread name");
+  });
+
+  it("leaves an ambiguous object without a title key untouched", () => {
+    const raw = '{"name": "one", "label": "two"}';
+    expect(sanitizeThreadTitle(raw)).toBe(raw);
+  });
+
   it("unwraps a JSON envelope surrounded by prose or code fences", () => {
     expect(sanitizeThreadTitle('```json\n{"title": "Add dark mode toggle"}\n```')).toBe(
       "Add dark mode toggle",

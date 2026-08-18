@@ -9,8 +9,12 @@ const MAX_TITLE_UNWRAP_DEPTH = 5;
  * Some models ignore the structured-output contract and emit the whole JSON
  * envelope as the field's value, so a title comes back as the literal string
  * `{"title": "Fix the flaky test"}` instead of `Fix the flaky test`. Detect
- * that shape and unwrap the inner `title`, recursing to handle double-wrapping.
- * Anything that is not a JSON object with a string `title` is returned as-is.
+ * that shape and unwrap the inner value, recursing to handle double-wrapping.
+ *
+ * When the object has a single string value we take it regardless of the key
+ * name (models label it `title`, `name`, `summary`, ...). Only when several
+ * keys make that ambiguous do we prefer a string `title`. Anything that is not
+ * a JSON object with such a value is returned as-is.
  */
 export function unwrapJsonEnvelopeTitle(raw: string): string {
   let current = raw.trim();
@@ -25,11 +29,23 @@ export function unwrapJsonEnvelopeTitle(raw: string): string {
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       return current;
     }
-    const title = (parsed as { title?: unknown }).title;
-    if (typeof title !== "string") {
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    const stringEntries = entries.filter(([, value]) => typeof value === "string");
+    let unwrapped: string | undefined;
+    if (stringEntries.length === 1) {
+      // Single string value: use it whatever the key is called.
+      unwrapped = stringEntries[0]?.[1] as string;
+    } else if (stringEntries.length > 1) {
+      // Ambiguous: disambiguate with a `title` key when present.
+      const title = (parsed as { title?: unknown }).title;
+      if (typeof title === "string") {
+        unwrapped = title;
+      }
+    }
+    if (unwrapped === undefined) {
       return current;
     }
-    current = title.trim();
+    current = unwrapped.trim();
   }
   return current;
 }
