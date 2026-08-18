@@ -6267,7 +6267,7 @@ function ChatViewContent(props: ChatViewProps) {
         : null}
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col overflow-hidden",
+          "isolate flex min-h-0 min-w-0 flex-col overflow-hidden",
           rightPanelMaximized && rightPanelOpen ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized && rightPanelOpen ? "true" : "false"}
