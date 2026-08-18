@@ -1797,6 +1797,53 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps window unthrottled until the final frame capture stops", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstWindowThrottling = vi.fn();
+        const replacementWindowThrottling = vi.fn();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const webContentsById = new Map([
+          [41, makeTestPreviewWebContents(capturePage, 41)],
+          [42, makeTestPreviewWebContents(capturePage, 42)],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (webContentsById.get(id) ?? null),
+        );
+
+        yield* manager.createTab("tab_capture_throttling_1");
+        yield* manager.createTab("tab_capture_throttling_2");
+        yield* manager.registerWebview("tab_capture_throttling_1", 41);
+        yield* manager.registerWebview("tab_capture_throttling_2", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling: firstWindowThrottling },
+        } as never);
+
+        yield* manager.startRecording("tab_capture_throttling_1");
+        yield* manager.startRecording("tab_capture_throttling_2");
+        expect(firstWindowThrottling.mock.calls).toEqual([[false]]);
+
+        yield* manager.stopRecording("tab_capture_throttling_1");
+        expect(firstWindowThrottling.mock.calls).toEqual([[false]]);
+
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling: replacementWindowThrottling },
+        } as never);
+        expect(replacementWindowThrottling.mock.calls).toEqual([[false]]);
+
+        yield* manager.stopRecording("tab_capture_throttling_2");
+        expect(replacementWindowThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
   effectIt.effect("captures hidden preview recordings independently for concurrent tabs", () =>
     withManager((manager) =>
       Effect.gen(function* () {

@@ -583,32 +583,49 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ),
       );
     });
+  const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
+    const mainWindow = yield* Ref.get(mainWindowRef);
+    if (Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) return;
+    yield* attempt({ operation: "frameCapture.setBackgroundThrottling" }, () =>
+      mainWindow.value.webContents.setBackgroundThrottling(enabled),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Failed to update preview frame capture throttling.", {
+          enabled,
+          error,
+        }),
+      ),
+    );
+  });
   const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
   ) {
-    const captureScope = yield* SynchronizedRef.modify(frameCaptureSessionsRef, (sessions) => {
-      const current = sessions.get(tabId);
-      if (!current || !current.consumers.has(consumer)) {
-        return [undefined, sessions] as const;
-      }
-      const consumers = new Set(current.consumers);
-      consumers.delete(consumer);
-      if (consumers.size > 0) {
-        return [
-          undefined,
-          replaceMap(sessions, (copy) => {
-            copy.set(tabId, { ...current, consumers });
-          }),
-        ] as const;
-      }
-      return [
-        current.scope,
-        replaceMap(sessions, (copy) => {
+    const captureScope = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+      Effect.gen(function* () {
+        const current = sessions.get(tabId);
+        if (!current || !current.consumers.has(consumer)) {
+          return [undefined, sessions] as const;
+        }
+        const consumers = new Set(current.consumers);
+        consumers.delete(consumer);
+        if (consumers.size > 0) {
+          return [
+            undefined,
+            replaceMap(sessions, (copy) => {
+              copy.set(tabId, { ...current, consumers });
+            }),
+          ] as const;
+        }
+        const remainingSessions = replaceMap(sessions, (copy) => {
           copy.delete(tabId);
-        }),
-      ] as const;
-    });
+        });
+        if (remainingSessions.size === 0) {
+          yield* setFrameCaptureBackgroundThrottling(true);
+        }
+        return [current.scope, remainingSessions] as const;
+      }),
+    );
     if (captureScope) {
       yield* Scope.close(captureScope, Exit.void).pipe(Effect.ignore);
     }
@@ -1692,6 +1709,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     window: BrowserWindow,
   ) {
     yield* Ref.set(mainWindowRef, Option.some(window));
+    yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+      Effect.gen(function* () {
+        if (sessions.size > 0) {
+          yield* setFrameCaptureBackgroundThrottling(false);
+        }
+        return [undefined, sessions] as const;
+      }),
+    );
     window.once("closed", () => {
       runFork(closeAllPictureInPicture());
     });
@@ -2615,6 +2640,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               });
             }),
           ] as const;
+        }
+        if (sessions.size === 0) {
+          yield* setFrameCaptureBackgroundThrottling(false);
         }
         const scope = yield* Scope.fork(parentScope, "sequential");
         yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
