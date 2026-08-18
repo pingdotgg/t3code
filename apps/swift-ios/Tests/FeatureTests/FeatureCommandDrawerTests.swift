@@ -201,22 +201,98 @@ struct FeatureCommandDrawerTests {
     // MARK: - Settle thresholds
 
     @Test
-    func releasingBeforeTheThresholdSettlesClosedAndAfterItSettlesOpen() {
+    func releasingBeforeTheCommitDistanceSettlesClosedAndAfterItSettlesOpen() {
         let openHeight: CGFloat = 400
-        let threshold = openHeight * FeatureCommandDrawerGeometry.settleProgressThreshold
+        let commit = FeatureCommandDrawerGeometry.commitDistance(openHeight: openHeight)
+        #expect(commit == FeatureCommandDrawerGeometry.settleCommitDistance)
 
         #expect(
             FeatureCommandDrawerGeometry.settlesOpen(
-                reveal: threshold - 1,
+                reveal: commit - 1,
                 velocity: 0,
-                openHeight: openHeight
+                openHeight: openHeight,
+                wasOpen: false
             ) == false
         )
         #expect(
             FeatureCommandDrawerGeometry.settlesOpen(
-                reveal: threshold,
+                reveal: commit,
                 velocity: 0,
-                openHeight: openHeight
+                openHeight: openHeight,
+                wasOpen: false
+            )
+        )
+    }
+
+    @Test
+    func anOrdinarySwipeDownTheTopBarOpensTheFullPageDrawer() {
+        // Issue #122. The drawer opens to the whole page, so a settle measured
+        // as a fraction of the open height demanded a third of the screen of
+        // travel: an ordinary swipe fell short and snapped shut, and the
+        // palette could effectively only be opened by pressing and dragging.
+        let openHeight = FeatureCommandDrawerGeometry.openHeight(availableHeight: 778)
+        let swipe: CGFloat = 140
+
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: swipe,
+                velocity: 0,
+                openHeight: openHeight,
+                wasOpen: false
+            )
+        )
+        // The rejected rule: 40% of a full-page drawer is most of the reachable
+        // screen, and this swipe is nowhere near it.
+        #expect(swipe < openHeight * 0.4)
+
+        // A brisk swipe that has barely started travelling still commits on the
+        // speed it was thrown at.
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: 30,
+                velocity: 900,
+                openHeight: openHeight,
+                wasOpen: false
+            )
+        )
+    }
+
+    @Test
+    func aCommittedPullIsMeasuredFromTheRestPositionTheDragStartedAt() {
+        let openHeight: CGFloat = 400
+        let commit = FeatureCommandDrawerGeometry.commitDistance(openHeight: openHeight)
+
+        // Closing takes the same short push back that opening took out, rather
+        // than having to drag the drawer most of the way up again.
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: openHeight - commit,
+                velocity: 0,
+                openHeight: openHeight,
+                wasOpen: true
+            ) == false
+        )
+        // Barely moving an open drawer leaves it open.
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: openHeight - 20,
+                velocity: 0,
+                openHeight: openHeight,
+                wasOpen: true
+            )
+        )
+        // The same reveal settles the other way depending on where the drag
+        // began, which is what makes an abandoned pull return to its own rest
+        // position instead of jumping across the screen.
+        let midway = openHeight / 2
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: midway, velocity: 0, openHeight: openHeight, wasOpen: true
+            ) == false
+        )
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: midway, velocity: 0, openHeight: openHeight, wasOpen: false
             )
         )
     }
@@ -228,25 +304,65 @@ struct FeatureCommandDrawerTests {
         #expect(
             FeatureCommandDrawerGeometry.settlesOpen(
                 reveal: 40,
-                velocity: FeatureCommandDrawerGeometry.settleVelocity,
-                openHeight: openHeight
+                velocity: 800,
+                openHeight: openHeight,
+                wasOpen: false
             )
         )
         // Upward flick from a nearly open drawer still closes.
         #expect(
             FeatureCommandDrawerGeometry.settlesOpen(
                 reveal: 380,
-                velocity: -FeatureCommandDrawerGeometry.settleVelocity,
-                openHeight: openHeight
+                velocity: -1200,
+                openHeight: openHeight,
+                wasOpen: true
             ) == false
         )
-        // A slow drag below the flick speed keeps using the position threshold.
+        // An upward flick that is not enough to carry the drawer back past the
+        // commit distance leaves it open.
         #expect(
             FeatureCommandDrawerGeometry.settlesOpen(
                 reveal: 380,
-                velocity: -(FeatureCommandDrawerGeometry.settleVelocity - 1),
-                openHeight: openHeight
+                velocity: -200,
+                openHeight: openHeight,
+                wasOpen: true
             )
+        )
+        // A downward flick on a closed drawer that dies immediately does not
+        // count as a swipe.
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: 10,
+                velocity: 100,
+                openHeight: openHeight,
+                wasOpen: false
+            ) == false
+        )
+    }
+
+    @Test
+    func theCommitDistanceNeverExceedsHalfOfAShortDrawer() {
+        // The keyboard floor can make the drawer shorter than the ordinary
+        // commit distance; both directions must still be reachable.
+        let short = FeatureCommandDrawerGeometry.minimumOpenHeight
+        let commit = FeatureCommandDrawerGeometry.commitDistance(openHeight: short)
+        #expect(commit <= short / 2)
+
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: short / 2, velocity: 0, openHeight: short, wasOpen: false
+            )
+        )
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: short / 2, velocity: 0, openHeight: short, wasOpen: true
+            ) == false
+        )
+        // No drawer to settle means nothing to open.
+        #expect(
+            FeatureCommandDrawerGeometry.settlesOpen(
+                reveal: 300, velocity: 900, openHeight: 0, wasOpen: false
+            ) == false
         )
     }
 
@@ -273,6 +389,46 @@ struct FeatureCommandDrawerTests {
             #expect(
                 FeatureCommandDrawerGesture.canBeginTouch(atY: y, reveal: 0, topInset: topInset)
                     == false
+            )
+        }
+    }
+
+    @Test
+    func theGrabBandCoversEveryTopBarInTheAppWithoutReachingTheSystemsOwn() {
+        // Issue #122: the same swipe has to work everywhere, so the band must
+        // cover Home's own bar and the navigation bar the thread page and the
+        // other pushed surfaces use — both of which start at the top inset.
+        let topInset: CGFloat = 62
+        let homeBarHeight: CGFloat = 49
+        let navigationBarHeight: CGFloat = 44
+
+        for barHeight in [homeBarHeight, navigationBarHeight] {
+            for offset in stride(from: CGFloat(1), through: barHeight, by: 4) {
+                #expect(
+                    FeatureCommandDrawerGesture.canBeginTouch(
+                        atY: topInset + offset, reveal: 0, topInset: topInset
+                    )
+                )
+            }
+        }
+
+        // The status bar above the inset stays the system's: that is where the
+        // notification shade is pulled from, and the app must not claim it.
+        for y in stride(from: CGFloat(0), through: topInset - 1, by: 6) {
+            #expect(
+                FeatureCommandDrawerGesture.canBeginTouch(
+                    atY: y, reveal: 0, topInset: topInset
+                ) == false
+            )
+        }
+
+        // Content below the bars keeps every ordinary scroll, on Home's thread
+        // list and on the thread transcript alike.
+        for y in stride(from: topInset + homeBarHeight + 64, through: 800, by: 40) {
+            #expect(
+                FeatureCommandDrawerGesture.canBeginTouch(
+                    atY: y, reveal: 0, topInset: topInset
+                ) == false
             )
         }
     }
@@ -389,7 +545,7 @@ struct FeatureCommandDrawerTests {
     }
 
     @Test
-    func releasingBeforeTheThresholdReturnsTheDrawerToTheClosedEdge() {
+    func releasingBeforeTheCommitDistanceReturnsTheDrawerToTheClosedEdge() {
         var state = FeatureCommandDrawerState()
         state.beginDrag()
         state.updateDrag(translation: 90, openHeight: 400)

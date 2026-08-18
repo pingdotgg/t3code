@@ -14,10 +14,19 @@ enum FeatureCommandDrawerGeometry {
     static let minimumOpenHeight: CGFloat = 220
     /// Share of the drag that keeps travelling once the drawer is fully out.
     static let overshootResistance: CGFloat = 0.22
-    /// Reveal fraction at or above which a release settles open.
-    static let settleProgressThreshold: CGFloat = 0.4
-    /// Points per second at which a flick decides the settle on its own.
-    static let settleVelocity: CGFloat = 420
+    /// Travel away from the rest position the drawer started at that commits
+    /// the release to the other rest position.
+    ///
+    /// This is an absolute distance rather than a fraction of the open height
+    /// on purpose. The drawer opens to the full page, so a fraction made an
+    /// ordinary swipe — a hundred points or so — fall far short of committing,
+    /// and the palette could only be opened by dragging a third of the screen
+    /// or flicking hard. A swipe is a swipe regardless of how tall the drawer
+    /// it is pulling happens to be.
+    static let settleCommitDistance: CGFloat = 96
+    /// How far ahead of the release the drawer's momentum is projected, so a
+    /// short fast swipe commits on the speed it was thrown at.
+    static let settleProjectionInterval: CGFloat = 0.14
 
     /// Fully open covers the whole page: the drawer runs from the top of the
     /// screen down to the keyboard's top edge, or to the home indicator when
@@ -74,17 +83,37 @@ enum FeatureCommandDrawerGeometry {
         return min(max(reveal / openHeight, 0), 1)
     }
 
-    /// A flick decides on its own; otherwise the drawer settles to whichever
-    /// rest position the release position is closest to committing to.
+    /// Distance the drawer must travel away from where the drag started before
+    /// the release commits to the opposite rest position. Never more than half
+    /// the drawer, so a short drawer stays reachable in both directions.
+    static func commitDistance(openHeight: CGFloat) -> CGFloat {
+        min(settleCommitDistance, openHeight * 0.5)
+    }
+
+    /// Where the drawer's edge is heading when the finger lifts. Position and
+    /// speed are the same quantity here, so a slow drag past the commit
+    /// distance and a fast flick short of it both settle the way they look.
+    static func projectedReveal(reveal: CGFloat, velocity: CGFloat) -> CGFloat {
+        reveal + velocity * settleProjectionInterval
+    }
+
+    /// The settle is measured from the rest position the drag started at: an
+    /// opening pull commits once it has travelled the commit distance out, and
+    /// a closing push commits once it has travelled the same distance back.
+    /// Symmetry is what makes the drawer feel physical — otherwise the release
+    /// that opens it and the release that closes it answer to different rules.
     static func settlesOpen(
         reveal: CGFloat,
         velocity: CGFloat,
-        openHeight: CGFloat
+        openHeight: CGFloat,
+        wasOpen: Bool
     ) -> Bool {
         guard openHeight > 0 else { return false }
-        if velocity >= settleVelocity { return true }
-        if velocity <= -settleVelocity { return false }
-        return progress(reveal: reveal, openHeight: openHeight) >= settleProgressThreshold
+        let projected = projectedReveal(reveal: reveal, velocity: velocity)
+        let commit = commitDistance(openHeight: openHeight)
+        return wasOpen
+            ? projected > openHeight - commit
+            : projected >= commit
     }
 }
 
@@ -172,7 +201,8 @@ struct FeatureCommandDrawerState: Equatable, Sendable {
         let opens = FeatureCommandDrawerGeometry.settlesOpen(
             reveal: reveal,
             velocity: velocity,
-            openHeight: openHeight
+            openHeight: openHeight,
+            wasOpen: isOpen
         )
         settle(open: opens, openHeight: openHeight)
         return opens
