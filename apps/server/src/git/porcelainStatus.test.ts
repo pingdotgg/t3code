@@ -84,5 +84,15 @@ describe("parsePorcelainStatus", () => {
     expect(
       parsePorcelainStatus("u UU N... 100644 100644 100644 100644 abc1 abc2 abc3 my conflict.ts"),
     ).toEqual({ path: "my conflict.ts", status: "modified" });
+    expect(
+      parsePorcelainStatus(
+        "1 .M N... 100644 100644 100644 bd4269ff9d6818e647e89bacacf357bc8b8eb33c bd4269ff9d6818e647e89bacacf357bc8b8eb33c  file.ts",
+      ),
+    ).toEqual({ path: " file.ts", status: "modified" });
+    expect(
+      parsePorcelainStatus(
+        "1 .M N... 100644 100644 100644 975fbec8256d3e8a3797e7a3611380f27c49f4ac 975fbec8256d3e8a3797e7a3611380f27c49f4ac file.ts ",
+      ),
+    ).toEqual({ path: "file.ts ", status: "modified" });
   });
 });

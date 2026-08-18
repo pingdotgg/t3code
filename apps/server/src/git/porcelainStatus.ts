@@ -78,20 +78,20 @@ function restAfterFields(line: string, fieldCount: number): string {
     while (index < line.length && line[index] !== " ") index++;
     seen++;
   }
-  while (index < line.length && line[index] === " ") index++;
+  if (index < line.length && line[index] === " ") index++;
   return line.slice(index);
 }
 
 function parsePorcelainPath(line: string): string | null {
   if (line.startsWith("? ") || line.startsWith("! ")) {
-    const simple = unquoteGitPath(line.slice(2).trim());
+    const simple = unquoteGitPath(line.slice(2));
     return simple.length > 0 ? simple : null;
   }
 
   if (line.startsWith("2 ")) {
     const tabIndex = line.indexOf("\t");
     const head = tabIndex >= 0 ? line.slice(0, tabIndex) : line;
-    const dest = unquoteGitPath(restAfterFields(head, 9).trim());
+    const dest = unquoteGitPath(restAfterFields(head, 9));
     return dest.length > 0 ? dest : null;
   }
 
@@ -103,11 +103,11 @@ function parsePorcelainPath(line: string): string | null {
   if (tabIndex >= 0) {
     const fromTab = line.slice(tabIndex + 1);
     const [filePath] = fromTab.split("\t");
-    const decoded = unquoteGitPath(filePath?.trim() ?? "");
+    const decoded = unquoteGitPath(filePath ?? "");
     return decoded.length > 0 ? decoded : null;
   }
 
-  const dest = unquoteGitPath(restAfterFields(line, line.startsWith("u ") ? 10 : 8).trim());
+  const dest = unquoteGitPath(restAfterFields(line, line.startsWith("u ") ? 10 : 8));
   return dest.length > 0 ? dest : null;
 }
 
@@ -130,7 +130,7 @@ export function workingTreeStatusFromPorcelainXy(
 /** Maps one porcelain-2 row to the single status the file explorer can show. */
 export function parsePorcelainStatus(line: string): PorcelainStatusEntry | null {
   if (line.startsWith("? ")) {
-    const path = unquoteGitPath(line.slice(2).trim());
+    const path = unquoteGitPath(line.slice(2));
     return path.length > 0 ? { path, status: "untracked" } : null;
   }
   if (line.startsWith("! ")) {
