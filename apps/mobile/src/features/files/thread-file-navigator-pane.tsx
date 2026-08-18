@@ -1,7 +1,7 @@
 import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, useColorScheme, View, type NativeSyntheticEvent } from "react-native";
+import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
 import {
   Screen,
   ScreenStack,
@@ -15,6 +15,7 @@ import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 
@@ -27,8 +28,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const colorScheme = useColorScheme();
-  const highlightTheme = colorScheme === "dark" ? "dark" : "light";
+  const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const iconColor = String(useThemeColor("--color-icon-muted"));
   const foregroundColor = String(useThemeColor("--color-foreground"));
   const sheetColor = String(useThemeColor("--color-sheet"));

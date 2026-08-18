@@ -25,7 +25,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
-import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
+import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -61,8 +61,10 @@ export function UsagePage() {
         : enumerateHourStarts(window.sinceTime, window.untilTime),
     [window.sinceTime, window.untilTime],
   );
-  const recentPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(
-    () => (isPast24Hours ? merged.hourly : merged.daily).toReversed().slice(0, 8),
+  // Newest first: the window can run 90 periods, so the interesting end
+  // belongs at the top of the table.
+  const breakdownPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(
+    () => (isPast24Hours ? merged.hourly : merged.daily).toReversed(),
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
@@ -209,7 +211,7 @@ export function UsagePage() {
                           <div className="flex items-baseline justify-between">
                             <span className="flex items-center gap-2 text-sm text-foreground">
                               <ProviderMark provider={provider.provider} className="size-4" />
-                              {PROVIDER_LABEL[provider.provider]}
+                              {PROVIDER_PRESENTATION[provider.provider].label}
                             </span>
                             <span className="text-sm text-foreground tabular-nums">
                               {metric === "cost"
@@ -222,7 +224,7 @@ export function UsagePage() {
                               className="h-full"
                               style={{
                                 width: `${(share * 100).toFixed(1)}%`,
-                                backgroundColor: PROVIDER_COLOR[provider.provider],
+                                backgroundColor: PROVIDER_PRESENTATION[provider.provider].color,
                               }}
                             />
                           </div>
@@ -385,7 +387,7 @@ export function UsagePage() {
                           <th className="py-2 font-normal">{isPast24Hours ? "Hour" : "Day"}</th>
                           {PROVIDER_ORDER.map((provider) => (
                             <th key={provider} className="py-2 text-right font-normal">
-                              {PROVIDER_LABEL[provider]}
+                              {PROVIDER_PRESENTATION[provider].label}
                             </th>
                           ))}
                           <th className="py-2 text-right font-normal">Total</th>
@@ -393,14 +395,14 @@ export function UsagePage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {recentPeriods.length === 0 ? (
+                        {breakdownPeriods.length === 0 ? (
                           <tr>
                             <td colSpan={5} className="py-6 text-center text-muted-foreground">
                               No activity in this window.
                             </td>
                           </tr>
                         ) : (
-                          recentPeriods.map((period) => (
+                          breakdownPeriods.map((period) => (
                             <tr
                               key={"hourStart" in period ? period.hourStart : period.day}
                               className="border-b border-border/50"
@@ -448,7 +450,7 @@ function ProviderMark({
   readonly provider: UsageProviderKind;
   readonly className: string;
 }) {
-  const Mark = PROVIDER_MARK[provider];
+  const Mark = PROVIDER_PRESENTATION[provider].mark;
   return <Mark className={cn("shrink-0", className)} aria-hidden />;
 }
 
@@ -595,7 +597,7 @@ function UsageSkeleton({ resolution }: { readonly resolution: "day" | "hour" }) 
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-sm text-foreground">
                   <ProviderMark provider={provider} className="size-4" />
-                  {PROVIDER_LABEL[provider]}
+                  {PROVIDER_PRESENTATION[provider].label}
                 </span>
                 <div className="h-3.5 w-14 rounded-sm bg-muted" />
               </div>

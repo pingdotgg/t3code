@@ -118,6 +118,30 @@ export const FILL_PREVIEW_VIEWPORT = {
   _tag: "fill",
 } as const satisfies PreviewViewportSetting;
 
+/**
+ * Discrete zoom levels mirroring Chrome's preset ladder. Zoom is applied by the
+ * desktop main process to the Chromium guest, but the ladder lives here so the
+ * settings UI can offer exactly the steps the zoom controls step through.
+ */
+export const PREVIEW_ZOOM_LEVELS = [
+  0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
+] as const;
+
+export const PreviewZoomFactor = Schema.Literals(PREVIEW_ZOOM_LEVELS);
+export type PreviewZoomFactor = typeof PreviewZoomFactor.Type;
+
+export const DEFAULT_PREVIEW_ZOOM_FACTOR: PreviewZoomFactor = 1.0;
+
+/**
+ * Preferred `prefers-color-scheme` for preview guests. `system` clears the
+ * emulation override so the guest follows the OS. Structurally identical to
+ * `DesktopPreviewColorScheme`, which is the IPC-layer spelling of the same set.
+ */
+export const PreviewAppearancePreference = Schema.Literals(["system", "light", "dark"]);
+export type PreviewAppearancePreference = typeof PreviewAppearancePreference.Type;
+
+export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = "system";
+
 export const PreviewNavStatus = Schema.Union([
   Schema.TaggedStruct("Idle", {}),
   Schema.TaggedStruct("Loading", {
@@ -153,6 +177,13 @@ export const PreviewOpenInput = Schema.Struct({
   threadId: ThreadId,
   /** Omit to create an empty (Idle) tab the user can type into. */
   url: Schema.optional(Url),
+  /**
+   * Initial viewport for the new tab. Omitting it keeps the historical
+   * fill-panel behaviour; clients that have a configured default send it here
+   * so the session is born at the right size instead of being resized a frame
+   * later (which the user would see as a visible reflow).
+   */
+  viewport: Schema.optional(PreviewViewportSetting),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 

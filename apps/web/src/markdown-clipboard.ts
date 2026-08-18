@@ -37,6 +37,22 @@ function wrapInlineMarker(content: string, marker: string): string {
   return `${match?.[1] ?? ""}${marker}${core}${marker}${match?.[3] ?? ""}`;
 }
 
+/**
+ * A code element whose pre wrapper fell outside the copied range is still
+ * block code, recognizable by its highlighter line spans or embedded
+ * newlines. Wrapping it like inline code produces backtick-surrounded
+ * shell commands on paste.
+ */
+function isBlockCodeElement(element: Element, content: string): boolean {
+  if (content.includes("\n")) return true;
+  for (const child of element.childNodes) {
+    if (child.nodeType === Node.ELEMENT_NODE && (child as Element).classList.contains("line")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function wrapInlineCode(code: string): string {
   const longestRun = [...(code.match(/`+/g) ?? [])].reduce(
     (max, run) => Math.max(max, run.length),
@@ -201,8 +217,10 @@ function serializeNode(node: Node): string {
       return `${serializeChildren(element).trim()}\n\n`;
     case "PRE":
       return serializeCodeBlock(element);
-    case "CODE":
-      return wrapInlineCode(element.textContent ?? "");
+    case "CODE": {
+      const content = element.textContent ?? "";
+      return isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+    }
     case "STRONG":
     case "B":
       return wrapInlineMarker(serializeChildren(element), "**");
@@ -301,6 +319,17 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    const ancestor = range.commonAncestorContainer;
+    const ancestorElement =
+      ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    if (ancestorElement?.closest("pre")) {
+      const text = range.toString();
+      if (text) {
+        texts.push(text);
+        htmls.push(sanitizedHtmlFrom(container));
+      }
+      continue;
+    }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
