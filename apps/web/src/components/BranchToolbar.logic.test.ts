@@ -22,6 +22,7 @@ import {
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
+  resolveMobileRunContextPopupClass,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   sanitizeNewRefName,
@@ -161,6 +162,13 @@ describe("buildEnvironmentOption", () => {
       providerLabel: "claudeAgent",
       modelLabel: "sonnet",
     });
+  });
+});
+
+describe("resolveMobileRunContextPopupClass", () => {
+  it("uses the detail width only when machine profiles are rendered", () => {
+    expect(resolveMobileRunContextPopupClass(true)).toBe("w-[min(28rem,calc(100vw-2rem))]");
+    expect(resolveMobileRunContextPopupClass(false)).toBe("w-64");
   });
 });
 

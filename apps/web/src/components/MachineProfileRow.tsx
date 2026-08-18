@@ -4,8 +4,6 @@ import { memo } from "react";
 import type { EnvironmentOption } from "./BranchToolbar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export const MACHINE_PROFILE_POPUP_CLASS = "w-[min(28rem,calc(100vw-2rem))]";
-
 function TruncatedMachineValue({ value, className }: { value: string; className: string }) {
   return (
     <Tooltip>

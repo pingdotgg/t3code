@@ -1,13 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { MACHINE_PROFILE_POPUP_CLASS, MachineProfileRow } from "./MachineProfileRow";
+import { MachineProfileRow } from "./MachineProfileRow";
 
 describe("MachineProfileRow", () => {
-  it("caps machine profile menus to the viewport at the shared detail width", () => {
-    expect(MACHINE_PROFILE_POPUP_CLASS).toBe("w-[min(28rem,calc(100vw-2rem))]");
-  });
-
   it("renders the machine path and draft execution details", () => {
     const markup = renderToStaticMarkup(
       <MachineProfileRow

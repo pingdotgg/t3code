@@ -2,8 +2,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
-import type { EnvironmentOption } from "./BranchToolbar.logic";
-import { MACHINE_PROFILE_POPUP_CLASS, MachineProfileRow } from "./MachineProfileRow";
+import { MACHINE_PROFILE_POPUP_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
+import { MachineProfileRow } from "./MachineProfileRow";
 import {
   Select,
   SelectGroup,

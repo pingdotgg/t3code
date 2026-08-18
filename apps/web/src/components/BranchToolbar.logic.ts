@@ -18,6 +18,12 @@ export {
 export { resolveMachineProfileSummary } from "../machineDraftProfile";
 export type { MachineDraftProfile, MachineProfileSummary } from "../machineDraftProfile";
 
+export const MACHINE_PROFILE_POPUP_CLASS = "w-[min(28rem,calc(100vw-2rem))]";
+
+export function resolveMobileRunContextPopupClass(showMachineProfiles: boolean): string {
+  return showMachineProfiles ? MACHINE_PROFILE_POPUP_CLASS : "w-64";
+}
+
 export type EnvironmentConnectionState = "connected" | "unavailable";
 
 export interface EnvironmentOption {
