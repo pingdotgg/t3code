@@ -39,6 +39,7 @@ Primary files:
 - `apps/web/src/components/settings/ProjectSettingsPanel.logic.ts`
 - `apps/web/src/components/settings/ProjectSettingsPanel.logic.test.ts`
 - `apps/web/src/components/CommandPalette.tsx`
+- `apps/web/src/components/CommandPalette.thread-project-items.tsx`
 - `apps/web/src/components/CommandPalette.merged-seam.test.tsx`
 - `apps/web/src/components/Sidebar.logic.ts`
 - `apps/web/src/components/Sidebar.logic.test.ts`
@@ -50,7 +51,7 @@ Primary files:
 
 Sidebar archive visibility is centralized across persisted and optimistic archive states. Project rows, project status, sorting, keyboard navigation, prewarming, and command-palette thread/project actions exclude an optimistically archived conversation immediately, so durable cold-storage work cannot leave a stale row or navigation target visible while the server shell catches up.
 
-The command palette builds its thread and project activity from that filtered thread set while preserving each new-thread project item's environment location and workspace path. `apps/web/src/components/ThreadCommandSubtitle.tsx` owns the location subtitle and location search-term helper used by `apps/web/src/components/CommandPalette.tsx`; local projects remain searchable by `Local`, remote projects remain searchable by their environment label, and both retain their workspace-root search term and rendered path. `apps/web/src/components/CommandPalette.merged-seam.test.tsx` covers this combined contract by excluding an optimistically archived thread while asserting the surviving project's location description and search metadata.
+The command palette builds its thread and project activity through shared production item builders that apply the filtered thread set while preserving each new-thread project item's environment location and workspace path. `apps/web/src/components/ThreadCommandSubtitle.tsx` owns the location subtitle and location search-term helper used by `apps/web/src/components/CommandPalette.tsx`; local projects remain searchable by `Local`, remote projects remain searchable by their environment label, and both retain their workspace-root search term and rendered path. `apps/web/src/components/CommandPalette.merged-seam.test.tsx` exercises those same item builders to cover the combined contract by excluding an optimistically archived thread while asserting the surviving project's location description and search metadata.
 
 The web Archive settings route renders `apps/web/src/components/settings/ArchivedThreadsPanel.tsx`, which reads archived snapshots across connected environments, groups archived threads by project, uses each project's configured favicon, and exposes unarchive plus permanent-delete actions. Keeping this branch-owned surface separate from the general panels in `apps/web/src/components/settings/SettingsPanels.tsx` limits archive behavior to the Archive route; the panel uses the upstream settings-search catalog for its title and scroll anchor so Archive search results still target this standalone surface.
 

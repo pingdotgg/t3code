@@ -107,7 +107,6 @@ import {
   buildBrowseGroups,
   buildProjectActionItems,
   buildRootGroups,
-  buildThreadActionItems,
   enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
@@ -135,11 +134,11 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
+import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
 import {
-  ProjectCommandSubtitle,
-  ThreadCommandSubtitle,
-  projectCommandLocationSearchTerms,
-} from "./ThreadCommandSubtitle";
+  buildLocationAwareProjectActionItems,
+  buildVisibleThreadActionItems,
+} from "./CommandPalette.thread-project-items";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import {
@@ -1041,27 +1040,16 @@ function OpenCommandPaletteDialog(props: {
   const projectThreadItems = useMemo(
     () =>
       enumerateCommandPaletteItems(
-        buildProjectActionItems({
+        buildLocationAwareProjectActionItems({
           projects: pickerProjects,
           valuePrefix: "new-thread-in",
           searchTerms: (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const location = projectEnvironmentLocationById.get(project.environmentId);
-            return [
-              ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
-                []),
-              ...projectCommandLocationSearchTerms(location),
-            ];
-          },
-          renderDescription: (project) => {
-            const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
-              kind: "remote",
-              label: "Remote",
-            };
             return (
-              <ProjectCommandSubtitle location={location} workspaceRoot={project.workspaceRoot} />
+              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
             );
           },
+          getLocation: (project) => projectEnvironmentLocationById.get(project.environmentId),
           icon: projectFavicon,
           runProject: async (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
@@ -1091,8 +1079,9 @@ function OpenCommandPaletteDialog(props: {
 
   const allThreadItems = useMemo(
     () =>
-      buildThreadActionItems({
-        threads: visibleThreads,
+      buildVisibleThreadActionItems({
+        threads,
+        optimisticallyArchivedThreadKeys,
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
@@ -1154,7 +1143,8 @@ function OpenCommandPaletteDialog(props: {
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
       threadSearchQuery,
-      visibleThreads,
+      threads,
+      optimisticallyArchivedThreadKeys,
     ],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);

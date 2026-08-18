@@ -4,9 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Project, Thread } from "../types";
-import { buildProjectActionItems, buildThreadActionItems } from "./CommandPalette.logic";
-import { filterVisibleSidebarThreads } from "./Sidebar.logic";
-import { ProjectCommandSubtitle, projectCommandLocationSearchTerms } from "./ThreadCommandSubtitle";
+import {
+  buildLocationAwareProjectActionItems,
+  buildVisibleThreadActionItems,
+} from "./CommandPalette.thread-project-items";
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-local");
@@ -41,14 +42,11 @@ describe("CommandPalette merged archive and project-location seam", () => {
   it("hides optimistic archives while retaining location description and search metadata", () => {
     const visibleThread = makeThread("thread-visible", "Visible thread");
     const optimisticArchive = makeThread("thread-optimistic", "Optimistically archived thread");
-    const visibleThreads = filterVisibleSidebarThreads(
-      [visibleThread, optimisticArchive],
-      new Set([
+    const threadItems = buildVisibleThreadActionItems({
+      threads: [visibleThread, optimisticArchive],
+      optimisticallyArchivedThreadKeys: new Set([
         scopedThreadKey(scopeThreadRef(optimisticArchive.environmentId, optimisticArchive.id)),
       ]),
-    );
-    const threadItems = buildThreadActionItems({
-      threads: visibleThreads,
       projectTitleById: new Map([[projectId, "Local project"]]),
       sortOrder: "updated_at",
       icon: null,
@@ -70,14 +68,11 @@ describe("CommandPalette merged archive and project-location seam", () => {
       scripts: [],
     };
     const location = { kind: "local", label: "Local" } as const;
-    const [projectItem] = buildProjectActionItems({
+    const [projectItem] = buildLocationAwareProjectActionItems({
       projects: [project],
       valuePrefix: "new-thread-in",
       icon: () => null,
-      searchTerms: () => projectCommandLocationSearchTerms(location),
-      renderDescription: (item) => (
-        <ProjectCommandSubtitle location={location} workspaceRoot={item.workspaceRoot} />
-      ),
+      getLocation: () => location,
       runProject: async () => undefined,
     });
 
