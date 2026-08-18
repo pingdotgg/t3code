@@ -40,6 +40,8 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    status?: "ok" | "missing" | "partial" | "failed";
+    message?: string | null;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -57,12 +59,12 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
-      status: "ok" as const,
+      status: source.status ?? ("ok" as const),
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
       distinctSessions: source.distinctSessions ?? 1,
-      message: null,
+      message: source.message ?? null,
     })),
     pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
     scanDurationMs: 1,
@@ -187,6 +189,58 @@ describe("mergeUsage", () => {
     expect(merged.providers[0]?.costShare).toBeCloseTo(0.75, 5);
     expect(merged.costQuality.unpricedShare).toBeCloseTo(0.5, 5);
     expect(merged.costQuality.cacheSavingsUsd).toBe(4);
+  });
+
+  it("includes OpenCode in provider and model totals", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({
+                provider: "opencode",
+                model: "anthropic/claude-opus-4-1",
+                costUsd: 3,
+              }),
+            ],
+            [{ provider: "opencode", hostId: "linux", homePath: "/home/test/opencode" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.providers[0]?.provider).toBe("opencode");
+    expect(merged.models[0]).toMatchObject({
+      provider: "opencode",
+      model: "anthropic/claude-opus-4-1",
+    });
+  });
+
+  it("surfaces owned provider sources with incomplete coverage", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [],
+            [
+              {
+                provider: "opencode",
+                hostId: "linux",
+                homePath: "/home/test/opencode",
+                status: "partial",
+                message: "Remote OpenCode usage is unavailable.",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.sourceIssues).toEqual(["env-a: Remote OpenCode usage is unavailable."]);
   });
 
   it("keeps two machines apart when hostname and home path collide", () => {

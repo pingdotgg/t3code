@@ -196,9 +196,10 @@ describe("UsageAggregator", () => {
     const result = aggregate([
       record(),
       record({ provider: "codex", model: "gpt-5.6-sol" }),
+      record({ provider: "opencode", model: "openai/gpt-5.6" }),
       record({ model: "claude-opus-5" }),
     ]);
 
-    expect(result.buckets).toHaveLength(3);
+    expect(result.buckets).toHaveLength(4);
   });
 });

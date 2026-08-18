@@ -463,9 +463,11 @@ function UsageCoverageNotice(props: {
     props.merged.staleEnvironments.includes(environment.environmentId),
   );
   const duplicateSources = props.merged.duplicateSources;
+  const sourceIssues = props.merged.sourceIssues;
   if (
     failed.length === 0 &&
     stale.length === 0 &&
+    sourceIssues.length === 0 &&
     duplicateSources.length === 0 &&
     !props.isPartial
   ) {
@@ -489,9 +491,14 @@ function UsageCoverageNotice(props: {
           {environment.label} runs an older server version and is excluded from totals.
         </Text>
       ))}
+      {sourceIssues.map((issue) => (
+        <Text key={issue} className="text-sm text-foreground-muted">
+          {issue}
+        </Text>
+      ))}
       {duplicateSources.length > 0 ? (
         <Text className="text-sm text-foreground-muted">
-          Counted once across environments sharing a transcript directory:{" "}
+          Counted once across environments sharing a provider usage store:{" "}
           {duplicateSources.join(", ")}
         </Text>
       ) : null}

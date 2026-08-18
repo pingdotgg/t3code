@@ -75,6 +75,8 @@ export interface MergedUsage {
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
+  /** Provider sources that were readable only partially or not at all. */
+  readonly sourceIssues: readonly string[];
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
@@ -82,7 +84,7 @@ export interface MergedUsage {
 }
 
 /**
- * Two sources are the same physical transcript directory only when host,
+ * Two sources are the same physical provider usage store only when host,
  * provider, path and filesystem identity all agree.
  *
  * `volumeId` is what stops two machines that happen to share a hostname and a
@@ -99,10 +101,10 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
 }
 
 /**
- * Decides which environment owns each physical transcript directory.
+ * Decides which environment owns each physical provider usage store.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
- * the same provider home and would otherwise double count every token. The
+ * the same provider store and would otherwise double count every token. The
  * first environment in a stable order claims a fingerprint; the rest have that
  * provider's buckets dropped. Environments are sorted by id so the winner does
  * not change between renders.
@@ -184,6 +186,7 @@ const EMPTY_MERGED: MergedUsage = {
     unpricedShare: 0,
     cacheSavingsUsd: 0,
   },
+  sourceIssues: [],
   duplicateSources: [],
   contributingEnvironments: [],
   staleEnvironments: [],
@@ -253,6 +256,7 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const sourceIssues: string[] = [];
 
   for (const environment of current) {
     const { buckets, sessions: environmentSessions } = ownedContribution(
@@ -261,6 +265,15 @@ export function mergeUsage(
     );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
     sessions += environmentSessions;
+
+    for (const source of environment.summary.sources) {
+      if (source.status !== "partial" && source.status !== "failed") continue;
+      const key = fingerprintKey(source.fingerprint);
+      if (ownerByFingerprint.get(key) !== environment.environmentId) continue;
+      sourceIssues.push(
+        `${environment.label}: ${source.message ?? `${source.fingerprint.provider} usage is incomplete.`}`,
+      );
+    }
 
     for (const bucket of buckets) {
       const tokens = bucketTokens(bucket);
@@ -391,6 +404,7 @@ export function mergeUsage(
         records === 0 ? 0 : (records - providerReportedRecords - unpricedRecords) / records,
       cacheSavingsUsd,
     },
+    sourceIssues,
     duplicateSources: duplicates,
     contributingEnvironments,
     staleEnvironments,

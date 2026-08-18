@@ -180,6 +180,7 @@ export function UsagePage() {
                 <UsageCoverageNotice
                   environments={environments}
                   duplicateSources={merged.duplicateSources}
+                  sourceIssues={merged.sourceIssues}
                   staleEnvironments={merged.staleEnvironments}
                 />
 
@@ -397,7 +398,10 @@ export function UsagePage() {
                       <tbody>
                         {breakdownPeriods.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                            <td
+                              colSpan={PROVIDER_ORDER.length + 3}
+                              className="py-6 text-center text-muted-foreground"
+                            >
                               No activity in this window.
                             </td>
                           </tr>
@@ -481,17 +485,24 @@ function Metric({
 function UsageCoverageNotice({
   environments,
   duplicateSources,
+  sourceIssues,
   staleEnvironments,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
+  readonly sourceIssues: readonly string[];
   readonly staleEnvironments: readonly string[];
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    sourceIssues.length === 0 &&
+    duplicateSources.length === 0
+  ) {
     return null;
   }
 
@@ -505,9 +516,12 @@ function UsageCoverageNotice({
           {environment.label} runs an older server version and is excluded from totals.
         </span>
       ))}
+      {sourceIssues.map((issue) => (
+        <span key={issue}>{issue}</span>
+      ))}
       {duplicateSources.length > 0 ? (
         <span>
-          Counted once across environments sharing a transcript directory:{" "}
+          Counted once across environments sharing a provider usage store:{" "}
           {duplicateSources.join(", ")}
         </span>
       ) : null}

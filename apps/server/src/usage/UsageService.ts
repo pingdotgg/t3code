@@ -1,5 +1,5 @@
 /**
- * UsageService - scans provider transcripts and returns priced usage buckets.
+ * UsageService - scans provider usage stores and returns priced usage buckets.
  *
  * The scan reads the provider CLIs' own session files rather than T3 Code's
  * orchestration projections, so usage covers turns driven outside T3 Code too.
@@ -38,6 +38,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import { readOpenCodeUsageRecords, resolveOpenCodeDataDir } from "./usageOpenCodeReader.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -197,8 +198,8 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
-  /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
+  /** Resolves every provider-owned local usage source. */
+  const resolveUsageSources = Effect.fn("UsageService.resolveUsageSources")(function* () {
     // A settings failure must surface as an error: swallowing it here would
     // present "zero usage from every provider" as a valid answer.
     const settings = yield* settingsService.getSettings.pipe(
@@ -218,11 +219,19 @@ export const make = Effect.gen(function* () {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const openCodeDataDir = resolveOpenCodeDataDir();
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-    ];
+    return {
+      transcriptDirs: [
+        { provider: "claude" as const, dir: claudeDir },
+        { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      ],
+      openCode: {
+        dataDir: openCodeDataDir,
+        databasePath: path.join(openCodeDataDir, "opencode.db"),
+        remote: settings.providers.opencode.serverUrl.length > 0,
+      },
+    };
   });
 
   /**
@@ -329,7 +338,9 @@ export const make = Effect.gen(function* () {
     const hostId = NodeOS.hostname();
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so `readSummary` stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const resolvedSources = yield* resolveUsageSources().pipe(
+      Effect.provideService(Path.Path, path),
+    );
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -353,7 +364,7 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir } of dirs) {
+    for (const { provider, dir } of resolvedSources.transcriptDirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
@@ -406,6 +417,77 @@ export const make = Effect.gen(function* () {
         distinctSessions: sessionIds.size,
         message: null,
       });
+    }
+
+    const openCodeVolumeId = yield* Effect.promise(() =>
+      readDirectoryVolumeId(resolvedSources.openCode.dataDir),
+    );
+    const openCodeFingerprint = {
+      hostId,
+      provider: "opencode" as const,
+      resolvedHomePath: resolvedSources.openCode.dataDir,
+      volumeId: openCodeVolumeId,
+    };
+
+    if (resolvedSources.openCode.remote) {
+      sources.push({
+        fingerprint: openCodeFingerprint,
+        status: "partial",
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: 0,
+        message: "Usage from a remote OpenCode server is not available on this environment.",
+      });
+    } else {
+      const openCodeDatabaseExists = yield* fileSystem
+        .exists(resolvedSources.openCode.databasePath)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      if (!openCodeDatabaseExists) {
+        sources.push({
+          fingerprint: openCodeFingerprint,
+          status: "missing",
+          scannedFiles: 0,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 0,
+          message: "No OpenCode usage database on this environment.",
+        });
+      } else {
+        const openCode = yield* Effect.sync(() =>
+          readOpenCodeUsageRecords(resolvedSources.openCode.databasePath, windowStartMs),
+        );
+        if (openCode.status === "failed") {
+          sources.push({
+            fingerprint: openCodeFingerprint,
+            status: "failed",
+            scannedFiles: 0,
+            skippedFiles: 1,
+            malformedRecords: 0,
+            distinctSessions: 0,
+            message: openCode.message,
+          });
+        } else {
+          const sessionIds = new Set<string>();
+          for (const record of openCode.records) {
+            if (aggregator.add(record) && record.sessionId.length > 0) {
+              sessionIds.add(record.sessionId);
+            }
+          }
+          sources.push({
+            fingerprint: openCodeFingerprint,
+            status: openCode.malformedRecords > 0 ? "partial" : "ok",
+            scannedFiles: 1,
+            skippedFiles: 0,
+            malformedRecords: openCode.malformedRecords,
+            distinctSessions: sessionIds.size,
+            message:
+              openCode.malformedRecords > 0
+                ? `${openCode.malformedRecords} OpenCode usage records could not be read.`
+                : null,
+          });
+        }
+      }
     }
 
     const pruned = pruneScanCache(fileCache, {
