@@ -538,6 +538,7 @@ export function createLocalDispatchSnapshot(
 export function deriveTurnFailureRecoveryAction(input: {
   hasPendingSnapshot: boolean;
   preSendTurnId: TurnId | null;
+  preSendLatestTurnCompletedAt: string | null;
   preSendSessionUpdatedAt: string | null;
   sessionStatus: NonNullable<Thread["session"]>["status"] | null;
   sessionUpdatedAt: string | null;
@@ -555,9 +556,15 @@ export function deriveTurnFailureRecoveryAction(input: {
     // failed attempt is still in the transcript for them to copy from.
     return input.composerHasContent ? "drop" : "restore";
   }
-  const turnAdvanced = input.latestTurnId !== null && input.latestTurnId !== input.preSendTurnId;
-  if (turnAdvanced && input.latestTurnCompletedAt !== null && input.sessionStatus !== "error") {
-    // Our turn ran to completion without error: the snapshot is spent.
+  // Our turn ran to completion without error, so the snapshot is spent. A fresh
+  // turn advances `latestTurnId`; a steered follow-up folds into the turn that
+  // was already running and keeps the same id but moves `completedAt` from its
+  // pre-send value, so both must count as completion.
+  const turnCompleted =
+    input.latestTurnCompletedAt !== null &&
+    (input.latestTurnId !== input.preSendTurnId ||
+      input.latestTurnCompletedAt !== input.preSendLatestTurnCompletedAt);
+  if (turnCompleted && input.sessionStatus !== "error") {
     return "drop";
   }
   return "wait";

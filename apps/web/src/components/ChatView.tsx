@@ -1420,6 +1420,7 @@ function ChatViewContent(props: ChatViewProps) {
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
     preSendTurnId: TurnId | null;
+    preSendLatestTurnCompletedAt: string | null;
     preSendSessionUpdatedAt: string | null;
   } | null>(null);
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -4987,6 +4988,7 @@ function ChatViewContent(props: ChatViewProps) {
     const action = deriveTurnFailureRecoveryAction({
       hasPendingSnapshot: true,
       preSendTurnId: pending.preSendTurnId,
+      preSendLatestTurnCompletedAt: pending.preSendLatestTurnCompletedAt,
       preSendSessionUpdatedAt: pending.preSendSessionUpdatedAt,
       sessionStatus: session?.status ?? null,
       sessionUpdatedAt: session?.updatedAt ?? null,
@@ -5193,6 +5195,7 @@ function ChatViewContent(props: ChatViewProps) {
     // Turn/session markers captured before this send so an async failure can be
     // distinguished from a stale prior-turn error (see the recovery effect).
     const preSendLatestTurnId = activeThread.latestTurn?.turnId ?? null;
+    const preSendLatestTurnCompletedAt = activeThread.latestTurn?.completedAt ?? null;
     const preSendSessionUpdatedAt = activeThread.session?.updatedAt ?? null;
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
@@ -5299,6 +5302,23 @@ function ChatViewContent(props: ChatViewProps) {
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
+    // Arm recovery BEFORE the async send RPCs: a turn can be accepted and then
+    // fail (or fail outright) while those awaits are in flight, and the effect
+    // that restores the composer keys off `activeServerThread`, not this ref —
+    // so the snapshot has to already be present when that failure lands. A
+    // synchronous send failure clears it again below.
+    pendingSendRecoveryRef.current = {
+      threadId: threadIdForSend,
+      prompt: promptForSend,
+      images: composerImagesSnapshot,
+      terminalContexts: composerTerminalContextsSnapshot,
+      elementContexts: composerElementContextsSnapshot,
+      previewAnnotations: composerPreviewAnnotationsSnapshot,
+      reviewComments: composerReviewCommentsSnapshot,
+      preSendTurnId: preSendLatestTurnId,
+      preSendLatestTurnCompletedAt,
+      preSendSessionUpdatedAt,
+    };
 
     let firstComposerImageName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
@@ -5418,19 +5438,8 @@ function ChatViewContent(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         acknowledgeActiveThreadWoke();
-        // The turn was accepted; keep the composed text recoverable until the
-        // turn is confirmed clean, so an async failure can restore it.
-        pendingSendRecoveryRef.current = {
-          threadId: threadIdForSend,
-          prompt: promptForSend,
-          images: composerImagesSnapshot,
-          terminalContexts: composerTerminalContextsSnapshot,
-          elementContexts: composerElementContextsSnapshot,
-          previewAnnotations: composerPreviewAnnotationsSnapshot,
-          reviewComments: composerReviewCommentsSnapshot,
-          preSendTurnId: preSendLatestTurnId,
-          preSendSessionUpdatedAt,
-        };
+        // The recovery snapshot armed before these RPCs stays in place so an
+        // async turn failure can restore it; a clean turn drops it later.
       }
     }
 
@@ -5463,6 +5472,10 @@ function ChatViewContent(props: ChatViewProps) {
           reviewComments: composerReviewCommentsSnapshot,
         });
       }
+      // The turn never started: drop the snapshot armed before the RPCs so the
+      // async recovery effect can't later restore this same message again. Only
+      // this send's snapshot can be here — it was just overwritten above.
+      pendingSendRecoveryRef.current = null;
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(

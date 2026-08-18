@@ -568,6 +568,7 @@ describe("deriveTurnFailureRecoveryAction", () => {
   const base = {
     hasPendingSnapshot: true,
     preSendTurnId: TurnId.make("turn-1"),
+    preSendLatestTurnCompletedAt: null,
     preSendSessionUpdatedAt: "2026-01-01T00:00:00.000Z",
     sessionStatus: "running" as const,
     sessionUpdatedAt: "2026-01-01T00:00:01.000Z",
@@ -614,12 +615,27 @@ describe("deriveTurnFailureRecoveryAction", () => {
     ).toBe("wait");
   });
 
-  it("drops the snapshot once the turn completes cleanly", () => {
+  it("drops the snapshot once a fresh turn completes cleanly", () => {
     expect(
       deriveTurnFailureRecoveryAction({
         ...base,
         sessionStatus: "idle",
         latestTurnCompletedAt: "2026-01-01T00:00:09.000Z",
+      }),
+    ).toBe("drop");
+  });
+
+  it("drops the snapshot after a steered turn completes under the same turn id", () => {
+    // Steering folds the message into the running turn, so the turn id does not
+    // change; the moved completion marker is what signals a clean finish.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-2"),
+        latestTurnId: TurnId.make("turn-2"),
+        preSendLatestTurnCompletedAt: null,
+        latestTurnCompletedAt: "2026-01-01T00:00:09.000Z",
+        sessionStatus: "idle",
       }),
     ).toBe("drop");
   });
