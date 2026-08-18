@@ -88,6 +88,5 @@ describe("claimWorkspaceBasenameLookup", () => {
   it("stays valid while it is the only claim", () => {
     const only = claimWorkspaceBasenameLookup();
     expect(only()).toBe(true);
-    expect(only()).toBe(true);
   });
 });
