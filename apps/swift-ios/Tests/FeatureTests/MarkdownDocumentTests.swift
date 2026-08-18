@@ -510,6 +510,24 @@ struct MarkdownDocumentTests {
     }
 
     @Test
+    func readsAngleBracketedDestinationsPastSpacesAndEscapes() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![padded]( <out/pad).png> )
+
+            ![escaped](<out/a\\>b.png>)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/pad).png", alt: "padded"),
+                .image(source: "out/a>b.png", alt: "escaped"),
+            ]
+        )
+    }
+
+    @Test
     func treatsQuotesInsideFileNamesAsPathCharacters() {
         let document = MarkdownDocument(
             parsing: """

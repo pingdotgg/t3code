@@ -108,8 +108,13 @@ struct MarkdownImageReference: Equatable, Sendable {
     private static func source(in destination: String) -> String? {
         let trimmed = destination.markdownTrimmed
         if trimmed.first == "<" {
-            guard let closing = trimmed.firstIndex(of: ">") else { return nil }
-            return String(trimmed[trimmed.index(after: trimmed.startIndex)..<closing])
+            // The same unescaped scan the delimiter search uses, so an escaped
+            // `>` inside the brackets stays part of the file name.
+            let characters = Array(trimmed)
+            guard let closing = unescapedIndex(of: ">", in: characters, from: 1) else {
+                return nil
+            }
+            return String(characters[1..<closing])
         }
         return trimmed
             .split(whereSeparator: { $0.isMarkdownWhitespace })
@@ -148,11 +153,15 @@ struct MarkdownImageReference: Equatable, Sendable {
         var cursor = start
         var openQuote: Character?
         var followsWhitespace = false
+        // True until the first non-whitespace character after the opening
+        // delimiter, which is the only place a `<`-wrapped destination starts.
+        var opensDestination = true
         while cursor < characters.count {
             let character = characters[cursor]
             if character == "\\" {
                 cursor += 2
                 followsWhitespace = false
+                opensDestination = false
                 continue
             }
             if ignoringQuotedText {
@@ -175,7 +184,9 @@ struct MarkdownImageReference: Equatable, Sendable {
                 // CommonMark wraps an awkward destination in angle brackets, as
                 // in `(<out/plot).png>)`. Everything inside is literal, so a
                 // parenthesis there is part of the file name.
-                if character == "<", cursor == start + 1 {
+                // CommonMark also permits whitespace between the delimiter and
+                // the brackets, and the destination reader trims it.
+                if character == "<", opensDestination {
                     guard let closingAngle = unescapedIndex(
                         of: ">",
                         in: characters,
@@ -185,6 +196,7 @@ struct MarkdownImageReference: Equatable, Sendable {
                     }
                     cursor = closingAngle + 1
                     followsWhitespace = false
+                    opensDestination = false
                     continue
                 }
             }
@@ -195,6 +207,9 @@ struct MarkdownImageReference: Equatable, Sendable {
                 if depth == 0 { return cursor }
             }
             followsWhitespace = character.isMarkdownWhitespace
+            if cursor > start, !character.isMarkdownWhitespace {
+                opensDestination = false
+            }
             cursor += 1
         }
         return nil
