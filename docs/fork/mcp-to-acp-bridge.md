@@ -131,6 +131,31 @@ callers cannot spoof, and content-free receipts.
 Whether a given agent *can* have built-ins disabled decides only whether this
 hardening is available for it — not whether the bridge works.
 
+### Session correlation must not depend on MCP transport state
+
+ACP is session-oriented: `session/update` and `session/request_permission` all
+carry a session id. The bridge therefore has to map every incoming `tools/call`
+onto the right ACP session.
+
+Do not use MCP transport state for this. The spec has moved *away* from it:
+
+| Revision | Session state |
+| --- | --- |
+| 2024-11-05 | HTTP+SSE, stateful |
+| 2025-03-26 | Streamable HTTP; stateless or stateful via `Mcp-Session-Id` |
+| 2026-07-28 (RC) | core stateless — `initialize` handshake and `Mcp-Session-Id` removed, request metadata inline in `_meta` |
+
+A bridge keyed on `Mcp-Session-Id` inherits a header the newest revision
+deletes. Carry correlation **outside** MCP instead — a per-agent-run endpoint
+URL, path-scoped — which behaves identically across all three revisions.
+
+This also avoids repeating the broker's `termBridge` singleton trap: without
+per-session routing, a second concurrent agent's tool calls land on the first
+agent's ACP session and cross-wire two threads. Same failure shape, same fix.
+
+For the same reason the repository name should stay version-neutral. Spec
+revisions will keep landing.
+
 ### Known risks
 
 - Permission latency is now in the tool-call path. A slow or absent client
