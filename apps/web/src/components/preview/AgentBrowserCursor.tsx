@@ -29,6 +29,7 @@ export function AgentBrowserCursor(props: {
 
   return (
     <AgentBrowserCursorMark
+      key={tabId}
       event={event}
       content={content}
       zoomFactor={zoomFactor}

@@ -216,22 +216,44 @@ function describeRawElement(element: Element): string {
   return `${tag}${id}${classes}`;
 }
 
+function clipAccessibleName(value: string | null | undefined): string | null {
+  const trimmed = value?.replace(/\s+/g, " ").trim();
+  return trimmed ? trimmed.slice(0, 32) : null;
+}
+
 function accessibleName(element: Element): string | null {
-  if (!(element instanceof HTMLElement)) return null;
-  const aria = element.getAttribute("aria-label")?.trim();
-  if (aria) return aria.slice(0, 32);
+  const labelledBy = element.getAttribute("aria-labelledby")?.trim();
+  if (labelledBy) {
+    const labelled = clipAccessibleName(
+      labelledBy
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .join(" "),
+    );
+    if (labelled) return labelled;
+  }
+  const aria = clipAccessibleName(element.getAttribute("aria-label"));
+  if (aria) return aria;
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLButtonElement
+  ) {
+    const labelText = clipAccessibleName(
+      Array.from(element.labels ?? [], (label) => label.textContent ?? "").join(" "),
+    );
+    if (labelText) return labelText;
+  }
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    const named = element.placeholder.trim() || element.name.trim();
-    return named.length > 0 ? named.slice(0, 32) : null;
+    return clipAccessibleName(element.placeholder) ?? clipAccessibleName(element.name);
   }
   if (element instanceof HTMLImageElement) {
-    const alt = element.alt.trim();
-    return alt.length > 0 ? alt.slice(0, 32) : null;
+    return clipAccessibleName(element.alt);
   }
   const tag = element.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || tag === "LABEL") {
-    const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
-    return text.length > 0 ? text.slice(0, 32) : null;
+    return clipAccessibleName(element.textContent);
   }
   return null;
 }
@@ -584,8 +606,9 @@ function startAnnotation(): void {
     }
     editor.style.display = hasTargets ? "flex" : "none";
     hint.style.display = hasTargets ? "none" : "block";
-    submit.disabled = !hasTargets;
-    submit.style.opacity = hasTargets ? "1" : "0.45";
+    const canSubmit = hasTargets && comment.value.trim().length > 0;
+    submit.disabled = !canSubmit;
+    submit.style.opacity = canSubmit ? "1" : "0.45";
     adjust.disabled = !hasTargets;
     stylePanel.style.display = editorExpanded && selected.size > 0 ? "grid" : "none";
     queueEditorLayout();
@@ -1107,11 +1130,17 @@ function startAnnotation(): void {
     if (index < 0) return;
     regions.splice(index, 1);
     root.querySelector(`[data-region-id="${id}"]`)?.remove();
-    for (const element of regionHarvest.get(id) ?? []) {
-      const target = selected.get(element);
-      if (target) removeSelected(target);
-    }
+    const harvested = regionHarvest.get(id) ?? [];
     regionHarvest.delete(id);
+    for (const element of harvested) {
+      const target = selected.get(element);
+      if (!target) continue;
+      const ownedElsewhere = Array.from(regionHarvest.values()).some((list) =>
+        list.includes(element),
+      );
+      if (ownedElsewhere || !target.quiet) continue;
+      removeSelected(target);
+    }
     updateStatus();
   };
 
