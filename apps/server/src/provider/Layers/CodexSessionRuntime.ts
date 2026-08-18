@@ -447,11 +447,17 @@ export function isRecoverableThreadResumeError(error: unknown): boolean {
   return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
 }
 
+export function isThreadActiveWriterError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes("thread") && message.includes("already has an active writer");
+}
+
 type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
-  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
+  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"]
+  | CodexRpc.ClientRequestResponsesByMethod["thread/fork"];
 
-type CodexThreadOpenMethod = "thread/start" | "thread/resume";
+type CodexThreadOpenMethod = "thread/start" | "thread/resume" | "thread/fork";
 
 interface CodexThreadOpenClient {
   readonly request: <M extends CodexThreadOpenMethod>(
@@ -487,6 +493,29 @@ export const openCodexThread = (input: {
       ...startParams,
     })
     .pipe(
+      Effect.catchIf(isThreadActiveWriterError, (error) =>
+        Effect.logWarning("codex app-server thread resume forked from active writer", {
+          threadId: input.threadId,
+          requestedRuntimeMode: input.runtimeMode,
+          resumeThreadId,
+          cause: error,
+        }).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const config = runtimeModeToThreadConfig(input.runtimeMode);
+              return input.client.request("thread/fork", {
+                threadId: resumeThreadId,
+                cwd: input.cwd,
+                approvalPolicy: config.approvalPolicy,
+                approvalsReviewer: config.approvalsReviewer,
+                sandbox: config.sandbox,
+                ...(input.requestedModel ? { model: input.requestedModel } : {}),
+                ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+              });
+            }),
+          ),
+        ),
+      ),
       Effect.catchIf(isRecoverableThreadResumeError, (error) =>
         Effect.logWarning("codex app-server thread resume fell back to fresh start", {
           threadId: input.threadId,
