@@ -1601,9 +1601,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler(({ url }) => {
+          let normalizedUrl: string;
+          try {
+            normalizedUrl = normalizePreviewUrl(url);
+          } catch {
+            return { action: "deny" };
+          }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(url),
+              wc.loadURL(normalizedUrl),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };
