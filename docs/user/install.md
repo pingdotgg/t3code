@@ -43,6 +43,12 @@ Stable:
 yay -S t3code-bin
 ```
 
+Nightly:
+
+```bash
+yay -S t3code-nightly-bin
+```
+
 ### Windows Subsystem for Linux
 
 When the desktop app runs a WSL backend, it installs the matching server runtime into
@@ -51,11 +57,6 @@ may take a little longer while that runtime is extracted. Later launches reuse t
 copy so startup does not depend on reading application files through `/mnt/c`. After a successful
 launch, T3 Code keeps the current runtime and one previous version for rollback and removes older
 runtime caches automatically.
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
 
 ## Providers
 
