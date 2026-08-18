@@ -16,7 +16,10 @@ import {
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
+  isPullRequestVerdictStale,
   isThreadOwnPullRequest,
+  latestPullRequestReviewOutcomes,
+  newestPullRequestCommitAt,
   mergePullRequestThreadComments,
   orderPullRequestComments,
   pullRequestActionMenuHasGroup,
@@ -24,6 +27,7 @@ import {
   pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
+  pullRequestReviewOutcome,
   readableFailure,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
@@ -177,6 +181,171 @@ describe("ordering comments", () => {
   });
 });
 
+describe("review verdicts", () => {
+  it("reads the same three verdicts however a host spells them", () => {
+    expect(pullRequestReviewOutcome("APPROVED")).toBe("approved");
+    expect(pullRequestReviewOutcome("approved")).toBe("approved");
+    expect(pullRequestReviewOutcome("CHANGES_REQUESTED")).toBe("changes-requested");
+    expect(pullRequestReviewOutcome("changes_requested")).toBe("changes-requested");
+    expect(pullRequestReviewOutcome("DISMISSED")).toBe("dismissed");
+  });
+
+  it("is not a verdict where the review only carried remarks", () => {
+    expect(pullRequestReviewOutcome("COMMENTED")).toBeNull();
+    expect(pullRequestReviewOutcome("PENDING")).toBeNull();
+    expect(pullRequestReviewOutcome(null)).toBeNull();
+  });
+
+  it("keeps each reviewer's last word, whatever order the host returned them in", () => {
+    const review = (
+      id: string,
+      login: string,
+      reviewState: string,
+      createdAt: string,
+    ): PullRequestComment => ({
+      id,
+      kind: "review",
+      author: { login, name: null, avatarUrl: null },
+      body: "",
+      createdAt,
+      url: null,
+      path: null,
+      reviewState,
+    });
+
+    expect(
+      latestPullRequestReviewOutcomes([
+        review("r3", "bilal", "APPROVED", "2026-07-03T00:00:00Z"),
+        review("r1", "bilal", "CHANGES_REQUESTED", "2026-07-01T00:00:00Z"),
+        review("r2", "octocat", "CHANGES_REQUESTED", "2026-07-02T00:00:00Z"),
+        // Not a verdict, so it neither adds a reviewer nor overwrites one.
+        review("r4", "octocat", "COMMENTED", "2026-07-04T00:00:00Z"),
+      ]).map((entry) => [entry.actor?.login, entry.outcome]),
+    ).toEqual([
+      ["bilal", "approved"],
+      ["octocat", "changes-requested"],
+    ]);
+  });
+
+  it("keeps two deleted accounts apart rather than counting them as one reviewer", () => {
+    expect(
+      latestPullRequestReviewOutcomes([
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          id: "r1",
+          kind: "review",
+          author: null,
+          reviewState: "APPROVED",
+          createdAt: "2026-07-01T00:00:00Z",
+        },
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          id: "r2",
+          kind: "review",
+          author: null,
+          reviewState: "APPROVED",
+          createdAt: "2026-07-02T00:00:00Z",
+        },
+      ]),
+    ).toHaveLength(2);
+  });
+
+  it("gives every entry a key that separates the reviewers it kept apart", () => {
+    const entries = latestPullRequestReviewOutcomes([
+      {
+        ...TIMELINE_SOURCE.comments[0]!,
+        id: "r1",
+        kind: "review",
+        author: null,
+        reviewState: "APPROVED",
+        createdAt: "2026-07-01T00:00:00Z",
+      },
+      {
+        ...TIMELINE_SOURCE.comments[0]!,
+        id: "r2",
+        kind: "review",
+        author: null,
+        reviewState: "APPROVED",
+        createdAt: "2026-07-01T00:00:00Z",
+      },
+    ]);
+    // Same author (none) and the same instant, so only the review's own id tells them apart.
+    expect(new Set(entries.map((entry) => entry.key)).size).toBe(2);
+  });
+
+  it("calls a verdict stale once commits land after it, and current before that", () => {
+    const commits = [
+      { oid: "c0ffee", messageHeadline: "later work", committedDate: "2026-07-05T00:00:00Z" },
+    ];
+    const review = (createdAt: string): PullRequestComment => ({
+      ...TIMELINE_SOURCE.comments[0]!,
+      kind: "review",
+      reviewState: "APPROVED",
+      createdAt,
+    });
+
+    expect(
+      latestPullRequestReviewOutcomes([review("2026-07-01T00:00:00Z")], commits)[0]?.stale,
+    ).toBe(true);
+    expect(
+      latestPullRequestReviewOutcomes([review("2026-07-06T00:00:00Z")], commits)[0]?.stale,
+    ).toBe(false);
+    // Nothing to be overtaken by, so nothing is stale.
+    expect(latestPullRequestReviewOutcomes([review("2026-07-01T00:00:00Z")], [])[0]?.stale).toBe(
+      false,
+    );
+  });
+
+  it("measures staleness against the newest commit, not the last one listed", () => {
+    expect(
+      newestPullRequestCommitAt([
+        { oid: "a", messageHeadline: "", committedDate: "2026-07-09T00:00:00Z" },
+        { oid: "b", messageHeadline: "", committedDate: "2026-07-02T00:00:00Z" },
+      ]),
+    ).toBe("2026-07-09T00:00:00Z");
+    expect(newestPullRequestCommitAt([])).toBeNull();
+  });
+
+  it("orders instants rather than their text, so a UTC offset cannot invert them", () => {
+    // 01:00+02:00 is 23:00 the previous day, so as text it sorts after the Z stamp and in time
+    // it falls well before it.
+    expect(
+      newestPullRequestCommitAt([
+        { oid: "a", messageHeadline: "", committedDate: "2026-07-05T00:30:00Z" },
+        { oid: "b", messageHeadline: "", committedDate: "2026-07-05T01:00:00+02:00" },
+      ]),
+    ).toBe("2026-07-05T00:30:00Z");
+    expect(isPullRequestVerdictStale("2026-07-05T00:30:00Z", "2026-07-05T01:00:00+02:00")).toBe(
+      false,
+    );
+    // A timestamp nothing can parse is not a position, so it settles nothing either way.
+    expect(isPullRequestVerdictStale("2026-07-01T00:00:00Z", "not a date")).toBe(false);
+    expect(
+      newestPullRequestCommitAt([{ oid: "a", messageHeadline: "", committedDate: "not a date" }]),
+    ).toBeNull();
+  });
+
+  it("shows nothing for a reviewer whose verdict was dismissed", () => {
+    expect(
+      latestPullRequestReviewOutcomes([
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          kind: "review",
+          reviewState: "APPROVED",
+          createdAt: "2026-07-01T00:00:00Z",
+        },
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          id: "c2",
+          kind: "review",
+          reviewState: "DISMISSED",
+          createdAt: "2026-07-02T00:00:00Z",
+        },
+      ]),
+    ).toEqual([]);
+  });
+});
+
 describe("pull request timeline", () => {
   it("orders creation, commits and comments newest first", () => {
     // What happened last is what the reader opening the tab is asking about.
@@ -318,6 +487,47 @@ describe("pull request timeline", () => {
       ["comments", "new-comment-1", "new-comment-2"],
       ["event", "1baf7bdcafe"],
       ["comments", "old-comment-1", "old-comment-2"],
+      ["event", "created"],
+    ]);
+  });
+
+  it("keeps a verdict out of the collapsed conversation it was submitted in", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [
+        { ...TIMELINE_SOURCE.comments[0]!, id: "chatter-1", createdAt: "2026-07-05T00:00:00Z" },
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          id: "approval",
+          kind: "review",
+          body: "",
+          reviewState: "APPROVED",
+          createdAt: "2026-07-04T00:00:00Z",
+        },
+        { ...TIMELINE_SOURCE.comments[0]!, id: "chatter-2", createdAt: "2026-07-03T00:00:00Z" },
+        // A review without a verdict is ordinary conversation and still groups.
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          id: "remark",
+          kind: "review",
+          reviewState: "COMMENTED",
+          createdAt: "2026-07-02T12:00:00Z",
+        },
+      ],
+    });
+
+    const rows = groupPullRequestTimelineConversations(events);
+    expect(
+      rows.map((row) =>
+        row.kind === "comments"
+          ? [row.kind, ...row.events.map((event) => event.id)]
+          : [row.kind, row.event.id],
+      ),
+    ).toEqual([
+      ["comments", "chatter-1"],
+      ["event", "approval"],
+      ["comments", "chatter-2", "remark"],
+      ["event", "1baf7bdcafe"],
       ["event", "created"],
     ]);
   });
