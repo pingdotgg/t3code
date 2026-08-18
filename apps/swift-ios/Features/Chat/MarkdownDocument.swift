@@ -130,21 +130,29 @@ struct MarkdownImageReference: Equatable, Sendable {
         var depth = 0
         var cursor = start
         var openQuote: Character?
+        var followsWhitespace = false
         while cursor < characters.count {
             let character = characters[cursor]
             if character == "\\" {
                 cursor += 2
+                followsWhitespace = false
                 continue
             }
             if ignoringQuotedText {
                 if let activeQuote = openQuote {
                     if character == activeQuote { openQuote = nil }
                     cursor += 1
+                    followsWhitespace = false
                     continue
                 }
-                if character == "\"" || character == "'" {
+                // A title is separated from the destination by whitespace, so
+                // only a quote in that position opens one. An apostrophe inside
+                // a file name, as in `images/team's-logo.png`, is just a
+                // character of the path.
+                if followsWhitespace, character == "\"" || character == "'" {
                     openQuote = character
                     cursor += 1
+                    followsWhitespace = false
                     continue
                 }
             }
@@ -154,6 +162,7 @@ struct MarkdownImageReference: Equatable, Sendable {
                 depth -= 1
                 if depth == 0 { return cursor }
             }
+            followsWhitespace = character.isMarkdownWhitespace
             cursor += 1
         }
         return nil

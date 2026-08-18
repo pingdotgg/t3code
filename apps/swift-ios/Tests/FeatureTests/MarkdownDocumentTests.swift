@@ -492,6 +492,27 @@ struct MarkdownDocumentTests {
     }
 
     @Test
+    func treatsQuotesInsideFileNamesAsPathCharacters() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![logo](images/team's-logo.png)
+
+            ![quote](out/say"hi".png)
+
+            ![both](out/it's-(1).png "a (title")
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "images/team's-logo.png", alt: "logo"),
+                .image(source: "out/say\"hi\".png", alt: "quote"),
+                .image(source: "out/it's-(1).png", alt: "both"),
+            ]
+        )
+    }
+
+    @Test
     func keepsImagesInsideProseAsParagraphText() {
         let document = MarkdownDocument(
             parsing: """
