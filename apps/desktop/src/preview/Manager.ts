@@ -2345,7 +2345,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         if (remainingTimeoutMs <= 0) {
           return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
         }
-        yield* withControlSession(
+        const commandExit = yield* withControlSession(
           tabId,
           target,
           "set-color-scheme",
@@ -2359,7 +2359,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               ],
             }),
           remainingTimeoutMs,
-        );
+        ).pipe(Effect.exit);
         const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
         if (!currentTab) {
           return yield* new PreviewTabNotFoundError({ tabId });
@@ -2367,6 +2367,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         if (currentTab.webContentsId !== target.id) {
           target = yield* requireWebContents(tabId);
           continue;
+        }
+        if (Exit.isFailure(commandExit)) {
+          return yield* Effect.failCause(commandExit.cause);
         }
         if (currentTab.colorScheme !== colorScheme) {
           yield* update(tabId, { colorScheme });
@@ -2956,9 +2959,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     mimeType: string,
     data: Uint8Array,
+    idempotencyKey: string,
   ) {
-    const [createdAt, millis] = yield* Effect.all([currentIso, currentMillis]);
-    const id = `browser-recording-${millis.toString(36)}`;
+    const createdAt = yield* currentIso;
+    const id = `browser-recording-${idempotencyKey}`;
     const extension = mimeType.includes("mp4") ? "mp4" : "webm";
     const artifactPath = path.join(resolvedArtifactDirectory, `${id}.${extension}`);
     yield* fileSystem.makeDirectory(resolvedArtifactDirectory, { recursive: true }).pipe(
@@ -2997,9 +3001,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     mimeType: string,
     data: Uint8Array,
+    idempotencyKey: string,
     timeoutMs?: number,
   ) {
-    const save = performSaveRecording(tabId, mimeType, data);
+    const save = performSaveRecording(tabId, mimeType, data, idempotencyKey);
     if (timeoutMs === undefined) return yield* save;
     const result = yield* save.pipe(Effect.timeoutOption(automationExecutionBudget(timeoutMs)));
     if (Option.isSome(result)) return result.value;
@@ -4376,6 +4381,7 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       mimeType: string,
       data: Uint8Array,
+      idempotencyKey: string,
       timeoutMs?: number,
     ) => Effect.Effect<DesktopPreviewRecordingArtifact, PreviewManagerError>;
     readonly automationStatus: (

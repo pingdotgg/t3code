@@ -1861,18 +1861,18 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("reapplies a bounded color scheme after the webview is replaced", () =>
+  effectIt.effect("retries a bounded color scheme when replacement rejects the old command", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        let finishFirstGuest: (() => void) | undefined;
+        let rejectFirstGuest: ((cause: unknown) => void) | undefined;
         const firstSendCommand = vi.fn(
           async (method: string, parameters?: { features?: ReadonlyArray<{ value: string }> }) => {
             if (
               method === "Emulation.setEmulatedMedia" &&
               parameters?.features?.[0]?.value === "dark"
             ) {
-              await new Promise<void>((resolve) => {
-                finishFirstGuest = resolve;
+              await new Promise<void>((_resolve, reject) => {
+                rejectFirstGuest = reject;
               });
             }
             return undefined;
@@ -1907,6 +1907,7 @@ describe("PreviewManager", () => {
               }),
               detach: vi.fn(() => {
                 attached = false;
+                if (id === 42) rejectFirstGuest?.(new Error("old guest detached"));
               }),
               sendCommand,
               on: vi.fn(),
@@ -1933,13 +1934,37 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         yield* manager.registerWebview("tab_scheme_replacement", 43);
         yield* Effect.yieldNow;
-        finishFirstGuest?.();
         yield* Fiber.join(mutation);
 
         expect(replacementSendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: "dark" }],
         });
         expect(states.at(-1)?.colorScheme).toBe("dark");
+      }),
+    ),
+  );
+
+  effectIt.effect("uses an idempotent artifact path for recording save retries", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const data = new Uint8Array([1, 2, 3]);
+        const first = yield* manager.saveRecording(
+          "tab_recording_save",
+          "video/webm",
+          data,
+          "8edc2f33-7bb4-4a30-97e8-e78f1d84513a",
+        );
+        const retry = yield* manager.saveRecording(
+          "tab_recording_save",
+          "video/webm",
+          data,
+          "8edc2f33-7bb4-4a30-97e8-e78f1d84513a",
+        );
+
+        expect(retry.id).toBe(first.id);
+        expect(retry.path).toBe(first.path);
+        expect(writeFile).toHaveBeenCalledTimes(2);
+        expect(writeFile.mock.calls[1]?.[0]).toBe(writeFile.mock.calls[0]?.[0]);
       }),
     ),
   );

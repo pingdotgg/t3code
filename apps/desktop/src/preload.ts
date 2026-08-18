@@ -215,11 +215,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId, timeoutMs }),
       stopScreencast: (tabId, timeoutMs) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, { tabId, timeoutMs }),
-      save: (tabId, mimeType, data, timeoutMs) =>
+      save: (tabId, mimeType, data, idempotencyKey, timeoutMs) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL, {
           tabId,
           mimeType,
           data,
+          idempotencyKey,
           timeoutMs,
         }),
       onFrame: (listener) => {

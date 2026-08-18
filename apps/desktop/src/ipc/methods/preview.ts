@@ -376,10 +376,11 @@ export const saveRecording = DesktopIpc.makeIpcMethod({
     tabId,
     mimeType,
     data,
+    idempotencyKey,
     timeoutMs,
   }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.saveRecording(tabId, mimeType, data, timeoutMs);
+    return yield* manager.saveRecording(tabId, mimeType, data, idempotencyKey, timeoutMs);
   }),
 });
 

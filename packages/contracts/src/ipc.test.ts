@@ -52,12 +52,29 @@ describe("desktop recording finalization deadlines", () => {
       tabId: "tab-1",
       timeoutMs: 1_250,
     });
-    expect(decodeSave({ tabId: "tab-1", mimeType: "video/webm", data, timeoutMs: 1_250 })).toEqual({
+    expect(
+      decodeSave({
+        tabId: "tab-1",
+        mimeType: "video/webm",
+        data,
+        idempotencyKey: "f3088f18-9595-44f8-a67c-50c587d034a2",
+        timeoutMs: 1_250,
+      }),
+    ).toEqual({
       tabId: "tab-1",
       mimeType: "video/webm",
       data,
+      idempotencyKey: "f3088f18-9595-44f8-a67c-50c587d034a2",
       timeoutMs: 1_250,
     });
+    expect(() =>
+      decodeSave({
+        tabId: "tab-1",
+        mimeType: "video/webm",
+        data,
+        idempotencyKey: "../unsafe",
+      }),
+    ).toThrow();
   });
 });
 

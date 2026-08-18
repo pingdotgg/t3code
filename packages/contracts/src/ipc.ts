@@ -1026,6 +1026,12 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   mimeType: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
   data: Schema.Uint8Array,
+  idempotencyKey: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(128),
+    Schema.isPattern(/^[a-z0-9-]+$/i),
+  ),
   timeoutMs: Schema.optional(
     Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(60_000)),
   ),
@@ -1209,6 +1215,7 @@ export interface DesktopPreviewBridge {
       tabId: string,
       mimeType: string,
       data: Uint8Array,
+      idempotencyKey: string,
       timeoutMs?: number,
     ) => Promise<DesktopPreviewRecordingArtifact>;
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;

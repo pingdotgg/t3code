@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { randomUUID } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 
@@ -95,6 +96,7 @@ interface ActiveRecording {
   readonly startupSettled: Promise<void>;
   readonly firstFrameSize: Promise<"frame" | "cancelled">;
   readonly settleFirstFrameSize: (outcome: "frame" | "cancelled") => void;
+  readonly artifactSaveKey: string;
   artifactSave: Promise<DesktopPreviewRecordingArtifact> | null;
   recorder: MediaRecorder | null;
   mimeType: string | null;
@@ -238,10 +240,38 @@ const clearActiveRecording = (recording: ActiveRecording): void => {
 const cleanupFailedRecordingStart = async (
   bridge: NonNullable<typeof previewBridge>,
   recording: ActiveRecording,
+  deadline: number | null,
 ): Promise<unknown | undefined> => {
   const errors: unknown[] = [];
   try {
-    await bridge.recording.stopScreencast(recording.tabId);
+    const remainingMs = deadline === null ? undefined : Math.max(0, deadline - Date.now());
+    const stop =
+      remainingMs === undefined
+        ? bridge.recording.stopScreencast(recording.tabId)
+        : bridge.recording.stopScreencast(recording.tabId, Math.max(1, remainingMs));
+    if (remainingMs === undefined) {
+      await stop;
+    } else {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      try {
+        await Promise.race([
+          stop,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `Browser recording startup cleanup exceeded its deadline for tab ${recording.tabId}.`,
+                  ),
+                ),
+              remainingMs,
+            );
+          }),
+        ]);
+      } finally {
+        if (timeout !== null) clearTimeout(timeout);
+      }
+    }
   } catch (error) {
     errors.push(error);
   }
@@ -444,6 +474,7 @@ export async function startBrowserRecording(
     startupSettled,
     firstFrameSize,
     settleFirstFrameSize: (outcome) => settleFirstFrameSize?.(outcome),
+    artifactSaveKey: randomUUID(),
     artifactSave: null,
     recorder: null,
     mimeType: null,
@@ -509,7 +540,7 @@ export async function startBrowserRecording(
           ? `Browser recording startup exceeded its deadline for tab ${tabId}.`
           : `No valid recording frame arrived for tab ${tabId}.`,
       );
-      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording, deadline);
       throw new BrowserRecordingOperationError({
         operation: "wait-first-frame",
         tabId,
@@ -538,7 +569,7 @@ export async function startBrowserRecording(
         if (event.data.size > 0) chunks.push(event.data);
       });
     } catch (cause) {
-      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording, deadline);
       throw new BrowserRecordingOperationError({
         operation: "initialize-media-recorder",
         tabId,
@@ -555,7 +586,7 @@ export async function startBrowserRecording(
     try {
       recorder.start(1_000);
     } catch (cause) {
-      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording, deadline);
       throw new BrowserRecordingOperationError({
         operation: "start-media-recorder",
         tabId,
@@ -644,8 +675,14 @@ const finalizeBrowserRecording = async (
           const saveBudget = remainingRecordingStopBudget(deadline, tabId);
           const saveOperation =
             saveBudget === undefined
-              ? bridge.recording.save(tabId, recording.mimeType, data)
-              : bridge.recording.save(tabId, recording.mimeType, data, saveBudget);
+              ? bridge.recording.save(tabId, recording.mimeType, data, recording.artifactSaveKey)
+              : bridge.recording.save(
+                  tabId,
+                  recording.mimeType,
+                  data,
+                  recording.artifactSaveKey,
+                  saveBudget,
+                );
           const trackedSave = saveOperation.catch((cause) => {
             if (recording.artifactSave === trackedSave) recording.artifactSave = null;
             throw cause;
