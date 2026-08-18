@@ -8,6 +8,7 @@ import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
   PermissionResult,
+  SDKControlGetContextUsageResponse,
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -97,6 +98,13 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   /** Simulates a wedged CLI: the control request is taken and never answered. */
   public hangInterrupt = false;
+
+  /**
+   * Left undefined by default so `queryCurrentContextUsage` short-circuits,
+   * matching the tests that predate context usage. Assigned per-test to cover
+   * the probe, including the wedged case where it never settles.
+   */
+  public getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
 
   readonly interrupt = async (): Promise<void> => {
     this.interruptCalls.push(undefined);
@@ -1671,7 +1679,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("interruptTurn stops a session whose runtime never acknowledges", () => {
+  it.effect("interruptTurn stops a session whose runtime never answers its control channel", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -1694,9 +1702,15 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
+      // A wedged CLI stops answering its control channel altogether, so the
+      // context-usage probe that completeTurn runs during teardown hangs on
+      // the same dead channel. Both bounds have to fire, or the escalation
+      // stalls in the same place the interrupt did.
       harness.query.hangInterrupt = true;
+      harness.query.getContextUsage = () => new Promise<never>(() => {});
       const interruptFiber = yield* adapter.interruptTurn(session.threadId).pipe(Effect.forkChild);
       yield* TestClock.adjust("10 seconds");
+      yield* TestClock.adjust("1 second");
 
       // Stop returns instead of hanging on the unanswered control request.
       yield* Fiber.join(interruptFiber);

@@ -2100,13 +2100,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return undefined;
     }
 
+    // Bounded because this rides the same control channel as interrupt, and
+    // completeTurn runs on the teardown path: an unbounded probe against a
+    // wedged CLI would hang the very escalation meant to free the thread.
+    // A skipped context-meter refresh is invisible next to a stranded turn.
     const usage = yield* Effect.promise(async () => {
       try {
         return await context.query.getContextUsage?.();
       } catch {
         return undefined;
       }
-    });
+    }).pipe(Effect.timeoutOption("1 second"), Effect.map(Option.getOrUndefined));
     if (!usage) {
       return undefined;
     }
