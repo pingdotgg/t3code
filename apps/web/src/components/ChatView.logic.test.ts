@@ -18,6 +18,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveTurnFailureRecoveryAction,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
@@ -560,6 +561,71 @@ describe("startNewThreadForProject", () => {
       }),
     ).toBe(false);
     expect(called).toBe(false);
+  });
+});
+
+describe("deriveTurnFailureRecoveryAction", () => {
+  const base = {
+    hasPendingSnapshot: true,
+    preSendTurnId: TurnId.make("turn-1"),
+    preSendSessionUpdatedAt: "2026-01-01T00:00:00.000Z",
+    sessionStatus: "running" as const,
+    sessionUpdatedAt: "2026-01-01T00:00:01.000Z",
+    latestTurnId: TurnId.make("turn-2"),
+    latestTurnCompletedAt: null,
+    composerHasContent: false,
+  };
+
+  it("waits while there is no pending snapshot", () => {
+    expect(deriveTurnFailureRecoveryAction({ ...base, hasPendingSnapshot: false })).toBe("wait");
+  });
+
+  it("restores when the turn fails asynchronously and the composer is empty", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        sessionStatus: "error",
+        sessionUpdatedAt: "2026-01-01T00:00:05.000Z",
+      }),
+    ).toBe("restore");
+  });
+
+  it("drops without restoring when the user already retyped", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        sessionStatus: "error",
+        sessionUpdatedAt: "2026-01-01T00:00:05.000Z",
+        composerHasContent: true,
+      }),
+    ).toBe("drop");
+  });
+
+  it("waits on a stale pre-send error that has not advanced since the send", () => {
+    // The session was already in "error" when the user sent (lastError is
+    // carried forward until "ready"); without a fresh session update this must
+    // not spuriously restore before the new turn has begun.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("wait");
+  });
+
+  it("drops the snapshot once the turn completes cleanly", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        sessionStatus: "idle",
+        latestTurnCompletedAt: "2026-01-01T00:00:09.000Z",
+      }),
+    ).toBe("drop");
+  });
+
+  it("keeps waiting while the accepted turn is still running", () => {
+    expect(deriveTurnFailureRecoveryAction(base)).toBe("wait");
   });
 });
 

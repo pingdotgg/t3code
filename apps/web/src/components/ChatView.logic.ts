@@ -520,6 +520,49 @@ export function createLocalDispatchSnapshot(
   };
 }
 
+// A message that was submitted and cleared from the composer must never be
+// lost when its turn fails. The synchronous send-failure path (a rejected
+// start-turn RPC) restores the composer inline, but a turn that the server
+// ACCEPTS and then fails asynchronously — a runtime stream error, a stale
+// pending provider callback, a `runtime.error` — surfaces only later via
+// `session.lastError`/`session.status`, long after `onSend` returned. This
+// decides, from the in-flight snapshot captured at send time, whether that
+// later failure should push the text back into an (empty) composer.
+//
+// The failure signal is `session.status === "error"`, not `lastError`:
+// `lastError` is carried forward across a fresh turn until the session next
+// reaches "ready", so keying on it would restore a stale prior-turn error.
+// `sessionUpdatedAt` must differ from the pre-send value so a session that was
+// already in "error" when the user sent (and has not yet transitioned) cannot
+// trigger a spurious restore before the new turn has begun.
+export function deriveTurnFailureRecoveryAction(input: {
+  hasPendingSnapshot: boolean;
+  preSendTurnId: TurnId | null;
+  preSendSessionUpdatedAt: string | null;
+  sessionStatus: NonNullable<Thread["session"]>["status"] | null;
+  sessionUpdatedAt: string | null;
+  latestTurnId: TurnId | null;
+  latestTurnCompletedAt: string | null;
+  composerHasContent: boolean;
+}): "restore" | "drop" | "wait" {
+  if (!input.hasPendingSnapshot) {
+    return "wait";
+  }
+  const sessionAdvanced =
+    input.sessionUpdatedAt !== null && input.sessionUpdatedAt !== input.preSendSessionUpdatedAt;
+  if (input.sessionStatus === "error" && sessionAdvanced) {
+    // Never clobber text the user has started typing since the send; the
+    // failed attempt is still in the transcript for them to copy from.
+    return input.composerHasContent ? "drop" : "restore";
+  }
+  const turnAdvanced = input.latestTurnId !== null && input.latestTurnId !== input.preSendTurnId;
+  if (turnAdvanced && input.latestTurnCompletedAt !== null && input.sessionStatus !== "error") {
+    // Our turn ran to completion without error: the snapshot is spent.
+    return "drop";
+  }
+  return "wait";
+}
+
 export function hasServerAcknowledgedLocalDispatch(input: {
   localDispatch: LocalDispatchSnapshot | null;
   phase: SessionPhase;
