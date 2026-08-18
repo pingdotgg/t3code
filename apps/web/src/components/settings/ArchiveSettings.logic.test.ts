@@ -193,6 +193,15 @@ describe("archivedThreadSearchScore", () => {
     expect(lateAllTokenMatch!).toBeLessThan(earlyPartialTokenMatch!);
   });
 
+  it("ranks partial matches by matched-token count before token position", () => {
+    const fewerTokens = scoreArchivedTitle("Alpha only", "alpha beta gamma");
+    const moreTokens = scoreArchivedTitle(`${"x".repeat(1_200)} Alpha Beta`, "alpha beta gamma");
+
+    expect(fewerTokens).not.toBeNull();
+    expect(moreTokens).not.toBeNull();
+    expect(moreTokens!).toBeLessThan(fewerTokens!);
+  });
+
   it("matches titles case-insensitively and rejects unrelated titles", () => {
     expect(scoreArchivedTitle("Release Candidate Notes", "candidate")).not.toBeNull();
     expect(scoreArchivedTitle("Release Candidate Notes", "missing")).toBeNull();

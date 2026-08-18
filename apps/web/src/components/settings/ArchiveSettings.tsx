@@ -74,7 +74,7 @@ function ArchivedSortButton({
   return (
     <button
       type="button"
-      className="inline-flex min-w-0 items-center justify-end gap-1 text-right text-[11px] font-medium text-muted-foreground/70 transition-colors hover:text-foreground"
+      className="inline-flex min-w-0 cursor-pointer items-center justify-end gap-1 text-right text-[11px] font-medium text-muted-foreground/70 transition-colors hover:text-foreground"
       aria-label={`Sort by ${label}${
         active ? `, ${sort.direction === "asc" ? "ascending" : "descending"}` : ""
       }`}
@@ -637,8 +637,8 @@ export function ArchivedThreadsPanel() {
                 <div
                   className={
                     isExpanded
-                      ? "grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 px-1"
-                      : "grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-2 px-1"
+                      ? "grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 px-2"
+                      : "grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-2 px-2"
                   }
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -656,7 +656,7 @@ export function ArchivedThreadsPanel() {
                 >
                   <button
                     type="button"
-                    className="group flex min-w-0 items-center gap-2 text-left"
+                    className="group flex min-w-0 cursor-pointer items-center gap-2 text-left"
                     disabled={archiveSearch.isSearching}
                     aria-expanded={isExpanded}
                     onClick={() => toggleProjectExpanded(projectKey)}
