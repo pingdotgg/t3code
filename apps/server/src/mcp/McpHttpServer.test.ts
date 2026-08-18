@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
@@ -37,6 +38,17 @@ const client = McpSchema.McpServerClient.of({
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
+);
+const BoundedSnapshotMetadata = Schema.Struct({
+  visibleText: Schema.String,
+  accessibilityTree: Schema.Struct({ truncated: Schema.Boolean }),
+  truncation: Schema.Struct({
+    truncated: Schema.Boolean,
+    reason: Schema.String,
+  }),
+});
+const decodeBoundedSnapshotMetadata = Schema.decodeUnknownSync(
+  Schema.fromJsonString(BoundedSnapshotMetadata),
 );
 
 it("normalizes empty successful notification responses to accepted", () => {
@@ -93,6 +105,66 @@ it.effect("returns bounded structural preview snapshot failures", () =>
           failureCount: 1,
         },
       });
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("bounds successful preview snapshot metadata before returning it to providers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const events = yield* broker.connect({
+        clientId: "mcp-oversized-snapshot-client",
+        environmentId,
+      });
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : broker.respond({
+              clientId: "mcp-oversized-snapshot-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: true,
+              result: {
+                url: "http://example.test/large",
+                title: "Large page",
+                loading: false,
+                visibleText: "visible ".repeat(20_000),
+                interactiveElements: [],
+                accessibilityTree: { nodes: [{ name: "accessible ".repeat(50_000) }] },
+                consoleEntries: [],
+                networkEntries: [],
+                actionTimeline: [],
+                screenshot: {
+                  mimeType: "image/png",
+                  data: Buffer.from("png").toString("base64"),
+                  width: 10,
+                  height: 5,
+                },
+              },
+            }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const snapshot = yield* server
+        .callTool({ name: "preview_snapshot", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      const text = snapshot.content.find((content) => content.type === "text")?.text;
+
+      expect(text).toBeDefined();
+      expect(Buffer.byteLength(text!, "utf8")).toBeLessThanOrEqual(64_000);
+      const metadata = decodeBoundedSnapshotMetadata(text!);
+      expect(metadata.accessibilityTree).toMatchObject({ truncated: true });
+      expect(metadata.truncation).toMatchObject({
+        truncated: true,
+        reason: "metadata_size_limit",
+      });
+      expect(metadata.visibleText.length).toBeLessThan(160_000);
+      expect(snapshot.structuredContent).toMatchObject(metadata);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

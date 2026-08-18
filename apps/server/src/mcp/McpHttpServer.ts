@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import type { PreviewAutomationSnapshot } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -22,6 +23,73 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+
+const PREVIEW_SNAPSHOT_METADATA_MAX_BYTES = 64_000;
+const PREVIEW_SNAPSHOT_FALLBACK_VISIBLE_TEXT_LENGTH = 8_000;
+
+const previewSnapshotMetadata = (snapshot: PreviewAutomationSnapshot) => {
+  const { screenshot, ...page } = snapshot;
+  const metadata = {
+    ...page,
+    screenshot: {
+      mimeType: screenshot.mimeType,
+      width: screenshot.width,
+      height: screenshot.height,
+    },
+  };
+  const serialized = JSON.stringify(metadata);
+  const originalBytes = Buffer.byteLength(serialized, "utf8");
+  if (originalBytes <= PREVIEW_SNAPSHOT_METADATA_MAX_BYTES) {
+    return { metadata, serialized };
+  }
+
+  const withoutAccessibilityTree = {
+    ...metadata,
+    accessibilityTree: { truncated: true },
+    truncation: {
+      truncated: true,
+      reason: "metadata_size_limit",
+      originalBytes,
+      omitted: ["accessibilityTree"],
+    },
+  };
+  const withoutAccessibilityTreeSerialized = JSON.stringify(withoutAccessibilityTree);
+  if (
+    Buffer.byteLength(withoutAccessibilityTreeSerialized, "utf8") <=
+    PREVIEW_SNAPSHOT_METADATA_MAX_BYTES
+  ) {
+    return {
+      metadata: withoutAccessibilityTree,
+      serialized: withoutAccessibilityTreeSerialized,
+    };
+  }
+
+  const fallback = {
+    url: snapshot.url.slice(0, 2_048),
+    title: snapshot.title.slice(0, 512),
+    loading: snapshot.loading,
+    visibleText: snapshot.visibleText.slice(0, PREVIEW_SNAPSHOT_FALLBACK_VISIBLE_TEXT_LENGTH),
+    interactiveElements: [],
+    accessibilityTree: { truncated: true },
+    consoleEntries: [],
+    networkEntries: [],
+    actionTimeline: [],
+    screenshot: metadata.screenshot,
+    truncation: {
+      truncated: true,
+      reason: "metadata_size_limit",
+      originalBytes,
+      omitted: [
+        "accessibilityTree",
+        "interactiveElements",
+        "consoleEntries",
+        "networkEntries",
+        "actionTimeline",
+      ],
+    },
+  };
+  return { metadata: fallback, serialized: JSON.stringify(fallback) };
+};
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -164,34 +232,18 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           Effect.matchCauseEffect({
             onFailure: previewSnapshotFailure,
             onSuccess: ({ encodedResult }) => {
-              const snapshot = encodedResult as {
-                readonly screenshot: {
-                  readonly mimeType: "image/png";
-                  readonly data: string;
-                  readonly width: number;
-                  readonly height: number;
-                };
-                readonly [key: string]: unknown;
-              };
-              const { screenshot, ...page } = snapshot;
-              const metadata = {
-                ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
+              const snapshot = encodedResult as PreviewAutomationSnapshot;
+              const { metadata, serialized } = previewSnapshotMetadata(snapshot);
               return Effect.succeed(
                 new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent: metadata,
                   content: [
-                    { type: "text", text: JSON.stringify(metadata) },
+                    { type: "text", text: serialized },
                     {
                       type: "image",
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
+                      data: new Uint8Array(Buffer.from(snapshot.screenshot.data, "base64")),
+                      mimeType: snapshot.screenshot.mimeType,
                     },
                   ],
                 }),
