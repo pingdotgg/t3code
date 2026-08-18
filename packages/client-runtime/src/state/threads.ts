@@ -28,7 +28,6 @@ import { ThreadSnapshotLoader, type ThreadSnapshotWindow } from "./threadSnapsho
 import {
   cachedThreadGeneration,
   evictCachedThread,
-  isCachedThreadEvicted,
   persistCachedThread,
   retainCachedThread,
   reviveCachedThread,
@@ -656,11 +655,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       {
         onExpectedFailure: setStreamError,
         retryExpectedFailureAfter: "250 millis",
-        // A retained route may outlive an archive navigation for several
-        // minutes. Once archive acknowledgement evicts the detail cache, a
-        // missing cold thread is terminal for that retained subscription
-        // rather than a transient materialization race.
-        shouldRetryExpectedFailure: () => !isCachedThreadEvicted(cache, environmentId, threadId),
+        // A retained route can stay mounted while another surface unarchives
+        // the thread. Keep retrying after cold storage makes the detail
+        // temporarily unavailable so this subscription can observe the later
+        // unarchive without requiring a wakeup or a replacement session.
+        shouldRetryExpectedFailure: () => true,
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(Stream.runForEach(applyItem)),

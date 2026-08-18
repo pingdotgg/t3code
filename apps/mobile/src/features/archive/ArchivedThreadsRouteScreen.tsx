@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useArchivedThreadListActions } from "../home/useThreadListActions";
@@ -26,6 +26,7 @@ export function ArchivedThreadsRouteScreen() {
   const [unarchivingThreadKeys, setUnarchivingThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const unarchivingThreadKeysRef = useRef(new Set<string>());
   const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>
       Arr.sort(
@@ -73,10 +74,13 @@ export function ArchivedThreadsRouteScreen() {
   const handleUnarchiveThread = useCallback(
     async (thread: EnvironmentThreadShell) => {
       const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+      if (unarchivingThreadKeysRef.current.has(threadKey)) return;
+      unarchivingThreadKeysRef.current.add(threadKey);
       setUnarchivingThreadKeys((current) => new Set(current).add(threadKey));
       try {
         await unarchiveThread(thread);
       } finally {
+        unarchivingThreadKeysRef.current.delete(threadKey);
         setUnarchivingThreadKeys((current) => {
           const next = new Set(current);
           next.delete(threadKey);

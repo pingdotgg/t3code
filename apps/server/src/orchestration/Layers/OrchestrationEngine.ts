@@ -46,7 +46,7 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
-import { ThreadColdStorage } from "../Services/ThreadColdStorage.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
@@ -85,7 +85,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const threadColdStorage = yield* Effect.serviceOption(ThreadColdStorage);
+  const threadColdStorage = yield* ThreadColdStorage.ThreadColdStorage;
   const crypto = yield* Crypto.Crypto;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -95,16 +95,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
   const finishRestoredUnarchiveTree = (threadId: ThreadId) =>
-    Option.isSome(threadColdStorage)
-      ? threadColdStorage.value.finishRestoreTree(threadId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("failed to finalize restored archive bundle", {
-              threadId,
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        )
-      : Effect.void;
+    threadColdStorage.finishRestoreTree(threadId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to finalize restored archive bundle", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,
@@ -192,8 +190,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
-        if (unarchiveThreadId !== null && Option.isSome(threadColdStorage)) {
-          const restored = yield* threadColdStorage.value.restoreTree(unarchiveThreadId).pipe(
+        if (unarchiveThreadId !== null) {
+          const restored = yield* threadColdStorage.restoreTree(unarchiveThreadId).pipe(
             Effect.mapError(
               (cause) =>
                 new OrchestrationCommandInvariantError({
@@ -329,12 +327,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             return;
           }
 
-          if (
-            restoredUnarchiveThreadId !== null &&
-            !restoredUnarchiveCommitted &&
-            Option.isSome(threadColdStorage)
-          ) {
-            const rolledBack = yield* threadColdStorage.value
+          if (restoredUnarchiveThreadId !== null && !restoredUnarchiveCommitted) {
+            const rolledBack = yield* threadColdStorage
               .rollbackRestoreTree(restoredUnarchiveThreadId)
               .pipe(
                 Effect.as(true),

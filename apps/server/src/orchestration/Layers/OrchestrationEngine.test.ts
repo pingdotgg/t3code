@@ -41,19 +41,26 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
-import { ThreadColdStorage } from "../Services/ThreadColdStorage.ts";
+import {
+  ThreadColdStorage,
+  noOpLayer as ThreadColdStorageNoOpLayer,
+} from "../ThreadColdStorage.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
+const OrchestrationEngineNoColdStorageLive = OrchestrationEngineLive.pipe(
+  Layer.provide(ThreadColdStorageNoOpLayer),
+);
+
 async function createOrchestrationSystem() {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
   const orchestrationLayer = Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
+    OrchestrationEngineNoColdStorageLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
     ),
@@ -175,7 +182,7 @@ describe("OrchestrationEngine", () => {
     };
     let fullSnapshotReadCount = 0;
 
-    const layer = OrchestrationEngineLive.pipe(
+    const layer = OrchestrationEngineNoColdStorageLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
           getCommandReadModel: () => Effect.succeed(commandReadModel),
@@ -821,7 +828,7 @@ describe("OrchestrationEngine", () => {
     });
 
     const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
+      OrchestrationEngineNoColdStorageLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -1082,7 +1089,7 @@ describe("OrchestrationEngine", () => {
     };
 
     const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
+      OrchestrationEngineNoColdStorageLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -1227,7 +1234,7 @@ describe("OrchestrationEngine", () => {
     };
 
     const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
+      OrchestrationEngineNoColdStorageLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),

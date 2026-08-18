@@ -4,23 +4,36 @@ import { create } from "zustand";
 
 interface OptimisticThreadArchiveState {
   readonly threadKeys: ReadonlySet<string>;
+  readonly operationCounts: ReadonlyMap<string, number>;
   readonly hide: (threadRef: ScopedThreadRef) => void;
   readonly show: (threadRef: ScopedThreadRef) => void;
 }
 
 export const useOptimisticThreadArchiveStore = create<OptimisticThreadArchiveState>((set) => ({
   threadKeys: new Set(),
+  operationCounts: new Map(),
   hide: (threadRef) =>
     set((state) => {
+      const threadKey = scopedThreadKey(threadRef);
       const next = new Set(state.threadKeys);
-      next.add(scopedThreadKey(threadRef));
-      return { threadKeys: next };
+      const operationCounts = new Map(state.operationCounts);
+      next.add(threadKey);
+      operationCounts.set(threadKey, (operationCounts.get(threadKey) ?? 0) + 1);
+      return { threadKeys: next, operationCounts };
     }),
   show: (threadRef) =>
     set((state) => {
+      const threadKey = scopedThreadKey(threadRef);
       const next = new Set(state.threadKeys);
-      next.delete(scopedThreadKey(threadRef));
-      return { threadKeys: next };
+      const operationCounts = new Map(state.operationCounts);
+      const remaining = (operationCounts.get(threadKey) ?? 0) - 1;
+      if (remaining > 0) {
+        operationCounts.set(threadKey, remaining);
+      } else {
+        operationCounts.delete(threadKey);
+        next.delete(threadKey);
+      }
+      return { threadKeys: next, operationCounts };
     }),
 }));
 

@@ -529,7 +529,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("does not retry a missing thread after archive eviction", () =>
+  it.effect("retries a missing archived thread so it can observe unarchive", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
       yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
@@ -546,7 +546,13 @@ describe("EnvironmentThreads", () => {
         yield* Effect.yieldNow;
       }
 
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      yield* Queue.offer(harness.inputs, unarchived());
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt === null,
+      );
+      expect(Option.getOrThrow(state.data).archivedAt).toBeNull();
     }),
   );
 

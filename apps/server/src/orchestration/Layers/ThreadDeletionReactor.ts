@@ -15,7 +15,7 @@ import { ProjectionThreadSessionRepository } from "../../persistence/Services/Pr
 import { PreviewManager } from "../../preview/Manager.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ThreadColdStorage } from "../Services/ThreadColdStorage.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 import {
   ThreadDeletionReactor,
   type ThreadDeletionReactorShape,
@@ -83,7 +83,7 @@ const make = Effect.gen(function* () {
   const projectionThreadSessions = yield* ProjectionThreadSessionRepository;
   const previewManager = yield* PreviewManager;
   const terminalManager = yield* TerminalManager.TerminalManager;
-  const threadColdStorage = yield* ThreadColdStorage;
+  const threadColdStorage = yield* ThreadColdStorage.ThreadColdStorage;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const providerEventLoggers = yield* ProviderEventLoggers;
   const retryRequested = yield* Queue.sliding<void>(1);

@@ -3,6 +3,7 @@ import * as NodeUtil from "node:util";
 import * as NodeZlib from "node:zlib";
 
 import { ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,9 +17,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   parseAttachmentIdFromRelativePath,
   toSafeThreadAttachmentSegment,
-} from "../../attachmentStore.ts";
-import { ServerConfig } from "../../config.ts";
-import { ThreadColdStorage, ThreadColdStorageError } from "../Services/ThreadColdStorage.ts";
+} from "../attachmentStore.ts";
+import { ServerConfig } from "../config.ts";
 
 const gzipAsync = NodeUtil.promisify(NodeZlib.gzip);
 const gunzipAsync = NodeUtil.promisify(NodeZlib.gunzip);
@@ -30,6 +30,88 @@ const BINARY_VALUE_KEY = "__t3_archive_binary_base64";
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(UnknownFromJsonString);
 const decodeUnknownJsonString = Schema.decodeUnknownEffect(UnknownFromJsonString);
+
+export const ThreadColdStorageOperation = Schema.Literals([
+  "archive",
+  "restore",
+  "rollback-restore",
+  "finish-restore",
+  "delete",
+  "remove-provider-logs",
+  "compact-legacy-storage",
+  "list-pending-archives",
+  "list-pending-deletes",
+]);
+export type ThreadColdStorageOperation = typeof ThreadColdStorageOperation.Type;
+
+export class ThreadColdStorageError extends Schema.TaggedErrorClass<ThreadColdStorageError>()(
+  "ThreadColdStorageError",
+  {
+    operation: ThreadColdStorageOperation,
+    threadId: Schema.optional(ThreadId),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const context = this.threadId === undefined ? "" : ` for '${this.threadId}'`;
+    return `Cold thread storage failed during ${this.operation}${context}.`;
+  }
+
+  static normalize(
+    operation: ThreadColdStorageOperation,
+    threadId: ThreadId | undefined,
+    cause: unknown,
+  ): ThreadColdStorageError {
+    const isThreadColdStorageError = Schema.is(ThreadColdStorageError);
+    return isThreadColdStorageError(cause) &&
+      cause.operation === operation &&
+      cause.threadId === threadId
+      ? cause
+      : new ThreadColdStorageError({ operation, threadId, cause });
+  }
+}
+
+export class ThreadColdStorage extends Context.Service<
+  ThreadColdStorage,
+  {
+    readonly archiveThread: <E>(
+      threadId: ThreadId,
+      quiesce?: Effect.Effect<void, E>,
+    ) => Effect.Effect<void, ThreadColdStorageError>;
+    readonly restoreTree: (threadId: ThreadId) => Effect.Effect<boolean, ThreadColdStorageError>;
+    readonly rollbackRestoreTree: (
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ThreadColdStorageError>;
+    readonly finishRestoreTree: (threadId: ThreadId) => Effect.Effect<void, ThreadColdStorageError>;
+    readonly deleteThread: (threadId: ThreadId) => Effect.Effect<void, ThreadColdStorageError>;
+    readonly removeProviderLogs: (
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ThreadColdStorageError>;
+    readonly compactLegacyStorage: Effect.Effect<void, ThreadColdStorageError>;
+    readonly listPendingArchiveThreadIds: Effect.Effect<
+      ReadonlyArray<ThreadId>,
+      ThreadColdStorageError
+    >;
+    readonly listPendingDeleteThreadIds: Effect.Effect<
+      ReadonlyArray<ThreadId>,
+      ThreadColdStorageError
+    >;
+  }
+>()("t3/orchestration/ThreadColdStorage") {}
+
+export const noOp = ThreadColdStorage.of({
+  archiveThread: () => Effect.void,
+  restoreTree: () => Effect.succeed(true),
+  rollbackRestoreTree: () => Effect.void,
+  finishRestoreTree: () => Effect.void,
+  deleteThread: () => Effect.void,
+  removeProviderLogs: () => Effect.void,
+  compactLegacyStorage: Effect.void,
+  listPendingArchiveThreadIds: Effect.succeed([]),
+  listPendingDeleteThreadIds: Effect.succeed([]),
+});
+
+export const noOpLayer = Layer.succeed(ThreadColdStorage, noOp);
 
 type SqlRow = Record<string, unknown>;
 type ThreadLockEntry = {
@@ -51,17 +133,6 @@ class ArchiveCodecError extends Schema.TaggedErrorClass<ArchiveCodecError>()("Ar
 }
 
 const isArchiveCodecError = Schema.is(ArchiveCodecError);
-const isThreadColdStorageError = Schema.is(ThreadColdStorageError);
-
-const normalizeThreadColdStorageError = (
-  operation: string,
-  threadId: ThreadId,
-  cause: unknown,
-): ThreadColdStorageError =>
-  isThreadColdStorageError(cause) && cause.operation === operation && cause.threadId === threadId
-    ? cause
-    : new ThreadColdStorageError({ operation, threadId, cause });
-
 class ArchiveTableValidationError extends Schema.TaggedErrorClass<ArchiveTableValidationError>()(
   "ArchiveTableValidationError",
   {
@@ -193,7 +264,7 @@ const decompress = (data: Uint8Array) =>
     catch: (cause) => new ArchiveCodecError({ operation: "decompress", cause }),
   }).pipe(Effect.map((value) => new Uint8Array(value)));
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -292,7 +363,14 @@ const make = Effect.gen(function* () {
   const removeProviderLogsImpl = Effect.fn("removeProviderLogs")(function* (threadId: string) {
     const segment = toSafeThreadAttachmentSegment(threadId);
     if (!segment) return;
-    const baseName = `${segment}.log`;
+    const configuredBaseName = path.basename(config.providerEventLogPath);
+    const configuredExtension = path.extname(configuredBaseName);
+    const providerLogPrefix = `${
+      configuredExtension.length > 0
+        ? configuredBaseName.slice(0, -configuredExtension.length)
+        : configuredBaseName
+    }.`;
+    const baseName = `${providerLogPrefix}${segment}.log`;
     const entries = yield* fs
       .readDirectory(config.providerLogsDir, { recursive: false })
       .pipe(
@@ -708,7 +786,10 @@ const make = Effect.gen(function* () {
             (thread_id, root_thread_id, status, archive_version, archived_at, updated_at, error)
            VALUES (?, ?, 'restored', ?, ?, CURRENT_TIMESTAMP, NULL)
            ON CONFLICT(thread_id) DO UPDATE SET
+             root_thread_id = excluded.root_thread_id,
              status = 'restored',
+             archive_version = excluded.archive_version,
+             archived_at = excluded.archived_at,
              updated_at = CURRENT_TIMESTAMP,
              error = NULL
            WHERE thread_archive_manifests.status IN ('pending', 'archiving')`,
@@ -889,21 +970,25 @@ const make = Effect.gen(function* () {
       return next;
     });
 
-  const wrap = <A, E>(operation: string, threadId: ThreadId, effect: Effect.Effect<A, E>) =>
+  const wrap = <A, E>(
+    operation: ThreadColdStorageOperation,
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E>,
+  ) =>
     Effect.acquireUseRelease(
       getTreeSemaphore(threadId),
       ({ semaphore }) => semaphore.withPermit(effect),
       releaseTreeSemaphore,
-    ).pipe(Effect.mapError((cause) => normalizeThreadColdStorageError(operation, threadId, cause)));
+    ).pipe(
+      Effect.mapError((cause) => ThreadColdStorageError.normalize(operation, threadId, cause)),
+    );
 
-  const listIds = (query: string, operation: string) =>
+  const listIds = (query: string, operation: ThreadColdStorageOperation) =>
     sql.unsafe(query).pipe(
       Effect.map((rows) =>
         (rows as ReadonlyArray<SqlRow>).map((row) => ThreadId.make(String(row.thread_id))),
       ),
-      Effect.mapError(
-        (cause) => new ThreadColdStorageError({ operation, threadId: "startup", cause }),
-      ),
+      Effect.mapError((cause) => ThreadColdStorageError.normalize(operation, undefined, cause)),
     );
 
   return {
@@ -916,7 +1001,9 @@ const make = Effect.gen(function* () {
           threadId,
           false,
           quiesce.pipe(
-            Effect.mapError((cause) => normalizeThreadColdStorageError(operation, threadId, cause)),
+            Effect.mapError((cause) =>
+              ThreadColdStorageError.normalize(operation, threadId, cause),
+            ),
           ),
         ),
       );
@@ -930,13 +1017,8 @@ const make = Effect.gen(function* () {
     removeProviderLogs: (threadId) =>
       wrap("remove-provider-logs", threadId, removeProviderLogsImpl(threadId)),
     compactLegacyStorage: compactLegacyStorageImpl().pipe(
-      Effect.mapError(
-        (cause) =>
-          new ThreadColdStorageError({
-            operation: "compact-legacy-storage",
-            threadId: "startup",
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        ThreadColdStorageError.normalize("compact-legacy-storage", undefined, cause),
       ),
     ),
     listPendingArchiveThreadIds: listIds(
@@ -984,4 +1066,4 @@ const make = Effect.gen(function* () {
   } satisfies ThreadColdStorage["Service"];
 });
 
-export const ThreadColdStorageLive = Layer.effect(ThreadColdStorage, make);
+export const layer = Layer.effect(ThreadColdStorage, make);

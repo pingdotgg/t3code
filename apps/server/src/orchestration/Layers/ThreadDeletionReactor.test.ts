@@ -39,10 +39,13 @@ import * as TerminalManager from "../../terminal/Manager.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ThreadColdStorage, ThreadColdStorageError } from "../Services/ThreadColdStorage.ts";
+import {
+  ThreadColdStorage,
+  ThreadColdStorageError,
+  layer as ThreadColdStorageLive,
+} from "../ThreadColdStorage.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
-import { ThreadColdStorageLive } from "./ThreadColdStorage.ts";
 import {
   enqueueLifecycleJobOnce,
   logCleanupCauseUnlessInterrupted,

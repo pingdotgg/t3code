@@ -4,9 +4,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ArchiveIcon, ArchiveX, LoaderIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -25,6 +26,7 @@ export function ArchivedThreadsPanel() {
   const [unarchivingThreadKeys, setUnarchivingThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const unarchivingThreadKeysRef = useRef(new Set<string>());
   const environmentIds = useMemo(
     () => [...new Set(projects.map((project) => project.environmentId))],
     [projects],
@@ -77,9 +79,12 @@ export function ArchivedThreadsPanel() {
         groups.push({
           project,
           threads: projectThreads.toSorted((left, right) => {
-            const leftKey = left.archivedAt ?? left.createdAt;
-            const rightKey = right.archivedAt ?? right.createdAt;
-            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
+            const leftKey = toSortableTimestamp(left.archivedAt ?? left.createdAt);
+            const rightKey = toSortableTimestamp(right.archivedAt ?? right.createdAt);
+            return (
+              (rightKey ?? Number.NEGATIVE_INFINITY) - (leftKey ?? Number.NEGATIVE_INFINITY) ||
+              right.id.localeCompare(left.id)
+            );
           }),
         });
       }
@@ -90,6 +95,8 @@ export function ArchivedThreadsPanel() {
   const handleUnarchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       const threadKey = scopedThreadKey(threadRef);
+      if (unarchivingThreadKeysRef.current.has(threadKey)) return;
+      unarchivingThreadKeysRef.current.add(threadKey);
       setUnarchivingThreadKeys((current) => new Set(current).add(threadKey));
       try {
         const result = await unarchiveThread(threadRef);
@@ -106,6 +113,7 @@ export function ArchivedThreadsPanel() {
           );
         }
       } finally {
+        unarchivingThreadKeysRef.current.delete(threadKey);
         setUnarchivingThreadKeys((current) => {
           const next = new Set(current);
           next.delete(threadKey);
@@ -184,7 +192,7 @@ export function ArchivedThreadsPanel() {
       ) : (
         archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
-            key={project.id}
+            key={`${project.environmentId}:${project.id}`}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.name}
             icon={
@@ -200,7 +208,7 @@ export function ArchivedThreadsPanel() {
               const isUnarchiving = unarchivingThreadKeys.has(scopedThreadKey(threadRef));
               return (
                 <SettingsRow
-                  key={thread.id}
+                  key={scopedThreadKey(threadRef)}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     if (isUnarchiving) return;

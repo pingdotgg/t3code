@@ -13,14 +13,15 @@ Archived conversations use cold storage instead of retaining full hot projection
 - Unarchive reserves still-hot archived rows with a `restored` manifest before releasing the archive-tree lock. This prevents queued lifecycle work from moving those rows cold between the restore check and the unarchive command commit; command failure archives the reserved rows, while success removes the reservation. Process-local restore ownership distinguishes those live reservations from `restored` manifests abandoned by a crashed process, which startup lifecycle discovery moves cold again while the shell remains archived. If storage cannot restore or reserve the archived conversation, the command is rejected before an active-shell event can commit.
 - A `restored` manifest protects only the archive epoch that an unarchive command reserved. If post-commit bundle finalization fails and the user later archives the thread again, the newer shell timestamp lets lifecycle work replace the stale manifest and move the conversation cold.
 - Migration `035_ThreadColdArchive` registers existing archived conversations for background conversion on the next update. Migration `036_DeletedThreadCleanupQueue` registers legacy soft-deleted conversations for the same permanent cleanup used by new deletes. The upstream title-regeneration columns use branch migration `037_ProjectionThreadTitleRegeneration` because migration ids 35 and 36 remain assigned to those deployed archive lifecycle steps. Migration `038_ThreadColdArchiveCompatibility` idempotently reruns cold-archive setup for databases that already recorded upstream title regeneration under migration id 35. Upstream thread pinning uses branch migration `039_ProjectionThreadsPinned`, the windowed-turn keyset index uses `040_ProjectionTurnsKeysetIndex`, and pin ordering uses `041_ProjectionThreadsPinOrderKey`. Upstream's project default environment-mode and favicon columns use branch migrations `042_ProjectionProjectsDefaultThreadEnvMode` and `043_ProjectionProjectFaviconPath`, so none collide with the deployed lifecycle ids.
+- Migration `044_ThreadStorageLifecycleCompatibility` idempotently reruns both lifecycle setup migrations above every upstream migration id that existed when the branch introduced cold storage, covering databases that had already recorded upstream migrations through id 40.
 - Pinning remains lightweight shell metadata: archiving a pinned thread keeps `pinned_at` in `projection_threads`, and unarchive restores the thread with its prior pinned state. The cold-storage boundary test covers this merged pin/archive contract.
 - After the legacy queues drain, a retryable one-time `VACUUM` physically compacts `state.sqlite` and enables incremental auto-vacuum. Later lifecycle operations reclaim bounded free-page batches from both `state.sqlite` and `archive.sqlite`, avoiding a full compaction on every archive.
 - Normal provider, server, trace, and terminal logging behavior is unchanged. Space is reclaimed at the conversation lifecycle boundary instead of by weakening diagnostics for active work.
 
 Primary files:
 
-- `apps/server/src/orchestration/Layers/ThreadColdStorage.ts`
-- `apps/server/src/orchestration/Layers/ThreadColdStorage.test.ts`
+- `apps/server/src/orchestration/ThreadColdStorage.ts`
+- `apps/server/src/orchestration/ThreadColdStorage.test.ts`
 - `apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts`
 - `apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts`
 - `apps/server/src/persistence/Migrations/035_ThreadColdArchive.ts`

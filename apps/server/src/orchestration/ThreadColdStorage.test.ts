@@ -8,10 +8,13 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { ThreadColdStorage, ThreadColdStorageError } from "../Services/ThreadColdStorage.ts";
-import { ThreadColdStorageLive } from "./ThreadColdStorage.ts";
+import * as ServerConfig from "../config.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import {
+  ThreadColdStorage,
+  ThreadColdStorageError,
+  layer as ThreadColdStorageLive,
+} from "./ThreadColdStorage.ts";
 
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -256,6 +259,15 @@ layer("ThreadColdStorage", (it) => {
           '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
         )
       `;
+      yield* sql`
+        INSERT INTO thread_archive_manifests (
+          thread_id, root_thread_id, status, archive_version,
+          archived_at, updated_at, error
+        ) VALUES (
+          ${threadId}, ${threadId}, 'pending', 0,
+          '2026-06-01T00:00:00.000Z', CURRENT_TIMESTAMP, NULL
+        )
+      `;
 
       assert.isTrue(yield* storage.restoreTree(threadId));
       assert.deepInclude(yield* storage.listPendingArchiveThreadIds, threadId);
@@ -270,12 +282,30 @@ layer("ThreadColdStorage", (it) => {
       const messages = yield* sql<{ readonly text: string }>`
         SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}
       `;
-      const manifest = yield* sql<{ readonly status: string }>`
-        SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}
+      const manifest = yield* sql<{
+        readonly rootThreadId: string;
+        readonly status: string;
+        readonly archiveVersion: number;
+        readonly archivedAt: string;
+      }>`
+        SELECT
+          root_thread_id AS "rootThreadId",
+          status,
+          archive_version AS "archiveVersion",
+          archived_at AS "archivedAt"
+        FROM thread_archive_manifests
+        WHERE thread_id = ${threadId}
       `;
       assert.strictEqual(quiesceCalls, 0);
       assert.deepStrictEqual(messages, [{ text: "keep hot until unarchive commits" }]);
-      assert.deepStrictEqual(manifest, [{ status: "restored" }]);
+      assert.deepStrictEqual(manifest, [
+        {
+          rootThreadId: threadId,
+          status: "restored",
+          archiveVersion: 1,
+          archivedAt: "2026-07-02T00:00:00.000Z",
+        },
+      ]);
 
       yield* storage.finishRestoreTree(threadId);
       const remainingManifest = yield* sql<{ readonly count: number }>`
@@ -564,11 +594,16 @@ layer("ThreadColdStorage", (it) => {
       `;
 
       const attachmentPath = path.join(config.attachmentsDir, attachmentName);
-      const providerLogPath = path.join(config.providerLogsDir, "thread-cold.log");
+      const providerLogPath = path.join(config.providerLogsDir, "events.thread-cold.log");
       const rotatedProviderLogPath = `${providerLogPath}.1`;
+      const similarlyPrefixedProviderLogPath = path.join(
+        config.providerLogsDir,
+        "events.thread-cold-extra.log",
+      );
       yield* fs.writeFileString(attachmentPath, "image bytes");
       yield* fs.writeFileString(providerLogPath, "diagnostic");
       yield* fs.writeFileString(rotatedProviderLogPath, "old diagnostic");
+      yield* fs.writeFileString(similarlyPrefixedProviderLogPath, "other thread diagnostic");
 
       yield* storage.archiveThread(threadId);
 
@@ -593,6 +628,7 @@ layer("ThreadColdStorage", (it) => {
       assert.isFalse(yield* fs.exists(attachmentPath));
       assert.isFalse(yield* fs.exists(providerLogPath));
       assert.isFalse(yield* fs.exists(rotatedProviderLogPath));
+      assert.isTrue(yield* fs.exists(similarlyPrefixedProviderLogPath));
 
       assert.isTrue(yield* storage.restoreTree(threadId));
       const restoredMessages = yield* sql<{ readonly text: string }>`
@@ -790,7 +826,7 @@ layer("ThreadColdStorage", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const threadId = ThreadId.make("thread-cleanup-retry");
-      const providerLogPath = path.join(config.providerLogsDir, "thread-cleanup-retry.log");
+      const providerLogPath = path.join(config.providerLogsDir, "events.thread-cleanup-retry.log");
 
       yield* insertArchivedThread(threadId, "Cleanup retry thread");
       yield* sql`
@@ -836,7 +872,10 @@ layer("ThreadColdStorage", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const threadId = ThreadId.make("thread-cleanup-missing-shell");
-      const providerLogPath = path.join(config.providerLogsDir, "thread-cleanup-missing-shell.log");
+      const providerLogPath = path.join(
+        config.providerLogsDir,
+        "events.thread-cleanup-missing-shell.log",
+      );
 
       yield* insertArchivedThread(threadId, "Cleanup missing shell thread");
       yield* fs.makeDirectory(providerLogPath);
