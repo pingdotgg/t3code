@@ -38,6 +38,7 @@ describe("ComposerStashBadge", () => {
     );
 
     expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("text-foreground");
     expect(markup).toContain("pointer-events-none");
     expect(markup).not.toContain("invisible");
   });

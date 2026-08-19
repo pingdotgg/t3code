@@ -793,10 +793,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     padding-bottom: var(--chat-composer-attachment-overlap);
   }
 
+  [data-chat-composer-form="true"],
+  .chat-composer-drawer-slot,
+  .chat-composer-top-drawer {
+    --chat-composer-drawer-inset: 1.375rem;
+  }
+
   .chat-composer-drawer-slot,
   .chat-composer-top-drawer {
     --chat-composer-attachment-overlap: calc(1rem + 1px);
-    width: calc(100% - 2.75rem);
+    width: calc(100% - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
+    max-width: calc(48rem - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
     margin-inline: auto;
     margin-bottom: calc(-1 * var(--chat-composer-attachment-overlap));
   }

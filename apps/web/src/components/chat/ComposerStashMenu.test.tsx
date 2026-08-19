@@ -17,6 +17,7 @@ describe("ComposerStashMenu", () => {
     expect(markup).toContain('data-composer-stash-drawer="true"');
     expect(markup).toContain("chat-composer-drawer-surface");
     expect(markup).toContain("chat-composer-drawer-attached");
+    expect(markup).toContain('aria-label="Close stash"');
     expect(markup).not.toContain("dropdown-glass");
     expect(markup).not.toContain("Stashed prompts");
   });

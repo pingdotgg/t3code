@@ -99,10 +99,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
 
   return (
     <div
-      className={cn(
-        "group/banner-stack chat-composer-drawer-slot max-w-[calc(48rem-2.75rem)]",
-        className,
-      )}
+      className={cn("group/banner-stack chat-composer-drawer-slot", className)}
       data-composer-banner-drawer="true"
     >
       <div
@@ -202,7 +199,7 @@ function ComposerBannerStackAlert({
       variant={item.variant}
       className={cn(
         attached
-          ? "chat-composer-drawer-surface chat-composer-drawer-attached px-3 pt-2 pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)]"
+          ? "chat-composer-drawer-surface chat-composer-drawer-attached px-3 pt-2 pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)] text-xs"
           : "alert-glass rounded-[22px]",
         item.className,
       )}

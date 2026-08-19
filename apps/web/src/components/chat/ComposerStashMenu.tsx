@@ -113,7 +113,17 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         className="chat-composer-drawer-surface chat-composer-drawer-attached relative w-full overflow-hidden"
         data-composer-stash-drawer="true"
       >
-        <CommandList className="max-h-72 scroll-pb-6">
+        <div className="flex h-7 items-center justify-end px-2 pt-1">
+          <Button
+            variant="ghost-muted"
+            size="icon-micro"
+            aria-label="Close stash"
+            onClick={onClose}
+          >
+            <XIcon className="size-3" />
+          </Button>
+        </div>
+        <CommandList className="max-h-64 scroll-pb-6">
           <CommandGroup>
             {entries.length === 0 ? (
               <p className="px-3 py-1.5 text-secondary-label text-xs">

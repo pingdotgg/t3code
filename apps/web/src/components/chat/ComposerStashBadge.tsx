@@ -30,7 +30,9 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         "chat-composer-stash-tab absolute -top-7 right-4 z-0 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-t-xl border border-b-0 px-3 pb-1 text-xs leading-none",
         "transition-[color,border-color] duration-200",
         props.menuOpen && "pointer-events-none",
-        props.pulsing ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+        props.menuOpen || props.pulsing
+          ? "text-foreground"
+          : "text-muted-foreground hover:text-foreground",
       )}
       onPointerDown={(event) => {
         // Keep composer focus so Escape/typing flows stay intact.
