@@ -34,6 +34,9 @@ relink.
 
 Protocol metadata is schema checked. Binary bodies use bounded 64 KiB frames;
 WebSocket messages are fragmented and reassembled up to a 16 MiB message limit.
+Incomplete messages share a 16 MiB aggregate buffer and each message is limited
+to 1,024 non-empty fragments, preventing many sparse streams from retaining
+unbounded memory.
 The edge reads HTTP request bodies incrementally and rejects them above 16 MiB;
 the built-in connector buffers at most that same limit before calling the
 loopback origin. HTTP responses stream back to the edge using per-stream credit
@@ -56,8 +59,11 @@ healthy without waking the object or forwarding heartbeat traffic to the host.
 
 Hosts advertise the managed endpoint providers they understand when requesting
 a link challenge. A missing advertisement means a legacy, Cloudflare-only host.
-The relay selects `t3_relay` only when both the deployment preference and the
-host capability allow it. Otherwise it selects `cloudflare_tunnel`.
+The relay selects a provider only when both the deployment preference and the
+host capability allow it. A legacy host still falls back to
+`cloudflare_tunnel`; an explicit capability list that excludes the preferred
+provider fails the challenge instead of returning unusable connector
+configuration.
 
 `RELAY_MANAGED_ENDPOINT_PROVIDER` controls the deployment preference and
 defaults to `cloudflare_tunnel`. Changing it affects new link reconciliations;

@@ -5,6 +5,8 @@ export const RELAY_TRANSPORT_PROTOCOL_VERSION = 1;
 export const RELAY_TRANSPORT_FRAME_HEADER_BYTES = 12;
 export const RELAY_TRANSPORT_MAX_FRAME_PAYLOAD_BYTES = 64 * 1024;
 export const RELAY_TRANSPORT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+export const RELAY_TRANSPORT_MAX_BUFFERED_MESSAGE_BYTES = 16 * 1024 * 1024;
+export const RELAY_TRANSPORT_MAX_MESSAGE_FRAGMENTS = 1024;
 export const RELAY_TRANSPORT_MAX_HTTP_REQUEST_BYTES = 16 * 1024 * 1024;
 export const RELAY_TRANSPORT_INITIAL_WINDOW_BYTES = 256 * 1024;
 export const RELAY_TRANSPORT_MAX_CONCURRENT_STREAMS = 256;
@@ -113,6 +115,7 @@ interface RelayTransportPartialMessage {
   readonly kind: RelayTransportWebSocketFrameKind;
   readonly chunks: Array<Uint8Array>;
   byteLength: number;
+  fragmentCount: number;
 }
 
 export interface RelayTransportWebSocketMessage {
@@ -122,6 +125,7 @@ export interface RelayTransportWebSocketMessage {
 
 export class RelayTransportMessageAssembler {
   readonly #messages = new Map<number, RelayTransportPartialMessage>();
+  #bufferedBytes = 0;
 
   append(frame: RelayTransportFrame): RelayTransportWebSocketMessage | null {
     if (
@@ -131,27 +135,45 @@ export class RelayTransportMessageAssembler {
       throw new TypeError("Only WebSocket data frames can be reassembled.");
     }
     const partial = this.#messages.get(frame.streamId);
+    if (frame.payload.byteLength === 0 && !frame.endOfMessage) {
+      this.delete(frame.streamId);
+      throw new TypeError("Relay transport messages cannot contain empty non-final fragments.");
+    }
     if (partial === undefined && frame.endOfMessage) {
       return { kind: frame.kind, payload: frame.payload };
     }
     if (partial !== undefined && partial.kind !== frame.kind) {
-      this.#messages.delete(frame.streamId);
+      this.delete(frame.streamId);
       throw new TypeError("Relay transport message changed frame kind before completion.");
     }
-    const message = partial ?? { kind: frame.kind, chunks: [], byteLength: 0 };
-    message.byteLength += frame.payload.byteLength;
-    if (message.byteLength > RELAY_TRANSPORT_MAX_MESSAGE_BYTES) {
-      this.#messages.delete(frame.streamId);
-      throw new RangeError(
-        `Relay transport message exceeds ${RELAY_TRANSPORT_MAX_MESSAGE_BYTES} bytes.`,
-      );
+    const message = partial ?? {
+      kind: frame.kind,
+      chunks: [],
+      byteLength: 0,
+      fragmentCount: 0,
+    };
+    const nextByteLength = message.byteLength + frame.payload.byteLength;
+    const nextFragmentCount = message.fragmentCount + 1;
+    if (
+      nextByteLength > RELAY_TRANSPORT_MAX_MESSAGE_BYTES ||
+      this.#bufferedBytes + frame.payload.byteLength > RELAY_TRANSPORT_MAX_BUFFERED_MESSAGE_BYTES ||
+      nextFragmentCount > RELAY_TRANSPORT_MAX_MESSAGE_FRAGMENTS
+    ) {
+      this.delete(frame.streamId);
+      throw new RangeError("Relay transport fragmented-message buffer exceeds its limit.");
     }
+    message.byteLength = nextByteLength;
+    message.fragmentCount = nextFragmentCount;
     message.chunks.push(frame.payload.slice());
     if (!frame.endOfMessage) {
+      this.#bufferedBytes += frame.payload.byteLength;
       this.#messages.set(frame.streamId, message);
       return null;
     }
-    this.#messages.delete(frame.streamId);
+    if (partial !== undefined) {
+      this.#bufferedBytes -= partial.byteLength - frame.payload.byteLength;
+      this.#messages.delete(frame.streamId);
+    }
     const payload = new Uint8Array(message.byteLength);
     let offset = 0;
     for (const chunk of message.chunks) {
@@ -162,11 +184,16 @@ export class RelayTransportMessageAssembler {
   }
 
   delete(streamId: number): void {
-    this.#messages.delete(streamId);
+    const message = this.#messages.get(streamId);
+    if (message !== undefined) {
+      this.#bufferedBytes -= message.byteLength;
+      this.#messages.delete(streamId);
+    }
   }
 
   clear(): void {
     this.#messages.clear();
+    this.#bufferedBytes = 0;
   }
 }
 
@@ -181,13 +208,18 @@ export class RelayTransportFrameDecodeError extends Schema.TaggedErrorClass<Rela
       "invalid_flags",
       "invalid_stream_id",
       "payload_too_large",
+      "empty_non_final_payload",
     ]),
   },
 ) {}
 
 export class RelayTransportControlDecodeError extends Schema.TaggedErrorClass<RelayTransportControlDecodeError>()(
   "RelayTransportControlDecodeError",
-  { cause: Schema.Defect() },
+  {
+    reason: Schema.Literals(["not_a_complete_control_frame", "invalid_control_message"]),
+    streamId: Schema.Int,
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {}
 
 function isRelayTransportFrameKind(value: number): value is RelayTransportFrameKind {
@@ -284,6 +316,14 @@ export function decodeRelayTransportFrame(
   if (payload.byteLength > RELAY_TRANSPORT_MAX_FRAME_PAYLOAD_BYTES) {
     return Result.fail(new RelayTransportFrameDecodeError({ reason: "payload_too_large" }));
   }
+  if (
+    (kind === RelayTransportFrameKind.websocketText ||
+      kind === RelayTransportFrameKind.websocketBinary) &&
+    payload.byteLength === 0 &&
+    (flags & RELAY_TRANSPORT_END_OF_MESSAGE_FLAG) === 0
+  ) {
+    return Result.fail(new RelayTransportFrameDecodeError({ reason: "empty_non_final_payload" }));
+  }
   return Result.succeed({
     kind,
     streamId,
@@ -314,12 +354,19 @@ export function decodeRelayTransportControlFrame(
   if (frame.kind !== RelayTransportFrameKind.control || !frame.endOfMessage) {
     return Result.fail(
       new RelayTransportControlDecodeError({
-        cause: "Relay transport control messages require one complete control frame.",
+        reason: "not_a_complete_control_frame",
+        streamId: frame.streamId,
       }),
     );
   }
   const decoded = decodeControlJson(new TextDecoder().decode(frame.payload));
   return Result.isSuccess(decoded)
     ? Result.succeed(decoded.success)
-    : Result.fail(new RelayTransportControlDecodeError({ cause: decoded.failure }));
+    : Result.fail(
+        new RelayTransportControlDecodeError({
+          reason: "invalid_control_message",
+          streamId: frame.streamId,
+          cause: decoded.failure,
+        }),
+      );
 }

@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import {
@@ -39,6 +39,10 @@ import {
   type ConnectorTicketRecord,
 } from "./connectorTicket.ts";
 import { relayPublicRequestUrl } from "./publicRequestUrl.ts";
+import {
+  relayHttpResponseBodyStream,
+  type RelayHttpResponseBodyEvent,
+} from "./httpResponseBody.ts";
 
 type SocketAttachment =
   | ({ readonly role: "connector" } & ConnectorSessionIdentity)
@@ -49,7 +53,7 @@ interface PendingHttpResponse {
     readonly status: number;
     readonly headers: ReadonlyArray<readonly [string, string]>;
   } | null>;
-  readonly body: Queue.Queue<Uint8Array | null>;
+  readonly body: Queue.Queue<RelayHttpResponseBodyEvent>;
   readonly connector: Cloudflare.WebSocket;
   completed: boolean;
 }
@@ -154,7 +158,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
           for (const pending of pendingHttp.values()) {
             pending.completed = true;
             yield* Deferred.succeed(pending.metadata, null);
-            yield* Queue.offer(pending.body, null);
+            yield* Queue.offer(pending.body, { type: "abort", reason });
           }
         });
 
@@ -246,7 +250,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             return true;
           }),
         fetch: Effect.gen(function* () {
-          const request = yield* HttpServerRequest;
+          const request = yield* HttpServerRequest.HttpServerRequest;
           const forwardedUrl = request.headers[PUBLIC_URL_HEADER];
           const publicRequestUrl = relayPublicRequestUrl({
             url: request.url,
@@ -365,7 +369,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               readonly status: number;
               readonly headers: ReadonlyArray<readonly [string, string]>;
             } | null>();
-            const body = yield* Queue.unbounded<Uint8Array | null>();
+            const body = yield* Queue.unbounded<RelayHttpResponseBodyEvent>();
             const pending = {
               metadata,
               body,
@@ -453,8 +457,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               pendingHttp.delete(streamId);
               return HttpServerResponse.text("Environment request failed", { status: 502 });
             }
-            const responseStream = Stream.fromQueue(body).pipe(
-              Stream.takeWhile((chunk): chunk is Uint8Array => chunk !== null),
+            const responseStream = relayHttpResponseBodyStream(body).pipe(
               Stream.tap((chunk) =>
                 !isActiveConnector(pending.connector)
                   ? Effect.void
@@ -585,7 +588,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
           const client = clients.get(frame.streamId);
           const http = pendingHttp.get(frame.streamId);
           if (frame.kind === RelayTransportFrameKind.httpResponseBody && http !== undefined) {
-            yield* Queue.offer(http.body, frame.payload.slice());
+            yield* Queue.offer(http.body, { type: "chunk", bytes: frame.payload.slice() });
             return;
           }
           if (frame.kind === RelayTransportFrameKind.control && http !== undefined) {
@@ -604,11 +607,14 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
                 );
               } else if (control.success.type === "http_response_end") {
                 http.completed = true;
-                yield* Queue.offer(http.body, null);
+                yield* Queue.offer(http.body, { type: "end" });
               } else if (control.success.type === "http_response_abort") {
                 http.completed = true;
                 yield* Deferred.succeed(http.metadata, null);
-                yield* Queue.offer(http.body, null);
+                yield* Queue.offer(http.body, {
+                  type: "abort",
+                  reason: control.success.reason,
+                });
               }
             }
             return;

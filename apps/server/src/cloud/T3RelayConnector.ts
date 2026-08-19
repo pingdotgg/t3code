@@ -87,7 +87,8 @@ function validateConnectorConfig(config: T3RelayConnectorConfig): void {
     connector.protocol !== "wss:" ||
     connector.username !== "" ||
     connector.password !== "" ||
-    connector.pathname !== "/.well-known/t3-relay/connect"
+    connector.pathname !== "/.well-known/t3-relay/connect" ||
+    connector.hash !== ""
   ) {
     throw new TypeError("T3 relay connector URL must be a secure connector endpoint.");
   }
@@ -103,6 +104,14 @@ function validateConnectorConfig(config: T3RelayConnectorConfig): void {
 
 function asBytes(value: ArrayBuffer | Uint8Array): Uint8Array {
   return value instanceof Uint8Array ? value : new Uint8Array(value);
+}
+
+function closeSocket(socket: RelayConnectorSocket | null, code: number, reason: string): void {
+  try {
+    socket?.close(code, reason);
+  } catch {
+    // Closing a WebSocket in CONNECTING may throw. Teardown must continue.
+  }
 }
 
 function localWebSocketUrl(originUrl: string, publicUrl: string): string {
@@ -234,11 +243,7 @@ export class T3RelayConnectorSession {
         if (this.#edgeSocket !== edge || this.#edgeReady) return;
         this.#edgeSocket = null;
         this.#edgeReady = false;
-        try {
-          edge.close(1013, "Relay edge handshake timed out");
-        } catch {
-          // Some WebSocket implementations reject close() while CONNECTING.
-        }
+        closeSocket(edge, 1013, "Relay edge handshake timed out");
         this.#scheduleReconnect("edge_handshake_timeout");
       }, CONNECT_ATTEMPT_TIMEOUT_MILLIS);
       this.#handshakeTimers.add(handshakeTimeout);
@@ -260,7 +265,7 @@ export class T3RelayConnectorSession {
         this.#edgeSocket = null;
         this.#edgeReady = false;
         for (const local of this.#localSockets.values()) {
-          local.close(1012, "Relay edge disconnected");
+          closeSocket(local, 1012, "Relay edge disconnected");
         }
         this.#localSockets.clear();
         this.#edgeMessages.clear();
@@ -294,11 +299,11 @@ export class T3RelayConnectorSession {
       clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = null;
     }
-    this.#edgeSocket?.close(1000, "Connector stopped");
+    closeSocket(this.#edgeSocket, 1000, "Connector stopped");
     this.#edgeSocket = null;
     this.#edgeReady = false;
     for (const local of this.#localSockets.values()) {
-      local.close(1001, "Connector stopped");
+      closeSocket(local, 1001, "Connector stopped");
     }
     this.#localSockets.clear();
     this.#edgeMessages.clear();
@@ -386,7 +391,7 @@ export class T3RelayConnectorSession {
           this.#sendEdge(frame);
         }
       } catch {
-        local.close(1009, "WebSocket message exceeds the relay limit");
+        closeSocket(local, 1009, "WebSocket message exceeds the relay limit");
       }
     });
     local.addEventListener("close", (event) => {
@@ -517,7 +522,7 @@ export class T3RelayConnectorSession {
         const local = this.#localSockets.get(frame.streamId);
         this.#localSockets.delete(frame.streamId);
         this.#edgeMessages.delete(frame.streamId);
-        local?.close(control.success.code, control.success.reason);
+        closeSocket(local ?? null, control.success.code, control.success.reason);
       } else if (control.success.type === "http_request_start") {
         this.#httpRequests.set(frame.streamId, {
           method: control.success.method,
@@ -587,7 +592,7 @@ export class T3RelayConnectorSession {
         }
       } catch {
         this.#edgeMessages.delete(frame.streamId);
-        local.close(1009, "Invalid fragmented relay message");
+        closeSocket(local, 1009, "Invalid fragmented relay message");
       }
     }
     return false;

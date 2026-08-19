@@ -100,25 +100,6 @@ function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
   });
 }
 
-function observeT3RelayConnector(event: T3RelayConnector.T3RelayConnectorLifecycleEvent): void {
-  const log =
-    event.type === "connected"
-      ? Effect.logInfo("T3 relay connector connected")
-      : event.type === "connecting"
-        ? Effect.logDebug("T3 relay connector connecting")
-        : event.type === "disconnected"
-          ? Effect.logWarning("T3 relay connector disconnected", {
-              code: event.code,
-              reason: event.reason,
-            })
-          : Effect.logWarning("T3 relay connector retry scheduled", {
-              attempt: event.attempt,
-              delayMillis: event.delayMillis,
-              reason: event.reason,
-            });
-  Effect.runFork(log);
-}
-
 const stopConnector = (connector: ActiveConnector | null) =>
   connector
     ? Scope.close(connector.scope, Exit.void).pipe(
@@ -132,6 +113,8 @@ const stopConnector = (connector: ActiveConnector | null) =>
     : Effect.void;
 
 export const make = Effect.gen(function* () {
+  const context = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(context);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
   const t3RelayConnectorFactory = yield* T3RelayConnector.T3RelayConnectorFactory;
@@ -140,6 +123,27 @@ export const make = Effect.gen(function* () {
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const reconcileSemaphore = yield* Semaphore.make(1);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
+
+  const observeT3RelayConnector = (
+    event: T3RelayConnector.T3RelayConnectorLifecycleEvent,
+  ): void => {
+    const log =
+      event.type === "connected"
+        ? Effect.logInfo("T3 relay connector connected")
+        : event.type === "connecting"
+          ? Effect.logDebug("T3 relay connector connecting")
+          : event.type === "disconnected"
+            ? Effect.logWarning("T3 relay connector disconnected", {
+                code: event.code,
+                reason: event.reason,
+              })
+            : Effect.logWarning("T3 relay connector retry scheduled", {
+                attempt: event.attempt,
+                delayMillis: event.delayMillis,
+                reason: event.reason,
+              });
+    runFork(log);
+  };
 
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);

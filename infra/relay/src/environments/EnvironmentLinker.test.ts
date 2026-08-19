@@ -225,6 +225,7 @@ describe("EnvironmentLinker", () => {
 
   it.effect("revokes the previous T3 relay lease after switching back to Cloudflare", () => {
     const lifecycle: Array<string> = [];
+    const lookupInputs: Array<{ readonly includeRevoked?: boolean }> = [];
     return Effect.gen(function* () {
       const { request } = yield* makeRequest;
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
@@ -236,18 +237,24 @@ describe("EnvironmentLinker", () => {
     }).pipe(
       Effect.provide(
         testLayer({
-          getForUser: () =>
-            Effect.succeed({
-              environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
-              label: "Link Test Environment",
-              endpoint: {
-                httpBaseUrl: "https://old-t3-relay.example.test/",
-                wsBaseUrl: "wss://old-t3-relay.example.test/ws",
-                providerKind: "t3_relay",
-                connectorLeaseId: "old-relay-lease",
-              },
-              environmentPublicKey: environmentKeyPair.publicKey.trim(),
-              linkedAt: "2026-08-18T00:00:00.000Z",
+          getForUser: (input) =>
+            Effect.sync(() => {
+              lookupInputs.push(
+                input.includeRevoked === undefined ? {} : { includeRevoked: input.includeRevoked },
+              );
+              return {
+                environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+                label: "Link Test Environment",
+                endpoint: {
+                  httpBaseUrl: "https://old-t3-relay.example.test/",
+                  wsBaseUrl: "wss://old-t3-relay.example.test/ws",
+                  providerKind: "t3_relay",
+                  connectorLeaseId: "old-relay-lease",
+                },
+                environmentPublicKey: environmentKeyPair.publicKey.trim(),
+                linkedAt: "2026-08-18T00:00:00.000Z",
+                updatedAt: "2026-08-18T00:00:00.000Z",
+              };
             }),
           provision: () =>
             Effect.sync(() => {
@@ -273,6 +280,7 @@ describe("EnvironmentLinker", () => {
             }),
         }),
       ),
+      Effect.tap(() => Effect.sync(() => expect(lookupInputs).toEqual([{ includeRevoked: true }]))),
     );
   });
 

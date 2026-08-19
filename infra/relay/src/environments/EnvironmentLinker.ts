@@ -306,6 +306,7 @@ const make = Effect.gen(function* () {
       const previousLink = yield* links.getForUser({
         userId: input.userId,
         environmentId: verified.environmentId,
+        includeRevoked: true,
       });
       // Downgrading a managed link to publish-only must release the tunnel and
       // DNS that were provisioned for it — nothing else cleans them up until a

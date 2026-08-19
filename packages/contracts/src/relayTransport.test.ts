@@ -10,6 +10,8 @@ import {
   normalizeRelayWebSocketCloseCode,
   RELAY_TRANSPORT_FRAME_HEADER_BYTES,
   RELAY_TRANSPORT_MAX_FRAME_PAYLOAD_BYTES,
+  RELAY_TRANSPORT_MAX_BUFFERED_MESSAGE_BYTES,
+  RELAY_TRANSPORT_MAX_MESSAGE_FRAGMENTS,
   RELAY_TRANSPORT_MAX_MESSAGE_BYTES,
   RelayTransportMessageAssembler,
   RelayTransportFrameKind,
@@ -64,6 +66,72 @@ describe("relay transport frames", () => {
 
     expect(message?.kind).toBe(RelayTransportFrameKind.websocketText);
     expect(new TextDecoder().decode(message?.payload)).toBe("hello world");
+  });
+
+  it("rejects empty non-final fragments before they can accumulate", () => {
+    const frame = encodeRelayTransportFrame({
+      kind: RelayTransportFrameKind.websocketBinary,
+      streamId: 3,
+      endOfMessage: false,
+      payload: new Uint8Array(),
+    });
+    const decoded = decodeRelayTransportFrame(frame);
+    expect(Result.isFailure(decoded) && decoded.failure.reason).toBe("empty_non_final_payload");
+
+    const assembler = new RelayTransportMessageAssembler();
+    expect(() =>
+      assembler.append({
+        kind: RelayTransportFrameKind.websocketBinary,
+        streamId: 3,
+        endOfMessage: false,
+        payload: new Uint8Array(),
+      }),
+    ).toThrow(/empty non-final/u);
+  });
+
+  it("bounds aggregate fragmented bytes across streams", () => {
+    const assembler = new RelayTransportMessageAssembler();
+    const payload = new Uint8Array(RELAY_TRANSPORT_MAX_FRAME_PAYLOAD_BYTES);
+    const bufferedStreams =
+      RELAY_TRANSPORT_MAX_BUFFERED_MESSAGE_BYTES / RELAY_TRANSPORT_MAX_FRAME_PAYLOAD_BYTES;
+    for (let streamId = 1; streamId <= bufferedStreams; streamId += 1) {
+      expect(
+        assembler.append({
+          kind: RelayTransportFrameKind.websocketBinary,
+          streamId,
+          endOfMessage: false,
+          payload,
+        }),
+      ).toBeNull();
+    }
+    expect(() =>
+      assembler.append({
+        kind: RelayTransportFrameKind.websocketBinary,
+        streamId: bufferedStreams + 1,
+        endOfMessage: false,
+        payload: Uint8Array.of(1),
+      }),
+    ).toThrow(/buffer exceeds/u);
+  });
+
+  it("bounds fragment count even when fragments are small", () => {
+    const assembler = new RelayTransportMessageAssembler();
+    for (let index = 0; index < RELAY_TRANSPORT_MAX_MESSAGE_FRAGMENTS; index += 1) {
+      assembler.append({
+        kind: RelayTransportFrameKind.websocketBinary,
+        streamId: 4,
+        endOfMessage: false,
+        payload: Uint8Array.of(1),
+      });
+    }
+    expect(() =>
+      assembler.append({
+        kind: RelayTransportFrameKind.websocketBinary,
+        streamId: 4,
+        endOfMessage: true,
+        payload: Uint8Array.of(1),
+      }),
+    ).toThrow(/buffer exceeds/u);
   });
 
   it("round trips binary payloads without copying their contents into JSON", () => {
@@ -178,6 +246,8 @@ describe("relay transport control messages", () => {
     });
 
     expect(Result.isFailure(decoded)).toBe(true);
+    expect(Result.isFailure(decoded) && decoded.failure.reason).toBe("invalid_control_message");
+    expect(Result.isFailure(decoded) && decoded.failure.streamId).toBe(3);
   });
 
   it("rejects unsendable WebSocket close codes and normalizes abnormal closes", () => {
@@ -204,5 +274,9 @@ describe("relay transport control messages", () => {
     });
 
     expect(Result.isFailure(decoded)).toBe(true);
+    expect(Result.isFailure(decoded) && decoded.failure.reason).toBe(
+      "not_a_complete_control_frame",
+    );
+    expect(Result.isFailure(decoded) && decoded.failure.streamId).toBe(3);
   });
 });

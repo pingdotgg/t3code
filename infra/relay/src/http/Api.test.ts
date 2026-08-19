@@ -239,6 +239,7 @@ const linkedEnvironmentRecord = {
   },
   environmentPublicKey: "public-key",
   linkedAt: "2026-07-28T00:00:00.000Z",
+  updatedAt: "2026-07-28T00:00:00.000Z",
 } as const;
 
 describe("relay environment unlink", () => {
@@ -296,8 +297,8 @@ describe("relay environment unlink", () => {
         }),
       ).toBe(true);
       expect(calls).toEqual([
-        "prepare",
         "lookup",
+        "prepare",
         "transaction",
         "link",
         "credential",
@@ -480,6 +481,72 @@ describe("relay environment unlink", () => {
                   : { connectorLeaseId: input.connectorLeaseId },
               ),
             ),
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not tear down a link generation replaced during unlink", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(false);
+      expect(calls).toEqual(["lookup", "prepare", "revoke:generation-1"]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          getForUser: () =>
+            Effect.sync(() => {
+              calls.push("lookup");
+              return { ...linkedEnvironmentRecord, updatedAt: "generation-1" };
+            }),
+          prepareDeprovision: () =>
+            Effect.sync(() => {
+              calls.push("prepare");
+              return null;
+            }),
+          revokeForUser: (input) =>
+            Effect.sync(() => {
+              calls.push(`revoke:${input.expectedUpdatedAt}`);
+              return false;
+            }),
+          deprovision: () => Effect.sync(() => calls.push("deprovision")),
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not retry teardown after a revoked link is concurrently relinked", () => {
+    let lookup = 0;
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(false);
+      expect(calls).toEqual(["prepare"]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          getForUser: (input) =>
+            Effect.sync(() => {
+              lookup += 1;
+              if (lookup === 1) return null;
+              if (input.includeRevoked) return linkedEnvironmentRecord;
+              return { ...linkedEnvironmentRecord, updatedAt: "new-generation" };
+            }),
+          prepareDeprovision: () =>
+            Effect.sync(() => {
+              calls.push("prepare");
+              return null;
+            }),
+          deprovision: () => Effect.sync(() => calls.push("deprovision")),
         }),
       ),
     );

@@ -23,6 +23,7 @@ class TestSocket implements RelayConnectorSocket {
   readyState = 0;
   readonly sent: Array<string | ArrayBuffer | Uint8Array> = [];
   readonly closed: Array<{ code?: number; reason?: string }> = [];
+  throwOnClose = false;
   readonly #listeners = new Map<string, Array<(event?: never) => void>>();
 
   addEventListener(type: "open", listener: () => void): void;
@@ -51,6 +52,7 @@ class TestSocket implements RelayConnectorSocket {
   }
 
   close(code?: number, reason?: string): void {
+    if (this.throwOnClose) throw new Error("socket is still connecting");
     this.closed.push({
       ...(code === undefined ? {} : { code }),
       ...(reason === undefined ? {} : { reason }),
@@ -149,6 +151,14 @@ describe("T3RelayConnectorSession", () => {
           originUrl: "http://internal.example.test:7331",
         }),
     ).toThrow(/loopback HTTP endpoint/u);
+    expect(
+      () =>
+        new T3RelayConnectorSession({
+          connectorUrl: "wss://endpoint.edge.test/.well-known/t3-relay/connect#fragment",
+          connectorToken: "token",
+          originUrl: "http://127.0.0.1:7331",
+        }),
+    ).toThrow(/secure connector endpoint/u);
   });
 
   it("exchanges the long-lived credential for a single-use connection ticket", async () => {
@@ -255,6 +265,59 @@ describe("T3RelayConnectorSession", () => {
     sockets[0]!.message(openLocal);
     expect(sockets).toHaveLength(1);
     session.close();
+  });
+
+  it("finishes cleanup and schedules recovery when socket close throws", async () => {
+    const events: Array<T3RelayConnectorLifecycleEvent> = [];
+    const sockets: Array<TestSocket> = [];
+    const session = new T3RelayConnectorSession(
+      {
+        connectorUrl: "wss://endpoint.edge.test/.well-known/t3-relay/connect",
+        connectorToken: "token",
+        originUrl: "http://127.0.0.1:7331/",
+      },
+      () => {
+        const socket = new TestSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      connectorTicketResponse,
+      (event) => events.push(event),
+    );
+
+    session.start();
+    await waitForConnector();
+    readyConnector(sockets[0]!);
+    sockets[0]!.message(
+      encodeRelayTransportControlFrame(3, {
+        type: "websocket_open",
+        url: "wss://endpoint.edge.test/ws",
+        headers: [],
+        protocols: [],
+      }),
+    );
+    sockets[1]!.throwOnClose = true;
+    sockets[0]!.peerClose(1006, "edge lost");
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "retry_scheduled", reason: "edge_disconnected" }),
+    );
+    session.close();
+
+    const stoppingSocket = new TestSocket();
+    const stoppingSession = new T3RelayConnectorSession(
+      {
+        connectorUrl: "wss://endpoint.edge.test/.well-known/t3-relay/connect",
+        connectorToken: "token",
+        originUrl: "http://127.0.0.1:7331/",
+      },
+      () => stoppingSocket,
+      connectorTicketResponse,
+    );
+    stoppingSession.start();
+    await waitForConnector();
+    stoppingSocket.throwOnClose = true;
+    expect(() => stoppingSession.close()).not.toThrow();
   });
 
   it("reports retry categories without exposing connector credentials", async () => {

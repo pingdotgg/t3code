@@ -16,6 +16,7 @@ import { relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export interface RelayLinkedEnvironmentRecord extends RelayClientEnvironmentRecord {
   readonly environmentPublicKey: string;
+  readonly updatedAt: string;
 }
 
 export interface AgentAwarenessDeliveryUserRecord {
@@ -137,6 +138,7 @@ export class EnvironmentLinks extends Context.Service<
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
+      readonly expectedUpdatedAt?: string;
     }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
   }
 >()("t3code-relay/environments/EnvironmentLinks") {}
@@ -362,6 +364,7 @@ const make = Effect.gen(function* () {
           endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
           endpointConnectorLeaseId: relayEnvironmentLinks.endpointConnectorLeaseId,
           createdAt: relayEnvironmentLinks.createdAt,
+          updatedAt: relayEnvironmentLinks.updatedAt,
         })
         .from(relayEnvironmentLinks)
         .where(
@@ -398,6 +401,7 @@ const make = Effect.gen(function* () {
                   },
                   environmentPublicKey: row.environmentPublicKey,
                   linkedAt: row.createdAt,
+                  updatedAt: row.updatedAt,
                 }
               : null;
           }),
@@ -428,6 +432,9 @@ const make = Effect.gen(function* () {
             eq(relayEnvironmentLinks.userId, input.userId),
             eq(relayEnvironmentLinks.environmentId, input.environmentId),
             isNull(relayEnvironmentLinks.revokedAt),
+            input.expectedUpdatedAt === undefined
+              ? undefined
+              : eq(relayEnvironmentLinks.updatedAt, input.expectedUpdatedAt),
           ),
         )
         .returning({ environmentId: relayEnvironmentLinks.environmentId })

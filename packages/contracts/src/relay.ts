@@ -311,6 +311,7 @@ export type RelayEnvironmentLinkFailedReason = typeof RelayEnvironmentLinkFailed
 export const RelayEnvironmentLinkUnavailableReason = Schema.Literals([
   "managed_endpoint_not_configured",
   "managed_endpoint_provisioning_failed",
+  "managed_endpoint_provider_unsupported",
 ]);
 export type RelayEnvironmentLinkUnavailableReason =
   typeof RelayEnvironmentLinkUnavailableReason.Type;
@@ -991,7 +992,7 @@ export const RelayClientGroup = HttpApiGroup.make("client")
         headers: RelayBearerRequestHeaders,
         payload: RelayEnvironmentLinkChallengeRequest,
         success: RelayEnvironmentLinkChallengeResponse,
-        error: RelayAuthAndInternalErrors,
+        error: [RelayAuthInvalidError, RelayEnvironmentLinkUnavailableError, RelayInternalError],
       },
     ).annotate(OpenApi.Summary, "Create an environment-link challenge"),
     HttpApiEndpoint.delete("unlinkEnvironment", "/v1/client/environment-links/:environmentId", {

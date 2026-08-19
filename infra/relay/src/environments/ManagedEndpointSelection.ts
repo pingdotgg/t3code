@@ -18,5 +18,8 @@ export function selectManagedEndpointProvider(input: {
   ) {
     return "t3_relay";
   }
-  return "cloudflare_tunnel";
+  if (supported === undefined || supported.some((provider) => provider === "cloudflare_tunnel")) {
+    return "cloudflare_tunnel";
+  }
+  return null;
 }

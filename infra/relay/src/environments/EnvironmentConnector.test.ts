@@ -224,6 +224,7 @@ function makeLinks(
           providerKind: "cloudflare_tunnel",
         },
         linkedAt: "2026-05-25T00:00:00.000Z",
+        updatedAt: "2026-05-25T00:00:00.000Z",
         environmentPublicKey: environmentKeyPair.publicKey,
         ...overrides,
       }),

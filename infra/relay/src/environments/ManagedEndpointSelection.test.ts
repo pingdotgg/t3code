@@ -44,4 +44,19 @@ describe("managed endpoint selection", () => {
       }),
     ).toBeNull();
   });
+
+  it("does not select a provider the host did not advertise", () => {
+    expect(
+      selectManagedEndpointProvider({
+        request: request(["t3_relay"]),
+        preferredProvider: "cloudflare_tunnel",
+      }),
+    ).toBeNull();
+    expect(
+      selectManagedEndpointProvider({
+        request: request([]),
+        preferredProvider: "t3_relay",
+      }),
+    ).toBeNull();
+  });
 });
