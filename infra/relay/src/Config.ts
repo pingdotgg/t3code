@@ -3,6 +3,8 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import type { RelayManagedEndpointProvider } from "@t3tools/contracts/relay";
+
 export const ApnsEnvironment = Schema.Literals(["sandbox", "production"]);
 export type ApnsEnvironment = typeof ApnsEnvironment.Type;
 
@@ -27,6 +29,7 @@ export class RelayConfiguration extends Context.Service<
     readonly cloudMintPublicKey: string;
     readonly managedEndpointBaseDomain: string | undefined;
     readonly managedEndpointNamespace: string | undefined;
+    readonly preferredManagedEndpointProvider?: RelayManagedEndpointProvider;
   }
 >()("t3code-relay/Config/RelayConfiguration") {}
 

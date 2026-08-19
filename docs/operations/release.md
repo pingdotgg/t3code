@@ -83,6 +83,9 @@ Required `production` environment variables:
 Optional `production` environment variables:
 
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
+- `RELAY_MANAGED_ENDPOINT_PROVIDER`, defaulting to `cloudflare_tunnel`; set it to
+  `t3_relay` only for the provider rollout described in the
+  [T3 relay canary runbook](./t3-relay-canary.md)
 
 Required `production` environment secrets:
 
@@ -94,7 +97,9 @@ are not bound into the relay Worker. The production deployment uses an Axiom per
 so `AXIOM_ORG_ID` must accompany `AXIOM_TOKEN`. The `prod` stage owns the retained PlanetScale
 database. Local personal stages provision isolated branches from it and are never deployed by CI.
 Production adopts the configured relay API and tunnel DNS zones as retained Cloudflare resources.
-Personal stages reference the production-owned zones.
+It also owns the managed-endpoint wildcard DNS record and stage-suffix Worker route used by the T3
+relay transport. Personal stages reference the production-owned zones and must not attempt to own
+that shared wildcard record.
 
 Developers deploy personal stages locally rather than through pull-request automation:
 

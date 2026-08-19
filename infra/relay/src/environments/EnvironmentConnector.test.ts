@@ -163,6 +163,7 @@ function connectorTestLayer(
   options?: {
     readonly links?: EnvironmentLinks.EnvironmentLinks["Service"];
     readonly allocations?: ManagedEndpointAllocations.ManagedEndpointAllocations["Service"];
+    readonly configuration?: RelayConfiguration.RelayConfiguration["Service"];
   },
 ) {
   return EnvironmentConnector.layer.pipe(
@@ -174,7 +175,7 @@ function connectorTestLayer(
         options?.allocations ?? makeAllocations(),
       ),
     ),
-    Layer.provide(RelayConfiguration.layer(settings)),
+    Layer.provide(RelayConfiguration.layer(options?.configuration ?? settings)),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
   );
 }
@@ -360,6 +361,52 @@ describe("EnvironmentConnector", () => {
               wsBaseUrl: "wss://127.0.0.1/ws",
               providerKind: "manual",
             },
+          }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("connects through a T3 relay endpoint without a Cloudflare allocation", () => {
+    const requestedUrls: Array<string> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        requestedUrls.push(request.url);
+        const healthRequest = decodeHealthRequestBody(requestBodyText(request));
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(signHealthResponse(healthRequest), { status: 200 }),
+        );
+      });
+    const hash = NodeCrypto.createHash("sha256")
+      .update("dev:user_123:env-connector-test")
+      .digest("hex")
+      .slice(0, 16);
+    const hostname = `${hash}-t3r-dev.example.test`;
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* connector.status({
+        userId: "user_123",
+        environmentId: "env-connector-test",
+      });
+
+      expect(result.status).toBe("online");
+      expect(requestedUrls).toEqual([`https://${hostname}/api/t3-connect/health`]);
+    }).pipe(
+      Effect.provide(
+        connectorTestLayer(execute, {
+          links: makeLinks({
+            endpoint: {
+              httpBaseUrl: `https://${hostname}/`,
+              wsBaseUrl: `wss://${hostname}/ws`,
+              providerKind: "t3_relay",
+            },
+          }),
+          allocations: makeAllocations(null),
+          configuration: RelayConfiguration.RelayConfiguration.of({
+            ...settings,
+            managedEndpointNamespace: "dev",
           }),
         }),
       ),

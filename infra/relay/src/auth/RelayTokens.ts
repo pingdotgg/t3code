@@ -7,6 +7,7 @@ import {
   RelayWebClientId,
   type RelayPublicClientId,
   type RelayEnvironmentLinkChallengeRequest,
+  type RelayManagedEndpointProvider,
 } from "@t3tools/contracts/relay";
 import { encodeOAuthScope, parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
 import {
@@ -39,6 +40,7 @@ const LinkChallengeClaims = Schema.Struct({
   notificationsEnabled: Schema.Boolean,
   liveActivitiesEnabled: Schema.Boolean,
   managedTunnelsEnabled: Schema.Boolean,
+  managedEndpointProvider: Schema.optional(Schema.Literals(["cloudflare_tunnel", "t3_relay"])),
 });
 export type LinkChallengeClaims = typeof LinkChallengeClaims.Type;
 
@@ -92,11 +94,13 @@ export class RelayTokens extends Context.Service<
       readonly jti: string;
       readonly issuedAtEpochSeconds: number;
       readonly expiresAtEpochSeconds: number;
+      readonly managedEndpointProvider?: RelayManagedEndpointProvider;
     }) => Effect.Effect<string, RelayJwtError>;
     readonly verifyLinkChallenge: (input: {
       readonly token: string;
       readonly userId: string;
       readonly request: RelayEnvironmentLinkChallengeRequest;
+      readonly managedEndpointProvider?: RelayManagedEndpointProvider;
       readonly nowEpochSeconds: number;
     }) => Effect.Effect<LinkChallengeClaims | null>;
     readonly issueDpopAccessToken: (input: {
@@ -133,7 +137,12 @@ const make = Effect.gen(function* () {
         jti: input.jti,
         iat: input.issuedAtEpochSeconds,
         exp: input.expiresAtEpochSeconds,
-        ...input.request,
+        notificationsEnabled: input.request.notificationsEnabled,
+        liveActivitiesEnabled: input.request.liveActivitiesEnabled,
+        managedTunnelsEnabled: input.request.managedTunnelsEnabled,
+        ...(input.managedEndpointProvider === undefined
+          ? {}
+          : { managedEndpointProvider: input.managedEndpointProvider }),
       },
     });
   });
@@ -155,7 +164,9 @@ const make = Effect.gen(function* () {
           claims.sub !== input.userId ||
           (input.request.notificationsEnabled && claims.notificationsEnabled !== true) ||
           (input.request.liveActivitiesEnabled && claims.liveActivitiesEnabled !== true) ||
-          (input.request.managedTunnelsEnabled && claims.managedTunnelsEnabled !== true)
+          (input.request.managedTunnelsEnabled && claims.managedTunnelsEnabled !== true) ||
+          (claims.managedEndpointProvider !== undefined &&
+            input.managedEndpointProvider !== claims.managedEndpointProvider)
         ) {
           return null;
         }

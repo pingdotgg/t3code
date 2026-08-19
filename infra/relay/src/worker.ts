@@ -1,6 +1,6 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
+import { Postgres as DrizzlePostgres } from "alchemy/Drizzle/Postgres";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -13,7 +13,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiScalar from "effect/unstable/httpapi/HttpApiScalar";
 
-import { RelayApi } from "@t3tools/contracts/relay";
+import { RelayApi, RelayManagedEndpointProvider } from "@t3tools/contracts/relay";
 
 import {
   clientApi,
@@ -57,6 +57,8 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
+import { Edge } from "./transport/EdgeWorker.ts";
+import * as T3RelayEndpointControl from "./transport/T3RelayEndpointControl.ts";
 
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -148,18 +150,27 @@ export const ApiLive = Api.make(
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
     const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(yield* RelayDb.RelayHyperdrive);
-    const db = yield* Drizzle.Postgres(hyperdrive.connectionString);
+    const db = yield* DrizzlePostgres(hyperdrive.connectionString);
 
     const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
     yield* yield* relayApiZone.zoneId;
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
+    const preferredManagedEndpointProvider = yield* Config.schema(
+      RelayManagedEndpointProvider,
+      "RELAY_MANAGED_ENDPOINT_PROVIDER",
+    ).pipe(Config.withDefault("cloudflare_tunnel"));
 
     //
     // 3. Runtime layers and app construction
     //
     const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
+    const relayEdge = yield* Cloudflare.Workers.bindWorker(Edge);
+    const t3RelayEndpointControlLayer = T3RelayEndpointControl.layerWorkerBinding(
+      relayEdge,
+      alchemyRuntimeContext,
+    );
 
     const loadSettings = Effect.gen(function* () {
       return RelayConfiguration.RelayConfiguration.of({
@@ -179,6 +190,7 @@ export const ApiLive = Api.make(
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
+        preferredManagedEndpointProvider,
       });
     });
 
@@ -201,7 +213,7 @@ export const ApiLive = Api.make(
           managedEndpointTunnelBinding,
           managedEndpointDnsBinding,
           alchemyRuntimeContext,
-        ),
+        ).pipe(Layer.provide(t3RelayEndpointControlLayer)),
       ),
       Layer.provideMerge(DpopProofs.layer),
       Layer.provideMerge(ApnsDeliveries.layer),

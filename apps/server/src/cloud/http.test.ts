@@ -373,6 +373,28 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
+  it.effect("binds a T3 relay shutdown release to its connector lease", () => {
+    const runtimeConfig = JSON.stringify({
+      providerKind: "t3_relay",
+      connectorToken: "connector-token",
+      connectorLeaseId: "lease-old",
+      connectorUrl: "wss://endpoint.example.test/.well-known/t3-relay/connect",
+      originUrl: "http://127.0.0.1:7331",
+    });
+    const { store } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, runtimeConfig],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      expect(yield* releaseManagedTunnelOnShutdown()).toBe(true);
+      expect(requests[0]?.headers["x-t3-relay-connector-lease-id"]).toBe("lease-old");
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
   it.effect("does nothing for links without a stored managed tunnel runtime config", () => {
     const { store } = makeMemorySecretStore();
     const applyConfigCalls: Array<unknown> = [];
@@ -595,14 +617,18 @@ describe("link proof provider kinds", () => {
     origin: { localHttpHost: "127.0.0.1", localHttpPort: 7331 },
   });
 
-  it("accepts managed and manual endpoints but not t3_relay", () => {
+  it("accepts both managed providers and manual endpoints", () => {
     expect(isSupportedLinkProviderKind(proofRequest("cloudflare_tunnel"))).toBe(true);
+    expect(isSupportedLinkProviderKind(proofRequest("t3_relay"))).toBe(true);
     expect(isSupportedLinkProviderKind(proofRequest("manual"))).toBe(true);
-    expect(isSupportedLinkProviderKind(proofRequest("t3_relay"))).toBe(false);
   });
 
   it("only claims the managed-tunnel scope for tunnel links", () => {
     expect(linkProofScopes(proofRequest("cloudflare_tunnel"))).toEqual([
+      "agent_activity_notifications",
+      "managed_tunnels",
+    ]);
+    expect(linkProofScopes(proofRequest("t3_relay"))).toEqual([
       "agent_activity_notifications",
       "managed_tunnels",
     ]);

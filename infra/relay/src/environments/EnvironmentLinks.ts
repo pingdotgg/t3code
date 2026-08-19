@@ -132,6 +132,7 @@ export class EnvironmentLinks extends Context.Service<
     readonly getForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
+      readonly includeRevoked?: boolean;
     }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
@@ -183,6 +184,7 @@ const make = Effect.gen(function* () {
           endpointHttpBaseUrl: endpoint.httpBaseUrl,
           endpointWsBaseUrl: endpoint.wsBaseUrl,
           endpointProviderKind: endpoint.providerKind,
+          endpointConnectorLeaseId: endpoint.connectorLeaseId ?? null,
           notificationsEnabled: request.notificationsEnabled,
           liveActivitiesEnabled: request.liveActivitiesEnabled,
           managedTunnelsEnabled: request.managedTunnelsEnabled,
@@ -199,6 +201,7 @@ const make = Effect.gen(function* () {
             endpointHttpBaseUrl: endpoint.httpBaseUrl,
             endpointWsBaseUrl: endpoint.wsBaseUrl,
             endpointProviderKind: endpoint.providerKind,
+            endpointConnectorLeaseId: endpoint.connectorLeaseId ?? null,
             notificationsEnabled: request.notificationsEnabled,
             liveActivitiesEnabled: request.liveActivitiesEnabled,
             managedTunnelsEnabled: request.managedTunnelsEnabled,
@@ -307,6 +310,7 @@ const make = Effect.gen(function* () {
           endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
           endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
           endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
+          endpointConnectorLeaseId: relayEnvironmentLinks.endpointConnectorLeaseId,
           createdAt: relayEnvironmentLinks.createdAt,
         })
         .from(relayEnvironmentLinks)
@@ -327,6 +331,9 @@ const make = Effect.gen(function* () {
                 wsBaseUrl: row.endpointWsBaseUrl,
                 providerKind:
                   row.endpointProviderKind as RelayClientEnvironmentRecord["endpoint"]["providerKind"],
+                ...(row.endpointConnectorLeaseId === null
+                  ? {}
+                  : { connectorLeaseId: row.endpointConnectorLeaseId }),
               },
               linkedAt: row.createdAt,
             })),
@@ -353,15 +360,21 @@ const make = Effect.gen(function* () {
           endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
           endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
           endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
+          endpointConnectorLeaseId: relayEnvironmentLinks.endpointConnectorLeaseId,
           createdAt: relayEnvironmentLinks.createdAt,
         })
         .from(relayEnvironmentLinks)
         .where(
-          and(
-            eq(relayEnvironmentLinks.userId, input.userId),
-            eq(relayEnvironmentLinks.environmentId, input.environmentId),
-            isNull(relayEnvironmentLinks.revokedAt),
-          ),
+          input.includeRevoked
+            ? and(
+                eq(relayEnvironmentLinks.userId, input.userId),
+                eq(relayEnvironmentLinks.environmentId, input.environmentId),
+              )
+            : and(
+                eq(relayEnvironmentLinks.userId, input.userId),
+                eq(relayEnvironmentLinks.environmentId, input.environmentId),
+                isNull(relayEnvironmentLinks.revokedAt),
+              ),
         )
         .limit(1)
         .pipe(
@@ -379,6 +392,9 @@ const make = Effect.gen(function* () {
                     wsBaseUrl: row.endpointWsBaseUrl,
                     providerKind:
                       row.endpointProviderKind as RelayClientEnvironmentRecord["endpoint"]["providerKind"],
+                    ...(row.endpointConnectorLeaseId === null
+                      ? {}
+                      : { connectorLeaseId: row.endpointConnectorLeaseId }),
                   },
                   environmentPublicKey: row.environmentPublicKey,
                   linkedAt: row.createdAt,
