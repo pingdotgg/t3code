@@ -1578,7 +1578,6 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnInProgress
         latestRun={{
           runId: RunId.make("run-1"),
           status: "running",
