@@ -576,11 +576,33 @@ public final class FeatureRootModel {
     /// settings snapshot. Other unsaved Settings edits remain drafts.
     @discardableResult
     public func saveAppearance(_ appearance: FeatureAppearance) async -> Bool {
-        let previous = snapshot.settings
-        guard previous.appearance != appearance else { return true }
+        await savePresentationPreference { $0.appearance = appearance }
+    }
 
+    /// Applies the text and code size preferences optimistically so dragging a
+    /// size control rescales every surface — including the Settings sheet doing
+    /// the dragging — before the write completes.
+    @discardableResult
+    public func saveTextSizes(
+        textSize: FeatureTextSizeAdjustment,
+        codeSize: FeatureTextSizeAdjustment
+    ) async -> Bool {
+        await savePresentationPreference {
+            $0.textSize = textSize
+            $0.codeSize = codeSize
+        }
+    }
+
+    /// Persists one presentation preference against the current settings
+    /// snapshot, leaving other unsaved Settings edits as drafts, and rolls the
+    /// optimistic change back if the write fails.
+    private func savePresentationPreference(
+        _ change: (inout FeatureSettings) -> Void
+    ) async -> Bool {
+        let previous = snapshot.settings
         var updated = previous
-        updated.appearance = appearance
+        change(&updated)
+        guard updated != previous else { return true }
         snapshot.settings = updated
 
         do {

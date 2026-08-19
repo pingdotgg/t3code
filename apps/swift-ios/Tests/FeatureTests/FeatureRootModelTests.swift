@@ -21,6 +21,37 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func textSizesApplyImmediatelyAndPersistWithoutSavingTheDraft() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+
+        let save = Task {
+            await model.saveTextSizes(
+                textSize: FeatureTextSizeAdjustment(steps: 2),
+                codeSize: FeatureTextSizeAdjustment(steps: -1)
+            )
+        }
+        await Task.yield()
+
+        #expect(model.snapshot.settings.textSize.steps == 2)
+        #expect(model.snapshot.settings.codeSize.steps == -1)
+        #expect(await save.value)
+        #expect(client.savedSettings.last?.textSize.steps == 2)
+        #expect(client.savedSettings.last?.codeSize.steps == -1)
+    }
+
+    @Test
+    func unchangedTextSizesSkipTheWriteSoSliderResendsCostNothing() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+
+        let saved = await model.saveTextSizes(textSize: .standard, codeSize: .standard)
+
+        #expect(saved)
+        #expect(client.savedSettings.isEmpty)
+    }
+
+    @Test
     func backgroundRefreshUsesTheBoundedClientPath() async {
         let client = FeatureClientStub()
         client.backgroundSnapshotValue = FeatureSnapshot(

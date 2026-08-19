@@ -496,28 +496,34 @@ private struct MarkdownCodeBlockView: View {
                 .fill(T3Colors.separator)
                 .frame(height: 1)
 
-            if wrapsLines {
-                MarkdownInlineText(
-                    renderedCode,
-                    selectionContext: selectionContext,
-                    lineSpacing: 3,
-                    wrapsLines: true
-                )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(13)
-            } else {
-                ScrollView(.horizontal) {
+            // Only the code itself takes the code size preference; the language
+            // label and the wrap/copy controls stay at the app text size so the
+            // block's chrome matches every other row in the transcript.
+            Group {
+                if wrapsLines {
                     MarkdownInlineText(
                         renderedCode,
                         selectionContext: selectionContext,
                         lineSpacing: 3,
-                        wrapsLines: false
+                        wrapsLines: true
                     )
-                        .fixedSize(horizontal: true, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(13)
+                } else {
+                    ScrollView(.horizontal) {
+                        MarkdownInlineText(
+                            renderedCode,
+                            selectionContext: selectionContext,
+                            lineSpacing: 3,
+                            wrapsLines: false
+                        )
+                            .fixedSize(horizontal: true, vertical: true)
+                            .padding(13)
+                    }
+                    .scrollIndicators(.hidden)
                 }
-                .scrollIndicators(.hidden)
             }
+            .t3CodeTextSize()
         }
         .background(T3Colors.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: 10))
