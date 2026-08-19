@@ -45,9 +45,9 @@ export function WorkspaceBreadcrumbItem({
   );
 }
 
-export function WorkspaceBreadcrumbSeparator() {
+export function WorkspaceBreadcrumbSeparator({ className }: { readonly className?: string }) {
   return (
-    <li aria-hidden="true" className="flex shrink-0 items-center text-icon-muted">
+    <li aria-hidden="true" className={cn("flex shrink-0 items-center text-icon-muted", className)}>
       /
     </li>
   );
