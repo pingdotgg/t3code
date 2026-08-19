@@ -3,7 +3,9 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { beforeEach } from "vite-plus/test";
 
@@ -304,6 +306,29 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         snapshot.message,
         "Failed to execute OpenCode CLI health check: opencode models failed",
       );
+    }),
+  );
+
+  it.effect("includes discovered skills from workspace in provider snapshot", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-provider-test-" });
+      const workspace = path.join(tempDir, "workspace");
+      const skillDir = path.join(workspace, ".opencode", "skills", "test-skill");
+
+      yield* fs.makeDirectory(skillDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(skillDir, "SKILL.md"),
+        ["---", "name: test-skill", "description: Test skill description.", "---"].join("\n"),
+      );
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), workspace);
+
+      NodeAssert.equal(snapshot.skills.length, 1);
+      NodeAssert.equal(snapshot.skills[0]?.name, "test-skill");
+      NodeAssert.equal(snapshot.skills[0]?.description, "Test skill description.");
+      NodeAssert.equal(snapshot.skills[0]?.scope, "project");
     }),
   );
 });

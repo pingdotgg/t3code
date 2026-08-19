@@ -23,6 +23,9 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
+import { discoverOpenCodeSkills } from "../Drivers/OpenCodeSkills.ts";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const OPENCODE_PRESENTATION = {
@@ -326,12 +329,17 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   openCodeSettings: OpenCodeSettings,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
-): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  OpenCodeRuntime | FileSystem.FileSystem | Path.Path
+> {
   const openCodeRuntime = yield* OpenCodeRuntime;
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+  const skills = yield* discoverOpenCodeSkills(cwd, resolvedEnvironment);
 
   const fallback = (cause: unknown, version: string | null = null) => {
     const failure = formatOpenCodeProbeError({
@@ -344,6 +352,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: openCodeSettings.enabled,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      skills,
       probe: {
         installed: failure.installed,
         version,
@@ -360,6 +369,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: false,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      skills,
       probe: {
         installed: false,
         version: null,
@@ -406,6 +416,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         enabled: openCodeSettings.enabled,
         checkedAt,
         models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+        skills,
         probe: {
           installed: true,
           version,
