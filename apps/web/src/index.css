@@ -2112,7 +2112,6 @@ code {
    in ChatMarkdown.tsx and use logical properties below. Code stays LTR. */
 .chat-markdown :is(p, li, h1, h2, h3, h4, h5, h6, td, th, dt, dd) {
   unicode-bidi: plaintext;
-  text-align: start;
 }
 
 .chat-markdown pre,
