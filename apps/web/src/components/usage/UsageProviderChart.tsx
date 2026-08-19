@@ -19,6 +19,7 @@ const PLOT_TOP = 8;
 export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
+  readonly providers: readonly UsageProviderKind[];
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly hours: readonly string[];
@@ -186,17 +187,8 @@ export function buildDayColumns(
   return buildPeriodColumns(days, byDay, metric);
 }
 
-export function providersWithUsage(columns: readonly DayColumn[]): readonly UsageProviderKind[] {
-  const active = new Set<UsageProviderKind>();
-  for (const column of columns) {
-    for (const band of column.bands) {
-      if (band.value > 0) active.add(band.provider);
-    }
-  }
-  return PROVIDER_ORDER.filter((provider) => active.has(provider));
-}
-
 export function UsageProviderChart({
+  providers,
   days,
   daily,
   hours,
@@ -219,10 +211,9 @@ export function UsageProviderChart({
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
-  const { activeProviders, paths, ticks, stepX, toY, series } = useMemo(() => {
+  const { paths, ticks, stepX, toY, series } = useMemo(() => {
     if (periods.length === 0) {
       return {
-        activeProviders: [] as readonly UsageProviderKind[],
         paths: [],
         series: [] as readonly DayColumn[],
         stepX: 0,
@@ -232,7 +223,6 @@ export function UsageProviderChart({
     }
 
     const columns = buildPeriodColumns(periods, byPeriod, metric);
-    const visibleProviders = providersWithUsage(columns);
     // The scale tops out at the largest single provider-period, not the sum:
     // layered series each measure from zero, so a combined peak would leave
     // the plot permanently half empty.
@@ -247,7 +237,7 @@ export function UsageProviderChart({
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = visibleProviders.map((provider) => {
+    const built = providers.map((provider) => {
       const providerIndex = PROVIDER_ORDER.indexOf(provider);
       const line = curvePath(
         smoothCurve(
@@ -267,14 +257,13 @@ export function UsageProviderChart({
 
     // Paint the heavier series first so the lighter one is not buried.
     return {
-      activeProviders: visibleProviders,
       paths: built.toSorted((a, b) => b.total - a.total),
       series: columns,
       stepX: step,
       ticks: tickValues,
       toY,
     };
-  }, [byPeriod, metric, periods]);
+  }, [byPeriod, metric, periods, providers]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
@@ -436,7 +425,7 @@ export function UsageProviderChart({
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
-              {activeProviders.map((provider) => {
+              {providers.map((provider) => {
                 const { label, mark: Mark } = PROVIDER_PRESENTATION[provider];
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">
