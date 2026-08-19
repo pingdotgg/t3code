@@ -799,7 +799,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
       background:
         linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
-        var(--chat-composer-attached-surface);
+        var(--chat-composer-attached-surface) !important;
     }
   }
 
