@@ -25,8 +25,6 @@ allowBuilds:
 catalog:
   "@clerk/backend": 3.14.0
   "@clerk/clerk-js": 6.29.2
-  "@clerk/electron": 0.0.33
-  "@clerk/electron-passkeys": 0.0.3
   "@clerk/expo": 4.2.0
   "@clerk/react": 6.14.4
   "@clerk/shared": 4.29.2
@@ -55,7 +53,6 @@ catalog:
 minimumReleaseAgeExclude:
   - "@clerk/backend@3.14.0"
   - "@clerk/clerk-js@6.29.2"
-  - "@clerk/electron@0.0.33"
   - "@clerk/expo@4.2.0"
   - "@clerk/react@6.14.4"
   - "@clerk/shared@4.29.2"
@@ -86,8 +83,6 @@ overrides:
   "@clerk/clerk-js>@solana/wallet-adapter-react": "-"
   "@clerk/clerk-js>@solana/wallet-standard": "-"
   "@clerk/clerk-js>@wallet-standard/core": "-"
-  "@clerk/electron": "catalog:"
-  "@clerk/electron-passkeys": "catalog:"
   "@clerk/expo": "catalog:"
   "@clerk/react": "catalog:"
   "@clerk/shared": "catalog:"

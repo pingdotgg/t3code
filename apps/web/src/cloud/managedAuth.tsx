@@ -1,4 +1,3 @@
-import { useAuth } from "@clerk/react";
 import { ManagedRelay, setManagedRelaySession } from "@t3tools/client-runtime/relay";
 import {
   reportAtomCommandResult,
@@ -12,16 +11,9 @@ import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
-import { resolveRelayClerkTokenOptions } from "./publicConfig";
-
-let relayTokenProvider: (() => Promise<string | null>) | null = null;
-
-export async function readManagedRelayClerkToken(): Promise<string | null> {
-  return relayTokenProvider?.() ?? null;
-}
+import { useT3ConnectAuth } from "./connectAuth";
 
 export function deactivateManagedRelayAuthentication(): void {
-  relayTokenProvider = null;
   setManagedRelaySession(appAtomRegistry, null);
 }
 
@@ -29,17 +21,19 @@ export function activateManagedRelayAuthentication(
   accountId: string,
   readClerkToken: () => Promise<string | null>,
 ): void {
-  relayTokenProvider = readClerkToken;
   setManagedRelaySession(appAtomRegistry, {
     accountId,
     readClerkToken,
   });
 }
 
+/**
+ * Bridges the T3 Connect session (Clerk on web, environment-server auth on
+ * desktop) into the managed relay session atom, and cleans relay state up
+ * across sign-out and account switches.
+ */
 export function ManagedRelayAuthProvider({ children }: { readonly children: ReactNode }) {
-  const { getToken, isLoaded, isSignedIn, userId } = useAuth({
-    treatPendingAsSignedOut: false,
-  });
+  const { getToken, isLoaded, isSignedIn, userId } = useT3ConnectAuth();
   const removeRelayEnvironments = useAtomCommand(environmentCatalog.removeRelayEnvironments, {
     reportFailure: false,
     reportDefect: false,
@@ -83,10 +77,9 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
         void queueAccountCleanup();
       }
     } else {
-      const tokenProvider = () => getToken(resolveRelayClerkTokenOptions());
       const activateSession = () => {
         if (!cancelled) {
-          activateManagedRelayAuthentication(userId, tokenProvider);
+          activateManagedRelayAuthentication(userId, getToken);
         }
       };
       const activateAfterTransition = (transition: Promise<void>) => {

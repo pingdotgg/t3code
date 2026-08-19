@@ -30,7 +30,6 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "ffi-rs",
   "@yuuang/",
   "@ff-labs/",
-  "@clerk/electron-passkeys",
   "@msgpackr-extract/",
   "msgpackr-extract",
   "node-gyp-build",

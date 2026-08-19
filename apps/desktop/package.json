@@ -12,8 +12,6 @@
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
-    "@clerk/electron": "catalog:",
-    "@clerk/electron-passkeys": "catalog:",
     "@effect/platform-node": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",

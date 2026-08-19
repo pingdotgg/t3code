@@ -356,7 +356,7 @@ describe("ManagedRelayClient", () => {
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
   });
 
-  it.effect("does not persist tokens when the Clerk subject cannot be decoded", () => {
+  it.effect("caches tokens for opaque OAuth credentials keyed by the token value", () => {
     let persistedTokens: ReadonlyArray<ManagedRelay.ManagedRelayAccessTokenCacheEntry> = [];
     const accessTokenStore: ManagedRelay.ManagedRelayAccessTokenStore = {
       load: Effect.succeed([]),
@@ -408,7 +408,9 @@ describe("ManagedRelayClient", () => {
         environmentId: EnvironmentId.make("env-1"),
       });
 
-      expect(persistedTokens).toEqual([]);
+      // Opaque tokens (desktop/CLI OAuth credentials) partition the cache by
+      // their own value, so rotation invalidates without a decodable subject.
+      expect(persistedTokens.map((entry) => entry.accountId)).toEqual(["token:not-a-jwt"]);
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
   });
 

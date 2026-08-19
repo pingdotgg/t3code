@@ -22,6 +22,9 @@ export class RelayConfiguration extends Context.Service<
     readonly clerkSecretKey: Redacted.Redacted<string>;
     readonly clerkPublishableKey: string;
     readonly clerkJwtAudience: string;
+    // OAuth client id of the CLI/desktop application. When set, OAuth bearer
+    // tokens from any other OAuth app in the Clerk instance are rejected.
+    readonly clerkCliOAuthClientId: string | undefined;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;

@@ -346,7 +346,8 @@
         <pre class="diagram mermaid">
 flowchart LR
   subgraph Clients["User-facing clients"]
-    Web["Desktop / hosted web UI"]
+    Web["Hosted web UI"]
+    Desktop["Desktop app"]
     Mobile["Mobile app"]
     CLI["Headless CLI"]
   end
@@ -375,9 +376,11 @@ flowchart LR
   Web -->|"Clerk bearer / relay DPoP"| Worker
   Mobile -->|"Clerk bearer / relay DPoP"| Worker
   CLI -->|"Clerk OAuth bearer"| Worker
+  Desktop -->|"Clerk OAuth bearer / relay DPoP"| Worker
   Web --> Clerk
   Mobile --> Clerk
   CLI -->|"PKCE authorization code flow"| Clerk
+  Desktop -->|"browser PKCE flow via bundled server<br/>credential shared with the CLI"| Clerk
   Worker --> Hyperdrive --> DB
   Worker --> Traces
   Worker --> CF
@@ -410,9 +413,9 @@ flowchart LR
               <td>Create a link challenge, submit an environment proof, list links, or unlink.</td>
             </tr>
             <tr>
-              <td>CLI -> relay link management</td>
+              <td>CLI or desktop -> relay link management</td>
               <td>HTTPS</td>
-              <td>Clerk OAuth access token obtained with PKCE</td>
+              <td>Clerk OAuth access token obtained with PKCE (one shared stored credential)</td>
               <td>Reconcile the desired headless cloud link when the server starts.</td>
             </tr>
             <tr>

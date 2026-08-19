@@ -52,6 +52,7 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   clerkSecretKey: Redacted.make("clerk-secret-key"),
   clerkPublishableKey: "pk_test_test",
   clerkJwtAudience: "t3-code-relay",
+  clerkCliOAuthClientId: undefined,
   apnsDeliveryJobSigningSecret: Redacted.make("apns-delivery-secret"),
   cloudMintPrivateKey: Redacted.make("cloud-mint-private-key"),
   cloudMintPublicKey: "cloud-mint-public-key",
@@ -104,6 +105,54 @@ describe("relay client authentication", () => {
         secretKey: "clerk-secret-key",
         publishableKey: "pk_test_test",
       });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          vi.mocked(verifyToken).mockReset();
+          vi.mocked(createClerkClient).mockReset();
+        }),
+      ),
+    ),
+  );
+
+  it.effect("pins OAuth bearer tokens to the configured CLI client id", () =>
+    Effect.gen(function* () {
+      const pinnedSettings = { ...relaySettings, clerkCliOAuthClientId: "oauth_cli_expected" };
+      vi.mocked(verifyToken).mockRejectedValue(new Error("not a session JWT"));
+      vi.mocked(createClerkClient).mockReturnValue({
+        authenticateRequest: vi.fn().mockResolvedValue({
+          isAuthenticated: true,
+          toAuth: () => ({ userId: "user_oauth", clientId: "oauth_cli_expected" }),
+        }),
+      } as never);
+
+      expect(yield* verifyRelayClientBearerToken(pinnedSettings, "oauth-token")).toEqual({
+        sub: "user_oauth",
+        mode: "clerk_oauth_bearer",
+      });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          vi.mocked(verifyToken).mockReset();
+          vi.mocked(createClerkClient).mockReset();
+        }),
+      ),
+    ),
+  );
+
+  it.effect("rejects OAuth bearer tokens issued to another OAuth application", () =>
+    Effect.gen(function* () {
+      const pinnedSettings = { ...relaySettings, clerkCliOAuthClientId: "oauth_cli_expected" };
+      vi.mocked(verifyToken).mockRejectedValue(new Error("not a session JWT"));
+      vi.mocked(createClerkClient).mockReturnValue({
+        authenticateRequest: vi.fn().mockResolvedValue({
+          isAuthenticated: true,
+          toAuth: () => ({ userId: "user_oauth", clientId: "oauth_other_app" }),
+        }),
+      } as never);
+
+      const error = yield* Effect.flip(verifyRelayClientBearerToken(pinnedSettings, "oauth-token"));
+      expect(error._tag).toBe("ClerkTokenVerificationFailed");
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ClerkPublishableKeyDecodeError,
   ClerkPublishableKeyFrontendApiError,
-  clerkFrontendApiHostnameFromPublishableKey,
   clerkFrontendApiUrlFromPublishableKey,
   isAllowedClerkFrontendApiHostname,
 } from "./relayAuth.ts";
@@ -20,10 +19,7 @@ const captureError = (run: () => unknown): unknown => {
 };
 
 describe("Clerk relay auth", () => {
-  it("derives a custom Frontend API hostname from a Clerk publishable key", () => {
-    expect(clerkFrontendApiHostnameFromPublishableKey(clerkPublishableKey("clerk.t3.codes"))).toBe(
-      "clerk.t3.codes",
-    );
+  it("derives a custom Frontend API URL from a Clerk publishable key", () => {
     expect(clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey("clerk.t3.codes"))).toBe(
       "https://clerk.t3.codes",
     );
@@ -64,7 +60,7 @@ describe("Clerk relay auth", () => {
   it("preserves URL parser failures for decoded frontend APIs", () => {
     const frontendApi = "[invalid-host";
     const error = captureError(() =>
-      clerkFrontendApiHostnameFromPublishableKey(clerkPublishableKey(frontendApi)),
+      clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey(frontendApi)),
     );
 
     expect(error).toBeInstanceOf(ClerkPublishableKeyFrontendApiError);

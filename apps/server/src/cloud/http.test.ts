@@ -14,7 +14,13 @@ import {
   type HttpClientRequest,
 } from "effect/unstable/http";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  AuthStandardClientScopes,
+  EnvironmentAuthenticatedPrincipal,
+  EnvironmentId,
+  type AuthEnvironmentScope,
+} from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -32,6 +38,11 @@ import * as CliTokenManager from "./CliTokenManager.ts";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
 import { CLOUD_ENDPOINT_RUNTIME_CONFIG, RELAY_URL_SECRET } from "./config.ts";
 import {
+  connectAuthCodeHandler,
+  connectAuthLoginHandler,
+  connectAuthLogoutHandler,
+  connectAuthStateHandler,
+  connectAuthTokenHandler,
   consumeCloudReplayGuards,
   isSupportedLinkProviderKind,
   linkProofScopes,
@@ -223,6 +234,9 @@ describe("reconcileDesiredCloudLink", () => {
           hasCredential: unusedSecretStoreOperation(),
           store: () => unusedSecretStoreOperation(),
           clear: unusedSecretStoreOperation(),
+          clientAuthState: unusedSecretStoreOperation(),
+          beginBrowserLogin: unusedSecretStoreOperation(),
+          submitBrowserLoginCode: () => unusedSecretStoreOperation(),
         }),
       ),
       Effect.provideService(
@@ -321,6 +335,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
             hasCredential: unusedSecretStoreOperation(),
             store: () => unusedSecretStoreOperation(),
             clear: unusedSecretStoreOperation(),
+            clientAuthState: unusedSecretStoreOperation(),
+            beginBrowserLogin: unusedSecretStoreOperation(),
+            submitBrowserLoginCode: () => unusedSecretStoreOperation(),
           }),
         ),
         Effect.provideService(
@@ -608,4 +625,105 @@ describe("link proof provider kinds", () => {
     ]);
     expect(linkProofScopes(proofRequest("manual"))).toEqual(["agent_activity_notifications"]);
   });
+});
+
+describe("connect auth endpoint scopes", () => {
+  const authState: CliTokenManager.CloudCliClientAuthState = {
+    authorized: true,
+    pendingLogin: true,
+    authorizationUrl: "https://app.example.test/connect#state=s&challenge=c&port=34338",
+    accountId: "user_scope_test",
+    identity: "theo@example.test",
+  };
+
+  const makeManager = (events: string[]) =>
+    CliTokenManager.CloudCliTokenManager.of({
+      get: unusedSecretStoreOperation(),
+      getExisting: unusedSecretStoreOperation(),
+      hasCredential: unusedSecretStoreOperation(),
+      store: () => unusedSecretStoreOperation(),
+      clear: Effect.sync(() => {
+        events.push("clear");
+      }),
+      clientAuthState: Effect.succeed(authState),
+      beginBrowserLogin: unusedSecretStoreOperation(),
+      submitBrowserLoginCode: () => unusedSecretStoreOperation(),
+    });
+
+  const makeDependencies = (events: string[]) => ({
+    secrets: makeSecretStore(unusedSecretStoreOperation),
+    environment: ServerEnvironment.ServerEnvironment.of({
+      getEnvironmentId: unusedSecretStoreOperation(),
+      getDescriptor: unusedSecretStoreOperation(),
+    }),
+    endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+      applyConfig: unusedSecretStoreOperation,
+    } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
+    environmentAuth: EnvironmentAuth.EnvironmentAuth.of(
+      {} as EnvironmentAuth.EnvironmentAuth["Service"],
+    ),
+    cliTokenManager: makeManager(events),
+    httpClient: HttpClient.make(() => unusedSecretStoreOperation()),
+  });
+
+  const providePrincipal = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+    Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+      sessionId: AuthSessionId.make("session-scope-test"),
+      subject: "scope-test-client",
+      method: "bearer-access-token",
+      scopes: new Set(scopes),
+    });
+
+  it.effect("rejects standard-scoped clients from the credential-bearing endpoints", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const dependencies = makeDependencies(events);
+      const expectScopeRejected = (error: unknown) =>
+        expect(error).toMatchObject({
+          _tag: "EnvironmentScopeRequiredError",
+          requiredScope: "relay:write",
+        });
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://environment.example.test/api/connect/auth/token"),
+      );
+      expectScopeRejected(
+        yield* Effect.flip(
+          connectAuthTokenHandler(dependencies).pipe(
+            Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+          ),
+        ),
+      );
+      expectScopeRejected(yield* Effect.flip(connectAuthLogoutHandler(dependencies)));
+      expectScopeRejected(yield* Effect.flip(connectAuthLoginHandler(dependencies)));
+      expectScopeRejected(
+        yield* Effect.flip(connectAuthCodeHandler(dependencies, { code: "code.state" })),
+      );
+      expect(events).toEqual([]);
+    }).pipe(providePrincipal(AuthStandardClientScopes)),
+  );
+
+  it.effect("standard scopes read auth state without the authorization URL", () =>
+    Effect.gen(function* () {
+      const state = yield* connectAuthStateHandler(makeDependencies([]));
+      // The pending URL is a capability to complete the sign-in with another
+      // account; only write-scoped sessions may see it.
+      expect(state).toEqual({ ...authState, authorizationUrl: null });
+    }).pipe(providePrincipal(AuthStandardClientScopes)),
+  );
+
+  it.effect("admin scopes read the pending authorization URL", () =>
+    Effect.gen(function* () {
+      const state = yield* connectAuthStateHandler(makeDependencies([]));
+      expect(state).toEqual(authState);
+    }).pipe(providePrincipal([...AuthStandardClientScopes, "relay:write"])),
+  );
+
+  it.effect("admin scopes may sign out", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const state = yield* connectAuthLogoutHandler(makeDependencies(events));
+      expect(state).toEqual(authState);
+      expect(events).toEqual(["clear"]);
+    }).pipe(providePrincipal([...AuthStandardClientScopes, "relay:write"])),
+  );
 });

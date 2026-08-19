@@ -144,6 +144,9 @@ export const ApiLive = Api.make(
     const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.string("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.string("CLERK_JWT_AUDIENCE");
+    const clerkCliOAuthClientId = yield* Config.string("CLERK_CLI_OAUTH_CLIENT_ID").pipe(
+      Config.withDefault(""),
+    );
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
@@ -175,6 +178,7 @@ export const ApiLive = Api.make(
         clerkSecretKey,
         clerkPublishableKey,
         clerkJwtAudience,
+        clerkCliOAuthClientId: clerkCliOAuthClientId.trim() || undefined,
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,

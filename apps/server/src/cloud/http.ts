@@ -6,6 +6,8 @@ import {
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentCloudLinkStateResult,
   EnvironmentCloudRelayConfigResult,
+  type EnvironmentConnectAuthState,
+  type EnvironmentConnectAuthToken,
   EnvironmentHttpApi,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
@@ -112,6 +114,14 @@ const failEnvironmentCloudInternalError =
 
 const failCloudCliTokenManagerError = (error: CliTokenManager.CloudCliTokenManagerError) =>
   failEnvironmentCloudInternalError(error.message)(error);
+
+const cloudCliTokenManagerErrorHandlers = {
+  CloudCliCredentialRemovalError: failCloudCliTokenManagerError,
+  CloudCliCredentialRefreshError: failCloudCliTokenManagerError,
+  CloudCliCredentialReadError: failCloudCliTokenManagerError,
+  CloudCliAuthorizationError: failCloudCliTokenManagerError,
+  CloudCliAuthorizationTimeoutError: failCloudCliTokenManagerError,
+} as const;
 
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
@@ -620,13 +630,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
     ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not persist desired T3 Connect link state."),
   ),
-  Effect.catchTags({
-    CloudCliCredentialRemovalError: failCloudCliTokenManagerError,
-    CloudCliCredentialRefreshError: failCloudCliTokenManagerError,
-    CloudCliCredentialReadError: failCloudCliTokenManagerError,
-    CloudCliAuthorizationError: failCloudCliTokenManagerError,
-    CloudCliAuthorizationTimeoutError: failCloudCliTokenManagerError,
-  }),
+  Effect.catchTags(cloudCliTokenManagerErrorHandlers),
 );
 
 export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileDesiredLink")(
@@ -827,6 +831,74 @@ const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
     failEnvironmentCloudInternalError("Could not persist environment cloud preferences."),
   ),
 );
+
+export const connectAuthStateHandler = Effect.fn("environment.cloud.authState")(function* (
+  dependencies: CloudHttpDependencies,
+) {
+  const session = yield* requireEnvironmentScope(AuthRelayReadScope);
+  const state = yield* dependencies.cliTokenManager.clientAuthState;
+  // The pending authorization URL is a capability: whoever completes it
+  // replaces the shared credential with their own account. Only sessions
+  // allowed to start a sign-in may see it.
+  return (
+    session.scopes.has(AuthRelayWriteScope) ? state : { ...state, authorizationUrl: null }
+  ) satisfies EnvironmentConnectAuthState;
+}, Effect.catchTags(cloudCliTokenManagerErrorHandlers));
+
+export const connectAuthLoginHandler = Effect.fn("environment.cloud.authLogin")(function* (
+  dependencies: CloudHttpDependencies,
+) {
+  yield* requireEnvironmentScope(AuthRelayWriteScope);
+  yield* dependencies.cliTokenManager.beginBrowserLogin;
+  return (yield* dependencies.cliTokenManager
+    .clientAuthState) satisfies EnvironmentConnectAuthState;
+}, Effect.catchTags(cloudCliTokenManagerErrorHandlers));
+
+export const connectAuthCodeHandler = Effect.fn("environment.cloud.authCode")(function* (
+  dependencies: CloudHttpDependencies,
+  payload: { readonly code: string },
+) {
+  yield* requireEnvironmentScope(AuthRelayWriteScope);
+  const result = yield* dependencies.cliTokenManager.submitBrowserLoginCode(payload.code);
+  if (!result.accepted) {
+    return yield* new EnvironmentHttpBadRequestError({ message: result.reason });
+  }
+  return (yield* dependencies.cliTokenManager
+    .clientAuthState) satisfies EnvironmentConnectAuthState;
+}, Effect.catchTags(cloudCliTokenManagerErrorHandlers));
+
+export const connectAuthLogoutHandler = Effect.fn("environment.cloud.authLogout")(function* (
+  dependencies: CloudHttpDependencies,
+) {
+  yield* requireEnvironmentScope(AuthRelayWriteScope);
+  yield* dependencies.cliTokenManager.clear;
+  return (yield* dependencies.cliTokenManager
+    .clientAuthState) satisfies EnvironmentConnectAuthState;
+}, Effect.catchTags(cloudCliTokenManagerErrorHandlers));
+
+export const connectAuthTokenHandler = Effect.fn("environment.cloud.authToken")(function* (
+  dependencies: CloudHttpDependencies,
+) {
+  // Deliberately reachable by any admin-scoped session, local or remote:
+  // admin sessions belong to the environment owner, and remote admin access
+  // already implies control of this credential (it could link and unlink at
+  // will). Served with no-store headers. No origin restriction on purpose —
+  // linkProof's origin check pins the advertised endpoint, it does not gate
+  // the caller.
+  yield* requireEnvironmentScope(AuthRelayWriteScope);
+  const token = yield* dependencies.cliTokenManager.getExisting;
+  if (Option.isNone(token)) {
+    return yield* new EnvironmentHttpUnauthorizedError({
+      message: "Sign in to T3 Connect on this device first.",
+    });
+  }
+  yield* appendCloudCredentialResponseHeaders;
+  return {
+    accessToken: token.value.accessToken,
+    expiresAtEpochMs: token.value.expiresAtEpochMs,
+    accountId: token.value.accountId ?? null,
+  } satisfies EnvironmentConnectAuthToken;
+}, Effect.catchTags(cloudCliTokenManagerErrorHandlers));
 
 const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
   function* (dependencies: CloudHttpDependencies, request: RelayCloudEnvironmentHealthRequest) {
@@ -1078,6 +1150,11 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
       .handle("linkState", () => cloudLinkStateHandler(dependencies))
       .handle("unlink", () => cloudUnlinkHandler(dependencies))
       .handle("preferences", ({ payload }) => cloudPreferencesHandler(dependencies, payload))
+      .handle("authState", () => connectAuthStateHandler(dependencies))
+      .handle("authLogin", () => connectAuthLoginHandler(dependencies))
+      .handle("authCode", ({ payload }) => connectAuthCodeHandler(dependencies, payload))
+      .handle("authLogout", () => connectAuthLogoutHandler(dependencies))
+      .handle("authToken", () => connectAuthTokenHandler(dependencies))
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))
       .handle("t3MintCredential", ({ payload }) =>

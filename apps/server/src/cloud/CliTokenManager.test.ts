@@ -1,6 +1,7 @@
 import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -11,9 +12,13 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Terminal from "effect/Terminal";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ExternalLauncher from "../process/externalLauncher.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import type { OutOfBandOAuthPromptInput } from "./CliTokenManager.ts";
 
@@ -30,18 +35,19 @@ interface RecordedTokenRequest {
 }
 
 // A JWT whose payload claims { email: "theo@example.test" } (signature is not
-// verified — the CLI only reads the claim to display the connected account).
+// verified — the CLI only reads the claims to display and key the connected
+// account).
 const TestIdTokenHeaderJson = Schema.fromJsonString(Schema.Struct({ alg: Schema.Literal("none") }));
-const TestIdTokenPayloadJson = Schema.fromJsonString(Schema.Struct({ email: Schema.String }));
+const TestIdTokenPayloadJson = Schema.fromJsonString(
+  Schema.Struct({ email: Schema.String, sub: Schema.optional(Schema.String) }),
+);
 const encodeTestIdTokenHeader = Schema.encodeSync(TestIdTokenHeaderJson);
 const encodeTestIdTokenPayload = Schema.encodeSync(TestIdTokenPayloadJson);
-const idTokenWithEmail = (() => {
+const makeTestIdToken = (payload: { readonly email: string; readonly sub?: string }) => {
   const header = Encoding.encodeBase64Url(encodeTestIdTokenHeader({ alg: "none" }));
-  const payload = Encoding.encodeBase64Url(
-    encodeTestIdTokenPayload({ email: "theo@example.test" }),
-  );
-  return `${header}.${payload}.`;
-})();
+  return `${header}.${Encoding.encodeBase64Url(encodeTestIdTokenPayload(payload))}.`;
+};
+const idTokenWithEmail = makeTestIdToken({ email: "theo@example.test" });
 
 const TestTokenResponseJson = Schema.fromJsonString(
   Schema.Struct({
@@ -259,6 +265,409 @@ it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
 
       assert.lengthOf(requests, 0);
       assert.isTrue(isAuthorizationError(result));
+    }),
+  );
+});
+
+const TestStoredTokenJson = Schema.fromJsonString(
+  Schema.Struct({
+    accessToken: Schema.String,
+    refreshToken: Schema.String,
+    expiresAtEpochMs: Schema.Number,
+    identity: Schema.optional(Schema.String),
+    accountId: Schema.optional(Schema.String),
+  }),
+);
+const encodeStoredToken = Schema.encodeSync(TestStoredTokenJson);
+const decodeStoredToken = Schema.decodeUnknownSync(TestStoredTokenJson);
+
+const TestUserinfoJson = Schema.fromJsonString(
+  Schema.Struct({ sub: Schema.String, email: Schema.String }),
+);
+const encodeUserinfo = Schema.encodeSync(TestUserinfoJson);
+
+const makeMemorySecretStore = () => {
+  const secrets = new Map<string, Uint8Array>();
+  const service: ServerSecretStore.ServerSecretStore["Service"] = {
+    get: (name) => Effect.sync(() => Option.fromNullishOr(secrets.get(name))),
+    set: (name, value) =>
+      Effect.sync(() => {
+        secrets.set(name, value);
+      }),
+    create: (name, value) =>
+      Effect.sync(() => {
+        secrets.set(name, value);
+      }),
+    getOrCreateRandom: () => Effect.die("unused getOrCreateRandom"),
+    remove: (name) =>
+      Effect.sync(() => {
+        secrets.delete(name);
+      }),
+  };
+  return { service, secrets };
+};
+
+const readStoredToken = (secrets: Map<string, Uint8Array>) => {
+  const bytes = secrets.get("cloud-cli-oauth-token");
+  return bytes === undefined ? null : decodeStoredToken(new TextDecoder().decode(bytes));
+};
+
+// The login fiber clears the pending flag in an `ensuring` just after it
+// persists the credential; yield until that final step lands.
+const awaitPendingLoginSettled = (manager: CliTokenManager.CloudCliTokenManager["Service"]) =>
+  Effect.gen(function* () {
+    while ((yield* manager.clientAuthState.pipe(provideTestEnv)).pendingLogin) {
+      yield* Effect.yieldNow;
+    }
+  });
+
+const unusedTerminal = Terminal.make({
+  columns: Effect.succeed(80),
+  rows: Effect.succeed(24),
+  readInput: Effect.die("terminal input unused"),
+  readLine: Effect.never,
+  display: () => Effect.void,
+});
+
+it.layer(NodeServices.layer)("CloudCliTokenManager browser login", (it) => {
+  it.effect("opens the browser, exchanges the callback code, and persists the credential", () =>
+    Effect.gen(function* () {
+      const requests: Array<RecordedTokenRequest> = [];
+      const memory = makeMemorySecretStore();
+      const opened: Array<string> = [];
+      const browserOpened = yield* Deferred.make<void>();
+      const persisted = yield* Deferred.make<void>();
+      const store: ServerSecretStore.ServerSecretStore["Service"] = {
+        ...memory.service,
+        set: (name, value) =>
+          memory.service
+            .set(name, value)
+            .pipe(Effect.andThen(Deferred.succeed(persisted, undefined))),
+      };
+
+      const manager = yield* CliTokenManager.make.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, store),
+        Effect.provideService(Terminal.Terminal, unusedTerminal),
+        Effect.provideService(ExternalLauncher.ExternalLauncher, {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          launchBrowser: (url) =>
+            Effect.sync(() => {
+              opened.push(url);
+            }).pipe(Effect.andThen(Deferred.succeed(browserOpened, undefined))),
+          launchEditor: () => Effect.die("unused launchEditor"),
+        }),
+        Effect.provide(
+          makeTokenEndpointLayer(requests, {
+            idToken: makeTestIdToken({ email: "theo@example.test", sub: "user_desktop" }),
+          }),
+        ),
+        provideTestEnv,
+      );
+
+      const { authorizationUrl } = yield* manager.beginBrowserLogin.pipe(provideTestEnv);
+      const request = readConnectAuthorizeRequest(new URL(authorizationUrl));
+      assert.isNotNull(request);
+      assert.equal(request!.loopbackPort, 34338);
+
+      // A second call while the first flow waits reuses the same attempt
+      // instead of fighting over the loopback port.
+      const second = yield* manager.beginBrowserLogin.pipe(provideTestEnv);
+      assert.equal(second.authorizationUrl, authorizationUrl);
+      const pendingState = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isFalse(pendingState.authorized);
+      assert.isTrue(pendingState.pendingLogin);
+      assert.equal(pendingState.authorizationUrl, authorizationUrl);
+
+      // The browser only launches once the loopback listener is up, so the
+      // launch signal is the receipt that the callback URL is reachable.
+      yield* Deferred.await(browserOpened);
+      assert.deepEqual(opened, [authorizationUrl]);
+      const callback = yield* Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        return yield* client.execute(
+          HttpClientRequest.get(
+            `http://127.0.0.1:34338/callback?code=clerk-code-123&state=${encodeURIComponent(request!.state)}`,
+          ),
+        );
+      }).pipe(Effect.provide(FetchHttpClient.layer));
+      assert.equal(callback.status, 200);
+      yield* Deferred.await(persisted);
+      yield* awaitPendingLoginSettled(manager);
+
+      const state = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isTrue(state.authorized);
+      assert.isFalse(state.pendingLogin);
+      assert.equal(state.accountId, "user_desktop");
+      assert.equal(state.identity, "theo@example.test");
+
+      assert.lengthOf(requests, 1);
+      const exchange = requests[0]!;
+      assert.equal(exchange.url, "https://clerk.example.test/oauth/token");
+      assert.equal(exchange.params.get("grant_type"), "authorization_code");
+      assert.equal(exchange.params.get("code"), "clerk-code-123");
+      assert.equal(exchange.params.get("redirect_uri"), "http://127.0.0.1:34338/callback");
+    }),
+  );
+
+  it.effect("a sign-out cancels a pending browser login", () =>
+    Effect.gen(function* () {
+      const requests: Array<RecordedTokenRequest> = [];
+      const memory = makeMemorySecretStore();
+      const browserOpened = yield* Deferred.make<void>();
+
+      const manager = yield* CliTokenManager.make.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, memory.service),
+        Effect.provideService(Terminal.Terminal, unusedTerminal),
+        Effect.provideService(ExternalLauncher.ExternalLauncher, {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          launchBrowser: () => Deferred.succeed(browserOpened, undefined).pipe(Effect.asVoid),
+          launchEditor: () => Effect.die("unused launchEditor"),
+        }),
+        Effect.provide(makeTokenEndpointLayer(requests)),
+        provideTestEnv,
+      );
+
+      yield* manager.beginBrowserLogin.pipe(provideTestEnv);
+      yield* Deferred.await(browserOpened);
+      yield* manager.clear;
+      yield* awaitPendingLoginSettled(manager);
+
+      const state = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isFalse(state.authorized);
+      assert.isFalse(state.pendingLogin);
+      // The attempt died before any token exchange could run.
+      assert.lengthOf(requests, 0);
+      assert.isNull(readStoredToken(memory.secrets));
+    }),
+  );
+
+  it.effect("a fresh sign-in right after a sign-out completes cleanly", () =>
+    Effect.gen(function* () {
+      const requests: Array<RecordedTokenRequest> = [];
+      const memory = makeMemorySecretStore();
+      // Each launch signals after its loopback listener is up.
+      const launches = yield* Queue.make<void>();
+      const persisted = yield* Deferred.make<void>();
+      const store: ServerSecretStore.ServerSecretStore["Service"] = {
+        ...memory.service,
+        set: (name, value) =>
+          memory.service
+            .set(name, value)
+            .pipe(Effect.andThen(Deferred.succeed(persisted, undefined))),
+      };
+
+      const manager = yield* CliTokenManager.make.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, store),
+        Effect.provideService(Terminal.Terminal, unusedTerminal),
+        Effect.provideService(ExternalLauncher.ExternalLauncher, {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          launchBrowser: () => Queue.offer(launches, undefined).pipe(Effect.asVoid),
+          launchEditor: () => Effect.die("unused launchEditor"),
+        }),
+        Effect.provide(
+          makeTokenEndpointLayer(requests, {
+            idToken: makeTestIdToken({ email: "theo@example.test", sub: "user_retry" }),
+          }),
+        ),
+        provideTestEnv,
+      );
+
+      // First attempt gets cancelled by a sign-out; the second must not lose
+      // its pending state to the first fiber's cleanup, and must be able to
+      // rebind the loopback port.
+      const first = yield* manager.beginBrowserLogin.pipe(provideTestEnv);
+      yield* Queue.take(launches);
+      yield* manager.clear;
+      const second = yield* manager.beginBrowserLogin.pipe(provideTestEnv);
+      assert.notEqual(second.authorizationUrl, first.authorizationUrl);
+      yield* Queue.take(launches);
+
+      const pendingState = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isTrue(pendingState.pendingLogin);
+      assert.equal(pendingState.authorizationUrl, second.authorizationUrl);
+
+      const request = readConnectAuthorizeRequest(new URL(second.authorizationUrl));
+      assert.isNotNull(request);
+      const callback = yield* Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        return yield* client.execute(
+          HttpClientRequest.get(
+            `http://127.0.0.1:34338/callback?code=clerk-code-789&state=${encodeURIComponent(request!.state)}`,
+          ),
+        );
+      }).pipe(Effect.provide(FetchHttpClient.layer));
+      assert.equal(callback.status, 200);
+      yield* Deferred.await(persisted);
+      yield* awaitPendingLoginSettled(manager);
+
+      const state = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isTrue(state.authorized);
+      assert.equal(state.accountId, "user_retry");
+      assert.lengthOf(requests, 1);
+      assert.equal(requests[0]!.params.get("code"), "clerk-code-789");
+    }),
+  );
+
+  it.effect("a denied authorization fails the pending attempt promptly", () =>
+    Effect.gen(function* () {
+      const requests: Array<RecordedTokenRequest> = [];
+      const memory = makeMemorySecretStore();
+      const browserOpened = yield* Deferred.make<void>();
+
+      const manager = yield* CliTokenManager.make.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, memory.service),
+        Effect.provideService(Terminal.Terminal, unusedTerminal),
+        Effect.provideService(ExternalLauncher.ExternalLauncher, {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          launchBrowser: () => Deferred.succeed(browserOpened, undefined).pipe(Effect.asVoid),
+          launchEditor: () => Effect.die("unused launchEditor"),
+        }),
+        Effect.provide(makeTokenEndpointLayer(requests)),
+        provideTestEnv,
+      );
+
+      const { authorizationUrl } = yield* manager.beginBrowserLogin.pipe(provideTestEnv);
+      const request = readConnectAuthorizeRequest(new URL(authorizationUrl));
+      assert.isNotNull(request);
+      yield* Deferred.await(browserOpened);
+
+      const callback = yield* Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        return yield* client.execute(
+          HttpClientRequest.get(
+            `http://127.0.0.1:34338/callback?error=access_denied&state=${encodeURIComponent(request!.state)}`,
+          ),
+        );
+      }).pipe(Effect.provide(FetchHttpClient.layer));
+      assert.equal(callback.status, 200);
+      yield* awaitPendingLoginSettled(manager);
+
+      const state = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isFalse(state.authorized);
+      assert.isFalse(state.pendingLogin);
+      assert.lengthOf(requests, 0);
+    }),
+  );
+
+  it.effect("completes a pending browser login with a pasted out-of-band code", () =>
+    Effect.gen(function* () {
+      const requests: Array<RecordedTokenRequest> = [];
+      const memory = makeMemorySecretStore();
+      const persisted = yield* Deferred.make<void>();
+      const store: ServerSecretStore.ServerSecretStore["Service"] = {
+        ...memory.service,
+        set: (name, value) =>
+          memory.service
+            .set(name, value)
+            .pipe(Effect.andThen(Deferred.succeed(persisted, undefined))),
+      };
+
+      const manager = yield* CliTokenManager.make.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, store),
+        Effect.provideService(Terminal.Terminal, unusedTerminal),
+        Effect.provideService(ExternalLauncher.ExternalLauncher, {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          launchBrowser: () => Effect.void,
+          launchEditor: () => Effect.die("unused launchEditor"),
+        }),
+        Effect.provide(
+          makeTokenEndpointLayer(requests, {
+            idToken: makeTestIdToken({ email: "theo@example.test", sub: "user_oob" }),
+          }),
+        ),
+        provideTestEnv,
+      );
+
+      const rejectedWithoutLogin = yield* manager.submitBrowserLoginCode("code.state");
+      assert.isFalse(rejectedWithoutLogin.accepted);
+
+      const { authorizationUrl } = yield* manager.beginBrowserLogin.pipe(provideTestEnv);
+      const request = readConnectAuthorizeRequest(new URL(authorizationUrl));
+      assert.isNotNull(request);
+
+      const rejected = yield* manager.submitBrowserLoginCode("clerk-code-456.wrong-state");
+      assert.isFalse(rejected.accepted);
+      assert.lengthOf(requests, 0);
+
+      const accepted = yield* manager.submitBrowserLoginCode(` clerk-code-456.${request!.state} `);
+      assert.isTrue(accepted.accepted);
+      // A second paste for the same attempt is reported as rejected, not
+      // silently swallowed.
+      const doubled = yield* manager.submitBrowserLoginCode(`clerk-code-456.${request!.state}`);
+      assert.isFalse(doubled.accepted);
+      yield* Deferred.await(persisted);
+      yield* awaitPendingLoginSettled(manager);
+
+      const state = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isTrue(state.authorized);
+      assert.isFalse(state.pendingLogin);
+
+      // The out-of-band code was issued against the hosted callback redirect
+      // URI, so the exchange must name it instead of the loopback URI.
+      assert.lengthOf(requests, 1);
+      const exchange = requests[0]!;
+      assert.equal(exchange.params.get("code"), "clerk-code-456");
+      assert.equal(
+        exchange.params.get("redirect_uri"),
+        "https://hosted.example.test/connect/callback",
+      );
+    }),
+  );
+
+  it.effect("clientAuthState backfills the account id for legacy credentials via userinfo", () =>
+    Effect.gen(function* () {
+      const memory = makeMemorySecretStore();
+      const now = yield* Clock.currentTimeMillis;
+      memory.secrets.set(
+        "cloud-cli-oauth-token",
+        new TextEncoder().encode(
+          encodeStoredToken({
+            accessToken: "legacy-access-token",
+            refreshToken: "legacy-refresh-token",
+            expiresAtEpochMs: now + 3_600_000,
+          }),
+        ),
+      );
+      const userinfoRequests: Array<string> = [];
+      const userinfoLayer = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            userinfoRequests.push(`${request.headers.authorization}`);
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(encodeUserinfo({ sub: "user_legacy", email: "theo@example.test" }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }),
+        ),
+      );
+
+      const manager = yield* CliTokenManager.make.pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, memory.service),
+        Effect.provideService(Terminal.Terminal, unusedTerminal),
+        Effect.provideService(ExternalLauncher.ExternalLauncher, {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          launchBrowser: () => Effect.die("unused launchBrowser"),
+          launchEditor: () => Effect.die("unused launchEditor"),
+        }),
+        Effect.provide(userinfoLayer),
+        provideTestEnv,
+      );
+
+      const state = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.isTrue(state.authorized);
+      assert.equal(state.accountId, "user_legacy");
+      assert.equal(state.identity, "theo@example.test");
+      assert.deepEqual(userinfoRequests, ["Bearer legacy-access-token"]);
+
+      // The backfill persists, so the next read does not hit userinfo again.
+      const again = yield* manager.clientAuthState.pipe(provideTestEnv);
+      assert.equal(again.accountId, "user_legacy");
+      assert.lengthOf(userinfoRequests, 1);
+      assert.deepInclude(readStoredToken(memory.secrets), { accountId: "user_legacy" });
     }),
   );
 });

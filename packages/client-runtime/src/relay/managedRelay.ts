@@ -377,14 +377,22 @@ function tokenMatches(
   );
 }
 
-function relayAccountId(clerkToken: string): Option.Option<string> {
+/**
+ * Cache partition for DPoP access tokens. Clerk session JWTs share a subject
+ * across refreshes; opaque OAuth access tokens (the desktop/CLI credential)
+ * key by their own value instead — the same partitioning per account, and
+ * token rotation invalidates the entry naturally.
+ */
+function relayAccountCacheKey(clerkToken: string): string {
   try {
-    return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
-      Option.filter((subject) => subject.length > 0),
-    );
+    const subject = decodeRelayJwt(clerkToken).sub;
+    if (typeof subject === "string" && subject.length > 0) {
+      return subject;
+    }
   } catch {
-    return Option.none();
+    // Not a JWT.
   }
+  return `token:${clerkToken}`;
 }
 
 function bearerHeaders(clerkToken: string) {
@@ -529,29 +537,13 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         "relay.scopes": input.scopes.join(" "),
       });
       const nowMillis = yield* Clock.currentTimeMillis;
-      const accountId = relayAccountId(input.clerkToken);
-      if (Option.isNone(accountId)) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.token_cache.result": "bypass",
-          "relay.token_cache.bypass_reason": "invalid_subject_token",
-        });
-        const response = yield* exchangeAccessToken(input);
-        return {
-          accountId: "",
-          clientId: options.clientId,
-          relayUrl,
-          thumbprint: input.thumbprint,
-          scopes: input.scopes,
-          accessToken: response.access_token,
-          expiresAtMillis: nowMillis + response.expires_in * 1_000,
-        } satisfies ManagedRelayAccessTokenCacheEntry;
-      }
+      const accountId = relayAccountCacheKey(input.clerkToken);
       return yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) =>
         Effect.gen(function* () {
           const activeTokens = tokens.filter((token) => token.expiresAtMillis > nowMillis + 5_000);
           const cached = activeTokens.find((token) =>
             tokenMatches(token, {
-              accountId: accountId.value,
+              accountId,
               clientId: options.clientId,
               relayUrl,
               thumbprint: input.thumbprint,
@@ -570,7 +562,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           });
           const response = yield* exchangeAccessToken(input);
           const next: ManagedRelayAccessTokenCacheEntry = {
-            accountId: accountId.value,
+            accountId,
             clientId: options.clientId,
             relayUrl,
             thumbprint: input.thumbprint,

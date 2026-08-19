@@ -9,7 +9,6 @@ import {
   readConnectCliCallbackResult,
   rememberConnectCliAuthState,
 } from "../../cloud/connectCliAuth";
-import { isElectron } from "../../env";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
@@ -65,10 +64,7 @@ export function ConnectCliAuthorizeSurface() {
     // so the callback's state check has to be armed before handing off.
     rememberConnectCliAuthState(request.state);
     clerk.openSignIn(
-      resolveClerkSignInProps(
-        connectCliSignInRedirectUrl(request, window.location.href),
-        isElectron,
-      ),
+      resolveClerkSignInProps(connectCliSignInRedirectUrl(request, window.location.href)),
     );
   }, [clerk, request]);
 

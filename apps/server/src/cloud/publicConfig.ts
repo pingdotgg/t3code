@@ -157,6 +157,7 @@ function makePublicValueConfig(name: string, fallback: string) {
  */
 export interface CloudCliOAuthConfig {
   readonly tokenEndpoint: string;
+  readonly userinfoEndpoint: string;
   readonly clientId: string;
   readonly loopbackPort: number;
   readonly redirectUri: string;
@@ -195,6 +196,7 @@ export function makeCloudCliOAuthConfig({
           (clerkFrontendApiUrl) =>
             ({
               tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
+              userinfoEndpoint: `${clerkFrontendApiUrl}/oauth/userinfo`,
               clientId,
               loopbackPort: CLOUD_CLI_OAUTH_LOOPBACK_PORT,
               redirectUri: connectLoopbackRedirectUri(CLOUD_CLI_OAUTH_LOOPBACK_PORT),

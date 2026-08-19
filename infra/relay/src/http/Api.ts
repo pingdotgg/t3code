@@ -711,12 +711,11 @@ export const tokenApi = HttpApiBuilder.group(
           return yield* new HttpApiError.Unauthorized({});
         }
 
-        const verified = yield* verifyClerkBearerToken(config, args.payload.subject_token).pipe(
-          Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
-        );
-        if (!verified.sub || !hasExpectedClerkAudience(verified.aud, config.clerkJwtAudience)) {
-          return yield* relayAuthInvalidError("invalid_bearer");
-        }
+        const verified = yield* verifyRelayClientBearerToken(
+          config,
+          args.payload.subject_token,
+        ).pipe(Effect.catch(() => relayAuthInvalidError("invalid_bearer")));
+        yield* Effect.annotateCurrentSpan({ "relay.auth.subject_mode": verified.mode });
         const proofKeyThumbprint = yield* requireDpopProof().pipe(
           Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
         );
@@ -1201,6 +1200,15 @@ function verifyClerkOAuthBearerToken(
       const auth = state.toAuth();
       if (!state.isAuthenticated || !auth.userId) {
         throw new Error("Clerk OAuth token is not authenticated.");
+      }
+      // Any OAuth app in the Clerk instance can mint tokens for its user;
+      // only the CLI/desktop application's tokens grant relay access when the
+      // expected client id is configured.
+      if (
+        config.clerkCliOAuthClientId !== undefined &&
+        auth.clientId !== config.clerkCliOAuthClientId
+      ) {
+        throw new Error("Clerk OAuth token was issued to an unexpected client.");
       }
       return { sub: auth.userId };
     },

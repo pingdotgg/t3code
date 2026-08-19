@@ -1,13 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { ClerkProvider } from "@clerk/react";
-import { passkeys as electronPasskeys } from "@clerk/electron/passkeys";
-import { ClerkProvider as ElectronClerkProvider } from "@clerk/electron/react";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
 import "./index.css";
 
 import { isElectron } from "./env";
+import { ClerkConnectAuthProvider, DesktopConnectAuthProvider } from "./cloud/connectAuth";
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
@@ -30,32 +29,23 @@ if (isElectron) {
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
-// @clerk/electron reports passkey autofill as supported but executes the
-// "quiet" autofill request as a modal prompt, so Clerk's sign-in form pops an
-// OS passkey dialog the moment it mounts. Report autofill as unsupported; the
-// explicit "Use passkey" button keeps working.
-// Upstream: https://github.com/clerk/javascript/issues/9496
-const passkeys = {
-  ...electronPasskeys,
-  isAutoFillSupported: () => Promise.resolve(false),
-};
-
 const app = <AppRoot router={router} />;
 
+// Desktop runs no auth UI at all: sign-in happens in the system browser
+// through the local environment server, which shares its stored credential
+// with `npx t3 connect`. Clerk only ever mounts in a real browser.
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {clerkPublishableKey && hasCloudPublicConfig() ? (
       isElectron ? (
-        <ElectronClerkProvider
-          appearance={clerkAppearance}
-          publishableKey={clerkPublishableKey}
-          passkeys={passkeys}
-        >
+        <DesktopConnectAuthProvider>
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
-        </ElectronClerkProvider>
+        </DesktopConnectAuthProvider>
       ) : (
         <ClerkProvider appearance={clerkAppearance} publishableKey={clerkPublishableKey}>
-          <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+          <ClerkConnectAuthProvider>
+            <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+          </ClerkConnectAuthProvider>
         </ClerkProvider>
       )
     ) : (

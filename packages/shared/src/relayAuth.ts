@@ -77,10 +77,6 @@ export function clerkFrontendApiUrlFromPublishableKey(publishableKey: string): s
   return parseClerkFrontendApi(publishableKey).url;
 }
 
-export function clerkFrontendApiHostnameFromPublishableKey(publishableKey: string): string {
-  return parseClerkFrontendApi(publishableKey).hostname;
-}
-
 export function isAllowedClerkFrontendApiHostname(
   hostname: string,
   configuredHostname: string | null,
