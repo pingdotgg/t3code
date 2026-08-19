@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -15,8 +16,11 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeKimiAdapter } from "../Layers/KimiAdapter.ts";
 import {
   buildInitialKimiProviderSnapshot,
-  checkKimiProviderStatus,
   enrichKimiSnapshot,
+  isTransientKimiProbeClassification,
+  probeKimiProviderStatus,
+  type KimiModelDiscoveryCache,
+  type KimiProviderProbeResult,
 } from "../Layers/KimiProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -77,6 +81,21 @@ const withInstanceIdentity =
     continuation: { groupKey: input.continuationGroupKey },
   });
 
+export const stabilizeKimiProviderProbe = Effect.fn("stabilizeKimiProviderProbe")(function* (
+  lastKnownGoodRef: Ref.Ref<ServerProvider | null>,
+  result: KimiProviderProbeResult<ServerProvider>,
+) {
+  if (result.classification._tag === "healthy") {
+    yield* Ref.set(lastKnownGoodRef, result.snapshot);
+    return result.snapshot;
+  }
+  if (isTransientKimiProbeClassification(result.classification)) {
+    return (yield* Ref.get(lastKnownGoodRef)) ?? result.snapshot;
+  }
+  yield* Ref.set(lastKnownGoodRef, null);
+  return result.snapshot;
+});
+
 export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -116,14 +135,33 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
       });
       const textGeneration = yield* makeKimiTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkKimiProviderStatus(effectiveConfig, processEnv).pipe(
-        Effect.map(stampIdentity),
+      const lastKnownGoodRef = yield* Ref.make<ServerProvider | null>(null);
+      const discoveryCacheRef = yield* Ref.make<KimiModelDiscoveryCache | undefined>(undefined);
+      const checkProvider = Effect.gen(function* () {
+        const discoveryCache = yield* Ref.get(discoveryCacheRef);
+        const result = yield* probeKimiProviderStatus(
+          effectiveConfig,
+          processEnv,
+          discoveryCache ? { discoveryCache } : {},
+        );
+        if (result.classification._tag === "healthy") {
+          yield* Ref.set(discoveryCacheRef, result.discoveryCache);
+        } else if (!isTransientKimiProbeClassification(result.classification)) {
+          yield* Ref.set(discoveryCacheRef, undefined);
+        }
+        return yield* stabilizeKimiProviderProbe(lastKnownGoodRef, {
+          ...result,
+          snapshot: stampIdentity(result.snapshot),
+        });
+      }).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KimiSettings>>({
+      const managedSnapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<KimiSettings>
+      >({
         maintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
@@ -150,6 +188,16 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
             }),
         ),
       );
+      const snapshot = {
+        maintenanceCapabilities: managedSnapshot.maintenanceCapabilities,
+        getSnapshot: managedSnapshot.getSnapshot,
+        refresh: Ref.set(discoveryCacheRef, undefined).pipe(
+          Effect.andThen(managedSnapshot.refresh),
+        ),
+        get streamChanges() {
+          return managedSnapshot.streamChanges;
+        },
+      };
 
       return {
         instanceId,

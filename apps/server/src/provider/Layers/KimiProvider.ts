@@ -33,6 +33,7 @@ import {
 import {
   isKimiAuthRequiredError,
   makeKimiAcpRuntime,
+  probeKimiAcpAuthentication,
   resolveKimiAcpBaseModelId,
   resolveKimiHomePath,
 } from "../acp/KimiAcpSupport.ts";
@@ -47,8 +48,49 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
-const KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+export const KIMI_VERSION_PROBE_TIMEOUT_MS = 10_000;
+export const KIMI_ACP_AUTH_PROBE_TIMEOUT_MS = 10_000;
+export const KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 20_000;
+
+export type KimiProbeStage = "version" | "authentication" | "discovery";
+
+export type KimiProbeClassification =
+  | { readonly _tag: "disabled" }
+  | { readonly _tag: "healthy"; readonly modelSource: "cache" | "discovery" }
+  | { readonly _tag: "command-missing" }
+  | { readonly _tag: "auth-required" }
+  | { readonly _tag: "non-zero-exit"; readonly exitCode: number }
+  | { readonly _tag: "acp-failure"; readonly stage: KimiProbeStage; readonly errorTag: string }
+  | {
+      readonly _tag: "transient-timeout";
+      readonly stage: KimiProbeStage;
+      readonly timeoutMs: number;
+    }
+  | {
+      readonly _tag: "transient-process-failure";
+      readonly stage: KimiProbeStage;
+      readonly errorTag: string;
+    };
+
+export interface KimiModelDiscoveryCache {
+  readonly key: string;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+export interface KimiProviderProbeResult<Snapshot = ServerProviderDraft> {
+  readonly classification: KimiProbeClassification;
+  readonly snapshot: Snapshot;
+  readonly discoveryCache?: KimiModelDiscoveryCache;
+}
+
+export function isTransientKimiProbeClassification(
+  classification: KimiProbeClassification,
+): boolean {
+  return (
+    classification._tag === "transient-timeout" ||
+    classification._tag === "transient-process-failure"
+  );
+}
 
 export const KIMI_NOT_SIGNED_IN_MESSAGE =
   "Kimi CLI is installed but not signed in. Use Sign in with Kimi in Settings or run `kimi login`.";
@@ -151,6 +193,45 @@ export function buildKimiDiscoveredModelsFromSessionModelState(
     .filter((model): model is ServerProviderModel => model !== undefined);
 }
 
+export type KimiVersionProbeResult =
+  | {
+      readonly _tag: "success";
+      readonly version: string | null;
+      readonly resolvedBinaryPath: string;
+    }
+  | { readonly _tag: "command-missing" }
+  | { readonly _tag: "non-zero-exit"; readonly exitCode: number; readonly version: string | null }
+  | { readonly _tag: "transient-timeout"; readonly timeoutMs: number }
+  | { readonly _tag: "transient-process-failure"; readonly errorTag: string };
+
+export type KimiAcpProbeResult<A> =
+  | { readonly _tag: "success"; readonly value: A }
+  | { readonly _tag: "auth-required" }
+  | { readonly _tag: "failure"; readonly errorTag: string }
+  | { readonly _tag: "transient-timeout"; readonly timeoutMs: number }
+  | { readonly _tag: "transient-process-failure"; readonly errorTag: string };
+
+type KimiProbeEnvironment = ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto;
+
+export interface KimiProviderProbeOperations {
+  readonly probeVersion: (
+    kimiSettings: KimiSettings,
+    environment: NodeJS.ProcessEnv,
+  ) => Effect.Effect<KimiVersionProbeResult, never, KimiProbeEnvironment>;
+  readonly probeAuthentication: (
+    kimiSettings: KimiSettings,
+    environment: NodeJS.ProcessEnv,
+  ) => Effect.Effect<KimiAcpProbeResult<void>, never, KimiProbeEnvironment>;
+  readonly discoverModels: (
+    kimiSettings: KimiSettings,
+    environment: NodeJS.ProcessEnv,
+  ) => Effect.Effect<
+    KimiAcpProbeResult<ReadonlyArray<ServerProviderModel>>,
+    never,
+    KimiProbeEnvironment
+  >;
+}
+
 const discoverKimiModelsViaAcp = (
   kimiSettings: KimiSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -179,118 +260,286 @@ const runKimiVersionCommand = (
     const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
       env,
     });
-    return yield* spawnAndCollect(
+    const result = yield* spawnAndCollect(
       command,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env,
         shell: spawnCommand.shell,
       }),
     );
+    return { ...result, resolvedBinaryPath: spawnCommand.command };
   });
 
-export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(function* (
-  kimiSettings: KimiSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<
-  ServerProviderDraft,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
-> {
-  const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const fallbackModels = kimiModelsFromSettings(kimiSettings.customModels);
-
-  if (!kimiSettings.enabled) {
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Kimi is disabled in T3 Code settings.",
-      },
-    });
+function errorTag(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("_tag" in error)) {
+    return "Unknown";
   }
+  return typeof error._tag === "string" ? error._tag : "Unknown";
+}
 
-  const versionResult = yield* runKimiVersionCommand(kimiSettings, environment).pipe(
-    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
+function isTransientKimiAcpError(error: unknown): boolean {
+  return [
+    "AcpSpawnError",
+    "AcpProcessExitedError",
+    "AcpTransportError",
+    "AcpInputStreamEndedError",
+  ].includes(errorTag(error));
+}
+
+function classifyKimiAcpExit<A>(
+  exit: Exit.Exit<Option.Option<A>, unknown>,
+  timeoutMs: number,
+): KimiAcpProbeResult<A> {
+  if (Exit.isFailure(exit)) {
+    const failure = Cause.findErrorOption(exit.cause);
+    if (Option.isSome(failure) && isKimiAuthRequiredError(failure.value)) {
+      return { _tag: "auth-required" };
+    }
+    const classifiedErrorTag = causeErrorTag(exit.cause);
+    return Option.isSome(failure) && isTransientKimiAcpError(failure.value)
+      ? { _tag: "transient-process-failure", errorTag: classifiedErrorTag }
+      : { _tag: "failure", errorTag: classifiedErrorTag };
+  }
+  if (Option.isNone(exit.value)) {
+    return { _tag: "transient-timeout", timeoutMs };
+  }
+  return { _tag: "success", value: exit.value.value };
+}
+
+const probeKimiVersion = (
+  kimiSettings: KimiSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<KimiVersionProbeResult, never, KimiProbeEnvironment> =>
+  runKimiVersionCommand(kimiSettings, environment).pipe(
+    Effect.timeoutOption(KIMI_VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
+    Effect.map((result): KimiVersionProbeResult => {
+      if (Result.isFailure(result)) {
+        if (isCommandMissingCause(result.failure)) {
+          return { _tag: "command-missing" };
+        }
+        return { _tag: "transient-process-failure", errorTag: errorTag(result.failure) };
+      }
+      if (Option.isNone(result.success)) {
+        return { _tag: "transient-timeout", timeoutMs: KIMI_VERSION_PROBE_TIMEOUT_MS };
+      }
+      const output = result.success.value;
+      const version = parseGenericCliVersion(`${output.stdout}\n${output.stderr}`);
+      if (output.code !== 0) {
+        return { _tag: "non-zero-exit", exitCode: output.code, version };
+      }
+      return { _tag: "success", version, resolvedBinaryPath: output.resolvedBinaryPath };
+    }),
   );
 
-  if (Result.isFailure(versionResult)) {
-    const error = versionResult.failure;
-    yield* Effect.logWarning("Kimi CLI health check failed.", {
-      errorTag: error._tag,
+const probeKimiAuthentication = (
+  kimiSettings: KimiSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<KimiAcpProbeResult<void>, never, KimiProbeEnvironment> =>
+  Effect.gen(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    yield* probeKimiAcpAuthentication({
+      kimiSettings,
+      environment,
+      childProcessSpawner,
+      cwd: process.cwd(),
+      clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: !isCommandMissingCause(error),
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Kimi CLI (`kimi`) is not installed or not on PATH. Install it from kimi.com/code or with `npm install -g @moonshot-ai/kimi-code`."
-          : "Failed to execute Kimi CLI health check.",
-      },
-    });
-  }
+  }).pipe(
+    Effect.scoped,
+    Effect.timeoutOption(KIMI_ACP_AUTH_PROBE_TIMEOUT_MS),
+    Effect.exit,
+    Effect.map((exit) => classifyKimiAcpExit(exit, KIMI_ACP_AUTH_PROBE_TIMEOUT_MS)),
+  );
 
-  if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Kimi CLI is installed but timed out while running `kimi --version`.",
-      },
-    });
-  }
-
-  const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
-  if (versionOutput.code !== 0) {
-    yield* Effect.logWarning("Kimi CLI version probe exited with a non-zero status.", {
-      exitCode: versionOutput.code,
-      stdoutLength: versionOutput.stdout.length,
-      stderrLength: versionOutput.stderr.length,
-    });
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Kimi CLI is installed but failed to run.",
-      },
-    });
-  }
-
-  const discoveryExit = yield* discoverKimiModelsViaAcp(kimiSettings, environment).pipe(
+const probeKimiModelDiscovery = (
+  kimiSettings: KimiSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<
+  KimiAcpProbeResult<ReadonlyArray<ServerProviderModel>>,
+  never,
+  KimiProbeEnvironment
+> =>
+  discoverKimiModelsViaAcp(kimiSettings, environment).pipe(
     Effect.timeoutOption(KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
     Effect.exit,
+    Effect.map((exit) => classifyKimiAcpExit(exit, KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS)),
   );
-  if (Exit.isFailure(discoveryExit)) {
-    const failure = Cause.findErrorOption(discoveryExit.cause);
-    if (Option.isSome(failure) && isKimiAuthRequiredError(failure.value)) {
-      return buildServerProvider({
+
+const LIVE_KIMI_PROBE_OPERATIONS: KimiProviderProbeOperations = {
+  probeVersion: probeKimiVersion,
+  probeAuthentication: probeKimiAuthentication,
+  discoverModels: probeKimiModelDiscovery,
+};
+
+export function buildKimiModelDiscoveryCacheKey(input: {
+  readonly version: string | null;
+  readonly resolvedBinaryPath: string;
+  readonly kimiSettings: KimiSettings;
+}): string {
+  return JSON.stringify({
+    version: input.version,
+    binaryPath: input.resolvedBinaryPath,
+    homePath: resolveKimiHomePath(input.kimiSettings) ?? null,
+    settings: {
+      binaryPath: input.kimiSettings.binaryPath,
+      homePath: input.kimiSettings.homePath,
+      customModels: input.kimiSettings.customModels,
+    },
+  });
+}
+
+export interface KimiProviderStatusProbeOptions {
+  readonly discoveryCache?: KimiModelDiscoveryCache;
+  readonly operations?: KimiProviderProbeOperations;
+}
+
+export const probeKimiProviderStatus = Effect.fn("probeKimiProviderStatus")(function* (
+  kimiSettings: KimiSettings,
+  environment: NodeJS.ProcessEnv = process.env,
+  options: KimiProviderStatusProbeOptions = {},
+): Effect.fn.Return<KimiProviderProbeResult, never, KimiProbeEnvironment> {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const fallbackModels = kimiModelsFromSettings(kimiSettings.customModels);
+  const operations = options.operations ?? LIVE_KIMI_PROBE_OPERATIONS;
+
+  if (!kimiSettings.enabled) {
+    return {
+      classification: { _tag: "disabled" },
+      snapshot: buildServerProvider({
         presentation: KIMI_PRESENTATION,
-        enabled: kimiSettings.enabled,
+        enabled: false,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Kimi is disabled in T3 Code settings.",
+        },
+      }),
+    };
+  }
+
+  const versionResult = yield* operations.probeVersion(kimiSettings, environment);
+  if (versionResult._tag === "command-missing") {
+    return {
+      classification: { _tag: "command-missing" },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: false,
+          version: null,
+          status: "error",
+          auth: { status: "unknown" },
+          message:
+            "Kimi CLI (`kimi`) is not installed or not on PATH. Install it from kimi.com/code or with `npm install -g @moonshot-ai/kimi-code`.",
+        },
+      }),
+    };
+  }
+  if (versionResult._tag === "non-zero-exit") {
+    yield* Effect.logWarning("Kimi CLI version probe exited with a non-zero status.", {
+      exitCode: versionResult.exitCode,
+    });
+    return {
+      classification: { _tag: "non-zero-exit", exitCode: versionResult.exitCode },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: versionResult.version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Kimi CLI is installed but failed to run.",
+        },
+      }),
+    };
+  }
+  if (versionResult._tag === "transient-timeout") {
+    yield* Effect.logWarning("Kimi CLI version probe timed out.", {
+      timeoutMs: versionResult.timeoutMs,
+    });
+    return {
+      classification: {
+        _tag: "transient-timeout",
+        stage: "version",
+        timeoutMs: versionResult.timeoutMs,
+      },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Kimi CLI health check timed out. T3 Code will retry automatically.",
+        },
+      }),
+    };
+  }
+  if (versionResult._tag === "transient-process-failure") {
+    yield* Effect.logWarning("Kimi CLI health check failed transiently.", {
+      errorTag: versionResult.errorTag,
+    });
+    return {
+      classification: {
+        _tag: "transient-process-failure",
+        stage: "version",
+        errorTag: versionResult.errorTag,
+      },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Kimi CLI health check failed temporarily. T3 Code will retry automatically.",
+        },
+      }),
+    };
+  }
+
+  const { version, resolvedBinaryPath } = versionResult;
+  const cacheKey = buildKimiModelDiscoveryCacheKey({
+    version,
+    resolvedBinaryPath,
+    kimiSettings,
+  });
+  const cachedDiscovery =
+    options.discoveryCache?.key === cacheKey ? options.discoveryCache : undefined;
+  let acpResult: KimiAcpProbeResult<ReadonlyArray<ServerProviderModel>>;
+  if (cachedDiscovery) {
+    const authenticationResult = yield* operations.probeAuthentication(kimiSettings, environment);
+    acpResult =
+      authenticationResult._tag === "success"
+        ? { _tag: "success", value: cachedDiscovery.models }
+        : authenticationResult;
+  } else {
+    acpResult = yield* operations.discoverModels(kimiSettings, environment);
+  }
+  const acpStage: KimiProbeStage = cachedDiscovery ? "authentication" : "discovery";
+
+  if (acpResult._tag === "auth-required") {
+    return {
+      classification: { _tag: "auth-required" },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
         checkedAt,
         models: fallbackModels,
         probe: {
@@ -300,61 +549,121 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
           auth: { status: "unauthenticated" },
           message: KIMI_NOT_SIGNED_IN_MESSAGE,
         },
-      });
-    }
-    yield* Effect.logWarning("Kimi ACP model discovery failed", {
-      errorTag: causeErrorTag(discoveryExit.cause),
-    });
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Kimi CLI is installed but ACP startup failed. Check server logs for details.",
-      },
-    });
+      }),
+    };
   }
-  if (Option.isNone(discoveryExit.value)) {
-    yield* Effect.logWarning(
-      `Kimi ACP model discovery timed out after ${KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-    );
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `Kimi CLI is installed but ACP startup timed out after ${KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-      },
+  if (acpResult._tag === "failure") {
+    yield* Effect.logWarning("Kimi ACP probe failed.", {
+      stage: acpStage,
+      errorTag: acpResult.errorTag,
     });
+    return {
+      classification: {
+        _tag: "acp-failure",
+        stage: acpStage,
+        errorTag: acpResult.errorTag,
+      },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Kimi CLI is installed but ACP startup failed. Check server logs for details.",
+        },
+      }),
+    };
   }
-  const discoveredModels = discoveryExit.value.value;
+  if (acpResult._tag === "transient-timeout") {
+    yield* Effect.logWarning("Kimi ACP probe timed out.", {
+      stage: acpStage,
+      timeoutMs: acpResult.timeoutMs,
+    });
+    return {
+      classification: {
+        _tag: "transient-timeout",
+        stage: acpStage,
+        timeoutMs: acpResult.timeoutMs,
+      },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Kimi ACP health check timed out. T3 Code will retry automatically.",
+        },
+      }),
+    };
+  }
+  if (acpResult._tag === "transient-process-failure") {
+    yield* Effect.logWarning("Kimi ACP probe failed transiently.", {
+      stage: acpStage,
+      errorTag: acpResult.errorTag,
+    });
+    return {
+      classification: {
+        _tag: "transient-process-failure",
+        stage: acpStage,
+        errorTag: acpResult.errorTag,
+      },
+      snapshot: buildServerProvider({
+        presentation: KIMI_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Kimi ACP health check failed temporarily. T3 Code will retry automatically.",
+        },
+      }),
+    };
+  }
+
+  const discoveredModels = acpResult.value;
   const models =
     discoveredModels.length > 0
       ? kimiModelsFromSettings(kimiSettings.customModels, discoveredModels)
       : fallbackModels;
+  const discoveryCache = cachedDiscovery ?? { key: cacheKey, models: discoveredModels };
 
-  return buildServerProvider({
-    presentation: KIMI_PRESENTATION,
-    enabled: kimiSettings.enabled,
-    checkedAt,
-    models,
-    probe: {
-      installed: true,
-      version,
-      status: "ready",
-      auth: { status: "authenticated" },
+  return {
+    classification: {
+      _tag: "healthy",
+      modelSource: cachedDiscovery ? "cache" : "discovery",
     },
-  });
+    snapshot: buildServerProvider({
+      presentation: KIMI_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version,
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    }),
+    discoveryCache,
+  };
+});
+
+export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(function* (
+  kimiSettings: KimiSettings,
+  environment: NodeJS.ProcessEnv = process.env,
+): Effect.fn.Return<ServerProviderDraft, never, KimiProbeEnvironment> {
+  return (yield* probeKimiProviderStatus(kimiSettings, environment)).snapshot;
 });
 
 export const enrichKimiSnapshot = (input: {

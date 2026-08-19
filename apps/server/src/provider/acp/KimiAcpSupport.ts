@@ -4,10 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { expandHomePath } from "../../pathExpansion.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -58,6 +61,45 @@ export function buildKimiAcpSpawnInput(
       : {}),
   };
 }
+
+export const probeKimiAcpAuthentication = Effect.fn("probeKimiAcpAuthentication")(function* (
+  input: KimiAcpRuntimeInput,
+) {
+  const spawnInput = buildKimiAcpSpawnInput(input.kimiSettings, input.cwd, input.environment);
+  const spawnCommand = yield* resolveSpawnCommand(
+    spawnInput.command,
+    spawnInput.args,
+    spawnInput.env ? { env: spawnInput.env, extendEnv: true } : {},
+  );
+  const child = yield* input.childProcessSpawner
+    .spawn(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        ...(spawnInput.cwd ? { cwd: spawnInput.cwd } : {}),
+        ...(spawnInput.env ? { env: spawnInput.env, extendEnv: true } : {}),
+        shell: spawnCommand.shell,
+      }),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new EffectAcpErrors.AcpSpawnError({
+            command: spawnInput.command,
+            cause,
+          }),
+      ),
+    );
+  const acpContext = yield* Layer.build(EffectAcpClient.layerChildProcess(child));
+  const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
+  yield* acp.agent.initialize({
+    protocolVersion: 1,
+    clientCapabilities: {
+      fs: { readTextFile: false, writeTextFile: false },
+      terminal: false,
+    },
+    clientInfo: input.clientInfo,
+  });
+  yield* acp.agent.authenticate({ methodId: KIMI_AUTH_METHOD_LOGIN });
+});
 
 export const makeKimiAcpRuntime = (
   input: KimiAcpRuntimeInput,
