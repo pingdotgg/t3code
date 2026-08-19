@@ -112,6 +112,11 @@ export interface OpenCodeCommandResult {
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
+  /**
+   * OpenCode's configured `default_agent`, when the server reports one. Absent
+   * for servers that do not expose it and for CLI-sourced inventories.
+   */
+  readonly defaultAgent?: string;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -673,9 +678,23 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
+  // The configured default agent only refines capability defaults, so a server
+  // that cannot report it must not fail the whole inventory load.
+  const loadDefaultAgent = (client: OpencodeClient) =>
+    runOpenCodeSdk("config.get", () => client.config.get()).pipe(
+      Effect.map((result) => result.data?.default_agent),
+      Effect.orElseSucceed(() => undefined),
+    );
+
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
+    Effect.all([loadProviders(client), loadAgents(client), loadDefaultAgent(client)], {
+      concurrency: "unbounded",
+    }).pipe(
+      Effect.map(([providerList, agents, defaultAgent]) => ({
+        providerList,
+        agents,
+        ...(defaultAgent === undefined ? {} : { defaultAgent }),
+      })),
     );
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
