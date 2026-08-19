@@ -4,6 +4,7 @@ import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3t
 import {
   createOpencodeClient,
   type Agent,
+  type Command,
   type FilePartInput,
   type Model,
   type OpencodeClient,
@@ -31,6 +32,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
+import {
+  EMPTY_PROVIDER_COMMAND_CATALOG,
+  mapOpenCodeSdkCatalogToProviderCatalog,
+  type ProviderCommandCatalog,
+} from "./providerCommandCatalog.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -109,9 +115,19 @@ export interface OpenCodeCommandResult {
   readonly code: number;
 }
 
+export interface OpenCodeSkill {
+  readonly name: string;
+  readonly description?: string;
+  readonly location: string;
+}
+
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
+  /** OpenCode `/command` list (slash commands + skill-sourced entries). */
+  readonly commands: ReadonlyArray<Command>;
+  /** OpenCode `/skill` list (paths for the `$` picker). */
+  readonly skills: ReadonlyArray<OpenCodeSkill>;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -163,6 +179,17 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
+  /**
+   * Load slash/skill catalogs via the OpenCode SDK (`/command` + `/skill`).
+   * Spawns a short-lived local serve when `serverUrl` is absent.
+   */
+  readonly loadProviderCommandCatalog: (input: {
+    readonly binaryPath: string;
+    readonly directory: string;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly serverUrl?: string | null;
+    readonly serverPassword?: string;
+  }) => Effect.Effect<ProviderCommandCatalog, never>;
 }
 
 function parseServerUrlFromOutput(output: string): string | null {
@@ -673,9 +700,52 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
+  const loadCommands = (client: OpencodeClient) =>
+    runOpenCodeSdk("command.list", () => client.command.list()).pipe(
+      Effect.map((result) => result.data ?? []),
+      // Catalog is optional for model inventory — empty is better than failing ready.
+      Effect.orElseSucceed(() => [] as ReadonlyArray<Command>),
+    );
+
+  const loadSkills = (client: OpencodeClient) =>
+    runOpenCodeSdk("app.skills", () => client.app.skills()).pipe(
+      Effect.map((result) => {
+        const rows = result.data ?? [];
+        return rows.flatMap((row) => {
+          const name = typeof row.name === "string" ? row.name.trim() : "";
+          const location = typeof row.location === "string" ? row.location.trim() : "";
+          if (!name || !location) {
+            return [];
+          }
+          const description =
+            typeof row.description === "string" && row.description.trim().length > 0
+              ? row.description.trim()
+              : undefined;
+          return [
+            {
+              name,
+              location,
+              ...(description ? { description } : {}),
+            } satisfies OpenCodeSkill,
+          ];
+        });
+      }),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<OpenCodeSkill>),
+    );
+
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
+    Effect.all(
+      [loadProviders(client), loadAgents(client), loadCommands(client), loadSkills(client)],
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(
+      Effect.map(([providerList, agents, commands, skills]) => ({
+        providerList,
+        agents,
+        commands,
+        skills,
+      })),
     );
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
@@ -749,11 +819,36 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         agents = parseAgentListCliOutput(agentsResult.value.stdout);
       }
 
+      // CLI inventory does not expose commands/skills; callers that need a
+      // catalog open an SDK session via loadProviderCommandCatalog.
       return {
         providerList: { all: allProviders, default: {}, connected },
         agents,
+        commands: [],
+        skills: [],
       };
     });
+
+  const loadProviderCommandCatalog: OpenCodeRuntimeShape["loadProviderCommandCatalog"] = (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* connectToOpenCodeServer({
+          binaryPath: input.binaryPath,
+          serverUrl: input.serverUrl,
+          environment: input.environment,
+        });
+        const client = createOpenCodeSdkClient({
+          baseUrl: server.url,
+          directory: input.directory,
+          ...(input.serverPassword ? { serverPassword: input.serverPassword } : {}),
+        });
+        // Only the catalog endpoints — do not couple to provider.list / app.agents.
+        const [commands, skills] = yield* Effect.all([loadCommands(client), loadSkills(client)], {
+          concurrency: "unbounded",
+        });
+        return mapOpenCodeSdkCatalogToProviderCatalog({ commands, skills });
+      }),
+    ).pipe(Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG));
 
   return {
     startOpenCodeServerProcess,
@@ -762,6 +857,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     createOpenCodeSdkClient,
     loadOpenCodeInventory,
     loadInventoryFromCli,
+    loadProviderCommandCatalog,
   } satisfies OpenCodeRuntimeShape;
 });
 

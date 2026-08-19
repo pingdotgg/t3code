@@ -3,6 +3,8 @@ import {
   type ModelCapabilities,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -30,6 +32,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import { mapAcpAvailableCommandsToProviderCatalog } from "../providerCommandCatalog.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -123,6 +126,18 @@ function buildGrokDiscoveredModelsFromSessionModelState(
     .filter((model): model is ServerProviderModel => model !== undefined);
 }
 
+interface GrokAcpDiscoveryResult {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+}
+
+const emptyGrokAcpDiscoveryResult: GrokAcpDiscoveryResult = {
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
+
 const discoverGrokModelsViaAcp = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -137,7 +152,12 @@ const discoverGrokModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    const catalog = mapAcpAvailableCommandsToProviderCatalog(started.availableCommands);
+    return {
+      models: buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models),
+      slashCommands: catalog.slashCommands,
+      skills: catalog.skills,
+    } satisfies GrokAcpDiscoveryResult;
   }).pipe(Effect.scoped);
 
 const runGrokVersionCommand = (
@@ -291,10 +311,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       },
     });
   }
-  const discoveredModels = discoveryExit.value.value;
+  const discovered = discoveryExit.value.value ?? emptyGrokAcpDiscoveryResult;
   const models =
-    discoveredModels.length > 0
-      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
+    discovered.models.length > 0
+      ? grokModelsFromSettings(grokSettings.customModels, discovered.models)
       : fallbackModels;
 
   return buildServerProvider({
@@ -302,6 +322,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     enabled: grokSettings.enabled,
     checkedAt,
     models,
+    slashCommands: discovered.slashCommands,
+    skills: discovered.skills,
     probe: {
       installed: true,
       version,

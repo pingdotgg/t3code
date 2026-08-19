@@ -38,7 +38,13 @@ const runtimeMock = {
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      commands: [] as unknown[],
+      skills: [] as unknown[],
     } as unknown,
+    commandCatalog: {
+      slashCommands: [] as unknown[],
+      skills: [] as unknown[],
+    },
   },
   reset() {
     this.state.runVersionError = null;
@@ -48,7 +54,10 @@ const runtimeMock = {
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      commands: [],
+      skills: [],
     };
+    this.state.commandCatalog = { slashCommands: [], skills: [] };
   },
 };
 
@@ -105,6 +114,20 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
+  loadProviderCommandCatalog: () =>
+    Effect.succeed({
+      slashCommands: runtimeMock.state.commandCatalog.slashCommands as ReadonlyArray<{
+        readonly name: string;
+        readonly description?: string;
+      }>,
+      skills: runtimeMock.state.commandCatalog.skills as ReadonlyArray<{
+        readonly name: string;
+        readonly path: string;
+        readonly enabled: boolean;
+        readonly description?: string;
+        readonly scope?: string;
+      }>,
+    }),
 };
 
 beforeEach(() => {
@@ -182,6 +205,17 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
           { name: "build", hidden: false, mode: "primary" },
           { name: "plan", hidden: false, mode: "primary" },
         ],
+        commands: [
+          { name: "review", description: "Review changes", hints: ["$ARGUMENTS"] },
+          { name: "init", description: "Init AGENTS.md", hints: [] },
+        ],
+        skills: [
+          {
+            name: "to-prd",
+            description: "Write a PRD",
+            location: "/tmp/skills/to-prd/SKILL.md",
+          },
+        ],
       };
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
@@ -204,6 +238,18 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+      NodeAssert.deepEqual(snapshot.slashCommands.map((command) => command.name).sort(), [
+        "init",
+        "review",
+      ]);
+      NodeAssert.deepEqual(snapshot.skills, [
+        {
+          name: "to-prd",
+          description: "Write a PRD",
+          path: "/tmp/skills/to-prd/SKILL.md",
+          enabled: true,
+        },
+      ]);
     }),
   );
 

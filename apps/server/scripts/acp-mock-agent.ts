@@ -38,6 +38,7 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+const emitAvailableCommands = process.env.T3_ACP_EMIT_AVAILABLE_COMMANDS === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
@@ -310,11 +311,38 @@ const program = Effect.gen(function* () {
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (emitAvailableCommands) {
+        // Mirror Grok: advertise slash commands + skill paths before session/new
+        // resolves so the provider probe can snapshot the catalog (issue #4109).
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "compact",
+                description: "Compress conversation history",
+                input: { hint: "optional context" },
+              },
+              {
+                name: "mock-skill",
+                description: "A mock Grok skill",
+                _meta: {
+                  scope: "user",
+                  path: "/tmp/mock-skill/SKILL.md",
+                },
+              },
+            ],
+          },
+        });
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
