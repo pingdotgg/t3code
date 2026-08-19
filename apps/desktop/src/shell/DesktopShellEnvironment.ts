@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,6 +17,10 @@ interface ShellEnvironmentConfig {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
   readonly userShell: Option.Option<string>;
+  readonly windowsEnvironmentCache?: {
+    readonly path: string;
+    readonly directory: string;
+  };
 }
 
 interface WindowsProbeOptions {
@@ -93,6 +98,20 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
+const WINDOWS_ENVIRONMENT_CACHE_MAX_AGE_MS = Duration.toMillis(Duration.hours(24));
+const WINDOWS_ENVIRONMENT_CACHE_FILE_NAME = "windows-shell-environment.json";
+
+const WindowsEnvironmentCache = Schema.Struct({
+  version: Schema.Literal(1),
+  capturedAt: Schema.Number,
+  inheritedPath: Schema.String,
+  noProfile: Schema.Record(Schema.String, Schema.String),
+  profile: Schema.Record(Schema.String, Schema.String),
+});
+type WindowsEnvironmentCache = typeof WindowsEnvironmentCache.Type;
+const WindowsEnvironmentCacheJson = Schema.fromJsonString(WindowsEnvironmentCache);
+const decodeWindowsEnvironmentCache = Schema.decodeUnknownOption(WindowsEnvironmentCacheJson);
+const encodeWindowsEnvironmentCache = Schema.encodeEffect(WindowsEnvironmentCacheJson);
 
 const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =>
   Option.fromNullishOr(value).pipe(
@@ -383,19 +402,65 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
 const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWindowsEnvironment")(
   function* (
     config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-    // Concurrent, not sequential: these two probes are independent (only their
-    // results are combined below) and each spawns its own PowerShell. Run in
-    // series they sit at offset 0 of desktop.startup, before anything else, and
-    // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
-    // startup span, of which desktop.bootstrap is ~30ms.
-    const [noProfile, profile] = yield* Effect.all(
-      [
-        readWindowsEnvironment(["PATH"], { loadProfile: false }),
-        readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
-      ],
-      { concurrency: 2 },
-    );
+  ): Effect.fn.Return<
+    void,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+  > {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const inheritedPath = Option.getOrElse(readEnvPath(config.env), () => "");
+    const cache = config.windowsEnvironmentCache ?? null;
+    const cachePath = cache?.path ?? null;
+    const now = yield* Clock.currentTimeMillis;
+    // Loading a PowerShell profile dominates warm Windows launches. Reuse its
+    // small environment snapshot while the inherited PATH is unchanged, but
+    // bound its lifetime so profile-only changes are eventually discovered.
+    // A missing, corrupt, or stale cache simply falls through to the probes.
+    const cached: Option.Option<WindowsEnvironmentCache> =
+      cachePath === null
+        ? Option.none<WindowsEnvironmentCache>()
+        : yield* fileSystem.readFileString(cachePath).pipe(
+            Effect.map(decodeWindowsEnvironmentCache),
+            Effect.orElseSucceed(() => Option.none()),
+            Effect.map((entry) =>
+              Option.filter(
+                entry,
+                (value) =>
+                  value.inheritedPath === inheritedPath &&
+                  now >= value.capturedAt &&
+                  now - value.capturedAt <= WINDOWS_ENVIRONMENT_CACHE_MAX_AGE_MS,
+              ),
+            ),
+          );
+
+    const [noProfile, profile] = Option.isSome(cached)
+      ? [cached.value.noProfile, cached.value.profile]
+      : yield* Effect.all(
+          [
+            readWindowsEnvironment(["PATH"], { loadProfile: false }),
+            readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
+          ],
+          { concurrency: 2 },
+        );
+
+    const probesCompleted =
+      Option.isSome(trimNonEmpty(noProfile.PATH)) && Option.isSome(trimNonEmpty(profile.PATH));
+
+    if (Option.isNone(cached) && cache !== null && probesCompleted) {
+      const encoded = yield* encodeWindowsEnvironmentCache({
+        version: 1,
+        capturedAt: now,
+        inheritedPath,
+        noProfile,
+        profile,
+      }).pipe(Effect.option);
+      if (Option.isSome(encoded)) {
+        yield* fileSystem.makeDirectory(cache.directory, { recursive: true }).pipe(
+          Effect.andThen(fileSystem.writeFileString(cache.path, `${encoded.value}\n`)),
+          Effect.catchCause(() => Effect.void),
+        );
+      }
+    }
     const mergedPath = mergePaths("win32", [
       trimNonEmpty(profile.PATH),
       trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
@@ -539,6 +604,17 @@ export const make = Effect.gen(function* () {
       env: process.env,
       platform: environment.platform,
       userShell: Option.none(),
+      ...(typeof environment.stateDir === "string" && environment.stateDir.length > 0
+        ? {
+            windowsEnvironmentCache: {
+              path: environment.path.join(
+                environment.stateDir,
+                WINDOWS_ENVIRONMENT_CACHE_FILE_NAME,
+              ),
+              directory: environment.stateDir,
+            },
+          }
+        : {}),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
