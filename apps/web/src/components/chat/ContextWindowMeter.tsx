@@ -62,8 +62,10 @@ export function ContextWindowMeter(props: {
     : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
   const showTokenCount = useClientSettings((settings) => settings.showContextWindowTokenCount);
   // Opting into the count also opts the ring into severity coloring, so the
-  // number and the arc never disagree. The popover keeps the neutral color.
-  const ringColor = showTokenCount ? contextWindowSeverityColor(usage.usedTokens) : usageColor;
+  // number and the arc never disagree. A nearly full window still wins, so a
+  // small model's saturation keeps the overload red it had before.
+  const ringColor =
+    showTokenCount && !isOverloaded ? contextWindowSeverityColor(usage.usedTokens) : usageColor;
 
   return (
     <Popover>
