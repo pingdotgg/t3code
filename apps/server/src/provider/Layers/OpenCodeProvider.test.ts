@@ -323,7 +323,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ["---", "name: test-skill", "description: Test skill description.", "---"].join("\n"),
       );
 
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), workspace);
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), workspace, {
+        OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-config"),
+      });
 
       NodeAssert.equal(snapshot.skills.length, 1);
       NodeAssert.equal(snapshot.skills[0]?.name, "test-skill");
