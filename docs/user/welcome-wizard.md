@@ -22,7 +22,7 @@ their install and sign-in status. If one is missing, an inline terminal opens
 with the install command pre-typed — press Enter to run it, then click
 **Done**. Once the agent is detected, its card offers **Sign in**, which opens
 a fresh terminal with the CLI's login command ready to run. Other supported
-agents are configured in Settings → Providers.
+agents are off by default and can be enabled in Settings → Providers.
 
 ## Import your projects
 

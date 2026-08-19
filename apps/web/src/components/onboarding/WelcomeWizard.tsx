@@ -603,7 +603,7 @@ function ConnectedAgentsStep({
           {otherAgents
             .map((driver) => getDriverOption(driver as never)?.label ?? driver)
             .join(" · ")}{" "}
-          — configure in Settings.
+          — off by default, enable in Settings.
         </p>
       ) : null}
       <div className="mt-6 flex items-center justify-between">
