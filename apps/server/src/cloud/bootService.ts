@@ -288,11 +288,15 @@ export function launchdManager(input: {
     kind: "launchd",
     unitPath,
     render: (plan) => renderBootServicePlist(plan, { homeDir: input.homeDir }),
+    // Without --wait, bootout returns in milliseconds while the job drains
+    // for up to ExitTimeOut, and a bootstrap during the drain fails EIO.
+    // --wait (present on modern macOS, absent from the man page) blocks until
+    // the job is removed from the domain; STOP_STEP_TIMEOUT outlives it.
     stop: [
       {
         step: "stopping the installed launch agent",
         command: "launchctl",
-        args: ["bootout", serviceTarget],
+        args: ["bootout", "--wait", serviceTarget],
         optional: true,
         timeout: STOP_STEP_TIMEOUT,
       },
@@ -327,7 +331,7 @@ export function launchdManager(input: {
       {
         step: "stopping the service",
         command: "launchctl",
-        args: ["bootout", serviceTarget],
+        args: ["bootout", "--wait", serviceTarget],
         optional: true,
         timeout: STOP_STEP_TIMEOUT,
       },
