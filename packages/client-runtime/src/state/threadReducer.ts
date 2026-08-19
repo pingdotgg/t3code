@@ -167,6 +167,91 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.goal-set":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          goal: {
+            objective: event.payload.objective,
+            status: event.payload.status,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+          },
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.goal-paused":
+      return thread.goal == null
+        ? { kind: "unchanged" }
+        : {
+            kind: "updated",
+            thread: {
+              ...thread,
+              goal: { ...thread.goal, status: "paused", updatedAt: event.payload.updatedAt },
+              updatedAt: event.payload.updatedAt,
+            },
+          };
+
+    case "thread.goal-resumed":
+      return thread.goal == null
+        ? { kind: "unchanged" }
+        : {
+            kind: "updated",
+            thread: {
+              ...thread,
+              goal: { ...thread.goal, status: "active", updatedAt: event.payload.updatedAt },
+              updatedAt: event.payload.updatedAt,
+            },
+          };
+
+    case "thread.goal-cleared":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          goal: null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.goal-completed":
+      return thread.goal == null
+        ? { kind: "unchanged" }
+        : {
+            kind: "updated",
+            thread: {
+              ...thread,
+              goal: { ...thread.goal, status: "complete", updatedAt: event.payload.updatedAt },
+              updatedAt: event.payload.updatedAt,
+            },
+          };
+
+    case "thread.goal-blocked":
+      return thread.goal == null
+        ? { kind: "unchanged" }
+        : {
+            kind: "updated",
+            thread: {
+              ...thread,
+              goal: { ...thread.goal, status: "blocked", updatedAt: event.payload.updatedAt },
+              updatedAt: event.payload.updatedAt,
+            },
+          };
+
+    case "thread.goal-usage-limited":
+      return thread.goal == null
+        ? { kind: "unchanged" }
+        : {
+            kind: "updated",
+            thread: {
+              ...thread,
+              goal: { ...thread.goal, status: "usageLimited", updatedAt: event.payload.updatedAt },
+              updatedAt: event.payload.updatedAt,
+            },
+          };
+
     case "thread.pinned":
       return {
         kind: "updated",

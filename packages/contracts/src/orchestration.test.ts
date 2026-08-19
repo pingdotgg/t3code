@@ -8,6 +8,7 @@ import {
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
+  ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
@@ -52,6 +53,7 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
@@ -423,6 +425,100 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     assert.strictEqual(thread.settledAt, null);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(thread.goal, undefined);
+    assert.strictEqual(shell.goal, undefined);
+  }),
+);
+
+it.effect("decodes optional Goal fields on Thread and shell", () =>
+  Effect.gen(function* () {
+    const common = {
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+    };
+    const thread = yield* decodeOrchestrationThread({
+      ...common,
+      goal: {
+        objective: "Reduce p95 below 120ms",
+        status: "active",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+    const shell = yield* decodeOrchestrationThreadShell({
+      ...common,
+      goal: { status: "active", objectivePreview: "Reduce p95 below 120ms" },
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    });
+    assert.strictEqual(thread.goal?.objective, "Reduce p95 below 120ms");
+    assert.strictEqual(thread.goal?.status, "active");
+    assert.strictEqual(shell.goal?.status, "active");
+    assert.strictEqual(shell.goal?.objectivePreview, "Reduce p95 below 120ms");
+  }),
+);
+
+it.effect("decodes thread.goal.set as a client command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.goal.set",
+      commandId: "cmd-goal-set-1",
+      threadId: "thread-1",
+      objective: "Reduce p95 below 120ms",
+      messageId: "msg-1",
+    });
+    assert.strictEqual(parsed.type, "thread.goal.set");
+    if (parsed.type === "thread.goal.set") {
+      assert.strictEqual(parsed.objective, "Reduce p95 below 120ms");
+      assert.strictEqual(parsed.messageId, "msg-1");
+    }
+  }),
+);
+
+it.effect("decodes thread.goal.continue as an internal command, not a client RPC", () =>
+  Effect.gen(function* () {
+    const command = {
+      type: "thread.goal.continue",
+      commandId: "goal-continue:thread-1:2026-01-01T00:00:00.000Z:turn-1",
+      threadId: "thread-1",
+      completedTurnId: "turn-1",
+    };
+    const parsed = yield* decodeOrchestrationCommand(command);
+    assert.strictEqual(parsed.type, "thread.goal.continue");
+    const clientRejected = yield* decodeClientOrchestrationCommand(command).pipe(Effect.flip);
+    assert.ok(clientRejected);
+  }),
+);
+
+it.effect("decodes thread.goal.block as an internal command, not a client RPC", () =>
+  Effect.gen(function* () {
+    const command = {
+      type: "thread.goal.block",
+      commandId: "goal-block:thread-1:2026-01-01T00:00:00.000Z:turn-1",
+      threadId: "thread-1",
+    };
+    const parsed = yield* decodeOrchestrationCommand(command);
+    assert.strictEqual(parsed.type, "thread.goal.block");
+    const clientRejected = yield* decodeClientOrchestrationCommand(command).pipe(Effect.flip);
+    assert.ok(clientRejected);
   }),
 );
 
@@ -723,6 +819,16 @@ it.effect(
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
+);
+
+it.effect("decodes thread.turn-start-requested payload without messageId", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.messageId, undefined);
+  }),
 );
 
 it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>

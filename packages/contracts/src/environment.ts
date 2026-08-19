@@ -58,6 +58,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.goal.set / pause / resume / clear / complete.
+      Same version-skew contract as threadSettlement. */
+  threadGoal: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),

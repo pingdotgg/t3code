@@ -177,6 +177,7 @@ export type BuildThreadActionItemsThread = Pick<
   | "session"
   | "title"
   | "worktreePath"
+  | "goal"
 > & {
   updatedAt: string;
   latestUserMessageAt?: string | null;
@@ -217,6 +218,9 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     }
     if (thread.id === input.activeThreadId) {
       descriptionParts.push("Current thread");
+    }
+    if (thread.goal?.status === "active") {
+      descriptionParts.push("Active");
     }
 
     const leadingContent = input.renderLeadingContent?.(thread);

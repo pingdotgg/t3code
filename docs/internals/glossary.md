@@ -42,6 +42,38 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
 
+#### Goal
+
+T3's completion contract on a Thread: keep working until the Objective is true, or until Pause, Complete, Clear, Blocked, or Usage-limited. Optional on the Thread read model and on the Thread shell (`status` plus a truncated Objective preview) so the inbox can render without Thread detail. T3 owns Goal state and does not call provider Goal APIs. See [the contracts][1] and [decider.ts][8].
+
+#### Objective
+
+The outcome text a Goal is working toward. The first Turn on an idle Thread records the Objective as a normal user message. Command forms (`/goal`, “slash goal”) never reach a provider.
+
+#### Continuation
+
+A Turn T3 starts while a Goal is Active, with no user message. Continuations wait until the Session is ready, and do not run in plan mode. An activity of kind `goal.continued` marks each one. See [GoalReactor.ts][25].
+
+#### Pause
+
+Goal status that prevents the next Continuation. `thread.goal.pause` does not interrupt a running Turn. Stop (`thread.turn.interrupt` while Active) interrupts this Turn and Pauses. Settle, Snooze, and a closed client do not Pause. Resume (`thread.goal.resume`) makes a Paused, Blocked, or Usage-limited Goal Active again; Resume from Complete is refused.
+
+#### Complete
+
+Terminal success for a Goal. Only the model Completes, via a structured `<objective_complete>` signal — never the user, and never from prose. Continuations stop immediately.
+
+#### Clear
+
+Removes the Goal from the Thread (`thread.goal.clear`) so the Thread returns to one-Turn-at-a-time behavior. The UI asks for confirmation first, and clearing interrupts a running Turn (`thread.turn-interrupt-requested` is emitted alongside `thread.goal-cleared`).
+
+#### Blocked
+
+The work stopped itself. The model Blocks only via `<objective_blocked>`. T3 also Blocks after several consecutive Continuations with no tool work and no checkpoint diff. Resume tries again and resets that streak.
+
+#### Usage-limited
+
+The account hit a provider quota or rate limit. Ordinary Turn errors leave the Goal Active; classified quota/rate-limit failures emit `thread.goal-usage-limited`. Resume tries again after the window resets.
+
 ### Orchestration
 
 Orchestration is the server-side domain layer that turns runtime activity into stable app state. The main entry point is [OrchestrationEngine.ts][7], with core logic in [decider.ts][8] and [projector.ts][4].
@@ -179,3 +211,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/orchestration/Layers/GoalReactor.ts

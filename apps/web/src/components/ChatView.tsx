@@ -44,6 +44,7 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
+import { formatGoalStatusMessage, parseGoalComposerCommand } from "@t3tools/shared/composerTrigger";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -256,6 +257,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
+import { useThreadGoalActions } from "../hooks/useThreadGoalActions";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -1231,6 +1233,11 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const setGoal = useAtomCommand(threadEnvironment.setGoal, { reportFailure: false });
+  const pauseGoal = useAtomCommand(threadEnvironment.pauseGoal, { reportFailure: false });
+  const resumeGoal = useAtomCommand(threadEnvironment.resumeGoal, { reportFailure: false });
+  const clearGoal = useAtomCommand(threadEnvironment.clearGoal, { reportFailure: false });
+  const { runGoalAction } = useThreadGoalActions();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -4165,6 +4172,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const supportsGoal = serverConfig?.environment.capabilities.threadGoal === true;
   const nowMinute = useNowMinute();
   const snoozeNow = new Date().toISOString();
   const activeThreadSnoozed =
@@ -5033,6 +5041,116 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
+    const goalCommand = parseGoalComposerCommand(trimmed);
+    let pendingGoalObjective: string | null = null;
+    if (goalCommand !== null && !directAnnotation) {
+      // Goal commands own only the prompt text: images, contexts, annotations,
+      // and review comments attached to the draft must survive a /goal submit.
+      const clearGoalComposer = () => {
+        promptRef.current = "";
+        setComposerDraftPrompt(composerDraftTarget, "");
+        composerRef.current?.resetCursorState();
+      };
+      const reportGoalCommandFailure = (result: AtomCommandResult<unknown, unknown>): boolean => {
+        const succeeded = result._tag === "Success";
+        if (!succeeded && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Failed to update the Objective.",
+          );
+        }
+        return succeeded;
+      };
+      if (goalCommand.action === "status") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Objective",
+            description: formatGoalStatusMessage(activeThread.goal ?? null),
+          }),
+        );
+        clearGoalComposer();
+        return;
+      }
+      if (goalCommand.action === "refuse") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "That command was not sent",
+            description: "Type /goal followed by the outcome to set an Objective.",
+          }),
+        );
+        clearGoalComposer();
+        return;
+      }
+      // Local drafts must pass the same gate: without it the objective would
+      // be sent as a normal message and the later setGoal call would fail.
+      if (!supportsGoal) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "This environment cannot set an Objective",
+            description: "Update the server to use /goal.",
+          }),
+        );
+        clearGoalComposer();
+        return;
+      }
+      if (
+        goalCommand.action === "clear" ||
+        goalCommand.action === "pause" ||
+        goalCommand.action === "resume"
+      ) {
+        if (!isServerThread) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "Objective",
+              description: "Set an Objective with /goal before pausing, resuming, or clearing.",
+            }),
+          );
+          clearGoalComposer();
+          return;
+        }
+        const result =
+          goalCommand.action === "clear"
+            ? await clearGoal({
+                environmentId,
+                input: { threadId: activeThread.id },
+              })
+            : goalCommand.action === "pause"
+              ? await pauseGoal({
+                  environmentId,
+                  input: { threadId: activeThread.id },
+                })
+              : await resumeGoal({
+                  environmentId,
+                  input: { threadId: activeThread.id },
+                });
+        // Only a successful command consumes the draft; failures keep the
+        // text so the user can retry.
+        if (reportGoalCommandFailure(result)) {
+          clearGoalComposer();
+        }
+        return;
+      }
+      if (isServerThread) {
+        const result = await setGoal({
+          environmentId,
+          input: {
+            threadId: activeThread.id,
+            objective: goalCommand.objective,
+            messageId: newMessageId(),
+          },
+        });
+        if (reportGoalCommandFailure(result)) {
+          clearGoalComposer();
+        }
+        return;
+      }
+      pendingGoalObjective = goalCommand.objective;
+    }
     if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -5123,7 +5241,10 @@ function ChatViewContent(props: ChatViewProps) {
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      appendTerminalContextsToPrompt(
+        pendingGoalObjective ?? promptForSend,
+        composerTerminalContextsSnapshot,
+      ),
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -5235,7 +5356,7 @@ function ChatViewContent(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = trimmed;
+    let titleSeed = pendingGoalObjective ?? trimmed;
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
@@ -5346,6 +5467,23 @@ function ChatViewContent(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         acknowledgeActiveThreadWoke();
+        if (pendingGoalObjective !== null) {
+          const goalResult = await setGoal({
+            environmentId,
+            input: {
+              threadId: threadIdForSend,
+              objective: pendingGoalObjective,
+              messageId: messageIdForSend,
+            },
+          });
+          if (goalResult._tag === "Failure" && !isAtomCommandInterrupted(goalResult)) {
+            const error = squashAtomCommandFailure(goalResult);
+            setThreadError(
+              threadIdForSend,
+              error instanceof Error ? error.message : "Failed to update the Objective.",
+            );
+          }
+        }
       }
     }
 
@@ -6485,6 +6623,18 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeThreadActivities={activeThread?.activities}
+                            threadGoal={supportsGoal ? (activeThread.goal ?? null) : null}
+                            onThreadGoalAction={
+                              supportsGoal
+                                ? (action) => {
+                                    void runGoalAction({
+                                      environmentId,
+                                      threadId: activeThread.id,
+                                      action,
+                                    });
+                                  }
+                                : undefined
+                            }
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}

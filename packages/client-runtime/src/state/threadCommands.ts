@@ -22,6 +22,11 @@ import {
   type UnpinThreadInput,
   type UnsettleThreadInput,
   type UnsnoozeThreadInput,
+  type SetThreadGoalInput,
+  type PauseThreadGoalInput,
+  type ResumeThreadGoalInput,
+  type ClearThreadGoalInput,
+  type CompleteThreadGoalInput,
   type UpdateThreadMetadataInput,
   archiveThread,
   createThread,
@@ -42,6 +47,11 @@ import {
   unpinThread,
   unsettleThread,
   unsnoozeThread,
+  setThreadGoal,
+  pauseThreadGoal,
+  resumeThreadGoal,
+  clearThreadGoal,
+  completeThreadGoal,
   updateThreadMetadata,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -66,6 +76,11 @@ export type {
   UnpinThreadInput,
   UnsettleThreadInput,
   UnsnoozeThreadInput,
+  SetThreadGoalInput,
+  PauseThreadGoalInput,
+  ResumeThreadGoalInput,
+  ClearThreadGoalInput,
+  CompleteThreadGoalInput,
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
 
@@ -124,6 +139,36 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsnooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsnooze",
       execute: (input: UnsnoozeThreadInput) => unsnoozeThread(input),
+      scheduler,
+      concurrency,
+    }),
+    setGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-goal",
+      execute: (input: SetThreadGoalInput) => setThreadGoal(input),
+      scheduler,
+      concurrency,
+    }),
+    pauseGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:pause-goal",
+      execute: (input: PauseThreadGoalInput) => pauseThreadGoal(input),
+      scheduler,
+      concurrency,
+    }),
+    resumeGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:resume-goal",
+      execute: (input: ResumeThreadGoalInput) => resumeThreadGoal(input),
+      scheduler,
+      concurrency,
+    }),
+    clearGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:clear-goal",
+      execute: (input: ClearThreadGoalInput) => clearThreadGoal(input),
+      scheduler,
+      concurrency,
+    }),
+    completeGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:complete-goal",
+      execute: (input: CompleteThreadGoalInput) => completeThreadGoal(input),
       scheduler,
       concurrency,
     }),

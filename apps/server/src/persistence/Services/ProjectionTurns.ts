@@ -71,7 +71,7 @@ export type ProjectionTurnById = typeof ProjectionTurnById.Type;
 
 export const ProjectionPendingTurnStart = Schema.Struct({
   threadId: ThreadId,
-  messageId: MessageId,
+  messageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   requestedAt: IsoDateTime,

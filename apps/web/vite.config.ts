@@ -83,6 +83,18 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
+const e2eTestProject = {
+  extends: true,
+  test: {
+    name: "e2e",
+    include: ["e2e/**/*.test.ts"],
+    environment: "node",
+    fileParallelism: false,
+    hookTimeout: 300_000,
+    testTimeout: 120_000,
+  },
+} satisfies TestProjectInlineConfiguration;
+
 function resolveDevProxyTarget(
   backendPort: string | undefined,
   wsUrl: string | undefined,
@@ -263,7 +275,7 @@ export default defineConfig(() => {
       sourcemap: buildSourcemap,
     },
     test: {
-      projects: [defineProject(unitTestProject)],
+      projects: [defineProject(unitTestProject), defineProject(e2eTestProject)],
     },
   };
 });

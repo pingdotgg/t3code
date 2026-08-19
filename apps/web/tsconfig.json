@@ -30,6 +30,7 @@
     "vite.config.ts",
     "vercel.ts",
     "test",
+    "e2e",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts"
   ]

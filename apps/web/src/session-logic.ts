@@ -14,6 +14,8 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 
+import { formatGoalActivityLabel } from "@t3tools/shared/composerTrigger";
+
 import type {
   ChatMessage,
   ProposedPlan,
@@ -832,11 +834,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null
     : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
+  const goalLabel = formatGoalActivityLabel(activity.kind);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
-    label: taskLabel || activity.summary,
+    label: goalLabel ?? (taskLabel || activity.summary),
     tone:
       activity.kind === "task.progress"
         ? "thinking"

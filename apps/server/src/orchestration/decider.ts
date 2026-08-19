@@ -1,9 +1,17 @@
 import {
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { isGoalCommandForm } from "@t3tools/shared/composerTrigger";
+import {
+  isProviderAccountUsageLimitError,
+  parseObjectiveSignal,
+} from "@t3tools/shared/goalContinuation";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -60,7 +68,7 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 // the window is one whose turn kept running, i.e. it was resolved or went
 // stale. (The projection pipeline's pendingApprovalCount reads the same
 // capped stream and stays consistent with this view.)
-function hasOpenBlockingRequest(thread: {
+export function hasOpenBlockingRequest(thread: {
   readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
 }): boolean {
   const openRequestIds = new Set<string>();
@@ -141,6 +149,124 @@ function threadHasQueuedTurnStart(
     Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
   );
 }
+
+export function isThreadIdleForGoal(
+  thread: {
+    readonly latestTurn: OrchestrationThread["latestTurn"];
+    readonly session: OrchestrationThread["session"];
+    readonly messages: OrchestrationThread["messages"];
+  },
+  occurredAt: string,
+): boolean {
+  if (thread.latestTurn?.state === "running") {
+    return false;
+  }
+  const sessionStatus = thread.session?.status;
+  if (sessionStatus === "running" || sessionStatus === "starting") {
+    return false;
+  }
+  return !threadHasQueuedTurnStart(thread, occurredAt);
+}
+
+function threadHasContinuationForLatestTurn(thread: {
+  readonly latestTurn: OrchestrationThread["latestTurn"];
+  readonly activities: OrchestrationThread["activities"];
+}): boolean {
+  const completedAt = thread.latestTurn?.completedAt;
+  if (completedAt == null) {
+    return false;
+  }
+  const completedAtMs = Date.parse(completedAt);
+  return thread.activities.some(
+    (activity) =>
+      activity.kind === "goal.continued" && Date.parse(activity.createdAt) >= completedAtMs,
+  );
+}
+
+function canStartGoalContinuation(
+  thread: {
+    readonly latestTurn: OrchestrationThread["latestTurn"];
+    readonly session: OrchestrationThread["session"];
+    readonly messages: OrchestrationThread["messages"];
+    readonly activities: OrchestrationThread["activities"];
+  },
+  occurredAt: string,
+): boolean {
+  return (
+    isThreadIdleForGoal(thread, occurredAt) &&
+    !hasOpenBlockingRequest(thread) &&
+    !threadHasContinuationForLatestTurn(thread)
+  );
+}
+
+const goalActivityAppendedEvent = Effect.fn("goalActivityAppendedEvent")(function* (input: {
+  readonly commandId: OrchestrationCommand["commandId"];
+  readonly threadId: ThreadId;
+  readonly occurredAt: string;
+  readonly kind: string;
+  readonly summary: string;
+  readonly tone?: "info" | "error";
+}) {
+  const crypto = yield* Crypto.Crypto;
+  const activityId = EventId.make(yield* crypto.randomUUIDv4);
+  return {
+    ...(yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: input.threadId,
+      occurredAt: input.occurredAt,
+      commandId: input.commandId,
+    })),
+    type: "thread.activity-appended" as const,
+    payload: {
+      threadId: input.threadId,
+      activity: {
+        id: activityId,
+        tone: input.tone ?? "info",
+        kind: input.kind,
+        summary: input.summary,
+        payload: {},
+        turnId: null,
+        createdAt: input.occurredAt,
+      },
+    },
+  };
+});
+
+const goalContinuationEvents = Effect.fn("goalContinuationEvents")(function* (input: {
+  readonly commandId: OrchestrationCommand["commandId"];
+  readonly threadId: ThreadId;
+  readonly occurredAt: string;
+  readonly objective: string;
+  readonly runtimeMode: OrchestrationThread["runtimeMode"];
+}): Effect.fn.Return<
+  readonly [Omit<OrchestrationEvent, "sequence">, Omit<OrchestrationEvent, "sequence">],
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const activityEvent = yield* goalActivityAppendedEvent({
+    commandId: input.commandId,
+    threadId: input.threadId,
+    occurredAt: input.occurredAt,
+    kind: "goal.continued",
+    summary: input.objective,
+  });
+  const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+    ...(yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: input.threadId,
+      occurredAt: input.occurredAt,
+      commandId: input.commandId,
+    })),
+    type: "thread.turn-start-requested",
+    payload: {
+      threadId: input.threadId,
+      runtimeMode: input.runtimeMode,
+      interactionMode: "default",
+      createdAt: input.occurredAt,
+    },
+  };
+  return [activityEvent, turnStartRequestedEvent];
+});
 
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
@@ -670,6 +796,449 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.goal.set": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (isGoalCommandForm(command.objective)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Objective for thread '${command.threadId}' is a command form and cannot be stored.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      const createdAt = thread.goal?.createdAt ?? occurredAt;
+      const events: Array<Omit<OrchestrationEvent, "sequence">> = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.goal-set",
+          payload: {
+            threadId: command.threadId,
+            objective: command.objective,
+            status: "active",
+            createdAt,
+            updatedAt: occurredAt,
+          },
+        },
+      ];
+      if (thread.interactionMode === "plan") {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.interaction-mode-set",
+          payload: {
+            threadId: command.threadId,
+            interactionMode: "default",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      events.push(
+        yield* goalActivityAppendedEvent({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt,
+          kind: "goal.set",
+          summary: command.objective,
+        }),
+      );
+      // An open approval or user-input request owns the thread right now; the
+      // Goal attaches and the first Turn starts when the Session reports ready
+      // and the GoalReactor requests a Continuation.
+      if (hasOpenBlockingRequest(thread) || !isThreadIdleForGoal(thread, occurredAt)) {
+        return events;
+      }
+      if (thread.settledOverride !== null) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      if (thread.snoozedUntil != null) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      const crypto = yield* Crypto.Crypto;
+      const messageId = command.messageId ?? MessageId.make(yield* crypto.randomUUIDv4);
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId,
+          role: "user",
+          text: command.objective,
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+      events.push(userMessageEvent);
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: "default",
+          titleSeed: command.objective,
+          createdAt: occurredAt,
+        },
+      });
+      return events;
+    }
+
+    case "thread.goal.pause": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.goal == null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no Goal to pause.`,
+        });
+      }
+      // Terminal statuses (complete/blocked/usageLimited) must win over a
+      // stale pause; resuming from them is the explicit recovery path.
+      if (thread.goal.status !== "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' Goal is '${thread.goal.status}' and cannot be paused.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.goal-paused",
+          payload: {
+            threadId: command.threadId,
+            updatedAt: occurredAt,
+          },
+        },
+        yield* goalActivityAppendedEvent({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt,
+          kind: "goal.paused",
+          summary: thread.goal.objective,
+        }),
+      ];
+    }
+
+    case "thread.goal.resume": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.goal == null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no Goal to resume.`,
+        });
+      }
+      if (thread.goal.status === "complete") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' Goal is complete and cannot be resumed.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      const events: Array<Omit<OrchestrationEvent, "sequence">> = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.goal-resumed",
+          payload: {
+            threadId: command.threadId,
+            updatedAt: occurredAt,
+          },
+        },
+      ];
+      if (thread.interactionMode === "plan") {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.interaction-mode-set",
+          payload: {
+            threadId: command.threadId,
+            interactionMode: "default",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      events.push(
+        yield* goalActivityAppendedEvent({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt,
+          kind: "goal.resumed",
+          summary: thread.goal.objective,
+        }),
+      );
+      if (canStartGoalContinuation(thread, occurredAt)) {
+        const continuation = yield* goalContinuationEvents({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt,
+          objective: thread.goal.objective,
+          runtimeMode: thread.runtimeMode,
+        });
+        events.push(...continuation);
+      }
+      return events;
+    }
+
+    case "thread.goal.clear": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      const events: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      // Deleting the Objective also stops the active run: the turn only exists
+      // to serve the Goal, and leaving it running would surprise users who
+      // deleted from another device (matches thread.turn.interrupt's reactor).
+      // A stale clear arriving after the Goal was removed must not interrupt
+      // unrelated new work, so the stop is gated on the Goal still existing.
+      if (thread.goal != null && thread.latestTurn?.state === "running") {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.turn-interrupt-requested",
+          payload: {
+            threadId: command.threadId,
+            createdAt: occurredAt,
+          },
+        });
+      }
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.goal-cleared",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: occurredAt,
+        },
+      });
+      if (thread.goal != null) {
+        events.push(
+          yield* goalActivityAppendedEvent({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            occurredAt,
+            kind: "goal.cleared",
+            summary: "Objective cleared",
+          }),
+        );
+      }
+      return events;
+    }
+
+    case "thread.goal.complete": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.goal == null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no Goal to complete.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.goal-completed",
+          payload: {
+            threadId: command.threadId,
+            updatedAt: occurredAt,
+          },
+        },
+        yield* goalActivityAppendedEvent({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt,
+          kind: "goal.completed",
+          summary: thread.goal.objective,
+        }),
+      ];
+    }
+
+    case "thread.goal.continue": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.goal == null || thread.goal.status !== "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no Active Goal to continue.`,
+        });
+      }
+      if (thread.interactionMode === "plan") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is in plan mode and cannot start a Continuation.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      if (!isThreadIdleForGoal(thread, occurredAt)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is not idle and cannot start a Continuation.`,
+        });
+      }
+      if (hasOpenBlockingRequest(thread)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has a pending approval or user-input request and cannot start a Continuation.`,
+        });
+      }
+      if (
+        thread.latestTurn?.turnId !== command.completedTurnId ||
+        thread.latestTurn.state === "running"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' latest Turn '${thread.latestTurn?.turnId ?? "none"}' cannot start a Continuation for '${command.completedTurnId}'.`,
+        });
+      }
+      if (threadHasContinuationForLatestTurn(thread)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' already continued after Turn '${command.completedTurnId}'.`,
+        });
+      }
+      return [
+        ...(yield* goalContinuationEvents({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt,
+          objective: thread.goal.objective,
+          runtimeMode: thread.runtimeMode,
+        })),
+      ];
+    }
+
+    case "thread.goal.block": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.goal == null || thread.goal.status !== "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no Active Goal to block.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.goal-blocked",
+          payload: {
+            threadId: command.threadId,
+            updatedAt: occurredAt,
+          },
+        },
+        yield* goalActivityAppendedEvent({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt,
+          kind: "goal.blocked",
+          summary: thread.goal.objective,
+          tone: "error",
+        }),
+      ];
+    }
+
     case "thread.pin": {
       const thread = yield* requireThreadNotArchived({
         readModel,
@@ -929,6 +1498,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (isGoalCommandForm(command.message.text)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `User text on thread '${command.threadId}' is a Goal command form and cannot start a Turn.`,
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1037,12 +1612,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const interruptEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1056,6 +1631,40 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
+      // A Stop that arrives after its Turn already finished must not pause
+      // the Goal: the interruption targeted the stale Turn, not the current
+      // run. Commands without a turnId ("stop whatever is current") keep
+      // pausing as before.
+      const interruptTargetsActiveTurn =
+        command.turnId === undefined ||
+        (thread.latestTurn?.state === "running" && thread.latestTurn.turnId === command.turnId);
+      if (thread.goal?.status !== "active" || !interruptTargetsActiveTurn) {
+        return interruptEvent;
+      }
+      const activeGoal = thread.goal;
+      return [
+        interruptEvent,
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.goal-paused",
+          payload: {
+            threadId: command.threadId,
+            updatedAt: command.createdAt,
+          },
+        },
+        yield* goalActivityAppendedEvent({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          occurredAt: command.createdAt,
+          kind: "goal.paused",
+          summary: activeGoal.objective,
+        }),
+      ];
     }
 
     case "thread.approval.respond": {
@@ -1202,27 +1811,56 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // surfaces immediately — effectiveSnoozed refuses to classify a thread
       // with a raised hand (approval / input / failure / fresh completion)
       // as snoozed, without spending the return ticket.
+      const events: Array<Omit<OrchestrationEvent, "sequence">> = [sessionSetEvent];
+      if (
+        command.session.status === "error" &&
+        thread.goal?.status === "active" &&
+        isProviderAccountUsageLimitError(command.session.lastError)
+      ) {
+        events.push(
+          {
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.goal-usage-limited",
+            payload: {
+              threadId: command.threadId,
+              updatedAt: command.createdAt,
+            },
+          },
+          yield* goalActivityAppendedEvent({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            occurredAt: command.createdAt,
+            kind: "goal.usage-limited",
+            summary: thread.goal.objective,
+            tone: "error",
+          }),
+        );
+      }
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
       // Real activity resets ANY override (settled wakes, active unpins).
-      if (thread.settledOverride === null || !isSessionActivity) {
-        return sessionSetEvent;
+      if (thread.settledOverride !== null && isSessionActivity) {
+        events.unshift({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
       }
-      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.unsettled",
-        payload: {
-          threadId: command.threadId,
-          reason: "activity",
-          updatedAt: command.createdAt,
-        },
-      };
-      return [unsettledEvent, sessionSetEvent];
+      return events.length === 1 ? events[0]! : events;
     }
 
     case "thread.message.assistant.delta": {
@@ -1253,30 +1891,101 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.message-sent",
-        payload: {
-          threadId: command.threadId,
-          messageId: command.messageId,
-          role: "assistant",
-          text: "",
-          turnId: command.turnId ?? null,
-          streaming: false,
-          createdAt: command.createdAt,
-          updatedAt: command.createdAt,
+      const events: Array<Omit<OrchestrationEvent, "sequence">> = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: command.messageId,
+            role: "assistant",
+            text: "",
+            turnId: command.turnId ?? null,
+            streaming: false,
+            createdAt: command.createdAt,
+            updatedAt: command.createdAt,
+          },
         },
-      };
+      ];
+      if (thread.goal?.status === "active") {
+        const message = thread.messages.find((entry) => entry.id === command.messageId);
+        const signal = parseObjectiveSignal(message?.text ?? "");
+        // A signal only finalizes the Goal the Turn was pursuing. When the
+        // user replaces the Goal mid-run, the old Turn's message predates the
+        // latest goal.set activity and its signal must not touch the new Goal;
+        // the GoalReactor starts a fresh Continuation for it once the Session
+        // reports ready.
+        const latestGoalSetAtMs = thread.activities.reduce<number | null>((latest, activity) => {
+          if (activity.kind !== "goal.set") {
+            return latest;
+          }
+          const createdAtMs = Date.parse(activity.createdAt);
+          return latest === null || createdAtMs > latest ? createdAtMs : latest;
+        }, null);
+        const signalPredatesGoal =
+          message !== undefined &&
+          latestGoalSetAtMs !== null &&
+          Date.parse(message.createdAt) < latestGoalSetAtMs;
+        if (signal === "complete" && !signalPredatesGoal) {
+          events.push(
+            {
+              ...(yield* withEventBase({
+                aggregateKind: "thread",
+                aggregateId: command.threadId,
+                occurredAt: command.createdAt,
+                commandId: command.commandId,
+              })),
+              type: "thread.goal-completed",
+              payload: {
+                threadId: command.threadId,
+                updatedAt: command.createdAt,
+              },
+            },
+            yield* goalActivityAppendedEvent({
+              commandId: command.commandId,
+              threadId: command.threadId,
+              occurredAt: command.createdAt,
+              kind: "goal.completed",
+              summary: thread.goal.objective,
+            }),
+          );
+        } else if (signal === "blocked" && !signalPredatesGoal) {
+          events.push(
+            {
+              ...(yield* withEventBase({
+                aggregateKind: "thread",
+                aggregateId: command.threadId,
+                occurredAt: command.createdAt,
+                commandId: command.commandId,
+              })),
+              type: "thread.goal-blocked",
+              payload: {
+                threadId: command.threadId,
+                updatedAt: command.createdAt,
+              },
+            },
+            yield* goalActivityAppendedEvent({
+              commandId: command.commandId,
+              threadId: command.threadId,
+              occurredAt: command.createdAt,
+              kind: "goal.blocked",
+              summary: thread.goal.objective,
+              tone: "error",
+            }),
+          );
+        }
+      }
+      return events;
     }
 
     case "thread.proposed-plan.upsert": {

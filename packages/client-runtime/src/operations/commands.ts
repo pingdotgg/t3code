@@ -39,6 +39,11 @@ export type SettleThreadInput = CommandInput<"thread.settle">;
 export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
 export type SnoozeThreadInput = CommandInput<"thread.snooze">;
 export type UnsnoozeThreadInput = CommandInput<"thread.unsnooze">;
+export type SetThreadGoalInput = CommandInput<"thread.goal.set">;
+export type PauseThreadGoalInput = CommandInput<"thread.goal.pause">;
+export type ResumeThreadGoalInput = CommandInput<"thread.goal.resume">;
+export type ClearThreadGoalInput = CommandInput<"thread.goal.clear">;
+export type CompleteThreadGoalInput = CommandInput<"thread.goal.complete">;
 export type PinThreadInput = CommandInput<"thread.pin">;
 export type UnpinThreadInput = CommandInput<"thread.unpin">;
 export type ReorderPinnedThreadInput = CommandInput<"thread.pin.reorder">;
@@ -196,6 +201,56 @@ export const unsnoozeThread: (input: UnsnoozeThreadInput) => CommandEffect = Eff
   return yield* dispatch({
     ...input,
     type: "thread.unsnooze",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const setThreadGoal: (input: SetThreadGoalInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.setThreadGoal",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal.set",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const pauseThreadGoal: (input: PauseThreadGoalInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.pauseThreadGoal",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal.pause",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const resumeThreadGoal: (input: ResumeThreadGoalInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.resumeThreadGoal",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal.resume",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const clearThreadGoal: (input: ClearThreadGoalInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.clearThreadGoal",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal.clear",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const completeThreadGoal: (input: CompleteThreadGoalInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.completeThreadGoal",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.goal.complete",
     commandId: yield* commandId(input),
   });
 });

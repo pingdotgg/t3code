@@ -801,7 +801,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     const draftKey = pendingTaskDraftKey(message.messageId);
     // Only hydrate a fresh editing draft; reopening mid-edit keeps newer edits.
     if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
-      setComposerDraftText(draftKey, message.text);
+      // A queued Objective task stores the bare Objective as its text; restore
+      // the `/goal` command form so re-submitting re-derives `attachGoal`.
+      setComposerDraftText(
+        draftKey,
+        message.attachGoal ? `/goal ${message.attachGoal}` : message.text,
+      );
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
         modelSelection: message.modelSelection,

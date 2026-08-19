@@ -21,7 +21,7 @@ import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 
-const THREAD_OUTBOX_SCHEMA_VERSION = 3;
+const THREAD_OUTBOX_SCHEMA_VERSION = 4;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
@@ -37,7 +37,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION]),
+  schemaVersion: Schema.Literals([1, 2, 3, THREAD_OUTBOX_SCHEMA_VERSION]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
@@ -50,6 +50,8 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   // Present when the queued item creates a brand-new thread (pending task)
   // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
+  // After this turn starts, attach a T3 Goal using this Objective.
+  attachGoal: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
 });
 
@@ -77,6 +79,7 @@ export interface QueuedThreadMessage {
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
   readonly creation?: QueuedThreadCreation;
+  readonly attachGoal?: string;
   readonly createdAt: string;
 }
 
@@ -208,7 +211,7 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
   return isTransportConnectionErrorMessage(errorMessage(error));
 }
 
-export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";
+export type ThreadOutboxCommandStage = "settings-sync" | "start-turn" | "goal-attach";
 export type ThreadOutboxFailureAction = "retry" | "discard";
 
 export function resolveThreadOutboxFailureAction(input: {

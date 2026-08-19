@@ -271,26 +271,30 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
+/** Event types delivered on subscribeThread; keep ProjectionSnapshotQuery watermark in sync. */
+export const THREAD_DETAIL_STREAM_EVENT_TYPES = [
+  "thread.message-sent",
+  "thread.proposed-plan-upserted",
+  "thread.activity-appended",
+  "thread.turn-diff-completed",
+  "thread.reverted",
+  "thread.session-set",
+  "thread.goal-set",
+  "thread.goal-paused",
+  "thread.goal-resumed",
+  "thread.goal-cleared",
+  "thread.goal-completed",
+  "thread.goal-blocked",
+  "thread.goal-usage-limited",
+] as const satisfies ReadonlyArray<OrchestrationEvent["type"]>;
+
+export function isThreadDetailEvent(
+  event: OrchestrationEvent,
+): event is Extract<
   OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
+  { type: (typeof THREAD_DETAIL_STREAM_EVENT_TYPES)[number] }
 > {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
+  return (THREAD_DETAIL_STREAM_EVENT_TYPES as ReadonlyArray<string>).includes(event.type);
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;

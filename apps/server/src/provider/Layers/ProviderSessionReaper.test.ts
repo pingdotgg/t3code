@@ -69,6 +69,10 @@ function makeReadModel(
       readonly updatedAt: string;
     } | null;
     readonly backgroundLiveness?: "working" | "monitoring" | null;
+    readonly goal?: {
+      readonly status: "active" | "paused" | "blocked" | "usageLimited" | "complete";
+      readonly objectivePreview: string;
+    };
   }>,
 ) {
   const now = "2026-01-01T00:00:00.000Z";
@@ -111,6 +115,7 @@ function makeReadModel(
       messages: [],
       session: thread.session,
       backgroundLiveness: thread.backgroundLiveness ?? null,
+      ...(thread.goal !== undefined ? { goal: thread.goal } : {}),
       activities: [],
       proposedPlans: [],
       checkpoints: [],
@@ -314,6 +319,57 @@ describe("ProviderSessionReaper", () => {
         lastSeenAt: "2026-04-14T00:00:00.000Z",
         resumeCursor: {
           opaque: "resume-active-turn",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    await startReaper();
+    await Effect.runPromise(drainFibers);
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
+    expect(Option.isSome(remaining)).toBe(true);
+  });
+
+  it("skips stale sessions while a Goal is Active", async () => {
+    const threadId = ThreadId.make("thread-reaper-active-goal");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          goal: {
+            status: "active",
+            objectivePreview: "Reduce p95 below 120ms",
+          },
+        },
+      ]),
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        resumeCursor: {
+          opaque: "resume-active-goal",
         },
         runtimePayload: null,
       }),

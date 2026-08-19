@@ -280,6 +280,123 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.goal-*", () => {
+    const activeGoal = {
+      objective: "Reduce p95 below 120ms",
+      status: "active" as const,
+      createdAt: "2026-04-01T05:00:00.000Z",
+      updatedAt: "2026-04-01T05:00:00.000Z",
+    };
+    const threadWithGoal: OrchestrationThread = {
+      ...baseThread,
+      goal: activeGoal,
+    };
+
+    it("applies Goal on thread.goal-set", () => {
+      const createdAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: createdAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.goal-set",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          objective: "Reduce p95 below 120ms",
+          status: "active",
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.goal).toEqual({
+          objective: "Reduce p95 below 120ms",
+          status: "active",
+          createdAt,
+          updatedAt: createdAt,
+        });
+      }
+    });
+
+    it.each([
+      ["thread.goal-paused", "paused"],
+      ["thread.goal-resumed", "active"],
+      ["thread.goal-completed", "complete"],
+      ["thread.goal-blocked", "blocked"],
+      ["thread.goal-usage-limited", "usageLimited"],
+    ] as const)("%s updates status to %s when a Goal exists", (type, status) => {
+      const updatedAt = "2026-04-01T06:00:00.000Z";
+      const result = applyThreadDetailEvent(threadWithGoal, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type,
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.goal?.status).toBe(status);
+        expect(result.thread.goal?.objective).toBe(activeGoal.objective);
+        expect(result.thread.goal?.createdAt).toBe(activeGoal.createdAt);
+        expect(result.thread.goal?.updatedAt).toBe(updatedAt);
+        expect(result.thread.updatedAt).toBe(updatedAt);
+      }
+    });
+
+    it.each([
+      "thread.goal-paused",
+      "thread.goal-resumed",
+      "thread.goal-completed",
+      "thread.goal-blocked",
+      "thread.goal-usage-limited",
+    ] as const)("%s is unchanged when no Goal exists", (type) => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type,
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      expect(result.kind).toBe("unchanged");
+    });
+
+    it("clears Goal on thread.goal-cleared", () => {
+      const updatedAt = "2026-04-01T07:00:00.000Z";
+      const result = applyThreadDetailEvent(threadWithGoal, {
+        ...baseEventFields,
+        sequence: 10,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.goal-cleared",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.goal).toBeNull();
+        expect(result.thread.updatedAt).toBe(updatedAt);
+      }
+    });
+  });
+
   describe("thread.meta-updated", () => {
     it("patches title and branch", () => {
       const result = applyThreadDetailEvent(baseThread, {

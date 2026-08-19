@@ -92,6 +92,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.connectionProbe).toBe(true);
       expect(second.capabilities.pullRequests).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
+      expect(second.capabilities.threadSnooze).toBe(true);
+      expect(second.capabilities.threadGoal).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
     }),
   );

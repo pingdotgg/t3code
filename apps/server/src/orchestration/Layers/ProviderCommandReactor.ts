@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { buildGoalContinuationPrompt } from "@t3tools/shared/goalContinuation";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -1070,20 +1071,36 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
-    if (!message || message.role !== "user") {
+    const messageId = event.payload.messageId;
+    const continuationPrompt =
+      messageId === undefined
+        ? thread.goal?.status === "active"
+          ? buildGoalContinuationPrompt(thread.goal.objective)
+          : null
+        : null;
+    if (messageId === undefined && continuationPrompt === null) {
+      return;
+    }
+
+    const message =
+      messageId === undefined ? null : thread.messages.find((entry) => entry.id === messageId);
+    if (messageId !== undefined && (!message || message.role !== "user")) {
       yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.start.failed",
         summary: "Provider turn start failed",
-        detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
+        detail: `User message '${messageId}' was not found for turn start request.`,
         turnId: null,
         createdAt: event.payload.createdAt,
       });
       return;
     }
 
+    const messageText = continuationPrompt ?? message?.text ?? "";
+    const attachments = message?.attachments;
+
     const isFirstUserMessageTurn =
+      messageId !== undefined &&
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
       const project = yield* resolveProject(thread.projectId);
@@ -1093,8 +1110,8 @@ const make = Effect.gen(function* () {
           projects: project ? [project] : [],
         }) ?? process.cwd();
       const generationInput = {
-        messageText: message.text,
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        messageText,
+        ...(attachments !== undefined ? { attachments } : {}),
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
@@ -1152,8 +1169,8 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      messageText,
+      ...(attachments !== undefined ? { attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),

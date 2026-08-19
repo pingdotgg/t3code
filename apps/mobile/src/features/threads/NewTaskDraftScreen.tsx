@@ -21,6 +21,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { MessageId, ThreadId } from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -42,6 +43,7 @@ import {
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
+import { interceptGoalComposerCommand } from "../../lib/goalComposerIntercept";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
@@ -56,6 +58,8 @@ import { resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
@@ -99,6 +103,7 @@ export function NewTaskDraftScreen(props: {
 }) {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
+  const setThreadGoal = useAtomCommand(threadEnvironment.setGoal, { reportFailure: false });
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const {
@@ -660,7 +665,19 @@ export function NewTaskDraftScreen(props: {
     const interactionMode = flow.planModeEnabled
       ? (draft.interactionMode ?? flow.interactionMode)
       : "default";
-    const initialMessageText = draft.text.trim();
+    const draftedMessageText = draft.text.trim();
+    const intercept = interceptGoalComposerCommand({
+      text: draftedMessageText,
+      supportsGoal: selectedEnvironmentServerConfig?.environment.capabilities.threadGoal === true,
+      allowLifecycleCommands: false,
+      goal: null,
+    });
+    if (intercept.kind === "alert") {
+      Alert.alert(intercept.title, intercept.message);
+      return;
+    }
+    const attachGoal = intercept.kind === "set" ? intercept.objective : undefined;
+    const initialMessageText = attachGoal ?? draftedMessageText;
 
     if (
       !modelSelection ||
@@ -691,7 +708,9 @@ export function NewTaskDraftScreen(props: {
       }
       flow.setSubmitting(true);
       try {
-        await enqueueThreadOutboxMessage(message);
+        await enqueueThreadOutboxMessage(
+          attachGoal !== undefined ? { ...message, text: initialMessageText, attachGoal } : message,
+        );
       } catch (error) {
         Alert.alert(
           "Could not queue task",
@@ -728,6 +747,14 @@ export function NewTaskDraftScreen(props: {
       selectedBranch: selectedBranchName,
       currentCheckoutBranch: flow.currentCheckoutBranchName,
     });
+    const metadata = editingPendingTask
+      ? {
+          threadId: editingPendingTask.threadId,
+          commandId: editingPendingTask.commandId,
+          messageId: editingPendingTask.messageId,
+          createdAt: editingPendingTask.createdAt,
+        }
+      : makeTurnCommandMetadata();
     const result = await createProjectThread({
       project: selectedProject,
       modelSelection,
@@ -739,16 +766,7 @@ export function NewTaskDraftScreen(props: {
       interactionMode,
       initialMessageText,
       initialAttachments: draft.attachments,
-      ...(editingPendingTask
-        ? {
-            turnMetadata: {
-              threadId: editingPendingTask.threadId,
-              commandId: editingPendingTask.commandId,
-              messageId: editingPendingTask.messageId,
-              createdAt: editingPendingTask.createdAt,
-            },
-          }
-        : {}),
+      ...(editingPendingTask || attachGoal !== undefined ? { turnMetadata: metadata } : {}),
     });
     flow.setSubmitting(false);
 
@@ -761,6 +779,24 @@ export function NewTaskDraftScreen(props: {
         );
       }
       return;
+    }
+
+    if (attachGoal !== undefined) {
+      const goalResult = await setThreadGoal({
+        environmentId: selectedProject.environmentId,
+        input: {
+          threadId: ThreadId.make(metadata.threadId),
+          objective: attachGoal,
+          messageId: MessageId.make(metadata.messageId),
+        },
+      });
+      if (goalResult._tag === "Failure" && !isAtomCommandInterrupted(goalResult)) {
+        const error = squashAtomCommandFailure(goalResult);
+        Alert.alert(
+          "Could not set Objective",
+          error instanceof Error ? error.message : "The task started without an Objective.",
+        );
+      }
     }
 
     if (editingPendingTask) {

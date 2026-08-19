@@ -1,5 +1,200 @@
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand =
+  | "model"
+  | "plan"
+  | "default"
+  | "goal"
+  | "goal pause"
+  | "goal resume"
+  | "goal clear";
+
+export type GoalChipAction = "pause" | "resume" | "clear";
+
+export const GOAL_PAUSE_HINT =
+  "Pause prevents the next Continuation. Stop interrupts this Turn and also Pauses.";
+
+export const BUILT_IN_GOAL_SLASH_COMMANDS = [
+  {
+    command: "goal",
+    label: "/goal",
+    description: "Set an Objective this Thread keeps working toward",
+  },
+  {
+    command: "goal pause",
+    label: "/goal pause",
+    description: "Pause — prevent the next Continuation",
+  },
+  {
+    command: "goal resume",
+    label: "/goal resume",
+    description: "Resume a Paused, Blocked, or Usage-limited Goal",
+  },
+  {
+    command: "goal clear",
+    label: "/goal clear",
+    description: "Clear the Goal from this Thread",
+  },
+] as const satisfies ReadonlyArray<{
+  readonly command: ComposerSlashCommand;
+  readonly label: string;
+  readonly description: string;
+}>;
+
+export const GOAL_OBJECTIVE_PREVIEW_MAX_CHARS = 80;
+
+const GOAL_COMMAND_TOKEN = /^\/goal(?:\/\S*)?$/i;
+const SLASH_GOAL_PHRASE = /^slash\s+goal\b/i;
+const GOAL_SLASH_LINE = /^\/goal(?:\s+([\s\S]*))?$/i;
+
+export type ParsedGoalComposerCommand =
+  | { readonly action: "status" }
+  | { readonly action: "pause" }
+  | { readonly action: "resume" }
+  | { readonly action: "clear" }
+  | { readonly action: "set"; readonly objective: string }
+  | { readonly action: "refuse" };
+
+export function isGoalCommandForm(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+  if (SLASH_GOAL_PHRASE.test(trimmed)) {
+    return true;
+  }
+  const firstToken = trimmed.split(/\s+/u, 1)[0] ?? "";
+  return GOAL_COMMAND_TOKEN.test(firstToken);
+}
+
+export function parseGoalComposerCommand(text: string): ParsedGoalComposerCommand | null {
+  const trimmed = text.trim();
+  if (!isGoalCommandForm(trimmed)) {
+    return null;
+  }
+  const slashMatch = GOAL_SLASH_LINE.exec(trimmed);
+  if (slashMatch === null) {
+    return { action: "refuse" };
+  }
+  const rest = (slashMatch[1] ?? "").trim();
+  if (rest.length === 0) {
+    return { action: "status" };
+  }
+  const restLower = rest.toLowerCase();
+  if (restLower === "pause") {
+    return { action: "pause" };
+  }
+  if (restLower === "resume") {
+    return { action: "resume" };
+  }
+  if (restLower === "clear") {
+    return { action: "clear" };
+  }
+  return { action: "set", objective: rest };
+}
+
+export function formatGoalStatusLabel(status: string): string {
+  if (status === "usageLimited") {
+    return "Usage-limited";
+  }
+  if (status.length === 0) {
+    return status;
+  }
+  return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;
+}
+
+export function formatGoalStatusMessage(
+  goal: { readonly status: string; readonly objective: string } | null | undefined,
+): string {
+  if (goal == null) {
+    return "No Objective on this Thread. Type /goal followed by the outcome to set one.";
+  }
+  return `${formatGoalStatusLabel(goal.status)}: ${goal.objective}`;
+}
+
+/** Chip prefix: bare "Goal" while Active, otherwise carries the status. */
+export function formatGoalChipPrefix(status: string): string {
+  if (status === "active") {
+    return "Goal";
+  }
+  return `Goal ${formatGoalStatusLabel(status).toLowerCase()}`;
+}
+
+/** Accessible label for the composer Goal chip. Matches the visible text. */
+export function formatGoalChipAriaLabel(
+  goal: { readonly status: string; readonly objective: string },
+  options?: { readonly isWorking?: boolean },
+): string {
+  const isWorking = options?.isWorking === true && goal.status === "active";
+  const label = `${formatGoalChipPrefix(goal.status)}: ${goal.objective}`;
+  return isWorking ? `${label} (Running)` : label;
+}
+
+// User-facing actions: pause/resume/clear only. Complete belongs to the model
+// (structured <objective_complete> signal), never to chip or palette chrome.
+export function goalChipActions(status: string): ReadonlyArray<GoalChipAction> {
+  const actions: GoalChipAction[] = [];
+  if (status === "active") {
+    actions.push("pause");
+  }
+  if (status === "paused" || status === "blocked" || status === "usageLimited") {
+    actions.push("resume");
+  }
+  actions.push("clear");
+  return actions;
+}
+
+export function goalChipActionLabel(action: GoalChipAction): string {
+  switch (action) {
+    case "pause":
+      return "Pause";
+    case "resume":
+      return "Resume";
+    case "clear":
+      return "Delete";
+  }
+}
+
+export function threadHasActiveGoal(goal: { readonly status: string } | null | undefined): boolean {
+  return goal?.status === "active";
+}
+
+export function formatGoalActivityLabel(kind: string): string | null {
+  switch (kind) {
+    case "goal.set":
+      return "Objective set";
+    case "goal.continued":
+      return "Continued";
+    case "goal.paused":
+      return "Paused";
+    case "goal.resumed":
+      return "Resumed";
+    case "goal.cleared":
+      return "Cleared";
+    case "goal.completed":
+      return "Complete";
+    case "goal.blocked":
+      return "Blocked";
+    case "goal.usage-limited":
+      return "Usage-limited";
+    default:
+      return null;
+  }
+}
+
+export function isBuiltInGoalSlashCommand(command: string): boolean {
+  return command === "goal" || command.startsWith("goal ");
+}
+
+export function composerTextForGoalSlashCommand(command: string): string {
+  return command === "goal" ? "/goal " : `/${command}`;
+}
+
+export function truncateGoalObjectivePreview(objective: string): string {
+  if (objective.length <= GOAL_OBJECTIVE_PREVIEW_MAX_CHARS) {
+    return objective;
+  }
+  return `${objective.slice(0, GOAL_OBJECTIVE_PREVIEW_MAX_CHARS - 1)}…`;
+}
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -124,9 +319,7 @@ export function detectComposerTrigger(
   };
 }
 
-export function parseStandaloneComposerSlashCommand(
-  text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+export function parseStandaloneComposerSlashCommand(text: string): "plan" | "default" | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

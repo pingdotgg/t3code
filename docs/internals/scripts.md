@@ -60,6 +60,11 @@ authenticated.
   options, so workspace type checking runs separately.
 - `vp run typecheck`: Strict TypeScript checks for all packages.
 - `vp run test`: Runs workspace tests.
+- `vp run --filter @t3tools/web test:e2e`: Opt-in Playwright browser tests for the web
+  client (`apps/web/e2e`). These are not part of `vp run test`. First run may download
+  Chromium (`npx playwright install chromium` from `apps/web` if the harness cannot).
+  Use `E2E_HEADED=1` to watch the browser and `E2E_KEEP=1` to leave the temp home on
+  disk. Pairing tokens in server logs are redacted in harness errors.
 - `vp run lint:mobile`: Mobile native static analysis (`scripts/mobile-native-static-check.ts`).
 - `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...`: Inspects or seeds
   an isolated T3 SQLite database; writes create a private backup first.

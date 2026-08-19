@@ -12,6 +12,10 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
+  buildGoalContinuationPrompt,
+  goalContinuationCommandId,
+} from "@t3tools/shared/goalContinuation";
+import {
   ApprovalRequestId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -2942,5 +2946,163 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("sends a Continuation turn with no user message and can start a fresh Session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const objective = "Reduce p95 below 120ms";
+    const completedTurnId = asTurnId("turn-goal-1");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-running-for-goal"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: completedTurnId,
+          lastError: null,
+          updatedAt: now,
+        },
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.goal.set",
+        commandId: CommandId.make("cmd-goal-attach"),
+        threadId: ThreadId.make("thread-1"),
+        objective,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-ready-for-goal"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+      }),
+    );
+    const readModelBeforeContinue = await harness.readModel();
+    const threadBeforeContinue = readModelBeforeContinue.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    const goalUpdatedAt = threadBeforeContinue?.goal?.updatedAt ?? now;
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.goal.continue",
+        commandId: CommandId.make(
+          goalContinuationCommandId({
+            threadId: "thread-1",
+            goalUpdatedAt,
+            completedTurnId,
+          }),
+        ),
+        threadId: ThreadId.make("thread-1"),
+        completedTurnId,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const sendTurnInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input ?? "";
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      input: buildGoalContinuationPrompt(objective),
+    });
+    expect(sendTurnInput).toContain(objective);
+    expect(sendTurnInput).toContain("<objective_complete>");
+    expect(sendTurnInput).toContain("<objective_blocked>");
+    expect(sendTurnInput).not.toMatch(/\bgoal\b/i);
+    expect(sendTurnInput.toLowerCase()).not.toContain("/goal");
+    expect(sendTurnInput.toLowerCase()).not.toContain("slash goal");
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    expect(harness.startSession.mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.messages.filter((message) => message.role === "user")).toHaveLength(0);
+    expect(thread?.activities.some((activity) => activity.kind === "goal.continued")).toBe(true);
+  });
+
+  it("does not send a Continuation when the Goal is paused", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const completedTurnId = asTurnId("turn-paused-1");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-running-paused-goal"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: completedTurnId,
+          lastError: null,
+          updatedAt: now,
+        },
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.goal.set",
+        commandId: CommandId.make("cmd-goal-attach-paused"),
+        threadId: ThreadId.make("thread-1"),
+        objective: "Reduce p95 below 120ms",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.goal.pause",
+        commandId: CommandId.make("cmd-goal-pause-before-ready"),
+        threadId: ThreadId.make("thread-1"),
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-ready-paused-goal"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+      }),
+    );
+    const error = await harness.runEffect(
+      harness.engine
+        .dispatch({
+          type: "thread.goal.continue",
+          commandId: CommandId.make("cmd-continue-paused"),
+          threadId: ThreadId.make("thread-1"),
+          completedTurnId,
+        })
+        .pipe(Effect.flip),
+    );
+    expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    await harness.drain();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
   });
 });

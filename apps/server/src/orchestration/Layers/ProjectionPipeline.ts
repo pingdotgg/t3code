@@ -623,6 +623,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pinOrderKey: null,
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
+            goal: null,
             latestUserMessageAt: null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
@@ -940,6 +941,74 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.goal-set": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            goal: {
+              objective: event.payload.objective,
+              status: event.payload.status,
+              createdAt: event.payload.createdAt,
+              updatedAt: event.payload.updatedAt,
+            },
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.goal-paused":
+        case "thread.goal-resumed":
+        case "thread.goal-completed":
+        case "thread.goal-blocked":
+        case "thread.goal-usage-limited": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || existingRow.value.goal == null) {
+            return;
+          }
+          const status =
+            event.type === "thread.goal-paused"
+              ? ("paused" as const)
+              : event.type === "thread.goal-resumed"
+                ? ("active" as const)
+                : event.type === "thread.goal-completed"
+                  ? ("complete" as const)
+                  : event.type === "thread.goal-blocked"
+                    ? ("blocked" as const)
+                    : ("usageLimited" as const);
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            goal: {
+              ...existingRow.value.goal,
+              status,
+              updatedAt: event.payload.updatedAt,
+            },
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.goal-cleared": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            goal: null,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
         default:
           return;
       }
@@ -1152,7 +1221,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.turn-start-requested": {
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
-            messageId: event.payload.messageId,
+            messageId: event.payload.messageId ?? null,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
             requestedAt: event.payload.createdAt,

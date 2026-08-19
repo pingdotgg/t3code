@@ -371,4 +371,9 @@ describe("parseStandaloneComposerSlashCommand", () => {
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
+
+  it("does not treat /goal as a standalone plan-mode command", () => {
+    expect(parseStandaloneComposerSlashCommand("/goal")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/goal Reduce p95")).toBeNull();
+  });
 });

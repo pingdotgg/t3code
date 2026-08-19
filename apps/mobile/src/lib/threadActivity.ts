@@ -7,6 +7,7 @@ import type {
   TurnId,
   UserInputQuestion,
 } from "@t3tools/contracts";
+import { formatGoalActivityLabel } from "@t3tools/shared/composerTrigger";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import * as Arr from "effect/Array";
@@ -371,6 +372,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
+  const goalLabel = formatGoalActivityLabel(activity.kind);
   const taskId =
     isTaskActivity && typeof payload?.taskId === "string" && payload.taskId.length > 0
       ? payload.taskId
@@ -380,7 +382,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
-    label: taskLabel || activity.summary,
+    label: goalLabel ?? (taskLabel || activity.summary),
     tone:
       activity.kind === "task.progress"
         ? "thinking"

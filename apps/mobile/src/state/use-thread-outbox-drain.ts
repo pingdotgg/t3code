@@ -10,6 +10,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   type MessageId,
 } from "@t3tools/contracts";
+import { isGoalCommandForm } from "@t3tools/shared/composerTrigger";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -85,6 +86,11 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
   return CommandId.make(`${message.commandId}:${setting}`);
 }
 
+function queuedAttachGoalObjective(message: QueuedThreadMessage): string | null {
+  const objective = message.attachGoal?.trim();
+  return objective !== undefined && objective.length > 0 ? objective : null;
+}
+
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -96,6 +102,7 @@ export function useThreadOutboxDrain(): void {
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
   });
+  const setThreadGoal = useAtomCommand(threadEnvironment.setGoal, { reportFailure: false });
   const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
   const editingQueuedMessageIds = useAtomValue(editingQueuedMessageIdsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
@@ -165,10 +172,61 @@ export function useThreadOutboxDrain(): void {
     return { reportFailure, completeDelivery };
   }, []);
 
+  const attachQueuedGoal = useCallback(
+    async (
+      queuedMessage: QueuedThreadMessage,
+      reportFailure: ReturnType<typeof makeDeliveryHelpers>["reportFailure"],
+    ): Promise<boolean> => {
+      const objective = queuedAttachGoalObjective(queuedMessage);
+      if (objective === null) {
+        return true;
+      }
+      const goalResult = await setThreadGoal({
+        environmentId: queuedMessage.environmentId,
+        input: {
+          threadId: queuedMessage.threadId,
+          objective,
+          messageId: queuedMessage.messageId,
+        },
+      });
+      // A failed attach must keep the outbox entry: the retried delivery
+      // dedupes the Turn by commandId and re-attempts the Objective.
+      return !reportFailure(goalResult, "goal-attach");
+    },
+    [makeDeliveryHelpers, setThreadGoal],
+  );
+
+  const dropQueuedCommandForm = useCallback(
+    async (queuedMessage: QueuedThreadMessage) => {
+      const { reportFailure } = makeDeliveryHelpers(queuedMessage);
+      const attached = await attachQueuedGoal(queuedMessage, reportFailure);
+      if (!attached) {
+        return false;
+      }
+      try {
+        await removeThreadOutboxMessage(queuedMessage);
+        return true;
+      } catch (error) {
+        console.warn("[thread-outbox] failed to drop queued goal command form", {
+          environmentId: queuedMessage.environmentId,
+          threadId: queuedMessage.threadId,
+          messageId: queuedMessage.messageId,
+          error,
+        });
+        return false;
+      }
+    },
+    [attachQueuedGoal, makeDeliveryHelpers],
+  );
+
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
       const settings = resolveQueuedThreadSettings(queuedMessage, thread);
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
+
+      if (isGoalCommandForm(queuedMessage.text)) {
+        return dropQueuedCommandForm(queuedMessage);
+      }
 
       if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
         const updateResult = await updateThreadMetadata({
@@ -234,9 +292,17 @@ export function useThreadOutboxDrain(): void {
           createdAt: queuedMessage.createdAt,
         },
       });
+      if (!AsyncResult.isFailure(deliveryResult)) {
+        const attached = await attachQueuedGoal(queuedMessage, reportFailure);
+        if (!attached) {
+          return false;
+        }
+      }
       return completeDelivery(deliveryResult);
     },
     [
+      attachQueuedGoal,
+      dropQueuedCommandForm,
       makeDeliveryHelpers,
       setThreadInteractionMode,
       setThreadRuntimeMode,
@@ -255,7 +321,10 @@ export function useThreadOutboxDrain(): void {
       if (modelSelection === undefined) {
         return false;
       }
-      const { completeDelivery } = makeDeliveryHelpers(queuedMessage);
+      if (isGoalCommandForm(queuedMessage.text)) {
+        return dropQueuedCommandForm(queuedMessage);
+      }
+      const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -277,9 +346,15 @@ export function useThreadOutboxDrain(): void {
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });
+      if (!AsyncResult.isFailure(deliveryResult)) {
+        const attached = await attachQueuedGoal(queuedMessage, reportFailure);
+        if (!attached) {
+          return false;
+        }
+      }
       return completeDelivery(deliveryResult);
     },
-    [makeDeliveryHelpers, startTurn],
+    [attachQueuedGoal, dropQueuedCommandForm, makeDeliveryHelpers, startTurn],
   );
 
   useEffect(() => {

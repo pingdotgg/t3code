@@ -84,6 +84,14 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
+        if (thread?.goal?.status === "active") {
+          yield* Effect.logDebug("provider.session.reaper.skipped-active-goal", {
+            threadId: binding.threadId,
+            idleDurationMs,
+          });
+          continue;
+        }
+
         const reaped = yield* providerService.stopSession({ threadId: binding.threadId }).pipe(
           Effect.tap(() =>
             Effect.logInfo("provider.session.reaped", {

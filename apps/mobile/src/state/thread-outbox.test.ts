@@ -70,12 +70,42 @@ describe("thread outbox", () => {
         ...message,
       }),
     ).toEqual(message);
+    expect(
+      decodeQueuedThreadMessage({
+        schemaVersion: 2,
+        ...message,
+      }),
+    ).toEqual(message);
+    expect(
+      decodeQueuedThreadMessage({
+        schemaVersion: 3,
+        ...message,
+      }),
+    ).toEqual(message);
     expect(() =>
       decodeQueuedThreadMessage({
         schemaVersion: 1,
         environmentId: "environment-1",
       }),
     ).toThrow();
+  });
+
+  it("round-trips attachGoal on schema v4", () => {
+    const message = {
+      ...queuedMessage({
+        messageId: "message-1",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      attachGoal: "Reduce p95 below 120ms",
+    } satisfies QueuedThreadMessage;
+
+    const encoded = encodeQueuedThreadMessage(message) as {
+      schemaVersion: number;
+      attachGoal?: string;
+    };
+    expect(encoded.schemaVersion).toBe(4);
+    expect(encoded.attachGoal).toBe("Reduce p95 below 120ms");
+    expect(decodeQueuedThreadMessage(encoded)).toEqual(message);
   });
 
   it("persists the exact selector snapshot while remaining compatible with v1 messages", () => {

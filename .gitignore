@@ -18,6 +18,7 @@ release-mock/
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
+apps/web/test-results
 apps/web/src/components/__screenshots__
 .vitest-*
 __screenshots__/

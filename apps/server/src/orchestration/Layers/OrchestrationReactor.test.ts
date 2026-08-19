@@ -6,6 +6,7 @@ import * as Scope from "effect/Scope";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
+import * as GoalReactor from "../GoalReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
@@ -23,7 +24,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts provider ingestion, provider command, checkpoint, and thread deletion reactors", async () => {
+  it("starts provider ingestion, provider command, checkpoint, goal, and thread deletion reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
@@ -56,6 +57,15 @@ describe("OrchestrationReactor", () => {
           }),
         ),
         Layer.provideMerge(
+          Layer.succeed(GoalReactor.GoalReactor, {
+            start: () => {
+              started.push("goal-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
           Layer.succeed(ThreadDeletionReactor, {
             start: () => {
               started.push("thread-deletion-reactor");
@@ -81,6 +91,7 @@ describe("OrchestrationReactor", () => {
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
 
     expect(started).toEqual([
+      "goal-reactor",
       "provider-runtime-ingestion",
       "provider-command-reactor",
       "checkpoint-reactor",

@@ -142,7 +142,12 @@ describe("enumerateCommandPaletteItems", () => {
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
 
-function makeThread(overrides: Partial<Thread> = {}): Thread {
+function makeThread(overrides: Partial<Thread> = {}): Omit<Thread, "goal"> & {
+  readonly goal: {
+    readonly status: NonNullable<Thread["goal"]>["status"];
+    readonly objectivePreview: string;
+  } | null;
+} {
   return {
     id: ThreadId.make("thread-1"),
     environmentId: LOCAL_ENVIRONMENT_ID,
@@ -166,6 +171,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     checkpoints: [],
     activities: [],
     ...overrides,
+    // Palette items read the compact Goal shell, not the full detail Goal.
+    goal:
+      overrides.goal != null
+        ? { status: overrides.goal.status, objectivePreview: overrides.goal.objective }
+        : null,
   };
 }
 
@@ -293,6 +303,27 @@ describe("buildThreadActionItems", () => {
       query: "reconnect",
     });
     expect(item?.description).toBe("T3 Code · #feat/search");
+  });
+
+  it("mentions an Active Goal in the thread description", () => {
+    const [item] = buildThreadActionItems({
+      threads: [
+        makeThread({
+          goal: {
+            status: "active",
+            objective: "Reduce p95 below 120ms",
+            createdAt: "2026-03-01T00:00:00.000Z",
+            updatedAt: "2026-03-01T00:00:00.000Z",
+          },
+        }),
+      ],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    expect(item?.description).toBe("T3 Code · Active");
   });
 
   it("prefers renderDescription when provided", () => {

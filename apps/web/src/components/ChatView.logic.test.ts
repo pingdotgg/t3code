@@ -168,6 +168,39 @@ describe("buildLoadingThreadFromShell", () => {
       checkpoints: [],
     });
   });
+
+  it("does not copy the compact shell Goal onto the loading thread", () => {
+    const shell = {
+      environmentId,
+      id: threadId,
+      projectId,
+      title: "Loading thread",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "main",
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      session: null,
+      latestUserMessageAt: now,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+      goal: { status: "active", objectivePreview: "Reduce p95 below 120ms" },
+    } satisfies ThreadShell;
+
+    expect(buildLoadingThreadFromShell(shell).goal).toBeUndefined();
+  });
 });
 
 describe("resolveThreadMetadataUpdateForNextTurn", () => {

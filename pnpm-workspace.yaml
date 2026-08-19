@@ -18,6 +18,7 @@ allowBuilds:
   msgpackr-extract: true
   msw: false
   node-pty: true
+  playwright: false
   sharp: true
   utf-8-validate: false
   workerd: false

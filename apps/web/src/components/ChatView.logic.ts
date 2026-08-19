@@ -109,8 +109,10 @@ export function buildLocalDraftThread(
 }
 
 export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
+  // Shell Goal is a compact preview (`objectivePreview`), not OrchestrationThreadGoal.
+  const { goal: _shellGoal, ...shellWithoutGoal } = shell;
   return {
-    ...shell,
+    ...shellWithoutGoal,
     messages: [],
     proposedPlans: [],
     activities: [],

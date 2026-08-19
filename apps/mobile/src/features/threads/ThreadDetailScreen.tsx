@@ -1,4 +1,8 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -30,6 +34,7 @@ import {
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import {
   AppState,
+  Alert,
   Keyboard,
   Platform,
   useWindowDimensions,
@@ -65,6 +70,9 @@ import type {
   PendingUserInputDraftAnswer,
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
+import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
@@ -72,6 +80,7 @@ import {
   ESTIMATED_KEYBOARD_HEIGHT,
   USER_INPUT_TOGGLE_DURATION_MS,
 } from "./pendingUserInputLayout";
+import { GoalChip, type GoalChipAction } from "./GoalChip";
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,
@@ -215,6 +224,66 @@ const USER_INPUT_TOGGLE_TIMING = {
 
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const insets = useSafeAreaInsets();
+  const pauseThreadGoal = useAtomCommand(threadEnvironment.pauseGoal, { reportFailure: false });
+  const resumeThreadGoal = useAtomCommand(threadEnvironment.resumeGoal, { reportFailure: false });
+  const clearThreadGoal = useAtomCommand(threadEnvironment.clearGoal, { reportFailure: false });
+  const dispatchGoalAction = useCallback(
+    async (action: GoalChipAction) => {
+      const run =
+        action === "pause"
+          ? pauseThreadGoal
+          : action === "resume"
+            ? resumeThreadGoal
+            : clearThreadGoal;
+      const result = await run({
+        environmentId: props.environmentId,
+        input: { threadId: props.selectedThread.id },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not update the Objective",
+          error instanceof Error ? error.message : "An error occurred.",
+        );
+      }
+    },
+    [
+      clearThreadGoal,
+      pauseThreadGoal,
+      props.environmentId,
+      props.selectedThread.id,
+      resumeThreadGoal,
+    ],
+  );
+  const handleGoalAction = useCallback(
+    (action: GoalChipAction) => {
+      if (action !== "clear") {
+        // Pause/resume stay instant.
+        void dispatchGoalAction(action);
+        return;
+      }
+      // Deleting also stops any active run, so confirm first via the native
+      // platform dialog.
+      Alert.alert("Delete this Objective?", "Any active run on this Thread will be stopped.", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void dispatchGoalAction("clear");
+          },
+        },
+      ]);
+    },
+    [dispatchGoalAction],
+  );
+  const selectedThreadDetail = useSelectedThreadDetail();
+  // Only fall back to the shell Goal while the detail is unavailable: once it
+  // has loaded, an explicit null (cleared Objective) must win over the
+  // possibly-stale shell projection.
+  const threadGoal = selectedThreadDetail
+    ? selectedThreadDetail.goal
+    : (props.selectedThread.goal ?? null);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
   // Android can swallow the IME hide callbacks when the app is backgrounded
@@ -582,6 +651,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           onTouchEnd={handleFeedTouchEnd}
           onTouchCancel={handleFeedTouchCancel}
         >
+          <GoalChip
+            goal={
+              threadGoal == null || "objectivePreview" in threadGoal
+                ? threadGoal
+                : {
+                    status: threadGoal.status,
+                    objectivePreview: threadGoal.objective,
+                  }
+            }
+            onAction={
+              props.serverConfig?.environment.capabilities.threadGoal === true
+                ? handleGoalAction
+                : undefined
+            }
+          />
           <ThreadFeed
             key={props.selectedThread.id}
             environmentId={props.environmentId}

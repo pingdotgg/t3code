@@ -13,6 +13,13 @@ import {
   ThreadUnsettledPayload as ContractsThreadUnsettledPayloadSchema,
   ThreadSnoozedPayload as ContractsThreadSnoozedPayloadSchema,
   ThreadUnsnoozedPayload as ContractsThreadUnsnoozedPayloadSchema,
+  ThreadGoalSetPayload as ContractsThreadGoalSetPayloadSchema,
+  ThreadGoalPausedPayload as ContractsThreadGoalPausedPayloadSchema,
+  ThreadGoalResumedPayload as ContractsThreadGoalResumedPayloadSchema,
+  ThreadGoalClearedPayload as ContractsThreadGoalClearedPayloadSchema,
+  ThreadGoalCompletedPayload as ContractsThreadGoalCompletedPayloadSchema,
+  ThreadGoalBlockedPayload as ContractsThreadGoalBlockedPayloadSchema,
+  ThreadGoalUsageLimitedPayload as ContractsThreadGoalUsageLimitedPayloadSchema,
   ThreadPinnedPayload as ContractsThreadPinnedPayloadSchema,
   ThreadUnpinnedPayload as ContractsThreadUnpinnedPayloadSchema,
   ThreadPinReorderedPayload as ContractsThreadPinReorderedPayloadSchema,
@@ -45,6 +52,13 @@ export const ThreadUnarchivedPayload = ContractsThreadUnarchivedPayloadSchema;
 export const ThreadUnsettledPayload = ContractsThreadUnsettledPayloadSchema;
 export const ThreadSnoozedPayload = ContractsThreadSnoozedPayloadSchema;
 export const ThreadUnsnoozedPayload = ContractsThreadUnsnoozedPayloadSchema;
+export const ThreadGoalSetPayload = ContractsThreadGoalSetPayloadSchema;
+export const ThreadGoalPausedPayload = ContractsThreadGoalPausedPayloadSchema;
+export const ThreadGoalResumedPayload = ContractsThreadGoalResumedPayloadSchema;
+export const ThreadGoalClearedPayload = ContractsThreadGoalClearedPayloadSchema;
+export const ThreadGoalCompletedPayload = ContractsThreadGoalCompletedPayloadSchema;
+export const ThreadGoalBlockedPayload = ContractsThreadGoalBlockedPayloadSchema;
+export const ThreadGoalUsageLimitedPayload = ContractsThreadGoalUsageLimitedPayloadSchema;
 export const ThreadPinnedPayload = ContractsThreadPinnedPayloadSchema;
 export const ThreadUnpinnedPayload = ContractsThreadUnpinnedPayloadSchema;
 export const ThreadPinReorderedPayload = ContractsThreadPinReorderedPayloadSchema;
