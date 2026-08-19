@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   assignProjectsToEnvironments,
+  pullRequestProjectHideKey,
   resolvePickableEnvironments,
   type AssignableProject,
 } from "./pullRequestProjectAssignment.logic";
@@ -22,6 +23,26 @@ const envs = (...ids: ReadonlyArray<string>) => ids as ReadonlyArray<Environment
 
 const plain = (assignment: Map<EnvironmentId, ProjectId[]>) =>
   Object.fromEntries([...assignment].map(([id, projectIds]) => [id, projectIds]));
+
+describe("what a hidden project is remembered by", () => {
+  it("gives two copies of one repository the same key", () => {
+    expect(pullRequestProjectHideKey(project("a1", "env-1", "github.com/acme/app"))).toBe(
+      pullRequestProjectHideKey(project("a2", "env-2", "github.com/acme/app")),
+    );
+  });
+
+  it("gives a project with no repository identity a key of its own", () => {
+    expect(pullRequestProjectHideKey(project("a1", "env-1"))).not.toBe(
+      pullRequestProjectHideKey(project("a2", "env-1")),
+    );
+  });
+
+  it("keeps a repository key from colliding with a project key", () => {
+    expect(pullRequestProjectHideKey(project("a1", "env-1", "env-1/a1"))).not.toBe(
+      pullRequestProjectHideKey(project("a1", "env-1")),
+    );
+  });
+});
 
 describe("one server per repository", () => {
   it("lets the first server list a repository both hold", () => {

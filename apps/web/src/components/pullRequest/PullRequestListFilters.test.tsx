@@ -117,14 +117,23 @@ describe("pull request filters menu", () => {
     environmentId: "env-1" as EnvironmentId,
     title: "T3 Code",
     workspaceRoot: "/work/t3code",
+    hideKey: "repository:github.com/acme/t3code",
   };
   const projectTwo = {
     id: "project-2" as ProjectId,
     environmentId: "env-1" as EnvironmentId,
     title: "Popular OSS",
     workspaceRoot: "/work/popular",
+    hideKey: "repository:github.com/acme/popular",
   };
-  const keyTwo = pullRequestProjectKey(projectTwo);
+  const keyTwo = projectTwo.hideKey;
+  /** The same repository held by a second server, so both rows share one hidden state. */
+  const projectTwoElsewhere = {
+    ...projectTwo,
+    id: "project-9" as ProjectId,
+    environmentId: "env-2" as EnvironmentId,
+    title: "Popular OSS · other",
+  };
 
   it("does not emit a change when the selected state is chosen again", () => {
     const onState = vi.fn();
@@ -247,6 +256,27 @@ describe("pull request filters menu", () => {
 
     buttons[1]?.onClick(clickEvent());
     expect(onProject).toHaveBeenCalledWith(projectOne.id, "env-2");
+  });
+
+  it("hides both copies of a repository two servers share", () => {
+    const onHiddenProjectKeys = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectTwo, projectTwoElsewhere], onHiddenProjectKeys }),
+    );
+    expect(rows.map((row) => row.checked)).toEqual([true, true, true]);
+
+    rows[1]?.onCheckedChange?.(false);
+    expect(onHiddenProjectKeys).toHaveBeenCalledWith([projectTwo.hideKey]);
+  });
+
+  it("reads both copies of a shared repository as hidden from the one key", () => {
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectTwo, projectTwoElsewhere],
+        hiddenProjectKeys: [projectTwo.hideKey],
+      }),
+    );
+    expect(rows.map((row) => row.checked)).toEqual([false, false, false]);
   });
 
   it("does not collide when environment and project ids contain spaces", () => {

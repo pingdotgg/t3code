@@ -19,6 +19,21 @@ function repositoryKey(project: AssignableProject): string | undefined {
 }
 
 /**
+ * What a hidden project is remembered by. Two servers holding one repository list it once between
+ * them, so hiding is a statement about the repository rather than about either copy — keyed per
+ * copy, hiding the listed one would leave the other reading as shown while its rows were gone.
+ *
+ * A project with no repository identity is nothing else's copy, so it stands for itself. The
+ * prefixes keep the two kinds of key from ever colliding.
+ */
+export function pullRequestProjectHideKey(project: AssignableProject): string {
+  const key = repositoryKey(project);
+  return key === undefined || key.length === 0
+    ? `project:${project.environmentId}\u0000${project.id}`
+    : `repository:${key}`;
+}
+
+/**
  * Two servers can hold the same repository, and both would list the same pull requests, so one
  * copy is picked by its repository key.
  *

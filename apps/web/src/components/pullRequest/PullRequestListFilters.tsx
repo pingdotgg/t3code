@@ -240,6 +240,11 @@ export function PullRequestFiltersMenu({
     readonly environmentId: EnvironmentId;
     readonly title: string;
     readonly workspaceRoot: string;
+    /**
+     * What this project's hidden state is stored under. Two copies of one repository share it, so
+     * a row never reads as shown while the listing has dropped the repository behind it.
+     */
+    readonly hideKey: string;
   }>;
   projectId: ProjectId | undefined;
   /**
@@ -255,7 +260,7 @@ export function PullRequestFiltersMenu({
   unavailable: ReadonlyMap<string, string>;
   /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
-  /** Projects left out of the list, by `pullRequestProjectKey`. */
+  /** Projects left out of the list, by their `hideKey`. */
   hiddenProjectKeys: ReadonlyArray<string>;
   onHiddenProjectKeys: (keys: ReadonlyArray<string>) => void;
 }) {
@@ -281,9 +286,13 @@ export function PullRequestFiltersMenu({
     projectId === undefined || projectEnvironmentId === undefined
       ? undefined
       : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId });
+  const scopedHideKey = projects.find(
+    (candidate) => pullRequestProjectKey(candidate) === scopedKey,
+  )?.hideKey;
   const hidden = new Set(hiddenProjectKeys);
   /** Checked means the listing actually reads it, and a scope reads exactly one. */
-  const listed = (key: string) => (scopedKey === undefined ? !hidden.has(key) : key === scopedKey);
+  const listed = (project: { readonly hideKey: string }, key: string) =>
+    scopedKey === undefined ? !hidden.has(project.hideKey) : key === scopedKey;
   const everyProjectListed = scopedKey === undefined && hidden.size === 0;
   const listEveryProject = () => {
     if (scopedKey !== undefined) onProject(undefined, undefined);
@@ -293,14 +302,14 @@ export function PullRequestFiltersMenu({
    * A one-project scope says the same thing as hiding every other project, so a click that widens
    * or narrows it carries on from that set rather than starting over from every project.
    */
-  const setProjectListed = (key: string, next: boolean) => {
+  const setProjectListed = (hideKey: string, next: boolean) => {
     const base =
       scopedKey === undefined
         ? hiddenProjectKeys
-        : projects.map(pullRequestProjectKey).filter((candidate) => candidate !== scopedKey);
+        : projects.map((candidate) => candidate.hideKey).filter((key) => key !== scopedHideKey);
     if (scopedKey !== undefined) onProject(undefined, undefined);
     onHiddenProjectKeys(
-      next ? base.filter((candidate) => candidate !== key) : [...new Set([...base, key])],
+      next ? base.filter((key) => key !== hideKey) : [...new Set([...base, hideKey])],
     );
   };
   const onlyProject = (project: {
@@ -410,8 +419,11 @@ export function PullRequestFiltersMenu({
               const item = (
                 <MenuCheckboxItem
                   key={key}
-                  checked={listed(key)}
-                  onCheckedChange={(next) => setProjectListed(key, next)}
+                  checked={listed(project, key)}
+                  onCheckedChange={(next) => setProjectListed(project.hideKey, next)}
+                  // The row takes its name from its contents, and the action below carries an
+                  // aria-label that would otherwise be folded into it.
+                  {...(reason === undefined ? { "aria-label": project.title } : {})}
                   className={cn(
                     "group/project",
                     reason !== undefined && "data-disabled:pointer-events-auto",
@@ -447,7 +459,7 @@ export function PullRequestFiltersMenu({
                         }}
                         // Highlighted rather than hovered: a menu row highlights under the
                         // pointer and under arrow keys alike, so both reach the action.
-                        className="pointer-events-none inline-flex shrink-0 cursor-pointer items-center rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-data-highlighted/project:pointer-events-auto group-data-highlighted/project:opacity-100"
+                        className="pointer-events-none inline-flex shrink-0 cursor-pointer items-center self-stretch rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-data-highlighted/project:pointer-events-auto group-data-highlighted/project:opacity-100"
                       >
                         Only
                       </button>
