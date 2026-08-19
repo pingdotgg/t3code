@@ -77,6 +77,13 @@ describe("terminal close shortcut guards", () => {
     );
   });
 
+  it("does not treat bare Escape as terminal close", () => {
+    const event = keyboardEvent({ key: "Escape", code: "Escape", ctrlKey: false });
+
+    expect(preventTerminalCloseShortcut(event, keybindings, "MacIntel")).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("leaves a non-repeated window close and unrelated repeats alone", () => {
     const deliberateWindowClose = keyboardEvent({ repeat: false });
     const unrelatedRepeat = keyboardEvent({ key: "q", code: "KeyQ", repeat: true });

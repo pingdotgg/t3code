@@ -248,6 +248,12 @@ describe("split/new/close terminal shortcuts", () => {
         context: { terminalFocus: true },
       }),
     );
+    assert.isFalse(
+      isTerminalCloseShortcut(event({ key: "Escape" }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true, terminalOpen: true },
+      }),
+    );
   });
 
   it("supports when expressions", () => {

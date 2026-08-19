@@ -72,6 +72,7 @@ function ChatRouteGlobalShortcuts() {
       }
 
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
+        if (isTerminalFocused()) return;
         event.preventDefault();
         clearSelection();
         return;
