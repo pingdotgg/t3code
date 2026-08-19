@@ -39,7 +39,6 @@ import {
   highlightThemeRoleUsage,
   inspectThemeRoleAtElement,
   inspectThemeRoleFromUtilitiesAtElement,
-  refreshThemeInspectorSpotlight,
   showThemeInspectorHover,
   type ThemeElementInspection,
 } from "./themeInspector";
@@ -50,7 +49,6 @@ type ThemeEditorColorFamily = Readonly<{
   id: string;
   label: string;
   role: ThemeColorRole;
-  roles: ReadonlyArray<ThemeColorRole>;
 }>;
 
 const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
@@ -66,47 +64,34 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         id: "background",
         label: "Background",
         role: "canvas",
-        roles: ["canvas", "chrome", "toolbar"],
       },
-      { id: "surface", label: "Surface", role: "surface", roles: ["surface"] },
+      { id: "surface", label: "Surface", role: "surface" },
       {
         id: "raised-surface",
         label: "Raised surface",
         role: "surfaceRaised",
-        roles: ["surfaceRaised"],
       },
       {
         id: "overlay",
         label: "Overlay",
         role: "surfaceOverlay",
-        roles: ["surfaceOverlay"],
       },
       {
         id: "text",
         label: "Text",
         role: "text",
-        roles: ["text", "toolbarForeground", "toolbarControlForeground"],
       },
       {
         id: "muted-text",
         label: "Muted text",
         role: "mutedForeground",
-        roles: [
-          "textMuted",
-          "mutedForeground",
-          "placeholder",
-          "secondaryLabel",
-          "iconMuted",
-          "sidebarMutedForeground",
-        ],
       },
       {
         id: "border",
         label: "Border",
         role: "border",
-        roles: ["border", "toolbarBorder", "sidebarBorder"],
       },
-      { id: "input", label: "Input", role: "input", roles: ["input"] },
+      { id: "input", label: "Input", role: "input" },
     ],
   },
   {
@@ -117,45 +102,31 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         id: "subtle-surface",
         label: "Subtle surface",
         role: "secondary",
-        roles: ["secondary", "secondaryForeground", "muted", "toolbarControl"],
       },
       {
         id: "highlight-surface",
         label: "Highlight surface",
         role: "accentSurface",
-        roles: ["accentSurface", "accentSurfaceForeground", "toolbarControlHover"],
       },
       {
         id: "accent",
         label: "Accent",
         role: "accent",
-        roles: [
-          "accent",
-          "accentForeground",
-          "focus",
-          "update",
-          "updateForeground",
-          "updateSurface",
-          "terminalCursor",
-        ],
       },
       {
         id: "action",
         label: "Action",
         role: "messageAction",
-        roles: ["messageAction", "messageActionForeground", "messageActionHover"],
       },
       {
         id: "message-surface",
         label: "Message surface",
         role: "messageSurface",
-        roles: ["messageSurface", "messageForeground"],
       },
       {
         id: "code-surface",
         label: "Code surface",
         role: "codeBackground",
-        roles: ["codeBackground", "codeForeground"],
       },
     ],
   },
@@ -167,31 +138,21 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         id: "sidebar-background",
         label: "Sidebar background",
         role: "sidebar",
-        roles: ["sidebar", "sidebarForeground"],
       },
       {
         id: "sidebar-controls",
         label: "Sidebar controls",
         role: "sidebarControlSurface",
-        roles: ["sidebarControlSurface"],
       },
       {
         id: "sidebar-selection",
         label: "Sidebar selection",
         role: "sidebarRowSelected",
-        roles: ["sidebarRowHover", "sidebarRowActive", "sidebarRowSelected"],
       },
       {
         id: "terminal-background",
         label: "Terminal background",
         role: "terminalBackground",
-        roles: [
-          "terminalBackground",
-          "terminalForeground",
-          "terminalSelection",
-          "terminalScrollbar",
-          "terminalScrollbarHover",
-        ],
       },
     ],
   },
@@ -203,13 +164,11 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         id: "error",
         label: "Error",
         role: "error",
-        roles: ["error", "errorForeground", "errorSurface"],
       },
       {
         id: "warning",
         label: "Warning",
         role: "warning",
-        roles: ["warning", "warningForeground", "warningSurface"],
       },
     ],
   },
@@ -217,9 +176,7 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
 
 const THEME_EDITOR_COLOR_FAMILIES = THEME_EDITOR_ROLE_GROUPS.flatMap((group) => group.families);
 const THEME_EDITOR_COLOR_FAMILY_BY_ROLE = new Map(
-  THEME_EDITOR_COLOR_FAMILIES.flatMap((family) =>
-    family.roles.map((role) => [role, family] as const),
-  ),
+  THEME_EDITOR_COLOR_FAMILIES.map((family) => [family.role, family] as const),
 );
 
 function getThemeEditorColorFamily(role: ThemeColorRole): ThemeEditorColorFamily | null {
@@ -478,7 +435,7 @@ export function ThemeEditorPanel({
         return {
           ...current,
           [activeAppearance]: isAdvanced
-            ? updateThemeColorFamily(activeAppearance, current[activeAppearance], role, value)
+            ? updateThemeColorFamily(current[activeAppearance], role, value)
             : shouldManageColors
               ? getManagedEditorColors(activeAppearance, nextColors)
               : nextColors,
@@ -522,7 +479,7 @@ export function ThemeEditorPanel({
 
   const selectedHighlightRoles = selectedRole
     ? isAdvanced
-      ? (getThemeEditorColorFamily(selectedRole)?.roles ?? [selectedRole])
+      ? [selectedRole]
       : THEME_EDITOR_SIMPLE_ROLES.includes(selectedRole)
         ? THEME_COLOR_ROLES.filter(
             (role) =>
@@ -540,16 +497,14 @@ export function ThemeEditorPanel({
       return;
     }
     // Picking a new element needs the unobscured app, so suspend the existing
-    // spotlight while the picker is armed.
+    // usage highlights while the picker is armed.
     if (isInspecting) return;
 
     const highlightedRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
     const refreshHighlights = () => setUsageCount(highlightThemeRoleUsage(highlightedRoles));
     refreshHighlights();
-    // A refresh snapshots computed styles for the whole tree twice, so it is
-    // throttled rather than run per frame: a streaming reply or a virtualized
-    // list mutates the DOM continuously and would otherwise stall the main
-    // thread for as long as the inspector is open.
+    // A refresh walks the rendered tree, so throttle continuous mutations from
+    // streaming replies and virtualized lists.
     const MIN_REFRESH_INTERVAL_MS = 500;
     let refreshFrame: number | null = null;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -571,8 +526,7 @@ export function ThemeEditorPanel({
         mutations.every(
           (mutation) =>
             mutation.target instanceof Element &&
-            (mutation.target.closest("#theme-inspector-spotlight") ||
-              mutation.target.closest("[data-theme-editor-panel]")),
+            mutation.target.closest("[data-theme-editor-panel]"),
         )
       ) {
         return;
@@ -580,22 +534,10 @@ export function ThemeEditorPanel({
       scheduleRefresh();
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    let spotlightFrame: number | null = null;
-    const scheduleSpotlightRefresh = () => {
-      spotlightFrame ??= requestAnimationFrame(() => {
-        spotlightFrame = null;
-        refreshThemeInspectorSpotlight();
-      });
-    };
-    window.addEventListener("resize", scheduleSpotlightRefresh);
-    window.addEventListener("scroll", scheduleSpotlightRefresh, true);
     return () => {
       observer.disconnect();
       if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
       if (refreshTimer !== null) clearTimeout(refreshTimer);
-      if (spotlightFrame !== null) cancelAnimationFrame(spotlightFrame);
-      window.removeEventListener("resize", scheduleSpotlightRefresh);
-      window.removeEventListener("scroll", scheduleSpotlightRefresh, true);
       clearThemeInspectorHighlights();
     };
   }, [isInspecting, open, selectedHighlightRolesKey, selectedRole]);
@@ -1021,10 +963,7 @@ export function ThemeEditorPanel({
       families: group.families.filter(
         (family) =>
           !query ||
-          [family.label, ...family.roles.map((role) => getThemeRoleLabel(role))]
-            .join(" ")
-            .toLowerCase()
-            .includes(query),
+          [family.label, getThemeRoleLabel(family.role)].join(" ").toLowerCase().includes(query),
       ),
     })).filter((group) => group.families.length > 0);
     return isAdvanced ? (

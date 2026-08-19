@@ -977,6 +977,7 @@ export function TerminalViewport({
   return (
     <div
       ref={containerRef}
+      data-theme-terminal-surface
       className="relative h-full w-full overflow-hidden rounded-[4px] bg-background"
     />
   );

@@ -51,8 +51,8 @@ describe("getMobileTerminalTheme", () => {
     const terminal = getMobileTerminalTheme("ocean", "dark");
 
     expect(terminal.background).toBe(themeColorToNativeColor(colors.terminalBackground));
-    expect(terminal.foreground).toBe(themeColorToNativeColor(colors.terminalForeground));
-    expect(terminal.cursorForeground).toBe(themeColorToNativeColor(colors.terminalCursor));
+    expect(terminal.foreground).toBe(themeColorToNativeColor(colors.text));
+    expect(terminal.cursorForeground).toBe(themeColorToNativeColor(colors.accent));
   });
 });
 

@@ -1026,9 +1026,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
-  --card-foreground: var(--color-zinc-800);
+  --card-foreground: var(--foreground);
   --popover: var(--color-white);
-  --popover-foreground: var(--color-zinc-800);
+  --popover-foreground: var(--foreground);
   --primary: oklch(0.488 0.217 264);
   --primary-foreground: var(--color-white);
   --secondary: var(--color-zinc-50);
@@ -1089,9 +1089,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --surface-raised: var(--secondary);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
+    --card-foreground: var(--foreground);
     --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
+    --popover-foreground: var(--foreground);
     --primary: oklch(0.571 0.21 264);
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
@@ -1121,10 +1121,69 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Themes have the same 20 source colors as the Advanced editor. The runtime
+   contrast service fills the existing foreground and status-surface tokens;
+   this bridge handles the remaining direct and mixed semantic aliases. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  --background: var(--theme-canvas);
+  --app-chrome-background: var(--theme-canvas);
+  --toolbar-background: var(--theme-canvas);
+  --toolbar-foreground: var(--theme-text);
+  --toolbar-border: var(--theme-border);
+  --toolbar-control: var(--theme-secondary);
+  --toolbar-control-foreground: var(--secondary-foreground);
+  --toolbar-control-hover: color-mix(in srgb, var(--theme-secondary) 88%, var(--theme-text));
+  --surface-raised: var(--theme-surface-raised);
+  --foreground: var(--theme-text);
+  --card: var(--theme-surface);
+  --popover: var(--theme-surface-overlay);
+  --primary: var(--theme-message-action);
+  --secondary: var(--theme-secondary);
+  --muted: var(--theme-secondary);
+  --muted-foreground: var(--theme-muted-foreground);
+  --secondary-label: var(--theme-muted-foreground);
+  --icon-muted: var(--theme-muted-foreground);
+  --message-surface: var(--theme-message-surface);
+  --message-action: var(--theme-message-action);
+  --message-action-foreground: var(--primary-foreground);
+  --accent: var(--theme-accent-surface);
+  --error: var(--theme-error);
+  --destructive: var(--theme-error);
+  --destructive-foreground: var(--error-foreground);
+  --warning: var(--theme-warning);
+  --update: var(--theme-accent);
+  --border: var(--theme-border);
+  --input: var(--theme-input);
+  --ring: var(--theme-accent);
+  --sidebar: var(--theme-sidebar);
+  --sidebar-control-surface: var(--theme-sidebar-control-surface);
+  --sidebar-row-hover: color-mix(
+    in srgb,
+    var(--theme-sidebar) 50%,
+    var(--theme-sidebar-row-selected)
+  );
+  --sidebar-row-active: color-mix(
+    in srgb,
+    var(--theme-sidebar) 20%,
+    var(--theme-sidebar-row-selected)
+  );
+  --sidebar-row-selected: var(--theme-sidebar-row-selected);
+  --sidebar-border: var(--theme-border);
+  --sidebar-stage-fade: var(--theme-sidebar);
+  --code-background: var(--theme-code-background);
+  --terminal-background: var(--theme-terminal-background);
+  --terminal-cursor: var(--theme-accent);
+  --terminal-selection-background: color-mix(
+    in srgb,
+    var(--theme-terminal-background) 72%,
+    var(--theme-accent)
+  );
+}
+
 /* Keep both sidebar implementations (default and legacy) on the same quiet
    zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
    surfaces. */
-[data-app-sidebar] {
+html:not([data-theme-id]) [data-app-sidebar] {
   --background: var(--color-zinc-25);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
@@ -1168,90 +1227,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-/* Theme files are expressed in app color roles and mapped to the existing
-   semantic surface tokens here. Keep this block after the sidebar-version
-   compatibility overrides so both navigation implementations receive the
-   same palette. Success, info, provider, and channel identity colors remain
-   independent; error, warning, and update roles are themeable below. */
-
-/* The non-empty marker adds enough specificity to outrank the generated root
-   dark variant without reintroducing raw `.dark` selectors. */
-html[data-theme-id]:not([data-theme-id=""]) {
-  --background: var(--app-theme-canvas);
-  --app-chrome-background: var(--app-theme-chrome);
-  --toolbar-background: var(--app-theme-toolbar);
-  --toolbar-foreground: var(--app-theme-toolbar-foreground);
-  --toolbar-border: var(--app-theme-toolbar-border);
-  --toolbar-control: var(--app-theme-toolbar-control);
-  --toolbar-control-foreground: var(--app-theme-toolbar-control-foreground);
-  --toolbar-control-hover: var(--app-theme-toolbar-control-hover);
-  --surface-raised: var(--app-theme-surface-raised);
-  --foreground: var(--app-theme-text);
-  --card: var(--app-theme-surface);
-  --card-foreground: var(--app-theme-text);
-  --popover: var(--app-theme-surface-overlay);
-  --popover-foreground: var(--app-theme-text);
-  /* Solid controls (CTAs, switches, sliders, the send button) all share the
-     theme's action color so every "act now" affordance reads consistently;
-     the accent keeps driving surfaces, selection, and focus. Palettes without
-     a distinct action color make these identical. */
-  --primary: var(--app-theme-message-action);
-  --primary-foreground: var(--app-theme-message-action-foreground);
-  --secondary: var(--app-theme-secondary);
-  --secondary-foreground: var(--app-theme-secondary-foreground);
-  --muted: var(--app-theme-muted);
-  --muted-foreground: var(--app-theme-muted-foreground);
-  --placeholder: var(--app-theme-placeholder);
-  --secondary-label: var(--app-theme-secondary-label);
-  --icon-muted: var(--app-theme-icon-muted);
-  --accent: var(--app-theme-accent-surface);
-  --accent-foreground: var(--app-theme-accent-surface-foreground);
-  --message-surface: var(--app-theme-message-surface);
-  --message-foreground: var(--app-theme-message-foreground);
-  --message-action: var(--app-theme-message-action);
-  --message-action-foreground: var(--app-theme-message-action-foreground);
-  --message-action-hover: var(--app-theme-message-action-hover);
-  --error: var(--app-theme-error);
-  --error-foreground: var(--app-theme-error-foreground);
-  --error-surface: var(--app-theme-error-surface);
-  --destructive: var(--error);
-  --destructive-foreground: var(--error-foreground);
-  --warning: var(--app-theme-warning);
-  --warning-foreground: var(--app-theme-warning-foreground);
-  --warning-surface: var(--app-theme-warning-surface);
-  --update: var(--app-theme-update);
-  --update-foreground: var(--app-theme-update-foreground);
-  --update-surface: var(--app-theme-update-surface);
-  --border: var(--app-theme-border);
-  --input: var(--app-theme-input);
-  --ring: var(--app-theme-focus);
-  --sidebar: var(--app-theme-sidebar);
-  --sidebar-foreground: var(--app-theme-sidebar-foreground);
-  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
-  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
-  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
-  --sidebar-row-active: var(--app-theme-sidebar-row-active);
-  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
-  --sidebar-border: var(--app-theme-sidebar-border);
-  --sidebar-stage-fade: var(--app-theme-sidebar);
-  --code-background: var(--app-theme-code-background);
-  --code-foreground: var(--app-theme-code-foreground);
-  --terminal-background: var(--app-theme-terminal-background);
-  --terminal-foreground: var(--app-theme-terminal-foreground);
-  --terminal-cursor: var(--app-theme-terminal-cursor);
-  --terminal-selection-background: var(--app-theme-terminal-selection-background);
-}
-
 /* T3 Chat's composer is a translucent lift over --chat-background. Route its
    measured flattened color through the raised-surface role instead of deriving
    another tint from the canvas, which made the dark composer too red. */
 html[data-theme-id] .chat-composer-glass-shell {
-  --chat-composer-glass-surface: var(--app-theme-surface-raised);
-  --chat-composer-outline: var(--app-theme-toolbar-border);
+  --chat-composer-glass-surface: var(--surface-raised);
+  --chat-composer-outline: var(--toolbar-border);
 
   @variant dark {
-    --chat-composer-outline: color-mix(in srgb, var(--app-theme-input) 30%, var(--background));
-    --chat-composer-highlight: color-mix(in srgb, var(--app-theme-input) 12%, transparent);
+    --chat-composer-outline: color-mix(in srgb, var(--input) 30%, var(--background));
+    --chat-composer-highlight: color-mix(in srgb, var(--input) 12%, transparent);
   }
 }
 
@@ -1264,40 +1249,17 @@ html[data-theme-id="t3-chat"] .chat-composer-glass-shell {
   }
 }
 
-/* Theme-token dependency probes are restored synchronously, before paint. Keep
-   transitions from observing the temporary sentinel color in between. */
-html[data-theme-token-probe],
-html[data-theme-token-probe] *,
-html[data-theme-token-probe] *::before,
-html[data-theme-token-probe] *::after {
-  transition: none !important;
-}
-
-#theme-inspector-spotlight {
-  position: fixed;
-  z-index: 100;
-  inset: 0;
-  width: 100vw;
-  height: 100dvh;
-  overflow: visible;
-  pointer-events: none;
-}
-
 [data-slot="popover-positioner"]:has([data-theme-editor-panel]),
 [data-slot="tooltip-positioner"]:has([data-theme-editor-panel]) {
   z-index: 120;
 }
 
-.theme-inspector-spotlight-dimmer {
-  fill: rgb(2 3 8 / 54%);
-}
-
-.theme-inspector-spotlight-glow {
-  fill: color-mix(in oklab, var(--ring) 9%, transparent);
-  stroke: color-mix(in oklab, var(--ring) 72%, white);
-  stroke-width: 2px;
-  opacity: 0.92;
-  vector-effect: non-scaling-stroke;
+[data-theme-inspector-match] {
+  outline: 2px solid color-mix(in oklab, var(--ring) 72%, white) !important;
+  outline-offset: 3px;
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--ring) 14%, transparent),
+    0 0 16px color-mix(in oklab, var(--ring) 34%, transparent) !important;
 }
 
 #theme-inspector-hover {
@@ -1431,25 +1393,6 @@ html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="tr
 }
 
 html[data-theme-id] [data-app-sidebar] {
-  --background: var(--app-theme-canvas);
-  --foreground: var(--app-theme-text);
-  --card: var(--app-theme-surface);
-  --card-foreground: var(--app-theme-text);
-  --accent: var(--app-theme-accent-surface);
-  --accent-foreground: var(--app-theme-accent-surface-foreground);
-  --muted: var(--app-theme-muted);
-  --muted-foreground: var(--app-theme-muted-foreground);
-  --border: var(--app-theme-border);
-  --input: var(--app-theme-input);
-  --sidebar: var(--app-theme-sidebar);
-  --sidebar-foreground: var(--app-theme-sidebar-foreground);
-  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
-  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
-  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
-  --sidebar-row-active: var(--app-theme-sidebar-row-active);
-  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
-  --sidebar-border: var(--app-theme-sidebar-border);
-  --sidebar-stage-fade: var(--app-theme-sidebar);
   border-color: color-mix(in srgb, var(--sidebar-foreground) 10%, transparent);
 
   @variant dark {
@@ -1461,7 +1404,7 @@ html[data-theme-id] [data-app-sidebar] {
    keeps that color while hovered. Do not neutralize this branded edge. */
 html[data-theme-id="t3-chat"] [data-app-sidebar] {
   @variant dark {
-    border-color: var(--sidebar-border);
+    border-color: #322028;
   }
 }
 

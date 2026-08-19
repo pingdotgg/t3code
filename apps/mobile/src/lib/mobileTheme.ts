@@ -160,16 +160,26 @@ function contrastRatio(
   );
 }
 
-/** Preserve the theme's action hue while making it readable as skill text on a message bubble. */
-function readableMessageAccent(accent: string, surface: string): string {
-  const accentChannels = rgbChannels(accent);
+function mixNativeColors(background: string, foreground: string, foregroundAmount: number): string {
+  const backgroundChannels = rgbChannels(background);
+  const foregroundChannels = rgbChannels(foreground);
+  if (!backgroundChannels || !foregroundChannels) return background;
+  const mixed = backgroundChannels.map((channel, index) =>
+    Math.round(channel + (foregroundChannels[index]! - channel) * foregroundAmount),
+  );
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Preserve a preferred foreground hue while making it readable on a surface. */
+function readableThemeForeground(foreground: string, surface: string): string {
+  const accentChannels = rgbChannels(foreground);
   const surfaceChannels = rgbChannels(surface);
   if (
     !accentChannels ||
     !surfaceChannels ||
     contrastRatio(accentChannels, surfaceChannels) >= 4.5
   ) {
-    return accent;
+    return foreground;
   }
 
   const black = [0, 0, 0] as const;
@@ -210,75 +220,79 @@ export function createMobileThemeVariables(
   appearance: MobileThemeAppearance,
 ): MobileThemeVariables {
   const c = nativeColors(colors);
+  const foregroundOn = (surface: string) => readableThemeForeground(c.text, surface);
+  const messageForeground = foregroundOn(c.messageSurface);
+  const dangerAlpha = appearance === "dark" ? 0.14 : 0.08;
+  const dangerSurface = mixNativeColors(c.canvas, c.error, dangerAlpha);
   return {
     "--color-screen": c.canvas,
-    "--color-sheet": withAlpha(c.chrome, 0.98),
-    "--color-sheet-solid": c.chrome,
+    "--color-sheet": withAlpha(c.canvas, 0.98),
+    "--color-sheet-solid": c.canvas,
     "--color-card": c.surfaceRaised,
     "--color-card-alt": c.surface,
     "--color-card-translucent": withAlpha(c.surfaceRaised, 0.8),
     "--color-foreground": c.text,
-    "--color-foreground-secondary": c.textMuted,
+    "--color-foreground-secondary": c.mutedForeground,
     "--color-foreground-muted": c.mutedForeground,
-    "--color-foreground-tertiary": c.secondaryLabel,
+    "--color-foreground-tertiary": c.mutedForeground,
     "--color-border": c.border,
     "--color-border-subtle": withAlpha(c.border, 0.7),
     "--color-separator": withAlpha(c.border, 0.55),
-    "--color-subtle": c.muted,
+    "--color-subtle": c.secondary,
     "--color-subtle-strong": c.secondary,
     "--color-inline-skill-background": c.accentSurface,
     "--color-inline-skill-border": withAlpha(c.accent, 0.42),
-    "--color-inline-skill-foreground": c.accentSurfaceForeground,
+    "--color-inline-skill-foreground": foregroundOn(c.accentSurface),
     "--color-primary": c.accent,
-    "--color-primary-foreground": c.accentForeground,
+    "--color-primary-foreground": foregroundOn(c.accent),
     "--color-primary-shadow": "#000000",
     "--color-secondary": c.secondary,
-    "--color-secondary-foreground": c.secondaryForeground,
+    "--color-secondary-foreground": foregroundOn(c.secondary),
     "--color-secondary-border": c.border,
     "--color-switch-active-track": c.accent,
-    "--color-switch-active-thumb": c.accentForeground,
+    "--color-switch-active-thumb": foregroundOn(c.accent),
     "--color-switch-inactive-track": c.secondary,
     "--color-switch-inactive-thumb": c.mutedForeground,
-    "--color-danger": c.errorSurface,
+    "--color-danger": withAlpha(c.error, dangerAlpha),
     "--color-danger-border": withAlpha(c.error, 0.32),
-    "--color-danger-foreground": c.errorForeground,
+    "--color-danger-foreground": readableThemeForeground(c.error, dangerSurface),
     "--color-input": c.surfaceRaised,
     "--color-input-border": c.input,
     "--color-sidebar-search": c.sidebarControlSurface,
-    "--color-placeholder": c.placeholder,
+    "--color-placeholder": readableThemeForeground(c.mutedForeground, c.surfaceRaised),
     "--color-icon": c.text,
-    "--color-icon-muted": c.iconMuted,
-    "--color-icon-subtle": c.secondaryLabel,
-    "--color-header": withAlpha(c.toolbar, 0.97),
-    "--color-header-border": c.toolbarBorder,
+    "--color-icon-muted": c.mutedForeground,
+    "--color-icon-subtle": c.mutedForeground,
+    "--color-header": withAlpha(c.canvas, 0.97),
+    "--color-header-border": c.border,
     "--color-glass-surface": withAlpha(c.surfaceOverlay, 0.74),
     "--color-glass-tint": withAlpha(c.surfaceOverlay, 0.22),
     "--color-status-bar": c.canvas,
     "--color-md-body": c.text,
-    "--color-md-strong": c.toolbarForeground,
+    "--color-md-strong": c.text,
     "--color-md-link": c.accent,
     "--color-md-blockquote-border": c.border,
-    "--color-md-blockquote-bg": c.muted,
+    "--color-md-blockquote-bg": c.secondary,
     "--color-md-code-bg": c.codeBackground,
-    "--color-md-code-text": c.codeForeground,
-    "--color-md-user-code-bg": withAlpha(c.messageForeground, 0.18),
-    "--color-md-user-code-text": c.messageForeground,
+    "--color-md-code-text": foregroundOn(c.codeBackground),
+    "--color-md-user-code-bg": withAlpha(messageForeground, 0.18),
+    "--color-md-user-code-text": messageForeground,
     "--color-md-user-fence-bg": withAlpha("#000000", appearance === "dark" ? 0.28 : 0.16),
-    "--color-md-user-fence-text": c.messageForeground,
+    "--color-md-user-fence-text": messageForeground,
     "--color-md-hr": c.border,
     "--color-user-bubble": c.messageSurface,
-    "--color-user-bubble-foreground": c.messageForeground,
-    "--color-user-bubble-foreground-muted": withAlpha(c.messageForeground, 0.78),
-    "--color-user-bubble-skill-foreground": readableMessageAccent(
+    "--color-user-bubble-foreground": messageForeground,
+    "--color-user-bubble-foreground-muted": withAlpha(messageForeground, 0.78),
+    "--color-user-bubble-skill-foreground": readableThemeForeground(
       c.messageAction,
       c.messageSurface,
     ),
     "--color-backdrop": withAlpha("#000000", appearance === "dark" ? 0.48 : 0.22),
     "--color-drawer": withAlpha(c.sidebar, 0.99),
     "--color-drawer-shadow": withAlpha("#000000", appearance === "dark" ? 0.32 : 0.12),
-    "--color-dot-separator": withAlpha(c.textMuted, 0.35),
+    "--color-dot-separator": withAlpha(c.mutedForeground, 0.35),
     "--color-wordmark": c.text,
-    "--color-chevron": withAlpha(c.textMuted, 0.42),
+    "--color-chevron": withAlpha(c.mutedForeground, 0.42),
   };
 }
 

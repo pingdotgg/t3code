@@ -117,7 +117,7 @@ function StaticDiffHtml({ html }: { html: string }) {
     bridge.textContent = DIFF_PREVIEW_THEME_BRIDGE;
     shadow.append(bridge);
   }, [html]);
-  return <div ref={hostRef} />;
+  return <div ref={hostRef} data-theme-code-surface />;
 }
 
 /** The diff panel's file diff, statically rendered by its real pipeline. */
@@ -265,6 +265,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   return (
     <div
       ref={mountRef}
+      data-theme-terminal-surface
       className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
       aria-label="Terminal font preview"
     />

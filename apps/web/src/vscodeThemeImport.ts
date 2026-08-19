@@ -235,7 +235,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const sidebar = hexToRgb(sidebarHex);
   const terminalHex =
     solidOver(canvas, "terminal.background", "panel.background") ?? derived.terminalBackground;
-  const terminal = hexToRgb(terminalHex);
 
   /** Foregrounds only win when they stay readable on the surface they land on;
    *  a theme tuned for its own chrome can be unreadable on ours. */
@@ -259,11 +258,12 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const overrides: Partial<Record<ThemeColorRole, string>> = {
     canvas: canvasHex,
     text: readableOn(canvasHex, derived.text, "editor.foreground", "foreground"),
-    textMuted: readableOn(
+    mutedForeground: readableOn(
       canvasHex,
-      derived.textMuted,
+      derived.mutedForeground,
       "descriptionForeground",
       "disabledForeground",
+      "input.placeholderForeground",
     ),
     surface: solidOver(canvas, "editorWidget.background") ?? derived.surface,
     surfaceRaised:
@@ -274,7 +274,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     border:
       solidOver(canvas, "panel.border", "editorGroup.border", "contrastBorder") ?? derived.border,
     input: solidOver(canvas, "input.border", "dropdown.border") ?? derived.input,
-    placeholder: readableOn(canvasHex, derived.placeholder, "input.placeholderForeground"),
     error: readableOn(canvasHex, derived.error, "editorError.foreground", "errorForeground"),
     warning: readableOn(canvasHex, derived.warning, "editorWarning.foreground"),
     accentSurface:
@@ -282,41 +281,17 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
       derived.accentSurface,
     codeBackground: solidOver(canvas, "textCodeBlock.background") ?? derived.codeBackground,
     sidebar: sidebarHex,
-    sidebarForeground: readableOn(sidebarHex, derived.sidebarForeground, "sideBar.foreground"),
-    sidebarBorder: solidOver(sidebar, "sideBar.border") ?? derived.sidebarBorder,
-    sidebarRowHover: solidOver(sidebar, "list.hoverBackground") ?? derived.sidebarRowHover,
-    sidebarRowActive:
-      solidOver(sidebar, "list.inactiveSelectionBackground", "list.hoverBackground") ??
-      derived.sidebarRowActive,
+    sidebarControlSurface:
+      solidOver(sidebar, "sideBarSectionHeader.background", "activityBar.background") ??
+      derived.sidebarControlSurface,
     sidebarRowSelected:
       solidOver(sidebar, "list.activeSelectionBackground") ?? derived.sidebarRowSelected,
     terminalBackground: terminalHex,
-    terminalForeground: readableOn(terminalHex, derived.terminalForeground, "terminal.foreground"),
-    terminalCursor:
-      solidOver(terminal, "terminalCursor.foreground", "editorCursor.foreground") ??
-      derived.terminalCursor,
-    terminalSelection:
-      solidOver(terminal, "terminal.selectionBackground", "editor.selectionBackground") ??
-      derived.terminalSelection,
-    terminalScrollbar:
-      solidOver(terminal, "scrollbarSlider.background") ?? derived.terminalScrollbar,
   };
   if (accentHex) {
     overrides.accent = accentHex;
-    overrides.focus = accentHex;
     // The button pair is the closest thing VS Code has to our action color.
-    const actionHex = solidOver(canvas, "button.background") ?? accentHex;
-    overrides.messageAction = actionHex;
-    overrides.messageActionForeground = readableOn(
-      actionHex,
-      derived.messageActionForeground,
-      "button.foreground",
-    );
-    overrides.accentForeground = readableOn(
-      accentHex,
-      derived.accentForeground,
-      "button.foreground",
-    );
+    overrides.messageAction = solidOver(canvas, "button.background") ?? accentHex;
   }
 
   // Reuse the theme-file parser so ids, names, and color values go through the

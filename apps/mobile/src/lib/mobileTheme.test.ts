@@ -165,7 +165,7 @@ describe("mobile themes", () => {
     const variables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
     expect(Object.keys(variables)).toHaveLength(65);
     expect(variables["--color-sheet-solid"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.chrome),
+      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.canvas),
     );
     expect(variables["--color-primary"]).not.toBe(variables["--color-screen"]);
     expect(variables["--color-primary-shadow"]).toBe("#000000");
@@ -213,6 +213,13 @@ describe("mobile themes", () => {
             variables["--color-user-bubble-skill-foreground"],
             variables["--color-user-bubble"],
           ),
+        ).toBeGreaterThanOrEqual(4.5);
+        const dangerSurface = compositeOver(
+          variables["--color-danger"],
+          variables["--color-screen"],
+        );
+        expect(
+          contrastRatio(variables["--color-danger-foreground"], dangerSurface),
         ).toBeGreaterThanOrEqual(4.5);
         expect(variables["--color-user-bubble-skill-foreground"]).not.toBe(
           variables["--color-user-bubble-foreground"],

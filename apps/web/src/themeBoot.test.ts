@@ -19,9 +19,9 @@ import {
 } from "./themePalette";
 
 const THEME_STORAGE_KEY = "t3code:theme";
-// A custom theme that omits chrome falls back to the runtime default, so the
-// boot copy of that default stays derived from the real palette.
-const DEFAULT_DARK_CHROME = getDefaultThemeColors("dark").chrome;
+// A custom theme with a malformed or missing canvas falls back to the runtime
+// default, so the boot copy of that default stays derived from the real palette.
+const DEFAULT_DARK_CANVAS = getDefaultThemeColors("dark").canvas;
 
 const bootScript = (() => {
   const match = indexHtml.match(/<script>([\s\S]*?)<\/script>/);
@@ -276,9 +276,9 @@ describe("index.html boot script", () => {
     });
     expect(aurora.themeId).toBe("aurora");
     expect(aurora.isDark).toBe(true);
-    expect(aurora.backgroundColor).toBe(DEFAULT_DARK_CHROME);
+    expect(aurora.backgroundColor).toBe(AURORA_DUAL.variants.dark.canvas);
     expect(aurora.bootVariables["--boot-background"]).toBe(AURORA_DUAL.variants.dark.canvas);
-    expect(aurora.metaContent).toBe(DEFAULT_DARK_CHROME);
+    expect(aurora.metaContent).toBe(AURORA_DUAL.variants.dark.canvas);
   });
 
   it("accepts exponent-form OKLCH before the runtime mounts", () => {
@@ -306,8 +306,8 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-background"]).toBe(colors.canvas);
     expect(boot.bootVariables["--boot-foreground"]).toBe(colors.text);
     expect(boot.bootVariables["--boot-accent"]).toBe(colors.accent);
-    expect(boot.backgroundColor).toBe(colors.chrome);
-    expect(boot.metaContent).toBe(colors.chrome);
+    expect(boot.backgroundColor).toBe(colors.canvas);
+    expect(boot.metaContent).toBe(colors.canvas);
   });
 
   it("accepts legacy CSS color formats before the runtime mounts", () => {
@@ -335,7 +335,7 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-background"]).toBe(colors.canvas);
     expect(boot.bootVariables["--boot-foreground"]).toBe(colors.text);
     expect(boot.bootVariables["--boot-accent"]).toBe(colors.accent);
-    expect(boot.backgroundColor).toBe(colors.chrome);
+    expect(boot.backgroundColor).toBe(colors.canvas);
   });
 
   // Asserting against the real palette definitions (not literals) turns the
@@ -360,8 +360,8 @@ describe("index.html boot script", () => {
         expect(boot.bootVariables["--boot-background"]).toBe(colors!.canvas);
         expect(boot.bootVariables["--boot-foreground"]).toBe(colors!.text);
         expect(boot.bootVariables["--boot-accent"]).toBe(colors!.accent);
-        expect(boot.backgroundColor).toBe(colors!.chrome);
-        expect(boot.metaContent).toBe(colors!.chrome);
+        expect(boot.backgroundColor).toBe(colors!.canvas);
+        expect(boot.metaContent).toBe(colors!.canvas);
       }
     }
   });
@@ -476,8 +476,8 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-background"]).toBe(getDefaultThemeColors("dark").canvas);
     expect(boot.bootVariables["--boot-foreground"]).toBe("#fffaff");
     expect(boot.bootVariables["--boot-accent"]).toBe(getDefaultThemeColors("dark").accent);
-    expect(boot.backgroundColor).toBe(DEFAULT_DARK_CHROME);
-    expect(boot.metaContent).toBe(DEFAULT_DARK_CHROME);
+    expect(boot.backgroundColor).toBe(DEFAULT_DARK_CANVAS);
+    expect(boot.metaContent).toBe(DEFAULT_DARK_CANVAS);
   });
 
   it("ignores malformed custom theme entries before applying a splash", () => {

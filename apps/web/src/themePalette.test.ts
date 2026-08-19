@@ -35,9 +35,11 @@ import {
   CUSTOM_THEMES_STORAGE_KEY,
   createManagedThemeColors,
   createVividThemeColors,
+  deriveThemeSemanticColors,
   getDefaultThemeColors,
   themeColorToHex,
   toCanonicalThemeColor,
+  THEME_COLOR_ROLES,
   THEME_FILE_VERSION,
 } from "./themePalette";
 
@@ -98,16 +100,10 @@ describe("theme files", () => {
     expect(asHex(dark.canvas)).not.toBe("#ffffff");
     expect(contrastRatio(light.accent, light.canvas)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(dark.accent, dark.canvas)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(light.textMuted, light.canvas)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(dark.textMuted, dark.canvas)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(light.textMuted, light.canvas)).toBeLessThan(5.5);
-    expect(contrastRatio(dark.textMuted, dark.canvas)).toBeLessThan(5.5);
-    expect(contrastRatio(light.textMuted, light.canvas)).toBeCloseTo(4.705, 1);
-    expect(contrastRatio(dark.textMuted, dark.canvas)).toBeCloseTo(5.082, 1);
-    expect(light.secondaryLabel).toBe(light.textMuted);
-    expect(dark.secondaryLabel).toBe(dark.textMuted);
-    expect(contrastRatio(light.accentForeground, light.accent)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(dark.accentForeground, dark.accent)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(light.mutedForeground, light.canvas)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(dark.mutedForeground, dark.canvas)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(light.mutedForeground, light.secondary)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(dark.mutedForeground, dark.secondary)).toBeGreaterThanOrEqual(4.5);
     // Status colors fall back to T3 Code's standard red and amber rather than
     // the flagship palette's, so no generated theme inherits a brand tint.
     const channels = (value: string) =>
@@ -123,9 +119,6 @@ describe("theme files", () => {
       expect(errorRed).toBeGreaterThan(errorGreen * 2);
       expect(errorRed).toBeGreaterThan(errorBlue * 2);
       expect(contrastRatio(colors.error, "#ffffff")).toBeGreaterThanOrEqual(2.5);
-      expect(contrastRatio(colors.errorForeground, colors.errorSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
       const [warnRed, warnGreen, warnBlue] = channels(colors.warning);
       expect(warnRed).toBeGreaterThan(warnBlue);
       expect(warnGreen).toBeGreaterThan(warnBlue);
@@ -150,47 +143,13 @@ describe("theme files", () => {
       expect(colors.accent).toMatch(/^oklch\(/);
       expect(asHex(colors.canvas)).toBe(canvas);
       expect(asHex(colors.accent)).toBe(accent);
-      // Readability is solved per surface.
+      // Source text colors are solved against the generated canvas family.
       expect(contrastRatio(colors.text, colors.canvas)).toBeGreaterThanOrEqual(7);
-      expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(colors.textMuted, colors.canvas)).toBeLessThan(5.5);
-      expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
-      expect(colors.secondaryLabel).toBe(colors.textMuted);
-      expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
-      expect(
-        contrastRatio(colors.messageActionForeground, colors.messageAction),
-      ).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(colors.messageForeground, colors.messageSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.secondaryForeground, colors.secondary)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.mutedForeground, colors.canvas)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.mutedForeground, colors.secondary)).toBeGreaterThanOrEqual(4.5);
       // The companion action is a distinct voice, not the accent again.
       expect(colors.messageAction).not.toBe(colors.accent);
-      // Update family follows the theme, not the default palette.
-      expect(asHex(colors.update)).toBe(accent);
-    }
-  });
-
-  it("keys status colors off the canvas, not the appearance slot", () => {
-    // Inverted seeds: a dark canvas in the light slot must still get the dark
-    // status pair, or the alert foreground lands on a dark surface unreadable.
-    const inverted = [
-      createVividThemeColors("light", "#111827", "#8ab4f8"),
-      createVividThemeColors("dark", "#f5ecf5", "#a84370"),
-      createManagedThemeColors("light", "#0d1117", "#69b1ff", { exactSeeds: true }),
-      createManagedThemeColors("dark", "#fdfdfd", "#c2571b", { exactSeeds: true }),
-    ];
-    for (const colors of inverted) {
-      expect(contrastRatio(colors.errorForeground, colors.errorSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.warningForeground, colors.warningSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
+      expect(Object.keys(colors)).toEqual(THEME_COLOR_ROLES);
     }
   });
 
@@ -212,7 +171,7 @@ describe("theme files", () => {
       colors: {
         canvas: canonical("#07152f"),
         accent: canonical("#67c2ff"),
-        placeholder: canonical("#968d9f"),
+        mutedForeground: canonical("#e7d0dd"),
       },
     });
   });
@@ -225,36 +184,55 @@ describe("theme files", () => {
       colors: {
         canvas: "oklch(62% 0.2 280deg / 50%)",
         accent: "#abcd",
-        focus: "rgb(10 20 30 / 50%)",
         error: "hsl(350 80% 50%)",
         warning: "hwb(45 10% 20%)",
-        update: "lab(60% 40 30)",
         messageAction: "lch(60% 50 120)",
         sidebar: "oklab(0.6 0.1 -0.1)",
-        terminalCursor: "color(display-p3 0.8 0.2 0.3)",
-        terminalSelection: "rebeccapurple",
-        terminalScrollbar: "transparent",
-        terminalScrollbarHover: "rgb(10 20 30 / none)",
+        codeBackground: "color(display-p3 0.8 0.2 0.3)",
+        terminalBackground: "transparent",
       },
     });
 
     expect(theme.colors.canvas).toBe("oklch(0.62 0.2 280 / 0.5)");
     expect(theme.colors.accent).toBe(canonical("#abcd"));
     expect(themeColorToHex(theme.colors.accent)).toBe("#aabbccdd");
-    expect(themeColorToHex(theme.colors.focus)).toBe("#0a141e80");
-    expect(themeColorToHex(theme.colors.terminalSelection)).toBe("#663399");
-    expect(theme.colors.terminalScrollbar).toBe("oklch(0 0 0 / 0)");
-    expect(themeColorToHex(theme.colors.terminalScrollbarHover)).toBe("#0a141e00");
+    expect(theme.colors.terminalBackground).toBe("oklch(0 0 0 / 0)");
     for (const role of [
       "error",
       "warning",
-      "update",
       "messageAction",
       "sidebar",
-      "terminalCursor",
+      "codeBackground",
     ] as const) {
       expect(theme.colors[role]).toMatch(/^oklch\(/);
     }
+  });
+
+  it("imports legacy v1 roles but exports only the 20 current roles", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Legacy",
+      appearance: "dark",
+      colors: {
+        canvas: "#101010",
+        accent: "#4488ff",
+        chrome: "#202020",
+        terminalCursor: "#ffffff",
+      },
+    });
+    const exported = JSON.parse(serializeThemeFile(theme)) as { colors: Record<string, string> };
+
+    expect(Object.keys(exported.colors)).toEqual(THEME_COLOR_ROLES);
+    expect(exported.colors).not.toHaveProperty("chrome");
+    expect(exported.colors).not.toHaveProperty("terminalCursor");
+
+    const legacyOnly = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Legacy chrome",
+      appearance: "light",
+      colors: { chrome: "#ffffff" },
+    });
+    expect(Object.keys(legacyOnly.colors).sort()).toEqual([...THEME_COLOR_ROLES].sort());
   });
 
   it("gamut maps extreme finite OKLCH chroma from theme files", () => {
@@ -392,44 +370,30 @@ describe("theme files", () => {
   it("keeps the T3 Chat palette faithful and readable", () => {
     expectThemeColors(T3_CHAT_THEME.colors, {
       canvas: "#fdf7fd",
-      chrome: "#fdf7fd",
-      toolbarBorder: "#efbdeb",
-      toolbarControl: "#f3e6f5",
-      toolbarControlHover: "#eccfe3",
       surfaceRaised: "#fdfafd",
       input: "#e7c1dc",
-      focus: "#db2777",
+      accent: "#db2777",
       messageSurface: "#f7def2",
       codeBackground: "#f5ecf9",
-      codeForeground: "#673c8b",
       accentSurface: "#f3e6f5",
       sidebar: "#f2e1f4",
     });
     expectThemeColors(T3_CHAT_THEME.variants!.dark!, {
       canvas: "#1f1a24",
-      chrome: "#1f1a24",
       surface: "#29232d",
       surfaceRaised: "#2c2631",
       input: "#302029",
-      focus: "#db2777",
+      accent: "#a3004c",
       messageSurface: "#2b2431",
       codeBackground: "#1f1a24",
       sidebar: "#171018",
-      sidebarBorder: "#322028",
     });
 
     for (const mode of ["light", "dark"] as const) {
       const colors = getThemeColorsForMode(T3_CHAT_THEME, mode)!;
       expect(contrastRatio(colors.text, colors.canvas)).toBeGreaterThanOrEqual(7);
-      expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(colors.messageForeground, colors.messageSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.secondaryForeground, colors.secondary)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.mutedForeground, colors.canvas)).toBeGreaterThanOrEqual(4.5);
+      expect(Object.keys(colors).sort()).toEqual([...THEME_COLOR_ROLES].sort());
     }
   });
 
@@ -446,31 +410,8 @@ describe("theme files", () => {
         const colors = getThemeColorsForMode(theme, mode);
         expect(colors).not.toBeNull();
         expect(contrastRatio(colors!.text, colors!.canvas)).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(colors!.textMuted, colors!.canvas)).toBeGreaterThanOrEqual(4.5);
-        if (theme !== T3_CHAT_THEME) {
-          expect(contrastRatio(colors!.textMuted, colors!.canvas)).toBeLessThan(5.5);
-          expect(contrastRatio(colors!.textMuted, colors!.canvas)).toBeCloseTo(
-            mode === "dark" ? 5.082 : 4.705,
-            1,
-          );
-        }
-        expect(contrastRatio(colors!.accentForeground, colors!.accent)).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.toolbarControlForeground, colors!.toolbarControl),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.messageForeground, colors!.messageSurface),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.messageActionForeground, colors!.messageAction),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(
-          contrastRatio(colors!.messageActionForeground, colors!.messageActionHover),
-        ).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(colors!.mutedForeground, colors!.muted)).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(colors!.placeholder, colors!.surfaceRaised)).toBeGreaterThanOrEqual(
-          4.5,
-        );
+        expect(contrastRatio(colors!.mutedForeground, colors!.canvas)).toBeGreaterThanOrEqual(4.5);
+        expect(Object.keys(colors!).sort()).toEqual([...THEME_COLOR_ROLES].sort());
       }
     }
     expect(themeAllowsSidebarArtwork("my-custom-theme")).toBe(false);
@@ -964,6 +905,86 @@ describe("theme files", () => {
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
+  });
+});
+
+describe("derived theme semantics", () => {
+  it("keeps every independently editable surface and status pair readable", () => {
+    for (const theme of BUILT_IN_THEMES) {
+      for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {
+        const semantic = deriveThemeSemanticColors(colors);
+        const readablePairs = [
+          [semantic.cardForeground, colors.surface],
+          [semantic.popoverForeground, colors.surfaceOverlay],
+          [semantic.primaryForeground, colors.messageAction],
+          [semantic.primaryForeground, semantic.messageActionHover],
+          [semantic.secondaryForeground, colors.secondary],
+          [semantic.placeholder, colors.surfaceRaised],
+          [semantic.accentForeground, colors.accentSurface],
+          [semantic.errorForeground, semantic.errorSurface],
+          [semantic.errorForeground, colors.surface],
+          [semantic.warningForeground, semantic.warningSurface],
+          [semantic.warningForeground, colors.surface],
+          [semantic.updateForeground, semantic.updateSurface],
+          [semantic.updateForeground, colors.surface],
+          [semantic.messageForeground, colors.messageSurface],
+          [semantic.codeForeground, colors.codeBackground],
+          [semantic.sidebarForeground, colors.sidebar],
+          [semantic.sidebarMutedForeground, colors.sidebar],
+          [semantic.terminalForeground, colors.terminalBackground],
+        ] as const;
+
+        for (const [foreground, background] of readablePairs) {
+          expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+
+  it("adapts text when an imported theme inverts independent surfaces", () => {
+    const colors = {
+      ...getDefaultThemeColors("dark"),
+      text: canonical("#f5f5f5"),
+      sidebar: canonical("#fafafa"),
+      terminalBackground: canonical("#fbfbfb"),
+    };
+    const semantic = deriveThemeSemanticColors(colors);
+
+    expect(contrastRatio(semantic.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(semantic.sidebarMutedForeground, colors.sidebar)).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(
+      contrastRatio(semantic.terminalForeground, colors.terminalBackground),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("measures translucent foregrounds after compositing them onto their surface", () => {
+    const colors = {
+      ...getDefaultThemeColors("light"),
+      canvas: canonical("#ffffff"),
+      surface: canonical("#ffffff"),
+      text: canonical("rgb(0 0 0 / 10%)"),
+    };
+    const semantic = deriveThemeSemanticColors(colors);
+
+    expect(semantic.cardForeground).not.toBe(colors.text);
+    expect(themeColorToHex(semantic.cardForeground)).toMatch(/^#[\da-f]{6}$/);
+    expect(contrastRatio(semantic.cardForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("measures translucent surfaces after compositing them onto the canvas", () => {
+    const colors = {
+      ...getDefaultThemeColors("dark"),
+      canvas: canonical("#000000"),
+      surface: canonical("rgb(255 255 255 / 10%)"),
+      text: canonical("#ffffff"),
+    };
+    const semantic = deriveThemeSemanticColors(colors);
+
+    expect(contrastRatio(semantic.cardForeground, canonical("#1a1a1a"))).toBeGreaterThanOrEqual(
+      4.5,
+    );
   });
 });
 

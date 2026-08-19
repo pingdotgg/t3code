@@ -84,8 +84,5 @@ describe("clerkAppearance", () => {
     expect(contrastRatio(colors.text, colors.surface)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(colors.mutedForeground, mutedSurface)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(colors.text, colors.secondary)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(colors.updateForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(colors.errorForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(colors.warningForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
   });
 });

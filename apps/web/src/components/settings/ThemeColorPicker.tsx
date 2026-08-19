@@ -6,25 +6,29 @@ import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function getThemeRoleLabel(role: ThemeColorRole): string {
-  const labels: Partial<Record<ThemeColorRole, string>> = {
+  const labels: Record<ThemeColorRole, string> = {
     canvas: "Background",
-    toolbar: "Toolbar background",
-    toolbarForeground: "Toolbar text",
-    toolbarBorder: "Toolbar border",
-    toolbarControl: "Toolbar control",
-    toolbarControlForeground: "Toolbar control text",
-    toolbarControlHover: "Toolbar control hover",
+    surface: "Surface",
+    surfaceRaised: "Raised surface",
+    surfaceOverlay: "Overlay",
+    text: "Text",
+    mutedForeground: "Muted text",
+    border: "Border",
+    input: "Input",
+    secondary: "Subtle surface",
+    accentSurface: "Highlight surface",
     accent: "Accent color",
-    errorForeground: "Error text",
-    errorSurface: "Error background",
-    warningForeground: "Warning text",
-    warningSurface: "Warning background",
-    updateForeground: "Update text",
-    updateSurface: "Update background",
+    messageAction: "Action",
+    messageSurface: "Message surface",
+    codeBackground: "Code surface",
+    sidebar: "Sidebar background",
+    sidebarControlSurface: "Sidebar controls",
+    sidebarRowSelected: "Sidebar selection",
+    terminalBackground: "Terminal background",
+    error: "Error",
+    warning: "Warning",
   };
-  const label = labels[role];
-  if (label) return label;
-  return role.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
+  return labels[role];
 }
 
 type ThemeColorHsv = {

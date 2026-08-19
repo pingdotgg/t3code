@@ -92,10 +92,10 @@ export function getMobileTerminalTheme(
   return {
     ...base,
     background,
-    foreground: themeColorToNativeColor(palette.terminalForeground),
+    foreground: themeColorToNativeColor(palette.text),
     mutedForeground: colors["--color-foreground-muted"],
     border: colors["--color-border"],
-    cursorForeground: themeColorToNativeColor(palette.terminalCursor),
+    cursorForeground: themeColorToNativeColor(palette.accent),
     cursorBackground: background,
   };
 }

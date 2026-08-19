@@ -39,13 +39,11 @@
             background: "oklch(0.982446 0.010114 325.653)",
             foreground: "oklch(0.325698 0.116116 325.037)",
             accent: "oklch(0.591646 0.217985 0.584)",
-            chrome: "oklch(0.982446 0.010114 325.653)",
           },
           dark: {
             background: "oklch(0.22813 0.020366 307.469)",
             foreground: "oklch(0.980735 0.004092 301.426)",
             accent: "oklch(0.460685 0.185347 4.099)",
-            chrome: "oklch(0.22813 0.020366 307.469)",
           },
         };
         // Keep this small boot-time copy in sync with the built-in palettes so
@@ -56,13 +54,11 @@
               background: "oklch(0.982446 0.010114 325.653)",
               foreground: "oklch(0.325698 0.116116 325.037)",
               accent: "oklch(0.591646 0.217985 0.584)",
-              chrome: "oklch(0.982446 0.010114 325.653)",
             },
             dark: {
               background: "oklch(0.22813 0.020366 307.469)",
               foreground: "oklch(0.980735 0.004092 301.426)",
               accent: "oklch(0.460685 0.185347 4.099)",
-              chrome: "oklch(0.22813 0.020366 307.469)",
             },
           },
           grove: {
@@ -70,13 +66,11 @@
               background: "oklch(0.972369 0.005497 157.15)",
               foreground: "oklch(0.222003 0.03479 328.979)",
               accent: "oklch(0.523295 0.112292 158.089)",
-              chrome: "oklch(0.972369 0.005497 157.15)",
             },
             dark: {
               background: "oklch(0.260865 0.02152 162.75)",
               foreground: "oklch(0.990339 0.008411 325.64)",
               accent: "oklch(0.796228 0.133058 157.319)",
-              chrome: "oklch(0.260865 0.02152 162.75)",
             },
           },
           ocean: {
@@ -84,13 +78,11 @@
               background: "oklch(0.974199 0.002856 241.597)",
               foreground: "oklch(0.222003 0.03479 328.979)",
               accent: "oklch(0.536684 0.120219 247.01)",
-              chrome: "oklch(0.974199 0.002856 241.597)",
             },
             dark: {
               background: "oklch(0.242641 0.024125 250.573)",
               foreground: "oklch(0.990339 0.008411 325.64)",
               accent: "oklch(0.758933 0.105833 241.548)",
-              chrome: "oklch(0.242641 0.024125 250.573)",
             },
           },
           ember: {
@@ -98,13 +90,11 @@
               background: "oklch(0.976527 0.002685 60.725)",
               foreground: "oklch(0.222003 0.03479 328.979)",
               accent: "oklch(0.552831 0.129438 44.656)",
-              chrome: "oklch(0.976527 0.002685 60.725)",
             },
             dark: {
               background: "oklch(0.245899 0.019144 42.044)",
               foreground: "oklch(0.990339 0.008411 325.64)",
               accent: "oklch(0.762174 0.124117 52.082)",
-              chrome: "oklch(0.245899 0.019144 42.044)",
             },
           },
           iris: {
@@ -112,13 +102,11 @@
               background: "oklch(0.976531 0.003855 303.226)",
               foreground: "oklch(0.222003 0.03479 328.979)",
               accent: "oklch(0.525348 0.15373 294.176)",
-              chrome: "oklch(0.976531 0.003855 303.226)",
             },
             dark: {
               background: "oklch(0.225975 0.031062 293.741)",
               foreground: "oklch(0.990339 0.008411 325.64)",
               accent: "oklch(0.671712 0.169136 293.929)",
-              chrome: "oklch(0.225975 0.031062 293.741)",
             },
           },
         };
@@ -367,23 +355,19 @@
             delete document.documentElement.dataset.themeSelected;
           }
           document.documentElement.classList.toggle("dark", isDark);
-          const chromeColor = customColors
-            ? isThemeColor(customColors.chrome)
-              ? customColors.chrome
-              : (customDefaults?.chrome ?? fallbackSplash.background)
-            : builtInSplash
-              ? builtInSplash.chrome
-              : isDark
-                ? DARK_BACKGROUND
-                : LIGHT_BACKGROUND;
-          document.documentElement.style.backgroundColor = chromeColor;
+          const splashColors = customSplash ?? builtInSplash ?? fallbackSplash;
+          const canvasColor = effectiveIsThemed
+            ? splashColors.background
+            : isDark
+              ? DARK_BACKGROUND
+              : LIGHT_BACKGROUND;
+          document.documentElement.style.backgroundColor = canvasColor;
           if (hasSelection) {
-            const splashColors = customSplash ?? builtInSplash ?? fallbackSplash;
             for (const [name, value] of Object.entries(splashColors)) {
               document.documentElement.style.setProperty(`--boot-${name}`, value);
             }
           }
-          setThemeColor(chromeColor);
+          setThemeColor(canvasColor);
         } catch {
           // Mirror the runtime's storage-failure fallback: follow the OS.
           let prefersDark = true;
