@@ -13,5 +13,7 @@ describe("toggle group segmented defaults", () => {
 
     expect(html.match(/data-size="segmented"/g)).toHaveLength(2);
     expect(html).toContain("h-6");
+    expect(html).toContain("dark:hover:bg-input/32");
+    expect(html).toContain("dark:data-pressed:bg-input/72");
   });
 });
