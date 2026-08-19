@@ -99,36 +99,91 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
 }
 
 /**
+ * How much in-window data a source contributes. Used when several environments
+ * claim the same fingerprint (Cursor account exports especially): a stale-cache
+ * `ok` with little or no window data must not beat a sibling that fetched a
+ * fresher export.
+ */
+function sourceRichness(
+  environment: EnvironmentUsage,
+  provider: UsageProviderKind,
+  source: { readonly distinctSessions: number; readonly scannedFiles: number },
+): number {
+  let records = 0;
+  for (const bucket of environment.summary.buckets) {
+    if (bucket.provider === provider) records += bucket.records;
+  }
+  return records * 1_000_000 + source.distinctSessions * 1_000 + source.scannedFiles;
+}
+
+/**
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
- * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * the same provider home and would otherwise double count every token. Among
+ * claimable sources for one fingerprint, the richest in-window contribution
+ * wins; equal richness keeps the lexicographically first environment id so the
+ * winner does not flicker between renders. Losers have that provider's buckets
+ * dropped.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
   readonly duplicates: readonly string[];
 } {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
+  const richnessByFingerprint = new Map<string, number>();
+  const labelByEnvironmentId = new Map<EnvironmentId, string>();
   const duplicates: string[] = [];
 
   const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
 
   for (const environment of ordered) {
+    labelByEnvironmentId.set(environment.environmentId, environment.label);
     for (const source of environment.summary.sources) {
-      if (source.status === "missing") continue;
+      // missing/failed never own a fingerprint: a transient Cursor export miss
+      // must not block another environment that successfully fetched the same
+      // account.
+      if (source.status === "missing" || source.status === "failed") continue;
       const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      const richness = sourceRichness(
+        environment,
+        source.fingerprint.provider,
+        source,
+      );
+      const existingOwner = ownerByFingerprint.get(key);
+      if (existingOwner === undefined) {
+        ownerByFingerprint.set(key, environment.environmentId);
+        richnessByFingerprint.set(key, richness);
         continue;
       }
-      ownerByFingerprint.set(key, environment.environmentId);
+      const existingRichness = richnessByFingerprint.get(key) ?? 0;
+      if (richness > existingRichness) {
+        const previousLabel = labelByEnvironmentId.get(existingOwner) ?? existingOwner;
+        duplicates.push(`${previousLabel}: ${source.fingerprint.resolvedHomePath}`);
+        ownerByFingerprint.set(key, environment.environmentId);
+        richnessByFingerprint.set(key, richness);
+        continue;
+      }
+      duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
     }
   }
 
   return { ownerByFingerprint, duplicates };
+}
+
+/**
+ * Whether a source should appear in the Usage coverage notice.
+ *
+ * Cursor soft-fails when desktop is not signed in; Claude/Codex `missing`
+ * directories are normal for users who only run some agents and must not drown
+ * out real Cursor gaps.
+ */
+export function isCursorCoverageGap(source: {
+  readonly fingerprint: UsageSourceFingerprint;
+  readonly status: "ok" | "missing" | "partial" | "failed";
+}): boolean {
+  if (source.fingerprint.provider !== "cursor") return false;
+  return source.status === "missing" || source.status === "failed";
 }
 
 /** Sources this environment owns after fingerprint claims, plus their buckets. */
@@ -139,7 +194,7 @@ function ownedContribution(
   const ownedProviders = new Set<UsageProviderKind>();
   let sessions = 0;
   for (const source of environment.summary.sources) {
-    if (source.status === "missing") continue;
+    if (source.status === "missing" || source.status === "failed") continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       ownedProviders.add(source.fingerprint.provider);

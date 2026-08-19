@@ -8,6 +8,12 @@
  */
 import type { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
 
+/**
+ * Providers whose usage is scanned from on-disk JSONL transcripts.
+ * Cursor is deliberately excluded: it has no local token ledger.
+ */
+export type TranscriptProviderKind = "claude" | "codex";
+
 export interface UsageRecord {
   readonly provider: UsageProviderKind;
   readonly timestampMs: number;
@@ -67,7 +73,7 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * a 30-day window this skips roughly half the lines outright and is worth about
  * an order of magnitude.
  */
-export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
+export function mightCarryUsage(line: string, provider: TranscriptProviderKind): boolean {
   return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
 }
 

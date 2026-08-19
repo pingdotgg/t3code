@@ -14,9 +14,7 @@
  *
  * @module usageScanCache
  */
-import type { UsageProviderKind } from "@t3tools/contracts";
-
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { TranscriptProviderKind, UsageRecord } from "./usageTranscripts.ts";
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
@@ -25,7 +23,7 @@ export const USAGE_SCAN_CACHE_VERSION = 2 as const;
 export interface CachedFile {
   readonly size: number;
   readonly mtimeMs: number;
-  readonly provider: UsageProviderKind;
+  readonly provider: TranscriptProviderKind;
   readonly records: readonly UsageRecord[];
 }
 
@@ -52,7 +50,7 @@ type SerializedRecord = readonly [
 interface SerializedFile {
   readonly s: number;
   readonly m: number;
-  readonly p: UsageProviderKind;
+  readonly p: TranscriptProviderKind;
   readonly r: readonly SerializedRecord[];
 }
 
@@ -137,7 +135,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (entry.p !== "claude" && entry.p !== "codex") continue;
     if (!isRecordArray(entry.r)) continue;
 
-    const provider: UsageProviderKind = entry.p;
+    const provider: TranscriptProviderKind = entry.p;
     const records: UsageRecord[] = [];
     // Any corrupt row disqualifies the whole entry. Keeping the survivors
     // under the original (size, mtime) would read as a valid warm hit and the

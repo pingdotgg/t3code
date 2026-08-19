@@ -1,9 +1,9 @@
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
- * The scan reads the provider CLIs' own session files rather than T3 Code's
- * orchestration projections, so usage covers turns driven outside T3 Code too.
- * This is the approach `ccusage` takes.
+ * Claude and Codex are scanned from on-disk session transcripts. Cursor has no
+ * local token ledger, so usage comes from the dashboard CSV export when Cursor
+ * desktop is signed in on this machine.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
@@ -15,7 +15,6 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
-  type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
@@ -38,6 +37,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import {
+  loadCursorUsageRecords,
+  type CursorExportLoadResult,
+} from "./usageCursorExport.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -51,7 +54,7 @@ import {
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { TranscriptProviderKind, UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -68,6 +71,42 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
+
+function toCursorUsageSource(
+  result: CursorExportLoadResult,
+  distinctSessions = 0,
+): UsageSource {
+  const resolvedHomePath =
+    result.userId !== null ? `cursor-export:${result.userId}` : "cursor-export";
+  // Cursor export is account-scoped, not host-local. A fixed host/volume keeps
+  // the same Cursor login from double-counting across machines.
+  const fingerprint = {
+    hostId: "cursor-account",
+    provider: "cursor" as const,
+    resolvedHomePath,
+    volumeId: "",
+  };
+  if (result.status === "ok") {
+    return {
+      fingerprint,
+      status: "ok",
+      scannedFiles: result.fromCache ? 0 : 1,
+      skippedFiles: 0,
+      malformedRecords: 0,
+      distinctSessions,
+      message: result.fromCache ? "Served from cached Cursor usage export." : null,
+    };
+  }
+  return {
+    fingerprint,
+    status: result.status,
+    scannedFiles: 0,
+    skippedFiles: 0,
+    malformedRecords: 0,
+    distinctSessions: 0,
+    message: result.message,
+  };
+}
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -129,6 +168,7 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
+  const cursorExportCacheDir = config.stateDir;
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
@@ -220,8 +260,11 @@ export const make = Effect.gen(function* () {
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
 
     return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "claude" as const satisfies TranscriptProviderKind, dir: claudeDir },
+      {
+        provider: "codex" as const satisfies TranscriptProviderKind,
+        dir: path.join(codexLayout.sharedHomePath, "sessions"),
+      },
     ];
   });
 
@@ -262,7 +305,7 @@ export const make = Effect.gen(function* () {
     filePath: string,
     size: number,
     mtimeMs: number,
-    provider: UsageProviderKind,
+    provider: TranscriptProviderKind,
   ): Effect.Effect<readonly UsageRecord[]> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
@@ -407,6 +450,23 @@ export const make = Effect.gen(function* () {
         message: null,
       });
     }
+
+    // Cursor has no local token transcripts; pull the dashboard CSV export
+    // when Cursor desktop is signed in on this machine. Failures stay soft so
+    // Claude/Codex still render.
+    const cursorExport = yield* loadCursorUsageRecords({
+      cacheDir: cursorExportCacheDir,
+      nowMs: startedAtMs,
+    }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+    const cursorSessionIds = new Set<string>();
+    if (cursorExport.status === "ok") {
+      for (const record of cursorExport.records) {
+        if (aggregator.add(record) && record.sessionId.length > 0) {
+          cursorSessionIds.add(record.sessionId);
+        }
+      }
+    }
+    sources.push(toCursorUsageSource(cursorExport, cursorSessionIds.size));
 
     const pruned = pruneScanCache(fileCache, {
       livePaths,

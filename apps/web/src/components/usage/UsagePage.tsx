@@ -19,6 +19,7 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
+import { isCursorCoverageGap } from "@t3tools/shared/usageMerge";
 import { ScrollArea } from "../ui/scroll-area";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
@@ -397,7 +398,10 @@ export function UsagePage() {
                       <tbody>
                         {breakdownPeriods.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                            <td
+                              colSpan={PROVIDER_ORDER.length + 3}
+                              className="py-6 text-center text-muted-foreground"
+                            >
                               No activity in this window.
                             </td>
                           </tr>
@@ -473,10 +477,10 @@ function Metric({
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are incomplete: an environment that failed, a
+ * Cursor soft-fail (desktop not signed in / export error), or a transcript
+ * directory another environment already reported. Claude/Codex missing homes
+ * are normal when those agents are unused and stay out of this notice.
  */
 function UsageCoverageNotice({
   environments,
@@ -491,7 +495,21 @@ function UsageCoverageNotice({
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  const uncovered = environments.flatMap((environment) => {
+    if (environment.summary === null) return [];
+    return environment.summary.sources.filter(isCursorCoverageGap).map((source) => ({
+      key: `${environment.environmentId}:${source.fingerprint.provider}:${source.status}`,
+      text: `${environment.label}: ${PROVIDER_PRESENTATION[source.fingerprint.provider].label} ${
+        source.status === "missing" ? "is uncovered" : "could not be loaded"
+      }${source.message ? ` (${source.message})` : ""}.`,
+    }));
+  });
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    uncovered.length === 0
+  ) {
     return null;
   }
 
@@ -505,10 +523,12 @@ function UsageCoverageNotice({
           {environment.label} runs an older server version and is excluded from totals.
         </span>
       ))}
+      {uncovered.map((entry) => (
+        <span key={entry.key}>{entry.text}</span>
+      ))}
       {duplicateSources.length > 0 ? (
         <span>
-          Counted once across environments sharing a transcript directory:{" "}
-          {duplicateSources.join(", ")}
+          Counted once across environments sharing the same source: {duplicateSources.join(", ")}
         </span>
       ) : null}
     </div>

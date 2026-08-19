@@ -89,6 +89,7 @@ For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./provi
 
 ## Next Steps
 
+- [Usage](./usage.md): token and cost totals for Claude, Codex, and Cursor
 - [Permission modes](./permission-modes.md): how much T3 Code asks before acting
 - [Remote access](./remote-access.md): connect from a phone, tablet, or another desktop
 - [Keeping T3 Code in sync](./updating.md): client and server version skew
