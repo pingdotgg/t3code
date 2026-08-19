@@ -70,8 +70,8 @@ export function UsageRouteScreen() {
   );
 
   // The pull spinner tracks re-scans of environments that have answered
-  // before. The initial scan renders its own placeholder, and an unreachable
-  // environment stays pending forever — neither may pin the spinner on.
+  // before. The initial scan renders its own placeholder, and the query
+  // deadline prevents an unreachable environment from pinning the spinner on.
   const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
   const selectWindow = (days: number) => {
     setWindowSelection({

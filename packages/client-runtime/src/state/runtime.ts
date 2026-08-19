@@ -1,5 +1,6 @@
 import { EnvironmentId, type EnvironmentId as EnvironmentIdType } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -52,6 +53,7 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
+  readonly timeout?: Duration.Input;
 }
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
@@ -513,10 +515,11 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         const generation = Option.getOrNull(
           AsyncResult.value(get(rpcGenerationAtom(target.environmentId))),
         );
-        if (generation === null) {
-          return Effect.never;
-        }
-        return runInEnvironment(target.environmentId, options.execute(target.input));
+        const query =
+          generation === null
+            ? Effect.never
+            : runInEnvironment(target.environmentId, options.execute(target.input));
+        return options.timeout === undefined ? query : query.pipe(Effect.timeout(options.timeout));
       })
       .pipe(
         Atom.swr({
@@ -598,6 +601,7 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
+    readonly timeout?: Duration.Input;
   },
 ) {
   return createEnvironmentQueryAtomFamily(runtime, {
@@ -607,6 +611,7 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     ...(options.refreshIntervalMs === undefined
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
     execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
   });
 }

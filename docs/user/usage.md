@@ -7,4 +7,6 @@ cost shown here.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
-headline and chart, and refreshing rescans every connected environment.
+headline and chart. Results appear as each environment responds. An environment that cannot report
+within 30 seconds is marked unavailable without hiding results from other environments; use
+**Refresh** to retry.
