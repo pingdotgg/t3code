@@ -833,7 +833,9 @@ it.effect(
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
-            serverSettingsLayer: ServerSettings.layerTest({ enableAgentBrowserAccess: false }),
+            serverSettingsLayer: ServerSettings.layerTest({
+              enableAgentBrowserAccess: false,
+            }).pipe(Layer.orDie),
           }),
         ),
       );
