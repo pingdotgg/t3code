@@ -26,7 +26,7 @@ const exitTransitionStyle = {
 // banners are stacked behind it, so its border must match the severity of the
 // first hidden banner — a neutral banner must not masquerade as a warning.
 const stackCapBorderClass: Record<ComposerBannerStackItem["variant"], string> = {
-  default: "border-border",
+  default: "border-[var(--chat-composer-attached-outline)]",
   error: "border-destructive/24",
   info: "border-info/24",
   success: "border-success/24",
@@ -115,7 +115,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
           <div
             className={cn(
               "pointer-events-none absolute inset-x-0 -top-3 z-0 mx-auto h-3 rounded-t-2xl",
-              "border border-b-0 bg-background/96 shadow-[0_6px_18px_rgba(0,0,0,0.06)]",
+              "chat-composer-banner-stack-cap border border-b-0 shadow-[0_6px_18px_rgba(0,0,0,0.06)]",
               stackCapBorderClass[firstStackedItem.variant],
               "transition-opacity duration-150 ease-out",
               "group-hover/banner-stack:opacity-0 group-focus-within/banner-stack:opacity-0",

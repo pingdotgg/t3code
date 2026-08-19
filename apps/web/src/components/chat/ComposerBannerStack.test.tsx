@@ -36,7 +36,9 @@ describe("ComposerBannerStack", () => {
     const neutralBehind = renderToStaticMarkup(
       <ComposerBannerStack items={[banner("front", "default"), banner("stacked", "default")]} />,
     );
-    expect(neutralBehind).toContain("border-border");
+    expect(neutralBehind).toContain("chat-composer-banner-stack-cap");
+    expect(neutralBehind).toContain("border-[var(--chat-composer-attached-outline)]");
+    expect(neutralBehind).not.toContain("border-border");
     expect(neutralBehind).not.toContain("border-warning/24");
 
     const warningBehind = renderToStaticMarkup(
