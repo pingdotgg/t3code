@@ -17,7 +17,7 @@ vi.mock("@legendapp/list/react", async () => {
       anchorIndex: number;
       anchorMaxSize?: number;
       anchorOffset?: number;
-      onReady?: (info: { anchorIndex: number }) => void;
+      onReady?: (info: { anchorIndex: number; size: number }) => void;
     };
     contentInsetEndAdjustment?: number;
     className?: string;
@@ -41,7 +41,10 @@ vi.mock("@legendapp/list/react", async () => {
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
-      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
+      props.anchoredEndSpace.onReady?.({
+        anchorIndex: props.anchoredEndSpace.anchorIndex,
+        size: 120,
+      });
     }
     return (
       <div
@@ -440,7 +443,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-visible-content-position-size="true"');
     expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
-    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1, 120);
   });
 
   it("renders collapse controls for long user messages", () => {

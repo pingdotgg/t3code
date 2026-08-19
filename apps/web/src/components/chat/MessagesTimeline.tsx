@@ -197,6 +197,14 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
     layout: true,
   },
 } as const;
+// LegendList abandons end maintenance once the viewport drifts further from
+// the end than this fraction of the viewport (library default 0.1). Container
+// width changes (sidebar/right-panel toggles) remeasure rows progressively
+// while maintainVisibleContentPosition holds the top visible row steady, which
+// walks the end away in steps larger than that window and strands the timeline
+// short of the live edge. One full viewport keeps maintenance active through a
+// remeasure; ChatView's scroll-mode refs still gate when maintenance runs.
+const TIMELINE_MAINTAIN_SCROLL_AT_END_THRESHOLD = 1;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -227,7 +235,7 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   anchorMessageId: MessageId | null;
-  onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
+  onAnchorReady: (messageId: MessageId, anchorIndex: number, endSpaceSize: number) => void;
   contentInsetEndAdjustment: number;
   /**
    * Whether the timeline should keep pinning to the live edge as content
@@ -427,9 +435,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const handleAnchorReady = useCallback(
-    (info: { anchorIndex: number | undefined }) => {
+    (info: { anchorIndex: number | undefined; size: number }) => {
       if (anchorMessageId !== null && info.anchorIndex !== undefined) {
-        onAnchorReady(anchorMessageId, info.anchorIndex);
+        onAnchorReady(anchorMessageId, info.anchorIndex, info.size);
       }
     },
     [anchorMessageId, onAnchorReady],
@@ -588,6 +596,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 ? false
                 : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
+            maintainScrollAtEndThreshold={TIMELINE_MAINTAIN_SCROLL_AT_END_THRESHOLD}
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             onScroll={handleScroll}
             className={cn(
