@@ -42,6 +42,45 @@ function findLabeledGroup(node: ReactNode, label: string): ReactNode {
   return undefined;
 }
 
+interface CheckboxItemProps {
+  readonly checked?: boolean;
+  readonly onCheckedChange?: (checked: boolean) => void;
+  readonly onClick?: () => void;
+  readonly children?: ReactNode;
+}
+
+/** The project rows, in the order the menu lists them: "All projects" first, then the projects. */
+function findCheckboxItems(node: ReactNode): ReadonlyArray<CheckboxItemProps> {
+  const found: CheckboxItemProps[] = [];
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    const props = child.props as CheckboxItemProps;
+    if (typeof props.checked === "boolean") found.push(props);
+    found.push(...findCheckboxItems(props.children));
+  }
+  return found;
+}
+
+/** The per-row "Only" buttons, in the same order as the rows that carry them. */
+function findOnlyButtons(
+  node: ReactNode,
+): ReadonlyArray<{ readonly onClick: (event: unknown) => void }> {
+  const found: Array<{ readonly onClick: (event: unknown) => void }> = [];
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    const props = child.props as {
+      readonly children?: ReactNode;
+      readonly onClick?: (event: unknown) => void;
+    };
+    if (child.type === "button" && props.onClick) found.push({ onClick: props.onClick });
+    found.push(...findOnlyButtons(props.children));
+  }
+  return found;
+}
+
+/** Enough of a click for the handler, which only ever stops the row from swallowing it. */
+const clickEvent = () => ({ preventDefault: () => undefined, stopPropagation: () => undefined });
+
 function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) {
   return PullRequestFiltersMenu({
     state: "open",
@@ -58,6 +97,8 @@ function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) 
     host: undefined,
     hostOptions: [],
     onHost: () => undefined,
+    hiddenProjectKeys: [],
+    onHiddenProjectKeys: () => undefined,
     server: undefined,
     serverOptions: [],
     onServer: () => undefined,
@@ -71,6 +112,20 @@ function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) 
 }
 
 describe("pull request filters menu", () => {
+  const projectOne = {
+    id: "project-1" as ProjectId,
+    environmentId: "env-1" as EnvironmentId,
+    title: "T3 Code",
+    workspaceRoot: "/work/t3code",
+  };
+  const projectTwo = {
+    id: "project-2" as ProjectId,
+    environmentId: "env-1" as EnvironmentId,
+    title: "Popular OSS",
+    workspaceRoot: "/work/popular",
+  };
+  const keyTwo = pullRequestProjectKey(projectTwo);
+
   it("does not emit a change when the selected state is chosen again", () => {
     const onState = vi.fn();
     const group = findValueChange(findLabeledGroup(menu({ onState }), "State"));
@@ -109,60 +164,89 @@ describe("pull request filters menu", () => {
     expect(onFilters).toHaveBeenCalledWith({ checks: "failing" });
   });
 
-  it("does not emit a change when the selected project is chosen again", () => {
-    const projectId = "project-1" as ProjectId;
-    const environmentId = "env-1" as EnvironmentId;
-    const onProject = vi.fn();
-    const view = menu({
-      projects: [
-        {
-          id: projectId,
-          environmentId,
-          title: "T3 Code",
-          workspaceRoot: "/work/t3code",
-        },
-      ],
-      projectId,
-      projectEnvironmentId: environmentId,
-      onProject,
-    });
-    const radioGroup = findValueChange(view);
-    expect(radioGroup).toBeDefined();
+  it("hides a project when its row is unchecked", () => {
+    const onHiddenProjectKeys = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onHiddenProjectKeys }),
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.checked)).toEqual([true, true, true]);
 
-    radioGroup?.props.onValueChange(pullRequestProjectKey({ id: projectId, environmentId }));
-    expect(onProject).not.toHaveBeenCalled();
-
-    radioGroup?.props.onValueChange("all");
-    expect(onProject).toHaveBeenCalledWith(undefined, undefined);
+    rows[2]?.onCheckedChange?.(false);
+    expect(onHiddenProjectKeys).toHaveBeenCalledWith([keyTwo]);
   });
 
-  it("passes the environment along so a duplicate project id on another server is told apart", () => {
-    const projectId = "project-1" as ProjectId;
-    const onProject = vi.fn();
-    const view = menu({
-      projects: [
-        {
-          id: projectId,
-          environmentId: "env-1" as EnvironmentId,
-          title: "T3 Code · one",
-          workspaceRoot: "/work/t3code-1",
-        },
-        {
-          id: projectId,
-          environmentId: "env-2" as EnvironmentId,
-          title: "T3 Code · two",
-          workspaceRoot: "/work/t3code-2",
-        },
-      ],
-      onProject,
-    });
-    const radioGroup = findValueChange(view);
-    expect(radioGroup).toBeDefined();
-
-    radioGroup?.props.onValueChange(
-      pullRequestProjectKey({ id: projectId, environmentId: "env-2" as EnvironmentId }),
+  it("brings a hidden project back when its row is checked again", () => {
+    const onHiddenProjectKeys = vi.fn();
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        hiddenProjectKeys: [keyTwo],
+        onHiddenProjectKeys,
+      }),
     );
-    expect(onProject).toHaveBeenCalledWith(projectId, "env-2");
+    expect(rows.map((row) => row.checked)).toEqual([false, true, false]);
+
+    rows[2]?.onCheckedChange?.(true);
+    expect(onHiddenProjectKeys).toHaveBeenCalledWith([]);
+  });
+
+  it("reads a one-project scope as that project alone being listed", () => {
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+      }),
+    );
+    expect(rows.map((row) => row.checked)).toEqual([false, true, false]);
+  });
+
+  it("carries a one-project scope into the hidden set rather than discarding it", () => {
+    const onProject = vi.fn();
+    const onHiddenProjectKeys = vi.fn();
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+        onProject,
+        onHiddenProjectKeys,
+      }),
+    );
+
+    rows[2]?.onCheckedChange?.(true);
+    expect(onProject).toHaveBeenCalledWith(undefined, undefined);
+    expect(onHiddenProjectKeys).toHaveBeenCalledWith([]);
+  });
+
+  it("clears both the scope and the hidden set when all projects is chosen", () => {
+    const onProject = vi.fn();
+    const onHiddenProjectKeys = vi.fn();
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+        hiddenProjectKeys: [keyTwo],
+        onProject,
+        onHiddenProjectKeys,
+      }),
+    );
+
+    rows[0]?.onClick?.();
+    expect(onProject).toHaveBeenCalledWith(undefined, undefined);
+    expect(onHiddenProjectKeys).toHaveBeenCalledWith([]);
+  });
+
+  it("narrows to one project from its own row, environment and all", () => {
+    const onProject = vi.fn();
+    const duplicate = { ...projectTwo, id: projectOne.id, environmentId: "env-2" as EnvironmentId };
+    const buttons = findOnlyButtons(menu({ projects: [projectOne, duplicate], onProject }));
+    expect(buttons).toHaveLength(2);
+
+    buttons[1]?.onClick(clickEvent());
+    expect(onProject).toHaveBeenCalledWith(projectOne.id, "env-2");
   });
 
   it("does not collide when environment and project ids contain spaces", () => {

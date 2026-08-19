@@ -100,6 +100,7 @@ import {
 import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
+import { useUiStateStore } from "~/uiStateStore";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 export interface PullRequestsSearch {
@@ -306,6 +307,8 @@ function PullRequestsRouteView() {
     () => resolveProjectScope(search.projectId, projects, projectsKnown),
     [projects, projectsKnown, search.projectId],
   );
+  const hiddenProjectKeys = useUiStateStore((state) => state.hiddenPullRequestProjectKeys);
+  const setHiddenProjectKeys = useUiStateStore((state) => state.setHiddenPullRequestProjectKeys);
   const scopedProject = useMemo(
     () => findScopedProject(projects, scopedEnvironmentId, scopedProjectId),
     [projects, scopedEnvironmentId, scopedProjectId],
@@ -527,15 +530,22 @@ function PullRequestsRouteView() {
     for (const project of projects) {
       totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
     }
+    const hidden = new Set(hiddenProjectKeys);
     return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
+      const assigned = assignment.get(environmentId);
+      if (assigned === undefined) return [];
+      const projectIds =
+        hidden.size === 0
+          ? assigned
+          : assigned.filter((id) => !hidden.has(pullRequestProjectKey({ id, environmentId })));
+      // Every project it was going to be asked about is hidden, so it is not read at all.
+      if (projectIds.length === 0) return [];
       // It lists everything it holds anyway, so the filter is left off and a one-server workspace
       // asks exactly the question it asked before.
       if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
       return [{ environmentId, projectIds }];
     });
-  }, [projects, projectsKnown, queryEnvironmentIds, scopedProjectId]);
+  }, [hiddenProjectKeys, projects, projectsKnown, queryEnvironmentIds, scopedProjectId]);
   // Part of the scope, since a different split is a different question and its answers must not
   // be filed under the same page state.
   const assignmentKey = useMemo(
@@ -1346,6 +1356,7 @@ function PullRequestsRouteView() {
             search.state !== "open" ||
             search.involvement !== "all" ||
             scopedProjectId !== undefined ||
+            hiddenProjectKeys.length > 0 ||
             search.host !== undefined
           }
           searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
@@ -1475,6 +1486,8 @@ function PullRequestsRouteView() {
       onProject={(projectId, environmentId) =>
         updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId })
       }
+      hiddenProjectKeys={hiddenProjectKeys}
+      onHiddenProjectKeys={setHiddenProjectKeys}
     />
   );
   const columnProps = {

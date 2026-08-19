@@ -28,6 +28,8 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 
 import {
   Menu,
+  MenuCheckboxItem,
+  MenuGroup,
   MenuGroupLabel,
   MenuPopup,
   MenuRadioGroup,
@@ -96,13 +98,6 @@ export function PullRequestSearchInput({
   );
 }
 
-/**
- * Every list filter lives behind the one filter icon so the control row stays two controls
- * wide: the search and this. The trigger carries a dot whenever any filter is off its
- * default, so a narrowed list is never a mystery. Same menu chrome as the detail panel's
- * actions, which also owns its own spacing.
- */
-const ALL_PROJECTS_VALUE = "all";
 /** MenuRadioGroup wants a string, so "every host" wears the one value no host can be. */
 const ALL_HOSTS_VALUE = "";
 /** The same trick for the servers, which are named by an id no empty string can collide with. */
@@ -110,8 +105,8 @@ const ALL_SERVERS_VALUE = "";
 /** The unset value of each narrowing group, which no filter of theirs is named after. */
 const UNFILTERED_VALUE = "all";
 /**
- * A project's own radio value, carrying the server along with the id: the id alone is only
- * unique within its own server, so two rows sharing one would otherwise both read as checked.
+ * A project's own row key, carrying the server along with the id: the id alone is only unique
+ * within its own server, so two rows sharing one would otherwise both read as checked.
  */
 export const pullRequestProjectKey = (project: {
   readonly id: ProjectId;
@@ -187,6 +182,12 @@ function PullRequestFilterRadioGroup<Value extends string>({
   );
 }
 
+/**
+ * Every list filter lives behind the one filter icon so the control row stays two controls
+ * wide: the search and this. The trigger carries a dot whenever any filter is off its
+ * default, so a narrowed list is never a mystery. Same menu chrome as the detail panel's
+ * actions, which also owns its own spacing.
+ */
 export function PullRequestFiltersMenu({
   state,
   stateOptions,
@@ -207,6 +208,8 @@ export function PullRequestFiltersMenu({
   projectEnvironmentId,
   unavailable,
   onProject,
+  hiddenProjectKeys,
+  onHiddenProjectKeys,
 }: {
   state: PullRequestListState;
   stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
@@ -252,6 +255,9 @@ export function PullRequestFiltersMenu({
   unavailable: ReadonlyMap<string, string>;
   /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
+  /** Projects left out of the list, by `pullRequestProjectKey`. */
+  hiddenProjectKeys: ReadonlyArray<string>;
+  onHiddenProjectKeys: (keys: ReadonlyArray<string>) => void;
 }) {
   const filtered =
     state !== "open" ||
@@ -259,6 +265,7 @@ export function PullRequestFiltersMenu({
     host !== undefined ||
     server !== undefined ||
     projectId !== undefined ||
+    hiddenProjectKeys.length > 0 ||
     Object.keys(filters).length > 0;
   /**
    * Rebuilt rather than spread so an unfiltered group leaves the record instead of lingering in
@@ -270,6 +277,39 @@ export function PullRequestFiltersMenu({
         ([, held]) => held !== undefined,
       ),
     ) as PullRequestListFilters;
+  const scopedKey =
+    projectId === undefined || projectEnvironmentId === undefined
+      ? undefined
+      : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId });
+  const hidden = new Set(hiddenProjectKeys);
+  /** Checked means the listing actually reads it, and a scope reads exactly one. */
+  const listed = (key: string) => (scopedKey === undefined ? !hidden.has(key) : key === scopedKey);
+  const everyProjectListed = scopedKey === undefined && hidden.size === 0;
+  const listEveryProject = () => {
+    if (scopedKey !== undefined) onProject(undefined, undefined);
+    if (hidden.size > 0) onHiddenProjectKeys([]);
+  };
+  /**
+   * A one-project scope says the same thing as hiding every other project, so a click that widens
+   * or narrows it carries on from that set rather than starting over from every project.
+   */
+  const setProjectListed = (key: string, next: boolean) => {
+    const base =
+      scopedKey === undefined
+        ? hiddenProjectKeys
+        : projects.map(pullRequestProjectKey).filter((candidate) => candidate !== scopedKey);
+    if (scopedKey !== undefined) onProject(undefined, undefined);
+    onHiddenProjectKeys(
+      next ? base.filter((candidate) => candidate !== key) : [...new Set([...base, key])],
+    );
+  };
+  const onlyProject = (project: {
+    readonly id: ProjectId;
+    readonly environmentId: EnvironmentId;
+  }) => {
+    if (hidden.size > 0) onHiddenProjectKeys([]);
+    onProject(project.id, project.environmentId);
+  };
   return (
     <Menu>
       <MenuTrigger
@@ -348,35 +388,14 @@ export function PullRequestFiltersMenu({
           </>
         ) : null}
         <MenuSeparator />
-        <MenuRadioGroup
-          value={
-            projectId === undefined || projectEnvironmentId === undefined
-              ? ALL_PROJECTS_VALUE
-              : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId })
-          }
-          onValueChange={(next) => {
-            if (next === ALL_PROJECTS_VALUE) {
-              if (projectId !== undefined) onProject(undefined, undefined);
-              return;
-            }
-            // The value carries both halves, since the id alone cannot tell two servers' rows
-            // apart once they share one.
-            const project = projects.find((candidate) => pullRequestProjectKey(candidate) === next);
-            if (
-              project !== undefined &&
-              (project.id !== projectId || project.environmentId !== projectEnvironmentId)
-            ) {
-              onProject(project.id, project.environmentId);
-            }
-          }}
-        >
+        <MenuGroup>
           <MenuGroupLabel>Project</MenuGroupLabel>
-          <MenuRadioItem value={ALL_PROJECTS_VALUE}>
+          <MenuCheckboxItem checked={everyProjectListed} onClick={listEveryProject}>
             <span className="flex min-w-0 items-center gap-2">
               <LayersIcon aria-hidden className="size-3.5" />
               All projects
             </span>
-          </MenuRadioItem>
+          </MenuCheckboxItem>
           {/* The ones that can be chosen first: a list that opens with three disabled rows reads
               as a broken menu rather than as a workspace with three unreadable repositories. */}
           {projects
@@ -386,12 +405,17 @@ export function PullRequestFiltersMenu({
                 Number(unavailable.has(pullRequestProjectKey(right))),
             )
             .map((project) => {
-              const reason = unavailable.get(pullRequestProjectKey(project));
+              const key = pullRequestProjectKey(project);
+              const reason = unavailable.get(key);
               const item = (
-                <MenuRadioItem
-                  key={pullRequestProjectKey(project)}
-                  value={pullRequestProjectKey(project)}
-                  className={reason !== undefined ? "data-disabled:pointer-events-auto" : undefined}
+                <MenuCheckboxItem
+                  key={key}
+                  checked={listed(key)}
+                  onCheckedChange={(next) => setProjectListed(key, next)}
+                  className={cn(
+                    "group/project",
+                    reason !== undefined && "data-disabled:pointer-events-auto",
+                  )}
                   disabled={reason !== undefined}
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -407,12 +431,33 @@ export function PullRequestFiltersMenu({
                         Unavailable
                       </span>
                     )}
+                    {reason === undefined ? (
+                      <button
+                        type="button"
+                        // The row's own checkbox is the keyboard path — unchecking the others
+                        // says the same thing — so this stays out of the tab order rather than
+                        // giving every project two stops.
+                        tabIndex={-1}
+                        aria-label={`List only ${project.title}`}
+                        // The row's checkbox would otherwise swallow the press as a toggle.
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onlyProject(project);
+                        }}
+                        // Highlighted rather than hovered: a menu row highlights under the
+                        // pointer and under arrow keys alike, so both reach the action.
+                        className="pointer-events-none inline-flex shrink-0 cursor-pointer items-center rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-data-highlighted/project:pointer-events-auto group-data-highlighted/project:opacity-100"
+                      >
+                        Only
+                      </button>
+                    ) : null}
                   </span>
-                </MenuRadioItem>
+                </MenuCheckboxItem>
               );
               if (reason === undefined) return item;
               return (
-                <Tooltip key={pullRequestProjectKey(project)}>
+                <Tooltip key={key}>
                   <TooltipTrigger render={item} />
                   <TooltipPopup side="top" className="max-w-80">
                     {reason}
@@ -420,7 +465,7 @@ export function PullRequestFiltersMenu({
                 </Tooltip>
               );
             })}
-        </MenuRadioGroup>
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
