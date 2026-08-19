@@ -538,6 +538,7 @@ function toStatusPr(pr: PullRequestInfo): {
   baseRef: string;
   headRef: string;
   state: "open" | "closed" | "merged";
+  updatedAt: string | null;
 } {
   return {
     number: pr.number,
@@ -546,6 +547,10 @@ function toStatusPr(pr: PullRequestInfo): {
     baseRef: pr.baseRefName,
     headRef: pr.headRefName,
     state: pr.state,
+    updatedAt: Option.match(pr.updatedAt, {
+      onNone: () => null,
+      onSome: (updatedAt) => DateTime.formatIso(updatedAt),
+    }),
   };
 }
 

@@ -169,6 +169,7 @@ export function threadChangeRequestSnapshotsEqual(
     left.pr.baseRef === right.pr.baseRef &&
     left.pr.headRef === right.pr.headRef &&
     left.pr.state === right.pr.state &&
+    (left.pr.updatedAt ?? null) === (right.pr.updatedAt ?? null) &&
     sourceControlProvidersEqual(left.sourceControlProvider, right.sourceControlProvider)
   );
 }

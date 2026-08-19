@@ -801,7 +801,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     snapshot: changeRequestSnapshot,
     retainTerminalOnBranchMismatch,
   });
-  const prState = pr?.state ?? null;
 
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
@@ -819,7 +818,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const isWoke =
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
-    !changeRequestAutoSettles(prState, props.autoSettleOnMerge);
+    !changeRequestAutoSettles(pr, {
+      autoSettleOnMerge: props.autoSettleOnMerge,
+      thread,
+    });
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, failed, and
@@ -2024,9 +2026,9 @@ export default function Sidebar() {
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const snapshot = changeRequestSnapshotByKey.get(threadKey);
-      const changeRequestState =
+      const changeRequest =
         snapshot != null && (thread.worktreePath === null || snapshot.branch === thread.branch)
-          ? snapshot.pr.state
+          ? snapshot.pr
           : null;
       // Snooze outranks everything, including a pin: "hide until Tuesday"
       // temporarily suspends "keep on top". The pin survives underneath —
@@ -2048,7 +2050,7 @@ export default function Sidebar() {
           now,
           autoSettleAfterDays,
           autoSettleOnMerge,
-          changeRequestState,
+          changeRequest,
         })
       ) {
         settled.push(thread);
