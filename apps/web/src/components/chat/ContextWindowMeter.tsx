@@ -1,7 +1,13 @@
+import { TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import { useClientSettings } from "~/hooks/useSettings";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
+import {
+  CONTEXT_WINDOW_CRITICAL_TOKENS,
+  contextWindowSeverityColor,
+  formatContextWindowCompactionMessage,
+} from "./ContextWindowMeter.logic";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -11,6 +17,31 @@ function formatPercentage(value: number | null): string | null {
     return `${value.toFixed(1).replace(/\.0$/, "")}%`;
   }
   return `${Math.round(value)}%`;
+}
+
+/**
+ * Used-token count for the composer footer, sitting immediately left of the
+ * meter ring when the user opts in. Presentational only: the ring next to it
+ * owns the hover popover.
+ */
+export function ContextWindowTokenCount(props: { usage: ContextWindowSnapshot }) {
+  const showTokenCount = useClientSettings((settings) => settings.showContextWindowTokenCount);
+  if (!showTokenCount) {
+    return null;
+  }
+
+  const { usedTokens } = props.usage;
+  return (
+    <span
+      className="flex items-center gap-1 text-xs tabular-nums transition-colors duration-500 ease-out motion-reduce:transition-none"
+      style={{ color: contextWindowSeverityColor(usedTokens) }}
+    >
+      {(usedTokens ?? 0) >= CONTEXT_WINDOW_CRITICAL_TOKENS ? (
+        <TriangleAlertIcon className="size-3" aria-hidden="true" />
+      ) : null}
+      {formatContextWindowTokens(usedTokens)}
+    </span>
+  );
 }
 
 export function ContextWindowMeter(props: {
@@ -29,6 +60,10 @@ export function ContextWindowMeter(props: {
   const usageColor = isOverloaded
     ? "var(--color-error)"
     : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
+  const showTokenCount = useClientSettings((settings) => settings.showContextWindowTokenCount);
+  // Opting into the count also opts the ring into severity coloring, so the
+  // number and the arc never disagree. The popover keeps the neutral color.
+  const ringColor = showTokenCount ? contextWindowSeverityColor(usage.usedTokens) : usageColor;
 
   return (
     <Popover>
@@ -66,7 +101,7 @@ export function ContextWindowMeter(props: {
                   cy="12"
                   r={radius}
                   fill="none"
-                  stroke={usageColor}
+                  stroke={ringColor}
                   strokeWidth="3"
                   strokeLinecap="round"
                   strokeDasharray={circumference}

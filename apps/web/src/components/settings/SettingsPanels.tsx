@@ -497,6 +497,10 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Auto-settle merged threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.showContextWindowTokenCount !==
+      DEFAULT_UNIFIED_SETTINGS.showContextWindowTokenCount
+        ? ["Context window token count"]
+        : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
@@ -568,6 +572,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
+      settings.showContextWindowTokenCount,
       followSystem,
       theme,
       themeHalves,
@@ -639,6 +644,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      showContextWindowTokenCount: DEFAULT_UNIFIED_SETTINGS.showContextWindowTokenCount,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1318,6 +1324,39 @@ function WordWrapRow() {
   );
 }
 
+function ContextWindowTokenCountRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("context-window-token-count")}
+      description="Print the used token count next to the composer's context window ring, colored green, orange, then red as tokens accumulate."
+      resetAction={
+        settings.showContextWindowTokenCount !==
+        DEFAULT_UNIFIED_SETTINGS.showContextWindowTokenCount ? (
+          <SettingResetButton
+            label="context window token count"
+            onClick={() =>
+              updateSettings({
+                showContextWindowTokenCount: DEFAULT_UNIFIED_SETTINGS.showContextWindowTokenCount,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.showContextWindowTokenCount}
+          onCheckedChange={(checked) =>
+            updateSettings({ showContextWindowTokenCount: Boolean(checked) })
+          }
+          aria-label="Show context window token count"
+        />
+      }
+    />
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -1415,6 +1454,7 @@ function TypographySection() {
     >
       {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <ContextWindowTokenCountRow />
     </SettingsSection>
   );
 }
