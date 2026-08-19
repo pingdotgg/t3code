@@ -17,11 +17,13 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { clerkAppearance } from "./components/clerk/clerkAppearance";
+import { createClerkRouterBridge } from "./components/clerk/clerkRouterBridge";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
+const clerkRouter = createClerkRouterBridge(history);
 
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);
@@ -46,11 +48,18 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           appearance={clerkAppearance}
           publishableKey={clerkPublishableKey}
           passkeys={passkeys}
+          routerPush={clerkRouter.routerPush}
+          routerReplace={clerkRouter.routerReplace}
         >
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </ElectronClerkProvider>
       ) : (
-        <ClerkProvider appearance={clerkAppearance} publishableKey={clerkPublishableKey}>
+        <ClerkProvider
+          appearance={clerkAppearance}
+          publishableKey={clerkPublishableKey}
+          routerPush={clerkRouter.routerPush}
+          routerReplace={clerkRouter.routerReplace}
+        >
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </ClerkProvider>
       )
