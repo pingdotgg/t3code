@@ -1119,6 +1119,13 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   /**
+   * Download a file URL in the main process and place the saved copy on the
+   * OS clipboard as a file reference (pasteable in Finder/Explorer, unlike a
+   * text or image clipboard write). Optional: older desktop builds lack it,
+   * and web builds have it undefined.
+   */
+  copyFileToClipboard?: (input: { url: string; fileName: string }) => Promise<void>;
+  /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
    * builds lack it; callers fall back to VS Code only.

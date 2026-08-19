@@ -44,4 +44,23 @@ describe("assetResponseHeaders", () => {
       "X-Content-Type-Options": "nosniff",
     });
   });
+
+  it("marks downloads as attachments with a safe filename", () => {
+    expect(assetResponseHeaders("/workspace/results.csv", "results.csv")).toMatchObject({
+      "Content-Disposition": `attachment; filename="results.csv"; filename*=UTF-8''results.csv`,
+    });
+  });
+
+  it("escapes filenames that break the quoted-string form", () => {
+    const headers = assetResponseHeaders("/workspace/relatório.csv", 'rela"tório\r\n.csv');
+    expect(headers["Content-Disposition"]).toBe(
+      `attachment; filename="rela_t_rio__.csv"; filename*=UTF-8''rela%22t%C3%B3rio%0D%0A.csv`,
+    );
+  });
+
+  it("keeps the SVG sandbox policy on downloaded SVGs", () => {
+    expect(assetResponseHeaders("/workspace/chart.svg", "chart.svg")).toHaveProperty(
+      "Content-Security-Policy",
+    );
+  });
 });

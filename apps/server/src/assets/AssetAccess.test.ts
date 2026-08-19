@@ -184,6 +184,63 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues download URLs for non-preview workspace files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-download-",
+      });
+      const csvPath = path.join(root, "data", "results.csv");
+      const siblingPath = path.join(root, "data", "other.csv");
+      yield* fileSystem.makeDirectory(path.join(root, "data"), { recursive: true });
+      yield* fileSystem.writeFileString(csvPath, "a,b\n1,2\n");
+      yield* fileSystem.writeFileString(siblingPath, "c,d\n3,4\n");
+      const canonicalCsvPath = yield* fileSystem.realPath(csvPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file-download",
+          threadId: ThreadId.make("thread-1"),
+          path: "data/results.csv",
+        },
+        workspaceRoot: root,
+      });
+      expect(result.relativeUrl.endsWith("/results.csv")).toBe(true);
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "results.csv")).toEqual({
+        kind: "file",
+        path: canonicalCsvPath,
+        downloadFileName: "results.csv",
+      });
+      expect(yield* resolveAsset(token, "other.csv")).toBeNull();
+      expect(yield* resolveAsset(token, "../results.csv")).toBeNull();
+      expect(yield* resolveAsset(`${token}tampered`, "results.csv")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects downloads outside the authorized root", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-download-root-",
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file-download",
+          threadId: ThreadId.make("thread-1"),
+          path: "../outside.csv",
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetWorkspacePathValidationError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues exact attachment capabilities by attachment id", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

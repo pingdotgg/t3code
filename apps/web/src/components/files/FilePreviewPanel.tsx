@@ -12,7 +12,16 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import {
+  ChevronRight,
+  Code2,
+  Copy,
+  Download,
+  Eye,
+  FolderTree,
+  Globe2,
+  LoaderCircle,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -35,6 +44,12 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
+import {
+  canCopyWorkspaceFileToClipboard,
+  copyWorkspaceFileToClipboard,
+  downloadWorkspaceFile,
+  type WorkspaceFileTransferAction,
+} from "~/workspaceFileTransfer";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { projectEnvironment } from "~/state/projects";
@@ -856,6 +871,42 @@ export default function FilePreviewPanel({
     })();
   }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
 
+  const handleDownloadFile = useCallback(() => {
+    if (!absolutePath || !environmentHttpBaseUrl) return;
+    void downloadWorkspaceFile({
+      threadRef,
+      filePath: absolutePath,
+      httpBaseUrl: environmentHttpBaseUrl,
+      createAssetUrl,
+    });
+  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, threadRef]);
+
+  const handleCopyFile = useCallback(() => {
+    if (!absolutePath || !environmentHttpBaseUrl) return;
+    void copyWorkspaceFileToClipboard({
+      threadRef,
+      filePath: absolutePath,
+      httpBaseUrl: environmentHttpBaseUrl,
+      createAssetUrl,
+    });
+  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, threadRef]);
+
+  const handleTreeFileTransfer = useCallback(
+    (action: WorkspaceFileTransferAction, treeRelativePath: string) => {
+      if (!environmentHttpBaseUrl) return;
+      const input = {
+        threadRef,
+        filePath: treeRelativePath,
+        httpBaseUrl: environmentHttpBaseUrl,
+        createAssetUrl,
+      };
+      void (action === "download"
+        ? downloadWorkspaceFile(input)
+        : copyWorkspaceFileToClipboard(input));
+    },
+    [createAssetUrl, environmentHttpBaseUrl, threadRef],
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
@@ -959,6 +1010,44 @@ export default function FilePreviewPanel({
                 }
               />
               <TooltipPopup>Open file in preview browser</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {absolutePath && environmentHttpBaseUrl ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={false}
+                    onPressedChange={handleDownloadFile}
+                    aria-label="Download file"
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <Download className="size-3.5" />
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>Download file</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {absolutePath && environmentHttpBaseUrl && canCopyWorkspaceFileToClipboard() ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={false}
+                    onPressedChange={handleCopyFile}
+                    aria-label="Copy file"
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <Copy className="size-3.5" />
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>Copy file</TooltipPopup>
             </Tooltip>
           ) : null}
           <Tooltip>
@@ -1080,6 +1169,7 @@ export default function FilePreviewPanel({
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
+              onFileTransfer={environmentHttpBaseUrl ? handleTreeFileTransfer : undefined}
             />
           </aside>
         ) : null}
