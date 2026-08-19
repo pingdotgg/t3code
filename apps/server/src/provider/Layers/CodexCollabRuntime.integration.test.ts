@@ -25,6 +25,7 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
+const MEMORY_CHILD = "memory-consolidation-child";
 
 /**
  * The captured sequence, extended with the shapes the live capture didn't
@@ -142,6 +143,84 @@ describe("CodexSessionRuntime collab integration", () => {
         leaked.map((event) => event.method),
         [],
         "child thread/* lifecycle must not appear as parent events",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("suppresses memory-consolidation collab agents", () =>
+    Effect.gen(function* () {
+      const rootThreadStarted = wireFixture.notifications.find(
+        (entry) => entry.method === "thread/started",
+      );
+      assert.isDefined(rootThreadStarted);
+      const memoryThreadStarted = {
+        ...rootThreadStarted,
+        params: {
+          thread: {
+            ...rootThreadStarted.params.thread,
+            id: MEMORY,
+            sessionId: MEMORY,
+            source: "unknown",
+            threadSource: "memory_consolidation",
+          },
+        },
+      };
+      const memorySpawn = {
+        method: "item/completed",
+        params: {
+          threadId: MEMORY,
+          turnId: "memory-consolidation-turn",
+          completedAtMs: 1785898349265,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_memory_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: MEMORY,
+            receiverThreadIds: [MEMORY_CHILD],
+            agentsStates: {
+              [MEMORY_CHILD]: { message: null, status: "running" },
+            },
+            prompt: "Consolidate this memory in the background",
+          },
+        },
+      };
+
+      NodeFS.writeFileSync(
+        scriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          rootThreadId: ROOT,
+          notifications: [memoryThreadStarted, memorySpawn],
+        }),
+        "utf8",
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-memory"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "process memory consolidation" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.deepEqual(
+        events.filter((event) => event.method?.startsWith("collabAgent/")),
+        [],
       );
 
       yield* runtime.close;
