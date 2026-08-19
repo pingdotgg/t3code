@@ -19,16 +19,13 @@ type ProjectDeletedEvent = Extract<OrchestrationEvent, { type: "project.deleted"
 /**
  * Revoke a deleted project's mirror link and every mirror-peer credential
  * for it. Exported standalone (rather than only as an inner closure) so it
- * can be exercised directly against mocked services in tests, without
- * standing up the full reactor's stream/worker plumbing.
+ * can be exercised directly in tests, without standing up the full
+ * reactor's stream/worker plumbing.
  */
 export const revokeMirrorLinkAndCredentials = Effect.fn("revokeMirrorLinkAndCredentials")(
-  function* (input: {
-    readonly projectId: ProjectDeletedEvent["payload"]["projectId"];
-    readonly mirrorService: MirrorService["Service"];
-    readonly serverAuth: EnvironmentAuth.EnvironmentAuth["Service"];
-  }) {
-    const { projectId, mirrorService, serverAuth } = input;
+  function* (projectId: ProjectDeletedEvent["payload"]["projectId"]) {
+    const mirrorService = yield* MirrorService;
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     // Unconditional: by the time this event lands the project is already
     // soft-deleted, so isMirroredProject would always read false (it
     // excludes deleted rows) and could never gate this call. revokeLink is
@@ -50,15 +47,9 @@ export const revokeMirrorLinkAndCredentials = Effect.fn("revokeMirrorLinkAndCred
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
-  const mirrorService = yield* MirrorService;
-  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
 
   const processProjectDeleted = (event: ProjectDeletedEvent) =>
-    revokeMirrorLinkAndCredentials({
-      projectId: event.payload.projectId,
-      mirrorService,
-      serverAuth,
-    });
+    revokeMirrorLinkAndCredentials(event.payload.projectId);
 
   const processProjectDeletedSafely = (event: ProjectDeletedEvent) =>
     processProjectDeleted(event).pipe(

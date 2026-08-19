@@ -642,7 +642,7 @@ export const make = Effect.gen(function* () {
       const result = yield* run({ root, args: ["remote", "-v"] });
       const remotes = new Map<string, string>();
       for (const line of result.stdout.split("\n")) {
-        const match = line.match(/^(\S+)\t(\S+) \(fetch\)$/);
+        const match = line.match(/^(\S+)\t(.+) \(fetch\)$/);
         if (match?.[1] !== undefined && match[2] !== undefined && !remotes.has(match[1])) {
           remotes.set(match[1], match[2]);
         }

@@ -505,12 +505,34 @@ export const make = Effect.gen(function* () {
    * Joins a host-supplied submodule path to the project root and rejects
    * anything that escapes it (e.g. `../other-repository`), so a compromised
    * host can't point the origin agent at an arbitrary local directory.
+   *
+   * The lexical check alone doesn't catch a symlink inside the working tree
+   * that resolves outside it, so containment is re-checked against the real
+   * (symlink-resolved) path whenever the target already exists on disk. A
+   * not-yet-existing target skips that second check and falls through to
+   * the caller's `isRepository` check, which safely rejects it anyway.
    */
   const resolveSubmoduleRoot = (link: MirrorLink, submodulePath: string) =>
     Effect.gen(function* () {
       const localRoot = path.resolve(link.localRoot);
       const root = path.resolve(localRoot, submodulePath);
       if (root !== localRoot && !root.startsWith(localRoot + path.sep)) {
+        return yield* new MirrorSyncFailedError({
+          projectId: link.projectId,
+          detail: "Submodule path escapes the project root.",
+        });
+      }
+      const realLocalRoot = yield* fileSystem.realPath(localRoot).pipe(
+        Effect.mapError(
+          () =>
+            new MirrorSyncFailedError({
+              projectId: link.projectId,
+              detail: "Project root is not accessible on the origin machine.",
+            }),
+        ),
+      );
+      const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
+      if (realRoot !== realLocalRoot && !realRoot.startsWith(realLocalRoot + path.sep)) {
         return yield* new MirrorSyncFailedError({
           projectId: link.projectId,
           detail: "Submodule path escapes the project root.",

@@ -1,10 +1,11 @@
 import { ProjectId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
-import type { MirrorService } from "../../mirror/MirrorService.ts";
+import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
+import { MirrorService } from "../../mirror/MirrorService.ts";
 import { revokeMirrorLinkAndCredentials } from "./MirrorProjectDeletionReactor.ts";
 
 const fakeSession = (subject: string, sessionId: string) => ({
@@ -28,29 +29,28 @@ describe("revokeMirrorLinkAndCredentials", () => {
     const revokedLinkProjectIds: string[] = [];
     const revokedSessionIds: string[] = [];
 
-    const mirrorService = {
-      revokeLink: (id: string) =>
-        Effect.sync(() => {
-          revokedLinkProjectIds.push(id);
-        }),
-    } as unknown as MirrorService["Service"];
-
-    const serverAuth = {
-      listSessions: () =>
-        Effect.succeed([
-          fakeSession(`mirror-peer:${projectId}`, `mirror-peer-session:${projectId}`),
-          fakeSession(`mirror-peer:${otherProjectId}`, `mirror-peer-session:${otherProjectId}`),
-        ]),
-      revokeSession: (sessionId: string) =>
-        Effect.sync(() => {
-          revokedSessionIds.push(sessionId);
-          return true;
-        }),
-    } as unknown as EnvironmentAuth["Service"];
-
-    await Effect.runPromise(
-      revokeMirrorLinkAndCredentials({ projectId, mirrorService, serverAuth }),
+    const layer = Layer.mergeAll(
+      Layer.mock(MirrorService, {
+        revokeLink: (id) =>
+          Effect.sync(() => {
+            revokedLinkProjectIds.push(id);
+          }),
+      }),
+      Layer.mock(EnvironmentAuth, {
+        listSessions: () =>
+          Effect.succeed([
+            fakeSession(`mirror-peer:${projectId}`, `mirror-peer-session:${projectId}`),
+            fakeSession(`mirror-peer:${otherProjectId}`, `mirror-peer-session:${otherProjectId}`),
+          ]),
+        revokeSession: (sessionId) =>
+          Effect.sync(() => {
+            revokedSessionIds.push(sessionId);
+            return true;
+          }),
+      }),
     );
+
+    await Effect.runPromise(revokeMirrorLinkAndCredentials(projectId).pipe(Effect.provide(layer)));
 
     expect(revokedLinkProjectIds).toEqual([projectId]);
     expect(revokedSessionIds).toEqual([`mirror-peer-session:${projectId}`]);
@@ -60,22 +60,21 @@ describe("revokeMirrorLinkAndCredentials", () => {
     const projectId = ProjectId.make("never-mirrored-project");
     const revokedSessionIds: string[] = [];
 
-    const mirrorService = {
-      revokeLink: () => Effect.void,
-    } as unknown as MirrorService["Service"];
-
-    const serverAuth = {
-      listSessions: () => Effect.succeed([]),
-      revokeSession: (sessionId: string) =>
-        Effect.sync(() => {
-          revokedSessionIds.push(sessionId);
-          return true;
-        }),
-    } as unknown as EnvironmentAuth["Service"];
-
-    await Effect.runPromise(
-      revokeMirrorLinkAndCredentials({ projectId, mirrorService, serverAuth }),
+    const layer = Layer.mergeAll(
+      Layer.mock(MirrorService, {
+        revokeLink: () => Effect.void,
+      }),
+      Layer.mock(EnvironmentAuth, {
+        listSessions: () => Effect.succeed([]),
+        revokeSession: (sessionId) =>
+          Effect.sync(() => {
+            revokedSessionIds.push(sessionId);
+            return true;
+          }),
+      }),
     );
+
+    await Effect.runPromise(revokeMirrorLinkAndCredentials(projectId).pipe(Effect.provide(layer)));
 
     expect(revokedSessionIds).toEqual([]);
   });
