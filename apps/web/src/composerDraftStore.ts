@@ -421,6 +421,8 @@ interface ComposerDraftStoreState {
     projectRef: ScopedProjectRef,
     threadRef: ComposerThreadTarget,
   ) => void;
+  /** Drops the project new-thread mapping for this server thread; composer state stays. */
+  retireProjectDraftMappingForThread: (threadRef: ScopedThreadRef) => void;
   /** Marks a draft session as being promoted to a real server thread. */
   markDraftThreadPromoting: (threadRef: ComposerThreadTarget, promotedTo?: ScopedThreadRef) => void;
   /** Removes draft-session metadata after promotion is complete. */
@@ -2541,6 +2543,58 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return removeDraftThreadReferences(state, threadKey);
           });
         },
+        retireProjectDraftMappingForThread: (threadRef) => {
+          set((state) => {
+            // Archive/delete only need the project to stop treating this
+            // server thread as the next `+` target. Composer content and
+            // draft-session metadata stay so an unsent prompt is not wiped.
+            const matchingDraftIds = new Set(
+              Object.entries(state.draftThreadsByThreadKey)
+                .filter(
+                  ([, draftThread]) =>
+                    draftThread.environmentId === threadRef.environmentId &&
+                    draftThread.threadId === threadRef.threadId,
+                )
+                .map(([draftId]) => draftId),
+            );
+            if (matchingDraftIds.size === 0) {
+              return state;
+            }
+            const nextLogicalMappings = Object.fromEntries(
+              Object.entries(state.logicalProjectDraftThreadKeyByLogicalProjectKey).filter(
+                ([, draftId]) => !matchingDraftIds.has(draftId),
+              ),
+            ) as Record<string, string>;
+            // Unpromoted leftovers keep their composer, but the archived
+            // thread id is burned — remint so sidebar send cannot recreate it.
+            let nextDraftThreads: Record<string, DraftThreadState> | undefined;
+            for (const draftId of matchingDraftIds) {
+              const existing = state.draftThreadsByThreadKey[draftId];
+              if (!existing || isDraftThreadPromoting(existing)) {
+                continue;
+              }
+              nextDraftThreads ??= { ...state.draftThreadsByThreadKey };
+              nextDraftThreads[draftId] = {
+                ...existing,
+                threadId: ThreadId.make(globalThis.crypto.randomUUID()),
+              };
+            }
+            const mappingUnchanged =
+              Object.keys(nextLogicalMappings).length ===
+              Object.keys(state.logicalProjectDraftThreadKeyByLogicalProjectKey).length;
+            if (mappingUnchanged && nextDraftThreads === undefined) {
+              return state;
+            }
+            return {
+              ...(mappingUnchanged
+                ? {}
+                : { logicalProjectDraftThreadKeyByLogicalProjectKey: nextLogicalMappings }),
+              ...(nextDraftThreads === undefined
+                ? {}
+                : { draftThreadsByThreadKey: nextDraftThreads }),
+            };
+          });
+        },
         markDraftThreadPromoting: (threadRef, promotedTo) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) {
@@ -3692,6 +3746,14 @@ export function useEffectiveComposerModelState(input: {
       input.threadModelSelection,
     ],
   );
+}
+
+/**
+ * Drop the project new-thread mapping for this server thread without touching
+ * composer content. Used after archive or delete so the next `+` mints a new id.
+ */
+export function retireProjectDraftMappingForThread(threadRef: ScopedThreadRef): void {
+  useComposerDraftStore.getState().retireProjectDraftMappingForThread(threadRef);
 }
 
 /**
