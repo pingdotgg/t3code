@@ -24,6 +24,11 @@ export interface ChatThreadActionContext {
   readonly activeDraftThread: ThreadContextLike | null;
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
+  /**
+   * The sidebar's project filter, passed only by the sidebar's new-thread
+   * button. Other surfaces leave it unset.
+   */
+  readonly scopedProjectRef?: ScopedProjectRef | null;
   readonly handleNewThread: NewThreadHandler;
 }
 
@@ -34,9 +39,15 @@ export function resolveNewDraftStartFromOrigin(input: {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
 }
 
+// A scoped project outranks the viewed thread: the sidebar lists only that
+// project's threads, so creating outside the scope would hide the new thread
+// from the list the user is looking at.
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
+  if (context.scopedProjectRef) {
+    return context.scopedProjectRef;
+  }
   if (context.activeThread) {
     return scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
   }

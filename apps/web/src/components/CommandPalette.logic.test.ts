@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
@@ -86,10 +87,30 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: { kind: "add-project" },
     });
-    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewThreadIn" })).toEqual({
+    expect(
+      reduceCommandPaletteUiState(filesOpen, {
+        _tag: "OpenNewThreadIn",
+        preferredProjectRef: null,
+      }),
+    ).toEqual({
       open: true,
       mode: "command",
-      openIntent: { kind: "new-thread-in" },
+      openIntent: { kind: "new-thread-in", preferredProjectRef: null },
+    });
+  });
+
+  it("carries the opener's preferred project into the new-thread intent", () => {
+    const preferredProjectRef = scopeProjectRef(
+      EnvironmentId.make("environment-1"),
+      ProjectId.make("project-1"),
+    );
+
+    expect(
+      reduceCommandPaletteUiState(closedState, { _tag: "OpenNewThreadIn", preferredProjectRef }),
+    ).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "new-thread-in", preferredProjectRef },
     });
   });
 

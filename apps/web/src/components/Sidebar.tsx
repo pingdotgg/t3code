@@ -3321,10 +3321,19 @@ export default function Sidebar() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  // New thread defaults to the project you're in (active thread's project,
-  // falling back to the top project) — same resolution the command palette
-  // uses. The command palette already offers a "New thread in..." submenu
-  // for multi-project setups.
+  const scopedProjectRef = useMemo(
+    () =>
+      scopedProjectGroup
+        ? scopeProjectRef(scopedProjectGroup.environmentId, scopedProjectGroup.id)
+        : null,
+    [scopedProjectGroup],
+  );
+
+  // New thread defaults to the project you're in: the project filter when one
+  // is set (the list shows only its threads, so creating elsewhere would hide
+  // the new thread), otherwise the active thread's project falling back to the
+  // top project. Only this button reads the filter — the keyboard shortcuts
+  // stay tied to the thread you are viewing.
   const handleNewThreadClick = useCallback(
     (event?: ReactMouseEvent) => {
       // One project: nothing to pick, create immediately. Shift+click creates
@@ -3336,14 +3345,15 @@ export default function Sidebar() {
           activeDraftThread: newThreadContext.activeDraftThread,
           activeThread: newThreadContext.activeThread ?? undefined,
           defaultProjectRef: newThreadContext.defaultProjectRef,
+          scopedProjectRef,
           handleNewThread: newThreadContext.handleNewThread,
         });
         return;
       }
       if (isMobile) setOpenMobile(false);
-      openCommandPalette({ open: "new-thread-in" });
+      openCommandPalette({ open: "new-thread-in", preferredProjectRef: scopedProjectRef });
     },
-    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],
+    [isMobile, newThreadContext, projectGroups.length, scopedProjectRef, setOpenMobile],
   );
 
   // The button mirrors chat.new: in multi-project setups both route through

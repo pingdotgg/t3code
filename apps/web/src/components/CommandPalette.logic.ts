@@ -1,6 +1,7 @@
 import {
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type ScopedProjectRef,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
@@ -37,9 +38,17 @@ export function browseInputEndPaddingClass(input: {
  */
 export type SearchOverlayMode = "command" | "files" | "content";
 
-export interface CommandPaletteOpenIntent {
-  readonly kind: "add-project" | "new-thread-in";
-}
+export type CommandPaletteOpenIntent =
+  | { readonly kind: "add-project" }
+  | {
+      readonly kind: "new-thread-in";
+      /**
+       * Project to list first, so the picker opens on it and Enter creates
+       * there. Set by the sidebar's new-thread button from its project
+       * filter; unset opens on the project of the thread being viewed.
+       */
+      readonly preferredProjectRef: ScopedProjectRef | null;
+    };
 
 export interface CommandPaletteUiState {
   readonly open: boolean;
@@ -51,7 +60,7 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "SetOpen"; readonly open: boolean }
   | { readonly _tag: "ToggleMode"; readonly mode: SearchOverlayMode }
   | { readonly _tag: "OpenAddProject" }
-  | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "OpenNewThreadIn"; readonly preferredProjectRef: ScopedProjectRef | null }
   | { readonly _tag: "ClearOpenIntent" };
 
 export function reduceCommandPaletteUiState(
@@ -70,7 +79,11 @@ export function reduceCommandPaletteUiState(
     case "OpenAddProject":
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":
-      return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
+      return {
+        open: true,
+        mode: "command",
+        openIntent: { kind: "new-thread-in", preferredProjectRef: action.preferredProjectRef },
+      };
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }

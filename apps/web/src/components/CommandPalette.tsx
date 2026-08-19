@@ -27,6 +27,7 @@ import {
   type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
+  type ScopedProjectRef,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
@@ -404,7 +405,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     [],
   );
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
-  const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const openNewThreadIn = useCallback(
+    (preferredProjectRef: ScopedProjectRef | null) =>
+      dispatch({ _tag: "OpenNewThreadIn", preferredProjectRef }),
+    [],
+  );
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
@@ -476,7 +481,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     () =>
       onOpenCommandPalette((detail) => {
         if (detail.open === "new-thread-in") {
-          openNewThreadIn();
+          openNewThreadIn(detail.preferredProjectRef ?? null);
         } else if (detail.open === "add-project") {
           openAddProject();
         } else {
@@ -1456,9 +1461,15 @@ function OpenCommandPaletteDialog(props: {
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
+    // The opener's preferred project wins over the viewed thread's, so the
+    // sidebar button opens on whatever its project filter is scoped to.
+    const preferred = openIntent.preferredProjectRef ?? {
+      environmentId: currentProjectEnvironmentId,
+      projectId: currentProjectId,
+    };
     const currentPrefix =
-      currentProjectEnvironmentId && currentProjectId
-        ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
+      preferred.environmentId && preferred.projectId
+        ? `new-thread-in:${preferred.environmentId}:${preferred.projectId}`
         : null;
     const prioritized = currentPrefix
       ? [
