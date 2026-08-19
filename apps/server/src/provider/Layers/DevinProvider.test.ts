@@ -15,11 +15,39 @@ import {
   buildInitialDevinProviderSnapshot,
   checkDevinProviderStatus,
   deduplicateDevinProviderModels,
+  mergeDevinSlashCommands,
   parseDevinModelsList,
 } from "./DevinProvider.ts";
 
 const decodeDevinSettings = Schema.decodeSync(DevinSettings);
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
+
+describe("mergeDevinSlashCommands", () => {
+  it("deduplicates live ACP commands and leaves model selection to T3", () => {
+    expect(
+      mergeDevinSlashCommands(
+        [
+          { name: "model", description: "Agent model picker" },
+          { name: "/compact", description: "Compact context" },
+        ],
+        [
+          { name: "COMPACT", input: { hint: "[focus]" } },
+          { name: "t3-hardening", description: "Run the project skill" },
+        ],
+      ),
+    ).toEqual([
+      {
+        name: "COMPACT",
+        description: "Compact context",
+        input: { hint: "[focus]" },
+      },
+      {
+        name: "t3-hardening",
+        description: "Run the project skill",
+      },
+    ]);
+  });
+});
 
 function isWindows(platform: string) {
   return platform === "win32";
@@ -66,6 +94,31 @@ function mockModelsListScript(platform: string) {
     "#!/bin/sh",
     'if [ "$1" = "models" ] && [ "$2" = "list" ] && [ "$3" = "--format" ] && [ "$4" = "json" ]; then',
     '  printf "[{\\\"family_label\\\": \\\"Adaptive\\\", \\\"slug\\\": \\\"adaptive\\\"}]\\n"',
+    "  exit 0",
+    "fi",
+    'printf "devin-cli 0.0.99\\n"',
+    "exit 0",
+    "",
+  ].join("\n");
+}
+
+function mockModelsListScriptWithConfig(platform: string, configPath: string) {
+  if (isWindows(platform)) {
+    return [
+      "@echo off",
+      `if "%1" == "--config" if "%2" == "${configPath}" if "%3" == "models" if "%4" == "list" if "%5" == "--format" if "%6" == "json" (`,
+      '  echo [{"family_label": "Configured", "slug": "configured"}]',
+      "  exit /b 0",
+      ")",
+      "echo devin-cli 0.0.99",
+      "exit /b 0",
+      "",
+    ].join("\n");
+  }
+  return [
+    "#!/bin/sh",
+    `if [ "$1" = "--config" ] && [ "$2" = "${configPath}" ] && [ "$3" = "models" ] && [ "$4" = "list" ] && [ "$5" = "--format" ] && [ "$6" = "json" ]; then`,
+    '  printf "[{\\\"family_label\\\": \\\"Configured\\\", \\\"slug\\\": \\\"configured\\\"}]\\n"',
     "  exit 0",
     "fi",
     'printf "devin-cli 0.0.99\\n"',
@@ -206,6 +259,40 @@ it.layer(NodeServices.layer)("checkDevinProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("ready");
       expect(snapshot.models.map((model) => model.slug)).toEqual(["adaptive"]);
+    }),
+  );
+
+  it.effect("uses the selected Devin config file for model discovery", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const configPath = "/profiles/devin-team.json";
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({
+            prefix: "t3code-devin-config-models-",
+          });
+          const devinPath = yield* makeMockDevinScript(
+            fs,
+            path,
+            dir,
+            mockModelsListScriptWithConfig(platform, configPath),
+            platform,
+          );
+
+          return yield* checkDevinProviderStatus(
+            decodeDevinSettings({
+              enabled: true,
+              binaryPath: devinPath,
+              configPath,
+            }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["configured"]);
     }),
   );
 

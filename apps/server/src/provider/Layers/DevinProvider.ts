@@ -5,6 +5,7 @@ import {
   type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -34,7 +35,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { resolveDevinAcpBaseModelId } from "../acp/DevinAcpSupport.ts";
+import { buildDevinGlobalArgs, resolveDevinAcpBaseModelId } from "../acp/DevinAcpSupport.ts";
 import { resolveEffectiveDevinBinary } from "../Drivers/DevinBinary.ts";
 
 const DEVIN_PRESENTATION = {
@@ -49,6 +50,33 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const VERSION_PROBE_TIMEOUT_MS = 15_000;
 const DEVIN_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const T3_NATIVE_DEVIN_COMMANDS = new Set(["model"]);
+
+export function mergeDevinSlashCommands(
+  ...groups: ReadonlyArray<ReadonlyArray<ServerProviderSlashCommand>>
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const commandsByName = new Map<string, ServerProviderSlashCommand>();
+  for (const group of groups) {
+    for (const command of group) {
+      const name = command.name.trim().replace(/^\/+/, "");
+      const key = name.toLowerCase();
+      if (!name || T3_NATIVE_DEVIN_COMMANDS.has(key)) {
+        continue;
+      }
+      const previous = commandsByName.get(key);
+      const description = command.description ?? previous?.description;
+      const input = command.input ?? previous?.input;
+      commandsByName.set(key, {
+        name,
+        ...(description ? { description } : {}),
+        ...(input ? { input } : {}),
+      });
+    }
+  }
+  return [...commandsByName.values()].toSorted((left, right) =>
+    left.name.localeCompare(right.name),
+  );
+}
 
 const DEVIN_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -593,7 +621,7 @@ const runDevinModelsListCommand = (
     const command = yield* resolveEffectiveDevinBinary(devinSettings.binaryPath, environment);
     const spawnCommand = yield* resolveSpawnCommand(
       command,
-      ["models", "list", "--format", "json"],
+      [...buildDevinGlobalArgs(devinSettings), "models", "list", "--format", "json"],
       {
         env: environment,
       },

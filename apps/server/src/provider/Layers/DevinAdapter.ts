@@ -5,6 +5,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ServerProviderSlashCommand,
   type ProviderUserInputAnswers,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -83,6 +84,10 @@ export interface DevinAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  readonly onAvailableCommandsChanged?: (input: {
+    readonly threadId: ThreadId;
+    readonly commands: ReadonlyArray<ServerProviderSlashCommand>;
+  }) => Effect.Effect<void, never>;
 }
 
 interface PendingApproval {
@@ -95,6 +100,46 @@ type PendingUserInputResolution =
 
 interface PendingUserInput {
   readonly resolution: Deferred.Deferred<PendingUserInputResolution>;
+}
+
+export type DevinBackgroundCommandTerminal = "completed" | "cancelled" | "failed";
+
+interface PendingBackgroundCommand {
+  readonly kind: "compact";
+  readonly turnId: TurnId;
+  readonly completion: Deferred.Deferred<DevinBackgroundCommandTerminal>;
+  output: string;
+}
+
+const MAX_BACKGROUND_COMMAND_OUTPUT_CHARS = 8_192;
+const BACKGROUND_COMMAND_TIMEOUT = "5 minutes";
+
+export function isDevinBackgroundCommand(input: string | undefined): boolean {
+  return input?.trim().toLowerCase() === "/compact";
+}
+
+/**
+ * Devin's `/compact` RPC returns before the asynchronous compactor emits its
+ * final session update. Keep a bounded rolling buffer because ACP text may be
+ * split across arbitrary chunks (including in the middle of a terminal phrase).
+ */
+export function updateDevinBackgroundCommandOutput(
+  current: string,
+  delta: string,
+): { readonly output: string; readonly terminal?: DevinBackgroundCommandTerminal } {
+  const output = `${current}${delta}`.slice(-MAX_BACKGROUND_COMMAND_OUTPUT_CHARS);
+  const normalized = output.toLowerCase();
+
+  if (/compaction\s+cancel(?:l)?ed\b/.test(normalized)) {
+    return { output, terminal: "cancelled" };
+  }
+  if (/(?:compaction\s+failed|failed\s+to\s+compact|could\s+not\s+compact)\b/.test(normalized)) {
+    return { output, terminal: "failed" };
+  }
+  if (/(?:context\s+compacted|compaction\s+complete(?:d)?)\b/.test(normalized)) {
+    return { output, terminal: "completed" };
+  }
+  return { output };
 }
 
 interface DevinSessionContext {
@@ -119,8 +164,11 @@ interface DevinSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** Slash commands whose ACP prompt RPC returns before their final update. */
+  pendingBackgroundCommand: PendingBackgroundCommand | undefined;
   currentModelId: string | undefined;
   currentReasoningValue: string | undefined;
+  availableCommands: ReadonlyArray<ServerProviderSlashCommand>;
   stopped: boolean;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   /** Last usage received from ACP (PromptResponse or UsageUpdated). */
@@ -149,6 +197,14 @@ function settlePendingUserInputsAsCancelled(
     (pending) => Deferred.succeed(pending.resolution, { _tag: "cancelled" }).pipe(Effect.ignore),
     { discard: true },
   );
+}
+
+function settlePendingBackgroundCommandAsCancelled(ctx: DevinSessionContext): Effect.Effect<void> {
+  const pending = ctx.pendingBackgroundCommand;
+  ctx.pendingBackgroundCommand = undefined;
+  return pending
+    ? Deferred.succeed(pending.completion, "cancelled").pipe(Effect.ignore)
+    : Effect.void;
 }
 
 function appendPromptResultToTurn(
@@ -786,11 +842,18 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
+        yield* settlePendingBackgroundCommandAsCancelled(ctx);
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);
+        yield* (
+          options?.onAvailableCommandsChanged?.({
+            threadId: ctx.threadId,
+            commands: [],
+          }) ?? Effect.void
+        );
         yield* offerRuntimeEvent({
           type: "session.exited",
           ...(yield* makeEventStamp()),
@@ -1000,8 +1063,10 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
           activeTurnId: undefined,
           interruptedTurnIds: new Set(),
           promptsInFlight: 0,
+          pendingBackgroundCommand: undefined,
           currentModelId: boundModel?.familySlug,
           currentReasoningValue: boundModel?.reasoningValue,
+          availableCommands: [],
           stopped: false,
           lastKnownTokenUsage: undefined,
           lastAcpUsage: undefined,
@@ -1019,9 +1084,72 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
               if (
                 event._tag === "PlanUpdated" ||
                 event._tag === "ToolCallUpdated" ||
-                event._tag === "ContentDelta"
+                event._tag === "ContentDelta" ||
+                event._tag === "AvailableCommandsChanged" ||
+                event._tag === "ConfigOptionsChanged" ||
+                event._tag === "SessionInfoChanged"
               ) {
                 yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+              }
+
+              if (event._tag === "AvailableCommandsChanged") {
+                ctx.availableCommands = event.commands;
+                yield* (
+                  options?.onAvailableCommandsChanged?.({
+                    threadId: ctx.threadId,
+                    commands: event.commands,
+                  }) ?? Effect.void
+                );
+                return;
+              }
+
+              if (event._tag === "ConfigOptionsChanged") {
+                ctx.sessionSetupResult = {
+                  ...ctx.sessionSetupResult,
+                  configOptions: event.configOptions,
+                };
+                const currentModel = currentDevinAcpModelSelection(ctx.sessionSetupResult);
+                ctx.currentModelId = currentModel?.familySlug;
+                ctx.currentReasoningValue = currentModel?.reasoningValue;
+                ctx.session = {
+                  ...ctx.session,
+                  ...(currentModel?.familySlug ? { model: currentModel.familySlug } : {}),
+                  updatedAt: yield* nowIso,
+                };
+                yield* offerRuntimeEvent({
+                  type: "session.configured",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: ctx.threadId,
+                  payload: {
+                    config: {
+                      configOptions: event.configOptions,
+                      ...(currentModel?.familySlug ? { model: currentModel.familySlug } : {}),
+                      ...(currentModel?.reasoningValue
+                        ? { reasoning: currentModel.reasoningValue }
+                        : {}),
+                    },
+                  },
+                });
+                return;
+              }
+
+              if (event._tag === "SessionInfoChanged") {
+                if (event.title || event.updatedAt) {
+                  yield* offerRuntimeEvent({
+                    type: "thread.metadata.updated",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: ctx.threadId,
+                    payload: {
+                      ...(event.title ? { name: event.title } : {}),
+                      ...(event.updatedAt
+                        ? { metadata: { providerUpdatedAt: event.updatedAt } }
+                        : {}),
+                    },
+                  });
+                }
+                return;
               }
 
               if (event._tag === "ModeChanged") {
@@ -1084,7 +1212,15 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                     }),
                   );
                   return;
-                case "ContentDelta":
+                case "ContentDelta": {
+                  const pending = ctx.pendingBackgroundCommand;
+                  const backgroundUpdate =
+                    pending?.turnId === notificationTurnId
+                      ? updateDevinBackgroundCommandOutput(pending.output, event.text)
+                      : undefined;
+                  if (pending && backgroundUpdate) {
+                    pending.output = backgroundUpdate.output;
+                  }
                   yield* offerRuntimeEvent(
                     makeAcpContentDeltaEvent({
                       stamp,
@@ -1096,7 +1232,13 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                       rawPayload: event.rawPayload,
                     }),
                   );
+                  if (pending && backgroundUpdate?.terminal) {
+                    yield* Deferred.succeed(pending.completion, backgroundUpdate.terminal).pipe(
+                      Effect.ignore,
+                    );
+                  }
                   return;
+                }
                 case "UsageUpdated": {
                   const tokenUsage = makeDevinTokenUsageSnapshotFromUsageUpdate(
                     event,
@@ -1258,9 +1400,9 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
             ctx.currentModelId = currentModel?.familySlug;
             ctx.currentReasoningValue = currentModel?.reasoningValue;
             const displayModel =
-              (turnModelSelection?.model ?? currentModel?.familySlug)
+              (currentModel?.familySlug ?? turnModelSelection?.model)
                 ? resolveDevinAcpBaseModelId(
-                    turnModelSelection?.model ?? currentModel?.familySlug ?? undefined,
+                    currentModel?.familySlug ?? turnModelSelection?.model ?? undefined,
                   )
                 : undefined;
             for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
@@ -1300,9 +1442,26 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
               });
             }
 
+            const backgroundCommand = isDevinBackgroundCommand(text)
+              ? {
+                  kind: "compact" as const,
+                  turnId,
+                  completion: yield* Deferred.make<DevinBackgroundCommandTerminal>(),
+                  output: "",
+                }
+              : undefined;
+            if (backgroundCommand) {
+              // The composer prevents concurrent sends, but fail safely if an
+              // external client races a second background command onto the
+              // same session instead of leaving the earlier sender blocked.
+              yield* settlePendingBackgroundCommandAsCancelled(ctx);
+              ctx.pendingBackgroundCommand = backgroundCommand;
+            }
+
             return {
               acp: ctx.acp,
               acpSessionId: ctx.acpSessionId,
+              backgroundCommand,
               displayModel,
               promptParts,
               turnId,
@@ -1353,6 +1512,22 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
             ),
           );
+
+        const backgroundTerminal = prepared.backgroundCommand
+          ? yield* Deferred.await(prepared.backgroundCommand.completion).pipe(
+              Effect.timeoutOption(BACKGROUND_COMMAND_TIMEOUT),
+            )
+          : Option.none<DevinBackgroundCommandTerminal>();
+        if (prepared.backgroundCommand && Option.isNone(backgroundTerminal)) {
+          const errorMessage = "Timed out waiting for Devin's background command to finish.";
+          yield* Ref.set(promptRpcSucceeded, false);
+          yield* Ref.set(promptFailureMessageRef, errorMessage);
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session/prompt",
+            detail: errorMessage,
+          });
+        }
 
         return yield* withThreadLock(
           input.threadId,
@@ -1489,7 +1664,10 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                 updatedAt: completedAt,
                 ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
               };
-              const completedStopReason = completedStopReasonFromPromptResponse(result);
+              const completedStopReason =
+                Option.isSome(backgroundTerminal) && backgroundTerminal.value === "cancelled"
+                  ? "cancelled"
+                  : completedStopReasonFromPromptResponse(result);
               yield* offerRuntimeEvent({
                 type: "turn.completed",
                 ...(yield* makeEventStamp()),
@@ -1497,8 +1675,17 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                 threadId: input.threadId,
                 turnId: prepared.turnId,
                 payload: {
-                  state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+                  state:
+                    result.stopReason === "cancelled" ||
+                    (Option.isSome(backgroundTerminal) && backgroundTerminal.value === "cancelled")
+                      ? "cancelled"
+                      : Option.isSome(backgroundTerminal) && backgroundTerminal.value === "failed"
+                        ? "failed"
+                        : "completed",
                   stopReason: completedStopReason,
+                  ...(Option.isSome(backgroundTerminal) && backgroundTerminal.value === "failed"
+                    ? { errorMessage: "Devin context compaction failed." }
+                    : {}),
                 },
               });
               ctx.interruptedTurnIds.delete(prepared.turnId);
@@ -1517,6 +1704,10 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
       }).pipe(
         Effect.ensuring(
           Effect.gen(function* () {
+            const liveCtx = sessions.get(input.threadId);
+            if (liveCtx && liveCtx.pendingBackgroundCommand === prepared.backgroundCommand) {
+              liveCtx.pendingBackgroundCommand = undefined;
+            }
             if (yield* Ref.get(promptSettled)) {
               return;
             }
@@ -1634,6 +1825,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
             observed.interruptedTurnId ?? turnId ?? activeTurnId ?? ctx.session.activeTurnId;
           yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
           yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
+          yield* settlePendingBackgroundCommandAsCancelled(ctx);
           yield* Effect.ignore(
             ctx.acp.cancel.pipe(
               Effect.mapError((error) =>

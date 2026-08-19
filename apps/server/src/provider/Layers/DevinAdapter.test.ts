@@ -4,9 +4,11 @@ import * as EffectAcpSchema from "effect-acp/schema";
 import type { AcpParsedSessionEvent } from "../acp/AcpRuntimeModel.ts";
 import {
   devinUsageDeltaTotals,
+  isDevinBackgroundCommand,
   isAcpUsageGreaterOrNew,
   makeDevinTokenUsageSnapshot,
   makeDevinTokenUsageSnapshotFromUsageUpdate,
+  updateDevinBackgroundCommandOutput,
   usageFromUsageUpdate,
 } from "./DevinAdapter.ts";
 
@@ -26,6 +28,38 @@ function makeUsageUpdatedEvent(
     rawPayload: event.rawPayload ?? {},
   };
 }
+
+describe("Devin background commands", () => {
+  it("only treats the asynchronous compact slash command as background work", () => {
+    expect(isDevinBackgroundCommand(" /COMPACT ")).toBe(true);
+    expect(isDevinBackgroundCommand("/compact now")).toBe(false);
+    expect(isDevinBackgroundCommand("regular prompt")).toBe(false);
+    expect(isDevinBackgroundCommand(undefined)).toBe(false);
+  });
+
+  it("recognizes a compact completion split across ACP chunks", () => {
+    const first = updateDevinBackgroundCommandOutput("", "Compacting context… Context comp");
+    expect(first.terminal).toBeUndefined();
+
+    const second = updateDevinBackgroundCommandOutput(first.output, "acted");
+    expect(second).toMatchObject({ terminal: "completed" });
+  });
+
+  it("recognizes cancellation and failure terminal updates", () => {
+    expect(updateDevinBackgroundCommandOutput("", "Compaction canceled.").terminal).toBe(
+      "cancelled",
+    );
+    expect(updateDevinBackgroundCommandOutput("", "Failed to compact context").terminal).toBe(
+      "failed",
+    );
+  });
+
+  it("bounds retained background output while preserving the terminal tail", () => {
+    const result = updateDevinBackgroundCommandOutput("x".repeat(20_000), "Context compacted");
+    expect(result.output.length).toBeLessThanOrEqual(8_192);
+    expect(result.terminal).toBe("completed");
+  });
+});
 
 describe("usageFromUsageUpdate", () => {
   it("keeps provided input and output tokens", () => {
