@@ -65,7 +65,7 @@ import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
-import { isMermaidFenceLanguage } from "../lib/mermaidRendering";
+import { isMermaidFenceLanguage, mermaidSourceAsMarkdownFence } from "../lib/mermaidRendering";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { MermaidOverlay } from "./chat/MermaidOverlay";
@@ -819,7 +819,11 @@ function MermaidMarkdownCodeBlock({
         diagram={
           <RenderErrorBoundary
             fallback={
-              <div className="chat-markdown-mermaid-error" role="alert">
+              <div
+                className="chat-markdown-mermaid-error"
+                data-markdown-copy={mermaidSourceAsMarkdownFence(code)}
+                role="alert"
+              >
                 <p>Couldn't render this diagram.</p>
               </div>
             }

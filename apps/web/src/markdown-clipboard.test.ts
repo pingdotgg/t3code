@@ -106,4 +106,15 @@ describe("serializeRenderedMarkdownFragment", () => {
       "See:\n\n```mermaid\ngraph TD\n  A --> B\n```",
     );
   });
+
+  it("serializes a mermaid error fallback as the source fence, not the alert copy", () => {
+    const error = new FakeElement("DIV", ["chat-markdown-mermaid-error"], {
+      "data-markdown-copy": "```mermaid\ngraph TD\n  A --> B\n```",
+    }).append(new FakeElement("P").append(new FakeText("Couldn't render this diagram.")));
+    const container = new FakeElement("DIV").append(error);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "```mermaid\ngraph TD\n  A --> B\n```",
+    );
+  });
 });
