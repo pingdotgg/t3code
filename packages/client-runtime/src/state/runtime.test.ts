@@ -1,17 +1,30 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, WS_METHODS, type UsageDay } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import type { RpcSession } from "../rpc/session.ts";
+import {
   environmentRpcKey,
   createAtomCommandScheduler,
+  createEnvironmentRpcQueryAtomFamily,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
   executeAtomCommand,
@@ -23,6 +36,13 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "./runtime.ts";
+
+const TARGET = new PrimaryConnectionTarget({
+  environmentId: EnvironmentId.make("environment-1"),
+  label: "Test environment",
+  httpBaseUrl: "https://environment.example.test",
+  wsBaseUrl: "wss://environment.example.test",
+});
 
 describe("settleAsyncResult", () => {
   it("preserves successful values and typed failures", async () => {
@@ -161,6 +181,73 @@ describe("environmentRpcKey", () => {
       }),
     ).not.toBe(environmentRpcKey(originalTarget));
   });
+});
+
+describe("bounded environment queries", () => {
+  it.effect("fails when an environment never connects", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connectionState: SupervisorConnectionState = {
+          ...AVAILABLE_CONNECTION_STATE,
+          desired: true,
+          network: "online",
+          phase: "connecting",
+          stage: "opening",
+          attempt: 1,
+        };
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(connectionState),
+          session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          run,
+          followStream,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        );
+        const query = createEnvironmentRpcQueryAtomFamily(runtime, {
+          label: "test.bounded-query",
+          tag: WS_METHODS.serverGetUsageSummary,
+          timeout: "0 millis",
+        })({
+          environmentId: TARGET.environmentId,
+          input: {
+            sinceDay: "2026-08-01" as UsageDay,
+            untilDay: "2026-08-09" as UsageDay,
+            timeZone: "UTC",
+          },
+        });
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+
+        const resultFiber = yield* Effect.promise(() =>
+          executeAtomQuery(registry, query, { reportDefect: false, reportFailure: false }),
+        ).pipe(Effect.timeout("250 millis"), Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("250 millis");
+        const result = yield* Fiber.join(resultFiber);
+
+        expect(AsyncResult.isFailure(result)).toBe(true);
+        if (AsyncResult.isFailure(result)) {
+          expect(Cause.squash(result.cause)).toMatchObject({ _tag: "TimeoutError" });
+        }
+      }),
+    ),
+  );
 });
 
 describe("Atom.fn mutation semantics", () => {
