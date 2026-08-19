@@ -1537,23 +1537,18 @@ function PullRequestsRouteView() {
       projectId={scopedProjectId}
       projectEnvironmentId={scopedProject?.environmentId}
       unavailable={unavailableProjects}
-      // The environment comes along with the project it belongs to, so a duplicate id on
-      // another server never gets narrowed to by mistake; picking "All projects" leaves the
-      // server scope as it was rather than clearing it.
-      onProject={(projectId, environmentId) =>
-        updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId })
-      }
       hiddenProjectKeys={activeHiddenProjectKeys}
-      // Keys naming a project this page cannot currently see are carried through untouched: the
-      // menu never showed them, so its answer does not speak for them. `updateListScope` closes a
-      // detail panel and clears a selection whose row may have just left the list.
-      onHiddenProjectKeys={(keys) => {
+      // One navigation for the whole selection. Keys naming a project this page cannot currently
+      // see are carried through untouched: the menu never showed them, so its answer does not
+      // speak for them. `updateListScope` closes a detail panel and clears a selection whose row
+      // may have just left the list.
+      onProjectSelection={({ projectId, environmentId, hiddenKeys }) => {
         setHiddenProjectKeys(
           liveHideKeys === null
-            ? keys
-            : [...keys, ...hiddenProjectKeys.filter((key) => !liveHideKeys.has(key))],
+            ? hiddenKeys
+            : [...hiddenKeys, ...hiddenProjectKeys.filter((key) => !liveHideKeys.has(key))],
         );
-        updateListScope({});
+        updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId });
       }}
     />
   );

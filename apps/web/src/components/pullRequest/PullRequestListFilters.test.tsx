@@ -98,7 +98,7 @@ function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) 
     hostOptions: [],
     onHost: () => undefined,
     hiddenProjectKeys: [],
-    onHiddenProjectKeys: () => undefined,
+    onProjectSelection: () => undefined,
     server: undefined,
     serverOptions: [],
     onServer: () => undefined,
@@ -106,7 +106,6 @@ function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) 
     projectId: undefined,
     projectEnvironmentId: undefined,
     unavailable: new Map(),
-    onProject: () => undefined,
     ...overrides,
   });
 }
@@ -174,30 +173,38 @@ describe("pull request filters menu", () => {
   });
 
   it("hides a project when its row is unchecked", () => {
-    const onHiddenProjectKeys = vi.fn();
+    const onProjectSelection = vi.fn();
     const rows = findCheckboxItems(
-      menu({ projects: [projectOne, projectTwo], onHiddenProjectKeys }),
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
     );
     expect(rows).toHaveLength(3);
     expect(rows.map((row) => row.checked)).toEqual([true, true, true]);
 
     rows[2]?.onCheckedChange?.(false);
-    expect(onHiddenProjectKeys).toHaveBeenCalledWith([keyTwo]);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [keyTwo],
+    });
   });
 
   it("brings a hidden project back when its row is checked again", () => {
-    const onHiddenProjectKeys = vi.fn();
+    const onProjectSelection = vi.fn();
     const rows = findCheckboxItems(
       menu({
         projects: [projectOne, projectTwo],
         hiddenProjectKeys: [keyTwo],
-        onHiddenProjectKeys,
+        onProjectSelection,
       }),
     );
     expect(rows.map((row) => row.checked)).toEqual([false, true, false]);
 
     rows[2]?.onCheckedChange?.(true);
-    expect(onHiddenProjectKeys).toHaveBeenCalledWith([]);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [],
+    });
   });
 
   it("reads a one-project scope as that project alone being listed", () => {
@@ -211,62 +218,118 @@ describe("pull request filters menu", () => {
     expect(rows.map((row) => row.checked)).toEqual([false, true, false]);
   });
 
-  it("carries a one-project scope into the hidden set rather than discarding it", () => {
-    const onProject = vi.fn();
-    const onHiddenProjectKeys = vi.fn();
+  it("drops a one-project scope and its hidden set in one selection", () => {
+    const onProjectSelection = vi.fn();
     const rows = findCheckboxItems(
       menu({
         projects: [projectOne, projectTwo],
         projectId: projectOne.id,
         projectEnvironmentId: projectOne.environmentId,
-        onProject,
-        onHiddenProjectKeys,
+        onProjectSelection,
       }),
     );
 
     rows[2]?.onCheckedChange?.(true);
-    expect(onProject).toHaveBeenCalledWith(undefined, undefined);
-    expect(onHiddenProjectKeys).toHaveBeenCalledWith([]);
+    // One call, never a scope change followed by a hidden change: two updates would each rebuild
+    // the URL from the committed one and the second would put the scope back.
+    expect(onProjectSelection).toHaveBeenCalledOnce();
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [],
+    });
+  });
+
+  it("carries a one-project scope into the hidden set rather than discarding it", () => {
+    const onProjectSelection = vi.fn();
+    const third = {
+      ...projectTwo,
+      id: "project-3" as ProjectId,
+      title: "Third",
+      hideKey: "repository:github.com/acme/third",
+    };
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo, third],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+        onProjectSelection,
+      }),
+    );
+
+    rows[2]?.onCheckedChange?.(true);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [third.hideKey],
+    });
   });
 
   it("clears both the scope and the hidden set when all projects is chosen", () => {
-    const onProject = vi.fn();
-    const onHiddenProjectKeys = vi.fn();
+    const onProjectSelection = vi.fn();
     const rows = findCheckboxItems(
       menu({
         projects: [projectOne, projectTwo],
         projectId: projectOne.id,
         projectEnvironmentId: projectOne.environmentId,
         hiddenProjectKeys: [keyTwo],
-        onProject,
-        onHiddenProjectKeys,
+        onProjectSelection,
       }),
     );
 
     rows[0]?.onClick?.();
-    expect(onProject).toHaveBeenCalledWith(undefined, undefined);
-    expect(onHiddenProjectKeys).toHaveBeenCalledWith([]);
+    expect(onProjectSelection).toHaveBeenCalledOnce();
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [],
+    });
+  });
+
+  it("does not emit a selection when nothing about it would change", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
+    );
+
+    rows[0]?.onClick?.();
+    expect(onProjectSelection).not.toHaveBeenCalled();
   });
 
   it("narrows to one project from its own row, environment and all", () => {
-    const onProject = vi.fn();
-    const duplicate = { ...projectTwo, id: projectOne.id, environmentId: "env-2" as EnvironmentId };
-    const buttons = findOnlyButtons(menu({ projects: [projectOne, duplicate], onProject }));
+    const onProjectSelection = vi.fn();
+    const duplicate = {
+      ...projectTwo,
+      id: projectOne.id,
+      environmentId: "env-2" as EnvironmentId,
+      hideKey: "repository:github.com/acme/other",
+    };
+    const buttons = findOnlyButtons(
+      menu({ projects: [projectOne, duplicate], onProjectSelection }),
+    );
     expect(buttons).toHaveLength(2);
 
     buttons[1]?.onClick(clickEvent());
-    expect(onProject).toHaveBeenCalledWith(projectOne.id, "env-2");
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: projectOne.id,
+      environmentId: "env-2",
+      hiddenKeys: [],
+    });
   });
 
   it("hides both copies of a repository two servers share", () => {
-    const onHiddenProjectKeys = vi.fn();
+    const onProjectSelection = vi.fn();
     const rows = findCheckboxItems(
-      menu({ projects: [projectTwo, projectTwoElsewhere], onHiddenProjectKeys }),
+      menu({ projects: [projectTwo, projectTwoElsewhere], onProjectSelection }),
     );
     expect(rows.map((row) => row.checked)).toEqual([true, true, true]);
 
     rows[1]?.onCheckedChange?.(false);
-    expect(onHiddenProjectKeys).toHaveBeenCalledWith([projectTwo.hideKey]);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [projectTwo.hideKey],
+    });
   });
 
   it("reads both copies of a shared repository as hidden from the one key", () => {

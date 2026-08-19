@@ -207,9 +207,8 @@ export function PullRequestFiltersMenu({
   projectId,
   projectEnvironmentId,
   unavailable,
-  onProject,
   hiddenProjectKeys,
-  onHiddenProjectKeys,
+  onProjectSelection,
 }: {
   state: PullRequestListState;
   stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
@@ -258,11 +257,22 @@ export function PullRequestFiltersMenu({
    * that says something is missing without saying which.
    */
   unavailable: ReadonlyMap<string, string>;
-  /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
-  onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
   /** Projects left out of the list, by their `hideKey`. */
   hiddenProjectKeys: ReadonlyArray<string>;
-  onHiddenProjectKeys: (keys: ReadonlyArray<string>) => void;
+  /**
+   * Which projects the list reads, as one statement. The scope and the hidden set move together
+   * because they answer the same question, and because two separate updates would each rebuild
+   * the URL from the committed one — the second landing on a location the first had not reached
+   * yet, and putting back the scope it had just dropped.
+   *
+   * The environment comes with the project id, since a scope names a specific server's copy. An
+   * absent environment leaves the server scope as it was rather than clearing it.
+   */
+  onProjectSelection: (selection: {
+    readonly projectId: ProjectId | undefined;
+    readonly environmentId: EnvironmentId | undefined;
+    readonly hiddenKeys: ReadonlyArray<string>;
+  }) => void;
 }) {
   const filtered =
     state !== "open" ||
@@ -295,8 +305,8 @@ export function PullRequestFiltersMenu({
     scopedKey === undefined ? !hidden.has(project.hideKey) : key === scopedKey;
   const everyProjectListed = scopedKey === undefined && hidden.size === 0;
   const listEveryProject = () => {
-    if (scopedKey !== undefined) onProject(undefined, undefined);
-    if (hidden.size > 0) onHiddenProjectKeys([]);
+    if (everyProjectListed) return;
+    onProjectSelection({ projectId: undefined, environmentId: undefined, hiddenKeys: [] });
   };
   /**
    * A one-project scope says the same thing as hiding every other project, so a click that widens
@@ -307,17 +317,22 @@ export function PullRequestFiltersMenu({
       scopedKey === undefined
         ? hiddenProjectKeys
         : projects.map((candidate) => candidate.hideKey).filter((key) => key !== scopedHideKey);
-    if (scopedKey !== undefined) onProject(undefined, undefined);
-    onHiddenProjectKeys(
-      next ? base.filter((key) => key !== hideKey) : [...new Set([...base, hideKey])],
-    );
+    onProjectSelection({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: next ? base.filter((key) => key !== hideKey) : [...new Set([...base, hideKey])],
+    });
   };
   const onlyProject = (project: {
     readonly id: ProjectId;
     readonly environmentId: EnvironmentId;
   }) => {
-    if (hidden.size > 0) onHiddenProjectKeys([]);
-    onProject(project.id, project.environmentId);
+    if (pullRequestProjectKey(project) === scopedKey && hidden.size === 0) return;
+    onProjectSelection({
+      projectId: project.id,
+      environmentId: project.environmentId,
+      hiddenKeys: [],
+    });
   };
   return (
     <Menu>
