@@ -117,6 +117,7 @@ function makeExecutorLayer(input: {
     Layer.succeed(
       ProviderTurnStartServiceV2,
       ProviderTurnStartServiceV2.of({
+        fail: () => Effect.void,
         start: () =>
           Effect.gen(function* () {
             yield* record("start");

@@ -101,3 +101,74 @@ it("does not commit running state when inherited background routing cannot be re
     expect(startRootRun).not.toHaveBeenCalled();
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("terminalizes a starting run when provider startup exhausts its retries", async () => {
+  const threadId = ThreadId.make("thread_provider_turn_start_exhausted");
+  const runId = RunId.make("run_provider_turn_start_exhausted");
+  const attemptId = RunAttemptId.make("attempt_provider_turn_start_exhausted");
+  const rootNodeId = NodeId.make("node_provider_turn_start_exhausted");
+  const providerThreadId = ProviderThreadId.make("provider_thread_provider_turn_start_exhausted");
+  const projection = {
+    thread: { id: threadId },
+    runs: [
+      {
+        id: runId,
+        status: "starting",
+        rootNodeId,
+        activeAttemptId: attemptId,
+        providerThreadId,
+        providerInstanceId: "codex",
+      },
+    ],
+    nodes: [{ id: rootNodeId, status: "pending" }],
+    attempts: [{ id: attemptId, status: "pending" }],
+    providerThreads: [{ id: providerThreadId, driver: "codex" }],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  type WriteInput = Parameters<EventSink.EventSinkV2Shape["writeIfRunCurrent"]>[0];
+  let written: WriteInput | undefined;
+  let writeCount = 0;
+  const writeIfRunCurrent: EventSink.EventSinkV2Shape["writeIfRunCurrent"] = (input) => {
+    written = input;
+    writeCount += 1;
+    return Effect.succeed({ committed: true, storedEvents: [] });
+  };
+  const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        IdAllocator.layer,
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({}),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+      ),
+    ),
+  );
+
+  await ProviderTurnStart.ProviderTurnStartServiceV2.pipe(
+    Effect.flatMap((service) =>
+      service.fail({ threadId, runId, cause: "invalid provider configuration" }),
+    ),
+    Effect.provide(layer),
+    Effect.runPromise,
+  );
+
+  expect(writeCount).toBe(1);
+  const input = written as WriteInput;
+  expect(input?.expectedStatus).toBe("starting");
+  expect(
+    input.events.map((event) => [
+      event.type,
+      (event.payload as { readonly status?: string }).status,
+    ]),
+  ).toEqual([
+    ["turn-item.updated", "failed"],
+    ["run-attempt.updated", "failed"],
+    ["node.updated", "failed"],
+    ["run.updated", "failed"],
+  ]);
+});
