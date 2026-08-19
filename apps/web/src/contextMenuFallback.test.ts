@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { archivedThreadContextMenuItems } from "./components/settings/ArchivedThreadsPanel.logic";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 
 type FakeListener = (event: FakeDomEvent) => void;
@@ -219,6 +220,19 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
+  it("uses the redesigned metadata for archived-thread actions", () => {
+    expect(archivedThreadContextMenuItems).toEqual([
+      { id: "unarchive", label: "Unarchive", icon: "archive" },
+      {
+        id: "delete",
+        label: "Delete",
+        destructive: true,
+        icon: "trash",
+        separatorBefore: true,
+      },
+    ]);
+  });
+
   it("renders one separator between menu sections", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename" },

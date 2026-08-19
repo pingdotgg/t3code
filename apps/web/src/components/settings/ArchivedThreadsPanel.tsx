@@ -17,6 +17,7 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { archivedThreadContextMenuItems } from "./ArchivedThreadsPanel.logic";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -128,13 +129,7 @@ export function ArchivedThreadsPanel() {
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "unarchive", label: "Unarchive" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
+      const clicked = await api.contextMenu.show(archivedThreadContextMenuItems, position);
 
       if (clicked === "unarchive") {
         await handleUnarchiveThread(threadRef);
