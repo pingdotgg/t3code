@@ -150,6 +150,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as VibeProxyUsageService from "./usage/VibeProxyUsageService.ts";
 import * as Data from "effect/Data";
 
 import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
@@ -419,6 +420,7 @@ const buildAppUnderTest = (options?: {
     desktopTelemetryReceiver?: Partial<
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
+    vibeProxyUsage?: Partial<VibeProxyUsageService.VibeProxyUsageService["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -827,6 +829,23 @@ const buildAppUnderTest = (options?: {
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(UsageService.layerTest),
+      Layer.provide(
+        Layer.mock(VibeProxyUsageService.VibeProxyUsageService)({
+          readCached: Effect.succeed({
+            status: "disabled",
+            snapshot: null,
+            refreshed: false,
+            refreshProblem: null,
+          }),
+          refresh: Effect.succeed({
+            status: "disabled",
+            snapshot: null,
+            refreshed: false,
+            refreshProblem: null,
+          }),
+          ...options?.layers?.vibeProxyUsage,
+        }),
+      ),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,
@@ -4597,6 +4616,70 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(Option.isSome(snapshot));
       assert.equal(snapshot.value.processes.length, 0);
       assert.equal(snapshot.value.groups.backend.processCount, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes Vibe-Proxy usage reads and refreshes with read-only scope", () =>
+    Effect.gen(function* () {
+      let cachedReads = 0;
+      let refreshes = 0;
+      const cachedResult = {
+        status: "ready" as const,
+        snapshot: {
+          fetchedAt: "2026-08-19T07:00:00.000Z",
+          accounts: [],
+        },
+        refreshed: false,
+        refreshProblem: null,
+      };
+      const refreshedResult = {
+        status: "ready" as const,
+        snapshot: {
+          fetchedAt: "2026-08-19T07:05:00.000Z",
+          accounts: [],
+        },
+        refreshed: true,
+        refreshProblem: null,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          vibeProxyUsage: {
+            readCached: Effect.sync(() => {
+              cachedReads += 1;
+              return cachedResult;
+            }),
+            refresh: Effect.sync(() => {
+              refreshes += 1;
+              return refreshedResult;
+            }),
+          },
+        },
+      });
+
+      const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "orchestration:read" },
+      );
+      assert.equal(exchangeResponse.status, 200);
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${tokenBody.access_token ?? ""}` },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+      const [cached, refreshed] = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all([
+            client[WS_METHODS.serverGetVibeProxyUsage]({}),
+            client[WS_METHODS.serverRefreshVibeProxyUsage]({}),
+          ]),
+        ),
+      );
+
+      assert.deepEqual(cached, cachedResult);
+      assert.deepEqual(refreshed, refreshedResult);
+      assert.equal(cachedReads, 1);
+      assert.equal(refreshes, 1);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

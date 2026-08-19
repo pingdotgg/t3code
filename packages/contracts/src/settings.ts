@@ -569,6 +569,15 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const VibeProxySettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  baseUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** The management key exists in the server secret store, never in settings.json. */
+  apiKeyRedacted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type VibeProxySettings = typeof VibeProxySettings.Type;
+
 export const ServerSettings = Schema.Struct({
   agenticOperatorEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
@@ -586,6 +595,7 @@ export const ServerSettings = Schema.Struct({
   autoContinueAfterUsageLimitReset: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  vibeProxy: VibeProxySettings,
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -754,6 +764,14 @@ export const ServerSettingsPatch = Schema.Struct({
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   autoContinueAfterUsageLimitReset: Schema.optionalKey(Schema.Boolean),
+  vibeProxy: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      baseUrl: Schema.optionalKey(TrimmedString),
+      /** Omit to preserve the stored key. Send an empty string to remove it. */
+      apiKey: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

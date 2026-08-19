@@ -60,6 +60,7 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const VIBE_PROXY_API_KEY_SECRET_NAME = "vibe-proxy-management-key";
 
 const normalizeServerSettings = (
   settings: ServerSettings,
@@ -109,7 +110,15 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return {
+    ...settings,
+    vibeProxy: {
+      ...settings.vibeProxy,
+      apiKey: "",
+      apiKeyRedacted: settings.vibeProxy.apiKey.length > 0 || settings.vibeProxy.apiKeyRedacted,
+    },
+    providerInstances,
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -352,8 +361,30 @@ const make = Effect.gen(function* () {
           environment,
         } satisfies ProviderInstanceConfig;
       }
+      let vibeProxy = settings.vibeProxy;
+      if (vibeProxy.apiKeyRedacted) {
+        const secret = yield* secretStore.get(VIBE_PROXY_API_KEY_SECRET_NAME).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "read-secret",
+                providerInstanceId: "vibe-proxy",
+                environmentVariable: "MANAGEMENT_KEY",
+                cause,
+              }),
+          ),
+        );
+        vibeProxy = {
+          ...vibeProxy,
+          apiKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+          apiKeyRedacted: Option.isSome(secret),
+        };
+      }
+
       return {
         ...settings,
+        vibeProxy,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
       };
     });
@@ -470,10 +501,91 @@ const make = Effect.gen(function* () {
         }
       }
 
+      let vibeProxy = next.vibeProxy;
+      if (!vibeProxy.apiKeyRedacted) {
+        if (vibeProxy.apiKey.length > 0) {
+          yield* secretStore
+            .set(VIBE_PROXY_API_KEY_SECRET_NAME, textEncoder.encode(vibeProxy.apiKey))
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "write-secret",
+                    providerInstanceId: "vibe-proxy",
+                    environmentVariable: "MANAGEMENT_KEY",
+                    cause,
+                  }),
+              ),
+            );
+          vibeProxy = { ...vibeProxy, apiKey: "", apiKeyRedacted: true };
+        } else {
+          yield* secretStore.remove(VIBE_PROXY_API_KEY_SECRET_NAME).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "remove-secret",
+                  providerInstanceId: "vibe-proxy",
+                  environmentVariable: "MANAGEMENT_KEY",
+                  cause,
+                }),
+            ),
+          );
+          vibeProxy = { ...vibeProxy, apiKey: "", apiKeyRedacted: false };
+        }
+      } else {
+        vibeProxy = { ...vibeProxy, apiKey: "" };
+      }
+
       return {
         ...next,
+        vibeProxy,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
       };
+    });
+
+  const readVibeProxySecret = secretStore.get(VIBE_PROXY_API_KEY_SECRET_NAME).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({
+          settingsPath,
+          operation: "read-secret",
+          providerInstanceId: "vibe-proxy",
+          environmentVariable: "MANAGEMENT_KEY",
+          cause,
+        }),
+    ),
+  );
+
+  const restoreVibeProxySecret = (secret: Option.Option<Uint8Array>) =>
+    Option.match(secret, {
+      onNone: () =>
+        secretStore.remove(VIBE_PROXY_API_KEY_SECRET_NAME).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "remove-secret",
+                providerInstanceId: "vibe-proxy",
+                environmentVariable: "MANAGEMENT_KEY",
+                cause,
+              }),
+          ),
+        ),
+      onSome: (value) =>
+        secretStore.set(VIBE_PROXY_API_KEY_SECRET_NAME, value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "write-secret",
+                providerInstanceId: "vibe-proxy",
+                environmentVariable: "MANAGEMENT_KEY",
+                cause,
+              }),
+          ),
+        ),
     });
 
   const writeSettingsAtomically = Effect.fnUntraced(
@@ -579,12 +691,33 @@ const make = Effect.gen(function* () {
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
+          const previousVibeProxySecret =
+            patch.vibeProxy?.apiKey === undefined ? null : yield* readVibeProxySecret;
+          const persistenceExit = yield* Effect.exit(
+            Effect.gen(function* () {
+              const nextPersisted = yield* persistProviderEnvironmentSecrets(
+                current,
+                applyServerSettingsPatch(current, patch),
+              );
+              const next = yield* normalizeServerSettings(nextPersisted);
+              yield* writeSettingsAtomically(next);
+              return next;
+            }),
           );
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
+          if (Exit.isFailure(persistenceExit)) {
+            if (previousVibeProxySecret !== null) {
+              yield* restoreVibeProxySecret(previousVibeProxySecret).pipe(
+                Effect.catch((rollbackError: ServerSettingsError) =>
+                  Effect.logError("failed to restore Vibe-Proxy management key", {
+                    operation: rollbackError.operation,
+                    cause: rollbackError.cause,
+                  }),
+                ),
+              );
+            }
+            return yield* Effect.failCause(persistenceExit.cause);
+          }
+          const next = persistenceExit.value;
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
           const materialized = yield* materializeProviderEnvironmentSecrets(next);

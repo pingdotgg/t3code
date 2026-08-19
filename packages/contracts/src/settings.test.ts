@@ -175,6 +175,34 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings Vibe-Proxy integration", () => {
+  it("defaults to disabled and unconfigured", () => {
+    expect(decodeServerSettings({}).vibeProxy).toEqual({
+      enabled: false,
+      baseUrl: "",
+      apiKey: "",
+      apiKeyRedacted: false,
+    });
+  });
+
+  it("accepts trimmed configuration patches without exposing the redaction marker", () => {
+    expect(
+      decodeServerSettingsPatch({
+        vibeProxy: {
+          enabled: true,
+          baseUrl: "  http://vibe-proxy.local:8954  ",
+          apiKey: "  management-key  ",
+          apiKeyRedacted: true,
+        },
+      }).vibeProxy,
+    ).toEqual({
+      enabled: true,
+      baseUrl: "http://vibe-proxy.local:8954",
+      apiKey: "management-key",
+    });
+  });
+});
+
 describe("ServerSettings Operator", () => {
   it("defaults off for existing settings files", () => {
     expect(decodeServerSettings({}).agenticOperatorEnabled).toBe(false);

@@ -15,6 +15,7 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SettingsUsagesRouteImport } from './routes/settings.usages'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsNotificationsRouteImport } from './routes/settings.notifications'
@@ -59,6 +60,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SettingsUsagesRoute = SettingsUsagesRouteImport.update({
+  id: '/usages',
+  path: '/usages',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
@@ -156,6 +162,7 @@ export interface FileRoutesByFullPath {
   '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/usages': typeof SettingsUsagesRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -177,6 +184,7 @@ export interface FileRoutesByTo {
   '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/usages': typeof SettingsUsagesRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -201,6 +209,7 @@ export interface FileRoutesById {
   '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/usages': typeof SettingsUsagesRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -226,6 +235,7 @@ export interface FileRouteTypes {
     | '/settings/notifications'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/usages'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
@@ -247,6 +257,7 @@ export interface FileRouteTypes {
     | '/settings/notifications'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/usages'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -270,6 +281,7 @@ export interface FileRouteTypes {
     | '/settings/notifications'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/usages'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
@@ -328,6 +340,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/settings/usages': {
+      id: '/settings/usages'
+      path: '/usages'
+      fullPath: '/settings/usages'
+      preLoaderRoute: typeof SettingsUsagesRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/settings/source-control': {
       id: '/settings/source-control'
@@ -464,6 +483,7 @@ interface SettingsRouteChildren {
   SettingsNotificationsRoute: typeof SettingsNotificationsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
+  SettingsUsagesRoute: typeof SettingsUsagesRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -477,6 +497,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
+  SettingsUsagesRoute: SettingsUsagesRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
