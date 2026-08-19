@@ -190,6 +190,21 @@ describe("sanitizeThreadTitle", () => {
     );
   });
 
+  it("unwraps a JSON envelope inside a Markdown code block", () => {
+    expect(sanitizeThreadTitle('```json\n{"title": "Add dark mode toggle"}\n```')).toBe(
+      "Add dark mode toggle",
+    );
+    expect(sanitizeThreadTitle('```\n{"name": "Add dark mode toggle"}\n```')).toBe(
+      "Add dark mode toggle",
+    );
+    expect(sanitizeThreadTitle('`{"title": "Add dark mode toggle"}`')).toBe("Add dark mode toggle");
+  });
+
+  it("unwraps an envelope that is both quoted and fenced", () => {
+    // A JSON string whose contents are a fenced JSON block — Macroscope's case.
+    expect(sanitizeThreadTitle('"```json\\n{\\"title\\": \\"Fix test\\"}\\n```"')).toBe("Fix test");
+  });
+
   it("does not unwrap a JSON object embedded in surrounding prose", () => {
     expect(sanitizeThreadTitle('Document {"foo":"bar"} syntax')).toBe(
       'Document {"foo":"bar"} syntax',
