@@ -1,3 +1,10 @@
+import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationThreadShell,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -488,5 +495,100 @@ describe("archive lifecycle guards", () => {
         }),
       ).toBe(false);
     }
+  });
+
+  it("re-checks timestamp-aware merged-PR membership before Archive all mutates", async () => {
+    const threadKey = "merged-pr-thread";
+    const stableThreadKey = "stable-settled-thread";
+    const now = "2026-04-10T00:00:00.000Z";
+    const firstMergedAt = "2026-04-03T00:00:00.000Z";
+    let changeRequestUpdatedAt = firstMergedAt;
+    let thread: OrchestrationThreadShell = {
+      id: ThreadId.make(threadKey),
+      projectId: ProjectId.make("project-1"),
+      title: "Merged PR thread",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      session: null,
+      latestUserMessageAt: "2026-04-02T00:00:00.000Z",
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    };
+    const isMergedThreadSettled = () =>
+      effectiveSettled(thread, {
+        now,
+        autoSettleAfterDays: null,
+        changeRequest: { state: "merged", updatedAt: changeRequestUpdatedAt },
+      });
+    const readSettledThreadKeys = () =>
+      new Set([stableThreadKey, ...(isMergedThreadSettled() ? [threadKey] : [])]);
+
+    // The first merge is newer than the thread's latest activity, so it
+    // contributes this thread to the settled partition.
+    expect(isMergedThreadSettled()).toBe(true);
+
+    // A manual un-settle pins the thread active; the unchanged merged PR
+    // cannot immediately put it back in the settled partition.
+    thread = { ...thread, settledOverride: "active" };
+    expect(isMergedThreadSettled()).toBe(false);
+
+    // Real activity clears the explicit pin server-side. The old merge is
+    // now older than the conversation, so timestamp-aware auto-settle still
+    // leaves the thread active.
+    thread = {
+      ...thread,
+      settledOverride: null,
+      latestUserMessageAt: "2026-04-04T00:00:00.000Z",
+    };
+    expect(isMergedThreadSettled()).toBe(false);
+
+    // A later re-merge is a new terminal transition and restores membership.
+    changeRequestUpdatedAt = "2026-04-05T00:00:00.000Z";
+    expect(isMergedThreadSettled()).toBe(true);
+
+    const archiveAllSnapshot = [{ threadKey }, { threadKey: stableThreadKey }] as const;
+    let liveSettledThreadKeys = readSettledThreadKeys();
+    expect(liveSettledThreadKeys.has(threadKey)).toBe(true);
+
+    // Archive all captured the thread while settled, but it was manually
+    // un-settled while the flow waited. The live membership check must skip
+    // it while allowing the stable sibling to continue.
+    thread = { ...thread, settledOverride: "active" };
+    liveSettledThreadKeys = readSettledThreadKeys();
+
+    const archive = vi.fn(async (_entry, markArchived: () => void) => {
+      markArchived();
+      return { _tag: "Success" } as const;
+    });
+    const outcome = await archiveSelectedThreadEntries({
+      entries: archiveAllSnapshot,
+      archive,
+      canArchive: (entry) =>
+        canArchiveSettledSidebarThread({
+          threadKey: entry.threadKey,
+          settledThreadKeys: liveSettledThreadKeys,
+          session: null,
+          backgroundLiveness: null,
+        }),
+    });
+
+    expect(archive).toHaveBeenCalledOnce();
+    expect(archive).toHaveBeenCalledWith(archiveAllSnapshot[1], expect.any(Function));
+    expect(outcome).toEqual({
+      archivedThreadKeys: [stableThreadKey],
+      skippedThreadKeys: [threadKey],
+      mutationFailure: null,
+      followupFailures: [],
+    });
   });
 });
