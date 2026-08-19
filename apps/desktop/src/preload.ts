@@ -187,6 +187,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         colorScheme,
         timeoutMs,
       }),
+    setAudioMuted: (tabId, audioMuted) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
     openDevTools: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, { tabId }),
     clearCookies: () => ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL),
