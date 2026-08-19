@@ -2000,11 +2000,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     renamingInputRef.current = null;
   }, []);
 
-  const startThreadRename = useCallback((threadKey: string, title: string) => {
-    setRenamingThreadKey(threadKey);
-    setRenamingTitle(title);
-    renamingCommittedRef.current = false;
-  }, []);
+  const startThreadRename = useCallback(
+    (threadKey: string, title: string) => {
+      if (renamingThreadKey === threadKey) return;
+      setRenamingThreadKey(threadKey);
+      setRenamingTitle(title);
+      renamingCommittedRef.current = false;
+    },
+    [renamingThreadKey],
+  );
   useEffect(() => {
     if (!activeRouteThreadKey) return;
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -2019,7 +2023,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
       if (command !== "thread.rename") return;
       const activeThread = sidebarThreadByKey.get(activeRouteThreadKey);
-      if (!activeThread) return;
+      if (!activeThread || activeThread.archivedAt !== null) return;
       event.preventDefault();
       event.stopPropagation();
       const activeRowRendered = renderedThreads.some(
