@@ -68,7 +68,7 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
   const path = yield* Path.Path;
   const env = environment ?? process.env;
 
-  const homeDir = NodeOS.homedir();
+  const homeDir = env.HOME?.trim() || env.USERPROFILE?.trim() || NodeOS.homedir();
   const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
   const defaultConfigDir = xdgConfigHome
     ? path.join(xdgConfigHome, "opencode")

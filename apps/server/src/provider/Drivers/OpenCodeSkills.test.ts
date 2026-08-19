@@ -168,6 +168,32 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
     }),
   );
 
+  it.effect("scans home directory from HOME and USERPROFILE environment variables", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+      const customHome = path.join(tempDir, "custom-home");
+
+      yield* writeSkill(
+        path.join(customHome, ".opencode", "skills"),
+        "home-skill",
+        ["---", "name: home-skill", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverOpenCodeSkills(undefined, {
+        HOME: customHome,
+        XDG_CONFIG_HOME: path.join(tempDir, "empty-xdg"),
+      });
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["home-skill"],
+      );
+      assert.equal(skills[0]?.scope, "user");
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
