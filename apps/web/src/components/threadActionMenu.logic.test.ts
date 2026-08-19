@@ -96,9 +96,7 @@ describe("buildThreadActionMenuItems", () => {
     const archiveItem = buildThreadActionMenuItems({
       ...baseState,
       archive: { disabled: true },
-    }).find(
-      (item) => item.id === "archive",
-    );
+    }).find((item) => item.id === "archive");
     expect(archiveItem?.disabled).toBe(true);
   });
 });

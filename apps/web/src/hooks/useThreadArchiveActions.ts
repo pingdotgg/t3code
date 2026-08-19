@@ -129,15 +129,12 @@ export function useThreadArchiveActions({
 
   const attemptArchive = useCallback(
     (threadRef: ScopedThreadRef) => {
-      void archiveCoordinatedEntries(
-        [{ threadKey: scopedThreadKey(threadRef), threadRef }],
-        {
-          confirmationMessage: ([entry]) => {
-            const thread = entry ? readThreadShell(entry.threadRef) : null;
-            return thread ? `Archive thread "${thread.title}"?` : "Archive this thread?";
-          },
+      void archiveCoordinatedEntries([{ threadKey: scopedThreadKey(threadRef), threadRef }], {
+        confirmationMessage: ([entry]) => {
+          const thread = entry ? readThreadShell(entry.threadRef) : null;
+          return thread ? `Archive thread "${thread.title}"?` : "Archive this thread?";
         },
-      );
+      });
     },
     [archiveCoordinatedEntries],
   );

@@ -8,10 +8,7 @@ import {
   canArchiveSettledSidebarThread,
   isThreadArchiveBlocked,
 } from "../components/SidebarArchiveControls.logic";
-import {
-  useThreadArchiveActions,
-  type ThreadArchiveEntry,
-} from "./useThreadArchiveActions";
+import { useThreadArchiveActions, type ThreadArchiveEntry } from "./useThreadArchiveActions";
 
 export type SidebarArchiveEntry = ThreadArchiveEntry;
 
