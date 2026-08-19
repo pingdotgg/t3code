@@ -124,7 +124,6 @@ function ModelRow(props: {
         <View className="flex-row items-center gap-2">
           <Text
             className="min-w-0 shrink text-base font-t3-medium text-foreground"
-            numberOfLines={1}
           >
             {props.option.label}
           </Text>

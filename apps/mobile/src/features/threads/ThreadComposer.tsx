@@ -793,7 +793,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                           <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
                         }
                         label={currentModelOption?.label ?? currentModelSelection.model}
-                        maxWidth={152}
+                        maxWidth={null}
                         onPress={openSettings}
                       />
                     </View>
