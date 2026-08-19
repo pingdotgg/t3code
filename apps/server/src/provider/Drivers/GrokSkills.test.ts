@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { parseGrokInspectSkills } from "./GrokSkills.ts";
+import { discoverGrokSkills, parseGrokInspectSkills } from "./GrokSkills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 
@@ -84,5 +89,47 @@ describe("parseGrokInspectSkills", () => {
     expect(parseGrokInspectSkills("null")).toEqual([]);
     expect(parseGrokInspectSkills(JSON.stringify({ skills: "nope" }))).toEqual([]);
     expect(parseGrokInspectSkills(JSON.stringify({}))).toEqual([]);
+  });
+});
+
+describe("discoverGrokSkills", () => {
+  it.effect("spawns the inspect probe in the configured cwd", () => {
+    const spawnCwds: Array<string | undefined> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      spawnCwds.push(command._tag === "StandardCommand" ? command.options.cwd : undefined);
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.encodeText(
+            Stream.make(
+              inspectPayload([
+                {
+                  name: "kept",
+                  source: { type: "project", path: "/workspaces/demo/.grok/skills/kept/SKILL.md" },
+                },
+              ]),
+            ),
+          ),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {}, "/workspaces/demo").pipe(
+        Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+      );
+
+      expect(spawnCwds).toEqual(["/workspaces/demo"]);
+      expect(skills.map((skill) => skill.name)).toEqual(["kept"]);
+    });
   });
 });

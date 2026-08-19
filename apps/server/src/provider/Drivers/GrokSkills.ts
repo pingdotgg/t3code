@@ -83,6 +83,7 @@ export function parseGrokInspectSkills(stdout: string): ReadonlyArray<ServerProv
 export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
   grokSettings: Pick<GrokSettings, "binaryPath">,
   environment: NodeJS.ProcessEnv = process.env,
+  cwd?: string,
 ): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
   never,
@@ -96,6 +97,7 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
     return yield* spawnAndCollect(
       command,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        ...(cwd ? { cwd } : {}),
         env: environment,
         shell: spawnCommand.shell,
       }),
