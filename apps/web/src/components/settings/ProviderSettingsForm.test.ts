@@ -38,13 +38,16 @@ describe("ProviderSettingsForm helpers", () => {
     expect(deriveProviderSettingsFields(devin!).map((field) => field.key)).toEqual([
       "binaryPath",
       "homePath",
-      "launchArgs",
+      "configPath",
+      "agentType",
       "permissionMode",
+      "sandbox",
+      "respectWorkspaceTrust",
+      "launchArgs",
     ]);
 
-    const permissionMode = deriveProviderSettingsFields(devin!).find(
-      (field) => field.key === "permissionMode",
-    );
+    const fields = deriveProviderSettingsFields(devin!);
+    const permissionMode = fields.find((field) => field.key === "permissionMode");
     expect(permissionMode).toMatchObject({
       control: "select",
       options: [
@@ -54,6 +57,23 @@ describe("ProviderSettingsForm helpers", () => {
         { value: "dangerous", label: "Dangerous" },
         { value: "autonomous", label: "Autonomous" },
       ],
+    });
+    expect(fields.find((field) => field.key === "agentType")).toMatchObject({
+      control: "select",
+      defaultValue: "default",
+      options: [
+        { value: "default", label: "Default coding agent" },
+        { value: "review", label: "Review (read-only)" },
+        { value: "summarizer", label: "Summarizer (no tools)" },
+      ],
+    });
+    expect(fields.find((field) => field.key === "sandbox")).toMatchObject({
+      control: "switch",
+      defaultBooleanValue: false,
+    });
+    expect(fields.find((field) => field.key === "respectWorkspaceTrust")).toMatchObject({
+      control: "switch",
+      defaultBooleanValue: true,
     });
   });
 
