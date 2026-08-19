@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "../../hooks/useSettings";
+import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
@@ -42,6 +43,7 @@ export function FirstRunGate({
 }) {
   const navigate = useNavigate();
   const hydrated = useClientSettingsHydrated();
+  const completeOnboarding = useCompleteOnboarding();
   const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const projects = useProjects();
@@ -77,22 +79,41 @@ export function FirstRunGate({
       setDecision("app");
       return;
     }
+    // Anything beyond the single cwd-bootstrap project/thread is provably
+    // real user state, so resolve immediately instead of holding the app
+    // behind the full bootstrap signal. Every install that predates the flag
+    // decodes it as `null`; backfilling here means only their first
+    // post-update load evaluates the workspace at all.
+    if (projects.length > 1 || threads.length > 1) {
+      completeOnboarding();
+      setDecision("app");
+      return;
+    }
     // Both shells AND the server config must be in before the workspace can
     // be judged: shells bootstrap and config load independently, and a
     // disconnected environment reports bootstrapped with empty projections.
     // Without the config a fresh cwd-bootstrapped install would read as
     // non-fresh (projects but no cwd yet), and an offline existing install
     // would read as fresh (nothing at all). Config never arriving means the
-    // timeout below falls back to the app.
+    // timeout below falls back to the app — without backfilling, so a fresh
+    // install on a slow start still gets the wizard on its next load.
     if (!bootstrapped || serverConfig === null) return;
-    setDecision(workspaceFresh ? "wizard" : "app");
+    if (workspaceFresh) {
+      setDecision("wizard");
+      return;
+    }
+    completeOnboarding();
+    setDecision("app");
   }, [
     bootstrapped,
+    completeOnboarding,
     decision,
     enabled,
     hydrated,
     onboardingCompletedAt,
+    projects.length,
     serverConfig,
+    threads.length,
     workspaceFresh,
   ]);
 
