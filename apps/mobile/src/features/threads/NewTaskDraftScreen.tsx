@@ -1004,7 +1004,7 @@ export function NewTaskDraftScreen(props: {
                 <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
               }
               label={flow.selectedModelOption?.label ?? "Choose model"}
-              maxWidth={152}
+              maxWidth={null}
               onPress={settingsSheetPresentation.open}
             />
             {flow.planModeEnabled ? (

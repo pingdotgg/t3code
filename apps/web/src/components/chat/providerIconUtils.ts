@@ -56,5 +56,12 @@ export function getTriggerDisplayModelName(model: ModelEsque): string {
 }
 
 export function getTriggerDisplayModelLabel(model: ModelEsque): string {
-  return getTriggerDisplayModelName(model);
+  const modelName = getTriggerDisplayModelName(model);
+  const subProvider = model.subProvider?.trim();
+  return subProvider ? `${modelName} · ${subProvider}` : modelName;
+}
+
+export function getModelSourceLabel(model: ModelEsque, runtimeDisplayName: string): string {
+  const subProvider = model.subProvider?.trim();
+  return subProvider ? `${runtimeDisplayName} · ${subProvider}` : runtimeDisplayName;
 }

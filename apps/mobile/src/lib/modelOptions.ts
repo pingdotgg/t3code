@@ -38,6 +38,14 @@ function providerDisplayLabel(provider: {
   return provider.instanceId;
 }
 
+function modelDisplayLabel(model: {
+  readonly name: string;
+  readonly subProvider?: string | undefined;
+}): string {
+  const subProvider = model.subProvider?.trim();
+  return subProvider ? `${model.name} · ${subProvider}` : model.name;
+}
+
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
@@ -120,7 +128,7 @@ export function buildModelOptions(
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
-        label: model.name,
+        label: modelDisplayLabel(model),
         subtitle: providerLabel,
         providerKey: provider.instanceId,
         providerLabel,

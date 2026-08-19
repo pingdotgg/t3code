@@ -35,7 +35,7 @@ export function ComposerInlineControl(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly iconNode?: ReactNode;
   readonly label: string;
-  readonly maxWidth?: number;
+  readonly maxWidth?: number | null;
   readonly onPress?: () => void;
   readonly selected?: boolean;
   readonly static?: boolean;
@@ -57,7 +57,10 @@ export function ComposerInlineControl(props: {
       className="h-11 flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
       disabled={props.disabled || props.static}
       onPress={props.onPress}
-      style={{ maxWidth: props.maxWidth ?? 190, opacity: props.disabled ? 0.45 : 1 }}
+      style={{
+        maxWidth: props.maxWidth === null ? undefined : (props.maxWidth ?? 190),
+        opacity: props.disabled ? 0.45 : 1,
+      }}
     >
       {props.iconNode ? (
         <View className="size-4 shrink-0 items-center justify-center">{props.iconNode}</View>

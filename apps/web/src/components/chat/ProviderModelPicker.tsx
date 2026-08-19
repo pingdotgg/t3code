@@ -65,7 +65,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
-  const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
+  const triggerModelName = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
+  const triggerSubProvider = selectedModel?.subProvider?.trim() || null;
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -150,7 +151,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             data-chat-provider-model-picker="true"
             className={cn(
               "min-w-0 justify-between whitespace-nowrap",
-              props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56",
+              props.compact ? "max-w-42 shrink-0" : "shrink",
               props.triggerClassName,
             )}
             disabled={props.disabled}
@@ -174,8 +175,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             />
           ) : null}
           <Tooltip>
-            <TooltipTrigger render={<span className="min-w-0 flex-1 overflow-hidden truncate" />}>
-              {triggerTitle}
+            <TooltipTrigger
+              render={<span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden" />}
+            >
+              <span className="min-w-0 truncate">{triggerModelName}</span>
+              {triggerSubProvider ? (
+                <span className="shrink-0 text-muted-foreground">· {triggerSubProvider}</span>
+              ) : null}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>

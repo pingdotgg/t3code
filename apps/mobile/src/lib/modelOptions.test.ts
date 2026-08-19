@@ -51,6 +51,35 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("qualifies models exposed by a sub-provider", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "opencode",
+          driver: "opencode",
+          displayName: "OpenCode",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "openai/gpt-5.4",
+              name: "GPT-5.4",
+              subProvider: "OpenAI",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)[0]).toMatchObject({
+      label: "GPT-5.4 · OpenAI",
+      subtitle: "OpenCode",
+    });
+  });
+
   it("normalizes a legacy fallback selection against current capabilities", () => {
     const config = {
       providers: [
