@@ -36,6 +36,7 @@ import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as PreparedWorktreeVerifier from "./PreparedWorktreeVerifier.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
@@ -74,6 +75,7 @@ interface HarnessOptions {
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly verifyPrepared?: PreparedWorktreeVerifier.PreparedWorktreeVerifier["Service"]["verify"];
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -106,6 +108,17 @@ function makeHarness(options: HarnessOptions = {}) {
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
+  const verifyPrepared = vi.fn(
+    options.verifyPrepared ??
+      ((checkout) =>
+        Effect.succeed({
+          repositoryRoot: checkout.repositoryRoot,
+          gitCommonDir: checkout.gitCommonDir,
+          worktreePath: checkout.worktreePath,
+          branch: checkout.branch,
+          startingCommit: checkout.startingCommit,
+        })),
+  );
   const externalServices = Layer.mergeAll(
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
@@ -133,6 +146,7 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     ServerSettings.layerTest(options.serverSettings),
     makeProviderRegistryLayer(options.providers),
+    Layer.succeed(PreparedWorktreeVerifier.PreparedWorktreeVerifier, { verify: verifyPrepared }),
   );
   const launch = ThreadLaunch.layer.pipe(
     Layer.provide(Layer.mergeAll(externalServices, threadManagement, receipts, IdAllocator.layer)),
@@ -165,6 +179,7 @@ function makeHarness(options: HarnessOptions = {}) {
     generateBranchName,
     generateThreadTitle,
     runSetup,
+    verifyPrepared,
   };
 }
 
@@ -893,6 +908,84 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
         oldBranch: "t3code/abcd1234",
         newBranch: "generated-branch",
       });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("verifies a prepared worktree before release and skips setup and branch rename", () =>
+  Effect.gen(function* () {
+    const verificationEntered = yield* Deferred.make<void>();
+    const allowVerification = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      verifyPrepared: (checkout) =>
+        Deferred.succeed(verificationEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowVerification)),
+          Effect.as({
+            repositoryRoot: checkout.repositoryRoot,
+            gitCommonDir: checkout.gitCommonDir,
+            worktreePath: checkout.worktreePath,
+            branch: checkout.branch,
+            startingCommit: checkout.startingCommit,
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const workspace = {
+        type: "prepared_worktree" as const,
+        repositoryRoot: "/repo",
+        gitCommonDir: "/repo/.git",
+        worktreePath: "/repo-worktrees/prepared",
+        branch: "t3code/prepared",
+        startingCommit: "abc123",
+      };
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:prepared-worktree",
+          thread: "thread:launch:prepared-worktree",
+          message: "Build the feature",
+          workspace,
+        }),
+      );
+      yield* Deferred.await(verificationEntered);
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).runs[0]?.status,
+        "preparing",
+      );
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+      assert.equal(harness.generateBranchName.mock.calls.length, 0);
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      assert.deepEqual(harness.verifyPrepared.mock.calls[0]?.[0], workspace);
+      yield* Deferred.succeed(allowVerification, undefined);
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(launched.threadId)
+          .pipe(Effect.map((projection) => projection.runs[0]?.status === "starting")),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("reuses the receipt thread when an idempotent launch did not supply a thread id", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({
+        command: "command:launch:receipt-thread",
+        thread: "unused-explicit-thread",
+        message: "Build the feature",
+        workspace: { type: "root" },
+      });
+      const { threadId: _unused, ...withoutThreadId } = input;
+
+      const first = yield* launches.launch(withoutThreadId);
+      const replay = yield* launches.launch(withoutThreadId);
+
+      assert.equal(replay.threadId, first.threadId);
+      assert.equal(replay.projection.runs[0]?.id, first.projection.runs[0]?.id);
+      assert.isTrue(replay.resumed);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

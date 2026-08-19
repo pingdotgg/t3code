@@ -41,6 +41,8 @@ import { layerFromProjectRepository as runtimePolicyLayerFromProjectRepository }
 import { layer as runtimeRequestServiceLayer } from "./RuntimeRequestService.ts";
 import { layerWithLegacyImporter as threadManagementServiceLayer } from "./ThreadManagementService.ts";
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
+import { layer as preparedWorktreeVerifierLayer } from "./PreparedWorktreeVerifier.ts";
+import { layer as programAttemptServiceLayer } from "./ProgramAttemptService.ts";
 import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
@@ -196,8 +198,12 @@ const threadLaunchProvided = threadLaunchServiceLayer.pipe(
       threadManagementProvided,
       commandReceiptStoreProvided,
       idAllocatorLayer,
+      preparedWorktreeVerifierLayer,
     ),
   ),
+);
+const programAttemptProvided = programAttemptServiceLayer.pipe(
+  Layer.provide(Layer.mergeAll(threadLaunchProvided, threadManagementProvided)),
 );
 const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
   Layer.provide(threadManagementProvided),
@@ -258,6 +264,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   OrchestrationV2LayerLive,
   ProjectServiceLayerLive,
   threadLaunchProvided,
+  programAttemptProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,
   providerContinuationWorkerProvided,

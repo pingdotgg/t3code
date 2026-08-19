@@ -5522,7 +5522,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: {
           ...state.preparationItem,
-          title: command.phase === "worktree" ? "Preparing worktree" : "Starting setup script",
+          title:
+            command.phase === "worktree"
+              ? "Preparing worktree"
+              : command.phase === "verification"
+                ? "Verifying prepared worktree"
+                : "Starting setup script",
           updatedAt: now,
         },
       });

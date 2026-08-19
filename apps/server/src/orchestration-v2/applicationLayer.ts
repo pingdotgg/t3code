@@ -3,6 +3,7 @@ import * as Layer from "effect/Layer";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { layer as projectServiceLayer } from "../project/ProjectService.ts";
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
+import { layer as preparedWorktreeVerifierLayer } from "./PreparedWorktreeVerifier.ts";
 import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { live as resourceCleanupLive } from "./ResourceCleanupService.ts";
 import { observerLive as runFinalizationObserverLive } from "./RunFinalizationService.ts";
@@ -12,7 +13,7 @@ const projectServiceProvided = projectServiceLayer.pipe(
 );
 
 const applicationServices = Layer.mergeAll(
-  threadLaunchServiceLayer,
+  threadLaunchServiceLayer.pipe(Layer.provide(preparedWorktreeVerifierLayer)),
   threadLifecycleServiceLayer,
 ).pipe(Layer.provideMerge(projectServiceProvided));
 

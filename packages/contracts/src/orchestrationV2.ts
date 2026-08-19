@@ -2126,7 +2126,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
-    phase: Schema.Literals(["worktree", "setup"]),
+    phase: Schema.Literals(["worktree", "verification", "setup"]),
   }),
   Schema.Struct({
     type: Schema.Literal("prepared-run.fail"),

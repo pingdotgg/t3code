@@ -7,6 +7,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2ThreadProjection,
   type ProviderInteractionMode,
+  type ProgramAttemptCheckout,
   ProjectId,
   type RunId,
   type RuntimeMode,
@@ -34,6 +35,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as PreparedWorktreeVerifier from "./PreparedWorktreeVerifier.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -42,6 +44,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly worktreePath: string;
       readonly branch?: string | undefined;
     }
+  | ({ readonly type: "prepared_worktree" } & ProgramAttemptCheckout)
   | {
       readonly type: "worktree";
       readonly baseRef: string;
@@ -91,6 +94,7 @@ export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError
       "dispatch-message",
       "release-run",
       "fail-run",
+      "verify-prepared-worktree",
     ]),
     commandId: CommandId,
     projectId: ProjectId,
@@ -133,6 +137,7 @@ export const make = Effect.gen(function* () {
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const preparedWorktrees = yield* PreparedWorktreeVerifier.PreparedWorktreeVerifier;
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
@@ -224,7 +229,8 @@ export const make = Effect.gen(function* () {
       branch = requestedBranch ?? null;
     }
     let worktreePath =
-      input.workspaceStrategy.type === "existing_worktree"
+      input.workspaceStrategy.type === "existing_worktree" ||
+      input.workspaceStrategy.type === "prepared_worktree"
         ? input.workspaceStrategy.worktreePath
         : null;
     if (input.workspaceStrategy.type === "worktree") {
@@ -286,7 +292,8 @@ export const make = Effect.gen(function* () {
       worktreePath !== null &&
       branch !== null &&
       initialMessage !== undefined &&
-      isTemporaryWorktreeBranch(branch)
+      isTemporaryWorktreeBranch(branch) &&
+      input.workspaceStrategy.type !== "prepared_worktree"
     ) {
       const oldBranch = branch;
       const worktreeCwd = worktreePath;
@@ -321,22 +328,28 @@ export const make = Effect.gen(function* () {
           commandId: CommandId.make(`${input.commandId}:progress:setup`),
           threadId,
           runId,
-          phase: "setup",
+          phase: input.workspaceStrategy.type === "prepared_worktree" ? "verification" : "setup",
         })
         .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
     }
-    yield* setupScripts
-      .runForThread({
-        threadId,
-        projectId: input.projectId,
-        projectCwd: project.workspaceRoot,
-        worktreePath: cwd,
-        project: {
-          workspaceRoot: project.workspaceRoot,
-          scripts: project.scripts,
-        },
-      })
-      .pipe(Effect.mapError(mapError(input, "run-setup-script", threadId)));
+    if (input.workspaceStrategy.type === "prepared_worktree") {
+      yield* preparedWorktrees
+        .verify(input.workspaceStrategy, project.workspaceRoot)
+        .pipe(Effect.mapError(mapError(input, "verify-prepared-worktree", threadId)));
+    } else {
+      yield* setupScripts
+        .runForThread({
+          threadId,
+          projectId: input.projectId,
+          projectCwd: project.workspaceRoot,
+          worktreePath: cwd,
+          project: {
+            workspaceRoot: project.workspaceRoot,
+            scripts: project.scripts,
+          },
+        })
+        .pipe(Effect.mapError(mapError(input, "run-setup-script", threadId)));
+    }
 
     if (runId !== null) {
       yield* threads
@@ -440,9 +453,11 @@ export const make = Effect.gen(function* () {
       return yield* Effect.gen(function* () {
         const candidateThreadId =
           input.threadId ??
-          (yield* ids.allocate
-            .thread({ projectId: input.projectId })
-            .pipe(Effect.mapError(mapError(input, "create-thread"))));
+          (Option.isSome(launchReceipt)
+            ? launchReceipt.value.threadId
+            : yield* ids.allocate
+                .thread({ projectId: input.projectId })
+                .pipe(Effect.mapError(mapError(input, "create-thread"))));
 
         if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
           yield* validateReusableThread(input, candidateThreadId);
@@ -450,7 +465,8 @@ export const make = Effect.gen(function* () {
 
         const initialBranch = input.workspaceStrategy.branch ?? null;
         const initialWorktreePath =
-          input.workspaceStrategy.type === "existing_worktree"
+          input.workspaceStrategy.type === "existing_worktree" ||
+          input.workspaceStrategy.type === "prepared_worktree"
             ? input.workspaceStrategy.worktreePath
             : null;
         const claimDispatch =

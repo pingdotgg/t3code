@@ -32,6 +32,13 @@ import {
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
 } from "./orchestrationV2.ts";
+import {
+  ProgramAttemptCancelInput,
+  ProgramAttemptEffectInput,
+  ProgramAttemptIdentityInput,
+  ProgramAttemptLaunchInput,
+  ProgramAttemptSnapshot,
+} from "./programAttempt.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
   PullRequestDiffInput,
@@ -188,7 +195,10 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "program_attempt_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
@@ -506,6 +516,14 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
   EnvironmentInternalError,
 ] as const;
 
+const EnvironmentProgramAttemptErrors = [
+  EnvironmentHttpBadRequestError,
+  EnvironmentHttpConflictError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
@@ -537,6 +555,40 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       query: EnvironmentOrchestrationThreadHistoryQuery,
       success: OrchestrationV2ThreadHistoryPage,
       error: EnvironmentOrchestrationThreadHistoryErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+export class EnvironmentProgramAttemptsHttpApi extends HttpApiGroup.make("programAttempts")
+  .add(
+    HttpApiEndpoint.post("launch", "/api/program-attempts/launch", {
+      headers: OptionalBearerHeaders,
+      payload: ProgramAttemptLaunchInput,
+      success: ProgramAttemptSnapshot,
+      error: EnvironmentProgramAttemptErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("observe", "/api/program-attempts/observe", {
+      headers: OptionalBearerHeaders,
+      payload: ProgramAttemptIdentityInput,
+      success: ProgramAttemptSnapshot,
+      error: EnvironmentProgramAttemptErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancel", "/api/program-attempts/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: ProgramAttemptCancelInput,
+      success: ProgramAttemptSnapshot,
+      error: EnvironmentProgramAttemptErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("acknowledge", "/api/program-attempts/acknowledge", {
+      headers: OptionalBearerHeaders,
+      payload: ProgramAttemptEffectInput,
+      success: ProgramAttemptSnapshot,
+      error: EnvironmentProgramAttemptErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
@@ -638,6 +690,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
+  .add(EnvironmentProgramAttemptsHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi) {}
