@@ -533,6 +533,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >(new Map());
   const actionSequenceRef = yield* Ref.make(0);
   const pointerSequenceRef = yield* Ref.make(0);
+  // Sustained recording/PiP capture sessions only. One-shot automation
+  // snapshots use their renderer presentation lease and never enter this map.
   const frameCaptureSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<string, FrameCaptureSession>
   >(new Map());
@@ -2082,15 +2084,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // A zoom or mute action that landed while this attach was in flight
     // addressed the guest this one replaced, so settle the new guest on the
     // committed values.
-    yield* assertTabZoom(tabId);
-    // Best-effort here, unlike in setAudioMuted: a guest that dies mid-attach
-    // must not fail the registration it was attaching for.
-    yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
-    // The default scheme needs no CDP state, so keep debugger attachment lazy
-    // for the common offscreen-registration path. A persisted override still
-    // needs to follow a replaced guest immediately; its restore path is
-    // separately bounded and releases a stalled session.
-    if (registered.colorScheme !== "system") runFork(restoreControlSession(tabId, wc));
+    yield* reconcileRegisteredGuestState(tabId, wc, registered.colorScheme);
     // emitIfCurrent, not emit: audio-state-changed can land between the commit
     // above and here, and republishing this snapshot would roll the UI back to
     // a superseded audibility that syncTabAudible will not re-send.
@@ -2488,6 +2482,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ),
       Effect.ignore,
     );
+
+  const reconcileRegisteredGuestState = Effect.fn("PreviewManager.reconcileRegisteredGuestState")(
+    function* (
+      tabId: string,
+      wc: Electron.WebContents,
+      registeredColorScheme: DesktopPreviewColorScheme,
+    ) {
+      yield* assertTabZoom(tabId);
+      // Mute is native guest state and needs no CDP session. Best-effort here,
+      // unlike in setAudioMuted: a guest that dies mid-attach must not fail the
+      // registration it was attaching for.
+      yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
+      // Appearance overrides are CDP state. Keep the common system-scheme path
+      // detached; non-system restoration is separately bounded and tears down a
+      // stalled session.
+      if (registeredColorScheme !== "system") runFork(restoreControlSession(tabId, wc));
+    },
+  );
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
     tabId: string,

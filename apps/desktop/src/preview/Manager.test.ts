@@ -116,7 +116,7 @@ const {
     browserWindowConstructor,
     createFromBuffer: vi.fn(),
     createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
-    fromId: vi.fn((_id?: number) => null),
+    fromId: vi.fn<(_id?: number) => Electron.WebContents | null>(() => null),
     getFocusedWebContents: vi.fn(() => null),
     mkdir: vi.fn((_path: string) => undefined),
     showItemInFolder: vi.fn(),
@@ -200,21 +200,41 @@ const withManager = <A>(
   }).pipe(Effect.provide(layer), Effect.scoped);
 
 interface TestCapturedPreviewImage {
-  readonly toJPEG: () => Buffer;
+  readonly toJPEG?: () => Buffer;
   readonly getSize: () => { readonly width: number; readonly height: number };
 }
 
+type TestPreviewDebuggerOverrides = Partial<
+  Pick<
+    Electron.WebContents["debugger"],
+    "isAttached" | "attach" | "detach" | "sendCommand" | "on" | "off"
+  >
+>;
+
+interface TestPreviewWebContentsOptions {
+  readonly capturePage?: () => Promise<TestCapturedPreviewImage>;
+  readonly id?: number;
+  readonly getURL?: Electron.WebContents["getURL"];
+  readonly isDevToolsOpened?: Electron.WebContents["isDevToolsOpened"];
+  readonly debugger?: TestPreviewDebuggerOverrides;
+}
+
 const makeTestPreviewWebContents = (
-  capturePage: () => Promise<TestCapturedPreviewImage>,
-  id = 42,
-) =>
-  ({
-    id,
+  options: TestPreviewWebContentsOptions = {},
+): Electron.WebContents => {
+  const capturePage =
+    options.capturePage ??
+    (async () => {
+      throw new Error("Unexpected preview capture");
+    });
+  return {
+    id: options.id ?? 42,
     isDestroyed: () => false,
     getType: () => "webview",
-    getURL: () => "https://example.com",
+    getURL: options.getURL ?? (() => "https://example.com"),
     getTitle: () => "Example",
     isLoading: () => false,
+    isDevToolsOpened: options.isDevToolsOpened ?? (() => false),
     getZoomFactor: () => 1,
     setZoomFactor: vi.fn(),
     setAudioMuted: vi.fn(),
@@ -231,9 +251,11 @@ const makeTestPreviewWebContents = (
       sendCommand: vi.fn(async () => undefined),
       on: vi.fn(),
       off: vi.fn(),
+      ...options.debugger,
     },
     capturePage,
-  }) as never;
+  } as unknown as Electron.WebContents;
+};
 
 const TEST_FAVICON = "data:image/png;base64,cG5n";
 
@@ -491,34 +513,20 @@ describe("PreviewManager", () => {
               return {};
             },
           );
-          fromId.mockReturnValue({
-            id: 42,
-            isDestroyed: () => false,
-            getType: () => "webview",
-            getURL: () => "https://example.com/",
-            getTitle: () => "Example",
-            isLoading: () => false,
-            isDevToolsOpened: () => false,
-            getZoomFactor: () => 1,
-            setZoomFactor: vi.fn(),
-            setAudioMuted: vi.fn(),
-            isCurrentlyAudible: () => false,
-            on: vi.fn(),
-            off: vi.fn(),
-            ipc: { on: vi.fn(), off: vi.fn() },
-            send: webviewSend,
-            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-            setWindowOpenHandler: vi.fn(),
-            capturePage,
-            debugger: {
-              isAttached: () => attached,
-              attach,
-              detach,
-              sendCommand,
-              on: vi.fn(),
-              off: vi.fn(),
-            },
-          } as never);
+          fromId.mockReturnValue(
+            makeTestPreviewWebContents({
+              capturePage,
+              id: 42,
+              getURL: () => "https://example.com/",
+              isDevToolsOpened: () => false,
+              debugger: {
+                isAttached: () => attached,
+                attach,
+                detach,
+                sendCommand,
+              },
+            }),
+          );
           yield* manager.createTab("tab_snapshot");
           yield* manager.registerWebview("tab_snapshot", 42);
           yield* Effect.yieldNow;
@@ -687,33 +695,18 @@ describe("PreviewManager", () => {
           }
           return method === "Runtime.evaluate" ? { result: { value: "recovered" } } : undefined;
         });
-        fromId.mockReturnValue({
-          id: 43,
-          isDestroyed: () => false,
-          getType: () => "webview",
-          getURL: () => "https://example.com/",
-          getTitle: () => "Example",
-          isLoading: () => false,
-          isDevToolsOpened: () => false,
-          getZoomFactor: () => 1,
-          setZoomFactor: vi.fn(),
-          setAudioMuted: vi.fn(),
-          isCurrentlyAudible: () => false,
-          on: vi.fn(),
-          off: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn() },
-          send: webviewSend,
-          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-          setWindowOpenHandler: vi.fn(),
-          debugger: {
-            isAttached: () => attached,
-            attach,
-            detach,
-            sendCommand,
-            on: vi.fn(),
-            off: vi.fn(),
-          },
-        } as never);
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents({
+            id: 43,
+            getURL: () => "https://example.com/",
+            debugger: {
+              isAttached: () => attached,
+              attach,
+              detach,
+              sendCommand,
+            },
+          }),
+        );
 
         yield* manager.createTab("tab_timeout");
         yield* manager.registerWebview("tab_timeout", 43);
@@ -763,33 +756,18 @@ describe("PreviewManager", () => {
           }
           return method === "Runtime.evaluate" ? { result: { value: "recovered" } } : undefined;
         });
-        fromId.mockReturnValue({
-          id: 44,
-          isDestroyed: () => false,
-          getType: () => "webview",
-          getURL: () => "https://example.com/",
-          getTitle: () => "Example",
-          isLoading: () => false,
-          isDevToolsOpened: () => false,
-          getZoomFactor: () => 1,
-          setZoomFactor: vi.fn(),
-          setAudioMuted: vi.fn(),
-          isCurrentlyAudible: () => false,
-          on: vi.fn(),
-          off: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn() },
-          send: webviewSend,
-          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-          setWindowOpenHandler: vi.fn(),
-          debugger: {
-            isAttached: () => attached,
-            attach,
-            detach,
-            sendCommand,
-            on: vi.fn(),
-            off: vi.fn(),
-          },
-        } as never);
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents({
+            id: 44,
+            getURL: () => "https://example.com/",
+            debugger: {
+              isAttached: () => attached,
+              attach,
+              detach,
+              sendCommand,
+            },
+          }),
+        );
 
         yield* manager.createTab("tab_queued_timeout");
         yield* manager.registerWebview("tab_queued_timeout", 44);
@@ -1754,33 +1732,17 @@ describe("PreviewManager", () => {
           attached = false;
         });
         const sendCommand = vi.fn(() => new Promise<unknown>(() => undefined));
-        fromId.mockReturnValue({
-          id: 42,
-          isDestroyed: () => false,
-          isDevToolsOpened: () => false,
-          getType: () => "webview",
-          getURL: () => "https://example.com",
-          getTitle: () => "Example",
-          isLoading: () => false,
-          getZoomFactor: () => 1,
-          setZoomFactor: vi.fn(),
-          setAudioMuted: vi.fn(),
-          isCurrentlyAudible: () => false,
-          on: vi.fn(),
-          off: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn() },
-          send: webviewSend,
-          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-          setWindowOpenHandler: vi.fn(),
-          debugger: {
-            isAttached: () => attached,
-            attach,
-            detach,
-            sendCommand,
-            on: vi.fn(),
-            off: vi.fn(),
-          },
-        } as never);
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents({
+            id: 42,
+            debugger: {
+              isAttached: () => attached,
+              attach,
+              detach,
+              sendCommand,
+            },
+          }),
+        );
         const states: PreviewManager.PreviewTabState[] = [];
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
@@ -1830,37 +1792,21 @@ describe("PreviewManager", () => {
             return undefined;
           },
         );
-        fromId.mockReturnValue({
-          id: 42,
-          isDestroyed: () => false,
-          isDevToolsOpened: () => false,
-          getType: () => "webview",
-          getURL: () => "https://example.com",
-          getTitle: () => "Example",
-          isLoading: () => false,
-          getZoomFactor: () => 1,
-          setZoomFactor: vi.fn(),
-          setAudioMuted: vi.fn(),
-          isCurrentlyAudible: () => false,
-          on: vi.fn(),
-          off: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn() },
-          send: webviewSend,
-          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-          setWindowOpenHandler: vi.fn(),
-          debugger: {
-            isAttached: () => attached,
-            attach: vi.fn(() => {
-              attached = true;
-            }),
-            detach: vi.fn(() => {
-              attached = false;
-            }),
-            sendCommand,
-            on: vi.fn(),
-            off: vi.fn(),
-          },
-        } as never);
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents({
+            id: 42,
+            debugger: {
+              isAttached: () => attached,
+              attach: vi.fn(() => {
+                attached = true;
+              }),
+              detach: vi.fn(() => {
+                attached = false;
+              }),
+              sendCommand,
+            },
+          }),
+        );
         const states: PreviewManager.PreviewTabState[] = [];
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
@@ -1910,24 +1856,8 @@ describe("PreviewManager", () => {
           sendCommand: typeof firstSendCommand | typeof replacementSendCommand,
         ) => {
           let attached = false;
-          return {
+          return makeTestPreviewWebContents({
             id,
-            isDestroyed: () => false,
-            isDevToolsOpened: () => false,
-            getType: () => "webview",
-            getURL: () => "https://example.com",
-            getTitle: () => "Example",
-            isLoading: () => false,
-            getZoomFactor: () => 1,
-            setZoomFactor: vi.fn(),
-            setAudioMuted: vi.fn(),
-            isCurrentlyAudible: () => false,
-            on: vi.fn(),
-            off: vi.fn(),
-            ipc: { on: vi.fn(), off: vi.fn() },
-            send: webviewSend,
-            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-            setWindowOpenHandler: vi.fn(),
             debugger: {
               isAttached: () => attached,
               attach: vi.fn(() => {
@@ -1938,10 +1868,8 @@ describe("PreviewManager", () => {
                 if (id === 42) rejectFirstGuest?.(new Error("old guest detached"));
               }),
               sendCommand,
-              on: vi.fn(),
-              off: vi.fn(),
             },
-          } as never;
+          });
         };
         const first = makeWebContents(42, firstSendCommand);
         const replacement = makeWebContents(43, replacementSendCommand);
@@ -1999,11 +1927,13 @@ describe("PreviewManager", () => {
 
   const makeAudioWebContents = (id: number) => {
     const listeners = new Map<string, (...args: never[]) => void>();
+    const attach = vi.fn();
     const setAudioMuted = vi.fn();
     let audible = false;
     let audibleAfterFirstRead = false;
     let audibleReads = 0;
     return {
+      attach,
       setAudioMuted,
       emitAudioState: (next: boolean) => {
         audible = next;
@@ -2046,7 +1976,7 @@ describe("PreviewManager", () => {
         setWindowOpenHandler: vi.fn(),
         debugger: {
           isAttached: () => false,
-          attach: vi.fn(),
+          attach,
           sendCommand: vi.fn(async () => undefined),
           on: vi.fn(),
           off: vi.fn(),
@@ -2072,6 +2002,7 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
 
         expect(states.at(-1)?.audioMuted).toBe(false);
+        expect(first.attach).not.toHaveBeenCalled();
 
         yield* manager.setAudioMuted("tab_audio", true);
 
@@ -2085,6 +2016,7 @@ describe("PreviewManager", () => {
 
         expect(replacement.setAudioMuted).toHaveBeenCalledWith(true);
         expect(states.at(-1)?.audioMuted).toBe(true);
+        expect(replacement.attach).not.toHaveBeenCalled();
 
         yield* manager.setAudioMuted("tab_audio", false);
 
@@ -2285,8 +2217,8 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("close-race-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        const firstWebContents = makeTestPreviewWebContents(capturePage, 42);
-        const replacementWebContents = makeTestPreviewWebContents(capturePage, 43);
+        const firstWebContents = makeTestPreviewWebContents({ capturePage, id: 42 });
+        const replacementWebContents = makeTestPreviewWebContents({ capturePage, id: 43 });
         const replacementListenerSpies = replacementWebContents as unknown as {
           readonly on: ReturnType<typeof vi.fn>;
           readonly off: ReturnType<typeof vi.fn>;
@@ -2530,8 +2462,8 @@ describe("PreviewManager", () => {
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const webContentsById = new Map([
-          [41, makeTestPreviewWebContents(capturePage, 41)],
-          [42, makeTestPreviewWebContents(capturePage, 42)],
+          [41, makeTestPreviewWebContents({ capturePage, id: 41 })],
+          [42, makeTestPreviewWebContents({ capturePage, id: 42 })],
         ]);
         fromId.mockImplementation((id) =>
           id === undefined ? null : (webContentsById.get(id) ?? null),
@@ -2568,7 +2500,7 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
 
         yield* manager.createTab("tab_capture_throttling_failure");
         yield* manager.registerWebview("tab_capture_throttling_failure", 42);
@@ -2619,7 +2551,7 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
 
         yield* manager.createTab("tab_capture_replacement_failure");
         yield* manager.registerWebview("tab_capture_replacement_failure", 42);
@@ -2650,7 +2582,7 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
 
         yield* manager.createTab("tab_replaced_window_close");
         yield* manager.registerWebview("tab_replaced_window_close", 42);
@@ -2688,8 +2620,8 @@ describe("PreviewManager", () => {
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const webContentsById = new Map([
-          [42, makeTestPreviewWebContents(capturePage, 42)],
-          [43, makeTestPreviewWebContents(capturePage, 43)],
+          [42, makeTestPreviewWebContents({ capturePage, id: 42 })],
+          [43, makeTestPreviewWebContents({ capturePage, id: 43 })],
         ]);
         fromId.mockImplementation((id) =>
           id === undefined ? null : (webContentsById.get(id) ?? null),
@@ -2858,8 +2790,14 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("replacement-recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        const initialWebContents = makeTestPreviewWebContents(staleCapturePage, 42);
-        const replacementWebContents = makeTestPreviewWebContents(replacementCapturePage, 43);
+        const initialWebContents = makeTestPreviewWebContents({
+          capturePage: staleCapturePage,
+          id: 42,
+        });
+        const replacementWebContents = makeTestPreviewWebContents({
+          capturePage: replacementCapturePage,
+          id: 43,
+        });
         fromId.mockImplementation((webContentsId?: number) => {
           if (webContentsId === 42) return initialWebContents;
           if (webContentsId === 43) return replacementWebContents;
@@ -2911,7 +2849,7 @@ describe("PreviewManager", () => {
             resolveCapture = resolve;
           });
         });
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
         const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
         browserWindowConstructor.mockImplementation(function () {
           return pictureInPictureWindow;
@@ -3200,7 +3138,7 @@ describe("PreviewManager", () => {
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         capturePage.mockRejectedValueOnce(new Error("UnknownVizError"));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
         const frames: DesktopPreviewRecordingFrame[] = [];
 
         yield* manager.subscribeRecordingFrames((frame) =>
@@ -3245,7 +3183,7 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("empty-preview-frame"),
           getSize: () => ({ width: 0, height: 0 }),
         });
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
         const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
         browserWindowConstructor.mockImplementation(function () {
           return pictureInPictureWindow;
@@ -3275,7 +3213,7 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("closing-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
         const { pictureInPictureWindow } = makeTestPictureInPictureWindow();
         pictureInPictureWindow.showInactive.mockImplementationOnce(() => {
           pictureInPictureWindow.close();
@@ -3309,7 +3247,7 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("serialized-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
         const { pictureInPictureWindow: initializingWindow } = makeTestPictureInPictureWindow(
           () =>
             new Promise<void>(() => {
@@ -3391,8 +3329,14 @@ describe("PreviewManager", () => {
           toJPEG: () => Buffer.from("replacement-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        const initialWebContents = makeTestPreviewWebContents(initialCapturePage, 42);
-        const replacementWebContents = makeTestPreviewWebContents(replacementCapturePage, 43);
+        const initialWebContents = makeTestPreviewWebContents({
+          capturePage: initialCapturePage,
+          id: 42,
+        });
+        const replacementWebContents = makeTestPreviewWebContents({
+          capturePage: replacementCapturePage,
+          id: 43,
+        });
         fromId.mockImplementation((webContentsId?: number) => {
           if (webContentsId === 42) return initialWebContents;
           if (webContentsId === 43) return replacementWebContents;
