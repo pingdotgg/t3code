@@ -4843,6 +4843,14 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "modelOptionsPicker.toggle") {
+        if (composerRef.current?.toggleModelOptionsPicker()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);

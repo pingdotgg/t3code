@@ -5,12 +5,14 @@ import {
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { isValidElement } from "react";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
+import { DraftId } from "../../composerDraftStore";
 
 // Everything in composerProviderState is now data-driven by the model's
 // optionDescriptors, so these tests use a single synthetic provider/model and
@@ -244,5 +246,38 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+  });
+
+  it("forwards the option selection handoff to both picker layouts", () => {
+    const onOptionSelect = () => undefined;
+    const args = {
+      provider: PROVIDER,
+      draftId: DraftId.make("draft-1"),
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("effort", [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High", isDefault: true },
+        ]),
+      ]),
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => undefined,
+      onOptionSelect,
+    };
+
+    const menuContent = renderProviderTraitsMenuContent(args);
+    const picker = renderProviderTraitsPicker(args);
+
+    expect(
+      isValidElement<{ onOptionSelect?: () => void }>(menuContent)
+        ? menuContent.props.onOptionSelect
+        : undefined,
+    ).toBe(onOptionSelect);
+    expect(
+      isValidElement<{ onOptionSelect?: () => void }>(picker)
+        ? picker.props.onOptionSelect
+        : undefined,
+    ).toBe(onOptionSelect);
   });
 });

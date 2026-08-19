@@ -14,7 +14,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";
@@ -212,10 +212,12 @@ export interface TraitsMenuContentProps {
   model: string | null | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
+  onOptionSelect?: () => void;
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
+  focusSelectedPrimaryOption?: boolean;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -225,10 +227,13 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   model,
   prompt,
   onPromptChange,
+  onOptionSelect,
   modelOptions,
   allowPromptInjectedEffort = true,
+  focusSelectedPrimaryOption = false,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
+  const selectedPrimaryOptionRef = useRef<HTMLDivElement>(null);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
@@ -268,6 +273,22 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
   };
 
+  useEffect(() => {
+    if (!focusSelectedPrimaryOption) return;
+    const timeout = window.setTimeout(() => {
+      const selectedItem = selectedPrimaryOptionRef.current;
+      if (!selectedItem) return;
+      // Base UI enables pointer highlighting on the popup before an item can
+      // become active. Follow that order so arrow navigation starts here.
+      selectedItem
+        .closest('[role="menu"]')
+        ?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      selectedItem.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      selectedItem.focus();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [focusSelectedPrimaryOption]);
+
   const handleSelectChange = (
     descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
     value: string,
@@ -279,6 +300,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           ? ULTRATHINK_PROMPT_PREFIX
           : applyClaudePromptEffortPrefix(prompt, "ultrathink");
       onPromptChange(nextPrompt);
+      onOptionSelect?.();
       return;
     }
     if (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id) return;
@@ -287,6 +309,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       onPromptChange(stripped);
     }
     updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
+    onOptionSelect?.();
   };
 
   if (!hasAnyControls) {
@@ -323,6 +346,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                     key={option.id}
                     value={option.id}
                     hideIndicator
+                    ref={
+                      descriptor.id === primarySelectDescriptor?.id && selectedValue === option.id
+                        ? selectedPrimaryOptionRef
+                        : undefined
+                    }
                     // Base UI keeps radio menus open by default. Close on pick so
                     // the traits menu behaves like the model picker.
                     closeOnClick
@@ -369,6 +397,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   updateDescriptors(
                     replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
                   );
+                  onOptionSelect?.();
                 }}
               >
                 {(["on", "off"] as const).map((value) => (
@@ -449,13 +478,21 @@ export const TraitsPicker = memo(function TraitsPicker({
   model,
   prompt,
   onPromptChange,
+  onOptionSelect,
   modelOptions,
   allowPromptInjectedEffort = true,
   triggerVariant,
   triggerClassName,
+  open,
+  onOpenChange,
   ...persistence
-}: TraitsMenuContentProps & TraitsPersistence) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+}: TraitsMenuContentProps &
+  TraitsPersistence & {
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isMenuOpen = open ?? uncontrolledOpen;
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -502,8 +539,11 @@ export const TraitsPicker = memo(function TraitsPicker({
   return (
     <Menu
       open={isMenuOpen}
-      onOpenChange={(open) => {
-        setIsMenuOpen(open);
+      onOpenChange={(nextOpen) => {
+        if (open === undefined) {
+          setUncontrolledOpen(nextOpen);
+        }
+        onOpenChange?.(nextOpen);
       }}
     >
       <MenuTrigger
@@ -541,9 +581,11 @@ export const TraitsPicker = memo(function TraitsPicker({
           model={model}
           prompt={prompt}
           onPromptChange={onPromptChange}
+          {...(onOptionSelect ? { onOptionSelect } : {})}
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
           {...persistence}
+          focusSelectedPrimaryOption={isMenuOpen}
         />
       </MenuPopup>
     </Menu>

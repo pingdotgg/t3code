@@ -40,6 +40,8 @@ Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refre
 `filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
+`modelOptionsPicker.toggle` opens or closes the composer's model options picker and defaults to
+`mod+shift+,`.
 `themeEditor.toggle` opens or closes the floating theme editor and defaults to
 `mod+alt+shift+t`. Select a color label to spotlight the elements that use it; select the label
 again to clear the spotlight. The swatch and hex field keep that color selected while you edit it.
