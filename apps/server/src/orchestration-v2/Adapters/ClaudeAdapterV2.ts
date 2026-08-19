@@ -4400,10 +4400,11 @@ export function makeClaudeAdapterV2(
             if (!interrupted && pendingSteers > 0 && isClaudeSteeringHandoffResult(message)) {
               yield* Ref.update(steeredTurns, (current) => {
                 const next = new Map(current);
-                if (pendingSteers <= 1) {
+                const currentPendingSteers = current.get(context.providerTurnId) ?? 0;
+                if (currentPendingSteers <= 1) {
                   next.delete(context.providerTurnId);
                 } else {
-                  next.set(context.providerTurnId, pendingSteers - 1);
+                  next.set(context.providerTurnId, currentPendingSteers - 1);
                 }
                 return next;
               });
