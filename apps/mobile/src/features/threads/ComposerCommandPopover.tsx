@@ -55,7 +55,12 @@ function PopoverSurface(props: { readonly children: React.ReactNode; readonly st
   };
 
   return (
-    <GlassSurface glassEffectStyle="clear" tintColor={tintColor} style={baseStyle}>
+    <GlassSurface
+      androidBlur
+      glassEffectStyle="clear"
+      tintColor={tintColor}
+      style={baseStyle}
+    >
       {props.children}
     </GlassSurface>
   );
