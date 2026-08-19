@@ -90,4 +90,11 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("finds the plugin marketplace from settings search", () => {
+    expect(searchSettings("plugin marketplace")[0]).toMatchObject({
+      id: "plugin-marketplace",
+      to: "/settings/plugins",
+    });
+  });
 });

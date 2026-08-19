@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  BlocksIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
   SettingsIcon,
@@ -148,6 +149,11 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     void navigate({ to: "/settings" });
   }, [closeMobileSidebar, navigate]);
 
+  const handlePluginsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/settings/plugins" });
+  }, [closeMobileSidebar, navigate]);
+
   const handleUsageClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -188,6 +194,22 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
                   }
                 />
                 <TooltipPopup side="top">Settings</TooltipPopup>
+              </Tooltip>
+            </SidebarMenuItem>
+            <SidebarMenuItem className="shrink-0">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <SidebarMenuButton
+                      aria-label="Plugins"
+                      onClick={handlePluginsClick}
+                      size="icon"
+                    >
+                      <BlocksIcon />
+                    </SidebarMenuButton>
+                  }
+                />
+                <TooltipPopup side="top">Plugins</TooltipPopup>
               </Tooltip>
             </SidebarMenuItem>
             {pullRequestsSupported ? (

@@ -452,6 +452,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
+      assert.deepStrictEqual((mac.mac as Record<string, unknown>).extendInfo, {
+        NSAppleEventsUsageDescription:
+          "T3 Code uses Automation to let installed Computer Use plugins control the Mac apps you choose.",
+      });
       // Native binaries and helper executables cannot load from inside an
       // asar; everything else stays packed. The Claude SDK platform packages
       // and .bin shims never ship.
@@ -900,6 +904,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.include(entitlements, "<key>com.apple.security.automation.apple-events</key>");
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {

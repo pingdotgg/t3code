@@ -118,12 +118,16 @@ export function SettingsSection({
   headerAction,
   children,
   className,
+  contentClassName,
+  hideHeader = false,
   ...sectionProps
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
   icon?: ReactNode;
   headerAction?: ReactNode;
   children: ReactNode;
+  contentClassName?: string;
+  hideHeader?: boolean;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
 
@@ -132,16 +136,21 @@ export function SettingsSection({
       {...sectionProps}
       ref={targetRef}
       tabIndex={sectionProps.id ? -1 : sectionProps.tabIndex}
+      aria-label={hideHeader ? title : sectionProps["aria-label"]}
       className={cn("space-y-3", className)}
     >
-      <div className="flex min-h-8 items-center justify-between gap-4 px-3 sm:px-4">
-        <h2 className="flex items-center gap-2 text-lg font-semibold tracking-[-0.025em] text-foreground">
-          {icon}
-          {title}
-        </h2>
-        <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
+      {hideHeader ? null : (
+        <div className="flex min-h-8 items-center justify-between gap-4 px-3 sm:px-4">
+          <h2 className="flex items-center gap-2 text-lg font-semibold tracking-[-0.025em] text-foreground">
+            {icon}
+            {title}
+          </h2>
+          <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
+        </div>
+      )}
+      <div className={cn("relative space-y-1 overflow-visible text-foreground", contentClassName)}>
+        {children}
       </div>
-      <div className="relative space-y-1 overflow-visible text-foreground">{children}</div>
     </section>
   );
 }

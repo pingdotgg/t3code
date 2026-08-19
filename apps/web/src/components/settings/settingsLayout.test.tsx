@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   scrollToSettingsTarget,
   SettingsRow,
+  SettingsSection,
   SettingsSearchTargetProvider,
 } from "./settingsLayout";
 
@@ -23,6 +24,20 @@ describe("settings search targets", () => {
     expect(markup).toContain('id="word-wrap" tabindex="-1"');
     expect(markup).not.toContain("data-settings-search-target");
     expect(markup).not.toContain("settings-search-target-pulse");
+  });
+
+  it("omits hidden section headers while preserving an accessible search target", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsSection id="plugin-marketplace" title="Plugin marketplace" hideHeader>
+        <div>Results</div>
+      </SettingsSection>,
+    );
+
+    expect(markup).toContain(
+      'id="plugin-marketplace" tabindex="-1" aria-label="Plugin marketplace"',
+    );
+    expect(markup).not.toContain("<h2");
+    expect(markup).toContain("Results");
   });
 
   it("scrolls directly to a section header and restarts the destination pulse", () => {

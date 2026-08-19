@@ -12,6 +12,9 @@ const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
 
 function settingsBreadcrumbLabel(pathname: string): string | null {
   const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
+  if (normalizedPathname.startsWith("/settings/plugins/")) {
+    return "Plugins";
+  }
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 }
 

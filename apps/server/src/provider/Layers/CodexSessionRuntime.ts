@@ -90,6 +90,10 @@ export type CodexTurnStartParamsWithCollaborationMode =
 
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
+type CodexPluginSkillInput = {
+  readonly name: string;
+  readonly path: string;
+};
 type CodexThreadItem =
   | EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number]["items"][number]
   | EffectCodexSchema.V2ThreadRollbackResponse["thread"]["turns"][number]["items"][number];
@@ -129,6 +133,14 @@ export interface CodexThreadTurnSnapshot {
 export interface CodexThreadSnapshot {
   readonly threadId: string;
   readonly turns: ReadonlyArray<CodexThreadTurnSnapshot>;
+}
+
+export interface CodexPluginMentionCandidate {
+  readonly id: string;
+  readonly name: string;
+  readonly installed: boolean;
+  readonly enabled: boolean;
+  readonly displayName?: string | null | undefined;
 }
 
 export interface CodexSessionRuntimeShape {
@@ -361,10 +373,54 @@ function buildCodexCollaborationMode(input: {
   };
 }
 
+function normalizePluginMention(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function pluginMentionAliases(plugin: CodexPluginMentionCandidate): ReadonlyArray<string> {
+  const displayName = plugin.displayName?.trim();
+  const aliases = [
+    plugin.name,
+    plugin.id.split("@")[0] ?? plugin.id,
+    displayName,
+    displayName?.split(/\s+by\s+/i)[0],
+  ];
+
+  return Array.from(
+    new Set(
+      aliases
+        .filter((alias): alias is string => alias !== undefined)
+        .map(normalizePluginMention)
+        .filter((alias) => alias.length >= 3),
+    ),
+  );
+}
+
+export function selectMentionedCodexPlugins<T extends CodexPluginMentionCandidate>(
+  prompt: string,
+  plugins: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  const mentions = new Set(
+    [...prompt.matchAll(/(?<![\w$])\$([\w:-]+)/gu)].map((match) =>
+      normalizePluginMention(match[1] ?? ""),
+    ),
+  );
+  return plugins.filter(
+    (plugin) =>
+      plugin.installed &&
+      plugin.enabled &&
+      pluginMentionAliases(plugin).some((alias) => mentions.has(alias)),
+  );
+}
+
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
+  readonly skills?: ReadonlyArray<CodexPluginSkillInput>;
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
     readonly url: string;
@@ -381,9 +437,17 @@ export function buildTurnStartParams(input: {
 > {
   const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
   if (input.prompt) {
+    const skillMentions = input.skills?.map((skill) => `$${skill.name}`).join(" ");
     turnInput.push({
       type: "text",
-      text: input.prompt,
+      text: skillMentions ? `${skillMentions} ${input.prompt}` : input.prompt,
+    });
+  }
+  for (const skill of input.skills ?? []) {
+    turnInput.push({
+      type: "skill",
+      name: skill.name,
+      path: skill.path,
     });
   }
   for (const attachment of input.attachments ?? []) {
@@ -1779,6 +1843,60 @@ export const makeCodexSessionRuntime = (
       return providerThreadId;
     });
 
+    const resolvePluginSkillsForPrompt = Effect.fn(
+      "CodexSessionRuntime.resolvePluginSkillsForPrompt",
+    )(function* (prompt: string) {
+      const response = yield* client.request("plugin/installed", {
+        cwds: [options.cwd],
+      });
+      const candidates = response.marketplaces.flatMap((marketplace) =>
+        marketplace.plugins.map((plugin) => ({
+          marketplaceName: marketplace.name,
+          marketplacePath: marketplace.path,
+          plugin,
+          id: plugin.id,
+          name: plugin.name,
+          installed: plugin.installed,
+          enabled: plugin.enabled,
+          displayName: plugin.interface?.displayName,
+        })),
+      );
+      const matches = selectMentionedCodexPlugins(prompt, candidates);
+      const skillGroups = yield* Effect.forEach(
+        matches,
+        (match) =>
+          client
+            .request("plugin/read", {
+              pluginName: match.plugin.name,
+              ...(match.marketplacePath
+                ? { marketplacePath: match.marketplacePath }
+                : { remoteMarketplaceName: match.marketplaceName }),
+            })
+            .pipe(
+              Effect.map((pluginResponse) =>
+                pluginResponse.plugin.skills.flatMap((skill) =>
+                  skill.enabled && skill.path
+                    ? [{ name: skill.name, path: skill.path } satisfies CodexPluginSkillInput]
+                    : [],
+                ),
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to load an installed Codex plugin for this turn.", {
+                  cause,
+                  pluginId: match.plugin.id,
+                }).pipe(Effect.as([] as ReadonlyArray<CodexPluginSkillInput>)),
+              ),
+            ),
+        { concurrency: 4 },
+      );
+
+      const skillsByPath = new Map<string, CodexPluginSkillInput>();
+      for (const skill of skillGroups.flat()) {
+        skillsByPath.set(skill.path, skill);
+      }
+      return Array.from(skillsByPath.values());
+    });
+
     const close = Effect.gen(function* () {
       const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
       if (alreadyClosed) {
@@ -1818,10 +1936,20 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const pluginSkills = input.input?.includes("$")
+            ? yield* resolvePluginSkillsForPrompt(input.input).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to discover installed Codex plugins for this turn.", {
+                    cause,
+                  }).pipe(Effect.as([] as ReadonlyArray<CodexPluginSkillInput>)),
+                ),
+              )
+            : [];
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
             ...(input.input ? { prompt: input.input } : {}),
+            ...(pluginSkills.length > 0 ? { skills: pluginSkills } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),

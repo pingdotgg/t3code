@@ -1051,6 +1051,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2069,6 +2071,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extendInfo: {
+        NSAppleEventsUsageDescription:
+          "T3 Code uses Automation to let installed Computer Use plugins control the Mac apps you choose.",
+      },
       protocols: [
         {
           name: "T3 Code",
@@ -2250,6 +2256,40 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
 // ELECTRON_RUN_AS_NODE runtime; enabling WSL extracts it to a real directory.
 // Shipping one packed archive instead of thousands of loose files is what
 // makes the NSIS install/update fast.
+function packedAsarPayloadBytes(directory: DirectoryRecord): number {
+  let bytes = 0;
+  for (const entry of Object.values(directory.files)) {
+    if ("files" in entry) {
+      bytes = Math.max(bytes, packedAsarPayloadBytes(entry));
+    } else if (!entry.unpacked) {
+      bytes = Math.max(bytes, Number(entry.offset) + entry.size);
+    }
+  }
+  return bytes;
+}
+
+const waitForAsarWriteCompletion = Effect.fn("waitForAsarWriteCompletion")(function* (
+  asarPath: string,
+) {
+  const { header, headerSize } = yield* Effect.try({
+    try: () => getRawHeader(asarPath),
+    catch: (cause) => new WindowsServerSidecarPackError({ asarPath, cause }),
+  });
+  const expectedBytes = 8 + headerSize + packedAsarPayloadBytes(header);
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const stat = yield* Effect.tryPromise({
+      try: () => NodeFSP.stat(asarPath),
+      catch: (cause) => new WindowsServerSidecarPackError({ asarPath, cause }),
+    });
+    if (stat.size >= expectedBytes) return;
+    yield* Effect.sleep("100 millis");
+  }
+  return yield* new WindowsServerSidecarPackError({
+    asarPath,
+    cause: new Error(`ASAR writer did not flush ${expectedBytes} bytes to ${asarPath}.`),
+  });
+});
+
 export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function* (input: {
   readonly sourceDir: string;
   readonly asarPath: string;
@@ -2264,6 +2304,7 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
   });
+  yield* waitForAsarWriteCompletion(input.asarPath);
   const unpackedDirPath = `${input.asarPath}.unpacked`;
   if (!(yield* fs.exists(unpackedDirPath))) {
     return yield* new WindowsServerSidecarPackError({

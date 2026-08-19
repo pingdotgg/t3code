@@ -40,6 +40,23 @@ import {
   PullRequestUnavailableError,
 } from "./pullRequest.ts";
 import {
+  PluginMarketplaceCatalog,
+  PluginMarketplaceDetail,
+  PluginMarketplaceLogo,
+  PluginMarketplaceMcpAuthCompleteInput,
+  PluginMarketplaceMcpAuthMutationResult,
+  PluginMarketplaceMcpAuthStartResult,
+  PluginMarketplaceMcpAuthState,
+  PluginMarketplaceMcpAuthTargetInput,
+  PluginMarketplaceMutationResult,
+  PluginMarketplaceNotFoundError,
+  PluginMarketplaceOperationError,
+  PluginMarketplacePluginParams,
+  PluginMarketplaceSetupInput,
+  PluginMarketplaceSetupResult,
+  PluginMarketplaceUnavailableError,
+} from "./pluginMarketplace.ts";
+import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
   RelayEnvironmentConfigRequest,
@@ -546,6 +563,109 @@ export class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullReque
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+const EnvironmentPluginMarketplaceCatalogQuery = {
+  q: Schema.optional(Schema.String),
+};
+
+const EnvironmentPluginMarketplaceReadErrors = [
+  PluginMarketplaceUnavailableError,
+  PluginMarketplaceNotFoundError,
+  EnvironmentAuthInvalidError,
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+
+const EnvironmentPluginMarketplaceWriteErrors = [
+  ...EnvironmentPluginMarketplaceReadErrors,
+  PluginMarketplaceOperationError,
+] as const;
+
+export class EnvironmentPluginMarketplaceHttpApi extends HttpApiGroup.make("plugins")
+  .add(
+    HttpApiEndpoint.get("catalog", "/api/plugins", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentPluginMarketplaceCatalogQuery,
+      success: PluginMarketplaceCatalog,
+      error: EnvironmentPluginMarketplaceReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("detail", "/api/plugins/:pluginId", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      success: PluginMarketplaceDetail,
+      error: EnvironmentPluginMarketplaceReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("logo", "/api/plugins/:pluginId/logo", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      success: PluginMarketplaceLogo,
+      error: EnvironmentPluginMarketplaceReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("mcpAuth", "/api/plugins/:pluginId/mcp-auth", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      success: PluginMarketplaceMcpAuthState,
+      error: EnvironmentPluginMarketplaceReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("startMcpAuth", "/api/plugins/:pluginId/mcp-auth/start", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      payload: PluginMarketplaceMcpAuthTargetInput,
+      success: PluginMarketplaceMcpAuthStartResult,
+      error: EnvironmentPluginMarketplaceWriteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("completeMcpAuth", "/api/plugins/:pluginId/mcp-auth/complete", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      payload: PluginMarketplaceMcpAuthCompleteInput,
+      success: PluginMarketplaceMcpAuthMutationResult,
+      error: EnvironmentPluginMarketplaceWriteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("disconnectMcpAuth", "/api/plugins/:pluginId/mcp-auth/disconnect", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      payload: PluginMarketplaceMcpAuthTargetInput,
+      success: PluginMarketplaceMcpAuthMutationResult,
+      error: EnvironmentPluginMarketplaceWriteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("install", "/api/plugins/:pluginId/install", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      success: PluginMarketplaceMutationResult,
+      error: EnvironmentPluginMarketplaceWriteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("setup", "/api/plugins/:pluginId/setup", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      payload: PluginMarketplaceSetupInput,
+      success: PluginMarketplaceSetupResult,
+      error: EnvironmentPluginMarketplaceWriteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("remove", "/api/plugins/:pluginId/remove", {
+      headers: OptionalBearerHeaders,
+      params: PluginMarketplacePluginParams,
+      success: PluginMarketplaceMutationResult,
+      error: EnvironmentPluginMarketplaceWriteErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -612,4 +732,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentPluginMarketplaceHttpApi)
   .add(EnvironmentConnectHttpApi) {}
