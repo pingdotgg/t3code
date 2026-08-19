@@ -733,13 +733,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
-  :is(.chat-composer-drawer-slot, .chat-composer-drawer-host)
-    + .chat-composer-shell-slot
-    .chat-composer-stash-tab {
-    pointer-events: none;
-    visibility: hidden;
-  }
-
   /* Mirror the run-context strip above the composer. These surfaces deliberately
      own no card fill or border themselves: a masked pseudo-element draws the
      same inset glass, 16px outer corners, quiet outline, and open attachment

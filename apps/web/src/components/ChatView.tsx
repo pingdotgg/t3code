@@ -6450,12 +6450,7 @@ function ChatViewContent(props: ChatViewProps) {
               >
                 <div className="pointer-events-auto relative z-10">
                   {isDraftHeroState ? (
-                    <div
-                      className={cn(
-                        "absolute inset-x-0 bottom-full z-0",
-                        composerBannerItems.length > 0 && "chat-composer-drawer-host",
-                      )}
-                    >
+                    <div className="absolute inset-x-0 bottom-full z-0">
                       <div
                         className="pb-8"
                         style={
@@ -6514,6 +6509,10 @@ function ChatViewContent(props: ChatViewProps) {
                             isSendBusy={isSendBusy}
                             sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
                             isPreparingWorktree={isPreparingWorktree}
+                            externalDrawerAttached={
+                              composerBannerItems.length > 0 ||
+                              Boolean(threadSyncPhase && !activeEnvironmentUnavailable)
+                            }
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}

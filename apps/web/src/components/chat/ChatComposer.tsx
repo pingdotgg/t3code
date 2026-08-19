@@ -540,6 +540,7 @@ export interface ChatComposerProps {
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
+  externalDrawerAttached: boolean;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -2840,7 +2841,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         </div>
       ) : null}
       <div className="relative">
-        {!showComposerTopDrawer && !isComposerCollapsedMobile ? (
+        {!props.externalDrawerAttached && !showComposerTopDrawer && !isComposerCollapsedMobile ? (
           <ComposerStashBadge
             count={stashQueue.length}
             menuOpen={isStashMenuOpen}
