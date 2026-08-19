@@ -191,8 +191,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <>
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup className="gap-2 p-[var(--sidebar-content-inset)]">
-          <InputGroup className="ms-px h-8 border-sidebar-border bg-background px-[calc(var(--sidebar-row-content-inset)-1px)] text-sm font-medium text-sidebar-muted-foreground dark:bg-sidebar-foreground/5">
-            <InputGroupAddon className="gap-[var(--sidebar-control-gap)] ps-0 [&_svg]:mx-0">
+          <InputGroup className="ms-px h-8 border-sidebar-border bg-background text-sm font-medium text-sidebar-muted-foreground dark:bg-sidebar-foreground/5">
+            <InputGroupAddon
+              className="gap-[var(--sidebar-control-gap)] ps-[calc(var(--sidebar-row-content-inset)-1px)] [&_svg]:mx-0"
+            >
               <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)] opacity-100" />
             </InputGroupAddon>
             <InputGroupInput
@@ -220,7 +222,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             />
             <InputGroupAddon
               align="inline-end"
-              className="pe-0 has-[>button]:me-0 has-[>kbd:last-child]:me-0"
+              className="pe-[calc(var(--sidebar-row-content-inset)-1px)] has-[>button]:me-0 has-[>kbd:last-child]:me-0"
             >
               {isSearching ? (
                 <Button
