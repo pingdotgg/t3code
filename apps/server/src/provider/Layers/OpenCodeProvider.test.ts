@@ -3,8 +3,10 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
@@ -34,6 +36,8 @@ const runtimeMock = {
     runVersionError: null as Error | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
+    hangVersion: false,
+    hangInventory: false,
     closeCalls: 0,
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
@@ -44,6 +48,8 @@ const runtimeMock = {
     this.state.runVersionError = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
+    this.state.hangVersion = false;
+    this.state.hangInventory = false;
     this.state.closeCalls = 0;
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
@@ -73,8 +79,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         external: Boolean(serverUrl),
       };
     }),
-  runOpenCodeCommand: () =>
-    runtimeMock.state.runVersionError
+  runOpenCodeCommand: () => {
+    if (runtimeMock.state.hangVersion) {
+      return Effect.never;
+    }
+    return runtimeMock.state.runVersionError
       ? Effect.fail(
           new OpenCodeRuntimeError({
             operation: "runOpenCodeCommand",
@@ -82,7 +91,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             cause: runtimeMock.state.runVersionError,
           }),
         )
-      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 });
+  },
   createOpenCodeSdkClient: () =>
     ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -95,8 +105,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
-  loadInventoryFromCli: () =>
-    runtimeMock.state.inventoryError
+  loadInventoryFromCli: () => {
+    if (runtimeMock.state.hangInventory) {
+      return Effect.never;
+    }
+    return runtimeMock.state.inventoryError
       ? Effect.fail(
           new OpenCodeRuntimeError({
             operation: "loadInventoryFromCli",
@@ -104,7 +117,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             cause: runtimeMock.state.inventoryError,
           }),
         )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
+      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
+  },
 };
 
 beforeEach(() => {
@@ -226,6 +240,42 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(
         snapshot.message,
         "Failed to execute OpenCode CLI health check: opencode models failed",
+      );
+    }),
+  );
+
+  it.effect("fails the health check when the version probe hangs", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.hangVersion = true;
+      const fiber = yield* Effect.forkChild(
+        checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd()),
+      );
+      yield* TestClock.adjust("30 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(
+        snapshot.message,
+        "Failed to execute OpenCode CLI health check: Timed out while running `opencode --version`.",
+      );
+    }),
+  );
+
+  it.effect("fails the health check when the inventory probe hangs", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.hangInventory = true;
+      const fiber = yield* Effect.forkChild(
+        checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd()),
+      );
+      yield* TestClock.adjust("30 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(
+        snapshot.message,
+        "Failed to execute OpenCode CLI health check: Timed out while loading the OpenCode model inventory.",
       );
     }),
   );
