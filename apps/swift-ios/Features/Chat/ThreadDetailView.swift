@@ -559,6 +559,7 @@ public struct ThreadDetailView: View {
                     pendingUserInputs: detail.userInputs,
                     isResolvingRequest: model.isPerformingAction,
                     powerFeatures: composerPowerFeatures,
+                    showsKeyboardDismissControl: true,
                     onDismissKeyboard: dismissKeyboard,
                     onApprovalDecision: { id, decision in
                         Task { await model.resolveApproval(id, decision: decision) }
