@@ -12,6 +12,7 @@ import {
   getProviderOptionStringSelectionValue,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  stripLeadingModelQualifier,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -153,5 +154,18 @@ describe("model slug normalization", () => {
 
     expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
     expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
+});
+
+describe("model display normalization", () => {
+  it("removes a repeated provider qualifier", () => {
+    expect(stripLeadingModelQualifier("OpenAI: GPT-5.4", "OpenAI")).toBe("GPT-5.4");
+    expect(stripLeadingModelQualifier("GitHub Copilot / Claude Haiku", "github copilot")).toBe(
+      "Claude Haiku",
+    );
+  });
+
+  it("preserves names without the provider qualifier", () => {
+    expect(stripLeadingModelQualifier("GPT-5.4", "OpenAI")).toBe("GPT-5.4");
   });
 });

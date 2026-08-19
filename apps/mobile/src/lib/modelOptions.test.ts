@@ -64,7 +64,7 @@ describe("mobile model options", () => {
           models: [
             {
               slug: "openai/gpt-5.4",
-              name: "GPT-5.4",
+              name: "OpenAI: GPT-5.4",
               subProvider: "OpenAI",
               isCustom: false,
               capabilities: null,

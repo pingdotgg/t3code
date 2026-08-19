@@ -6,6 +6,7 @@ import type {
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  stripLeadingModelQualifier,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -43,7 +44,8 @@ function modelDisplayLabel(model: {
   readonly subProvider?: string | undefined;
 }): string {
   const subProvider = model.subProvider?.trim();
-  return subProvider ? `${model.name} · ${subProvider}` : model.name;
+  const modelName = stripLeadingModelQualifier(model.name, subProvider);
+  return subProvider ? `${modelName} · ${subProvider}` : modelName;
 }
 
 function normalizeSelectionOptions(
