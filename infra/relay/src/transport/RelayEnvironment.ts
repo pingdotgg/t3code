@@ -519,6 +519,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               status: 431,
             });
           }
+          const upgradeConnector = role === "connector" ? null : connector;
           const [response, socket] = yield* Cloudflare.upgrade();
           if (role === "connector") {
             if (connector !== null) {
@@ -538,9 +539,21 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             );
           } else {
             const { streamId, openFrame } = publicWebSocket!;
+            if (upgradeConnector === null || !isActiveConnector(upgradeConnector)) {
+              yield* socket.close(1013, "Environment connector changed during upgrade");
+              return response;
+            }
             socket.serializeAttachment({ role: "client", streamId } satisfies SocketAttachment);
             clients.set(streamId, socket);
-            yield* connector!.send(openFrame);
+            yield* upgradeConnector
+              .send(openFrame)
+              .pipe(
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit)
+                    ? closeClient(streamId, 1013, "Environment connector is offline")
+                    : Effect.void,
+                ),
+              );
           }
           return response;
         }),
