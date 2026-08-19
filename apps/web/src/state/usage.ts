@@ -1,8 +1,9 @@
 /**
  * Multi-environment usage state.
  *
- * Every connected environment answers the same typed query; the client merges
- * the results. Raw transcripts never leave the machine that produced them.
+ * Connected environments answer the typed usage query. Connection state
+ * determines whether a waiting query contributes to loading coverage, so one
+ * unreachable machine can never hold the dashboard open.
  *
  * @module state/usage
  */
@@ -18,69 +19,104 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
+import {
+  getEnvironmentUsageLoadingState,
+  resolveEnvironmentUsageScope,
+  type EnvironmentUsageOption,
+} from "./usageEnvironmentScope";
 
-export interface EnvironmentUsageStatus {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
+export type { EnvironmentUsageOption } from "./usageEnvironmentScope";
+
+export interface EnvironmentUsageStatus extends EnvironmentUsageOption {
   readonly isPending: boolean;
+  /** A connected usage query failed. Connection coverage uses `phase`. */
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
 
-/**
- * Reads every environment's summary for one window.
- *
- * Keyed by the serialised window so switching ranges does not thrash the atom
- * cache, and so each environment's query is shared with any other reader of the
- * same window.
- */
-const usageByWindowAtom = Atom.family((windowKey: string) =>
-  Atom.make((get): readonly EnvironmentUsageStatus[] => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    const presentations = get(environmentPresentations.presentationsAtom);
+interface UsageAtomValue {
+  readonly isCatalogReady: boolean;
+  readonly options: readonly EnvironmentUsageOption[];
+  readonly environments: readonly EnvironmentUsageStatus[];
+}
 
-    const statuses: EnvironmentUsageStatus[] = [];
-    for (const [environmentId, presentation] of presentations) {
+interface UsageAtomKey {
+  readonly input: UsageSummaryInput;
+}
+
+const usageByWindowAtom = Atom.family((key: string) =>
+  Atom.make((get): UsageAtomValue => {
+    const { input } = JSON.parse(key) as UsageAtomKey;
+    const catalog = get(environmentCatalog.catalogValueAtom);
+    const presentations = get(environmentPresentations.presentationsAtom);
+    const options = Array.from(presentations, ([environmentId, presentation]) => ({
+      environmentId,
+      label: presentation.entry.target.label,
+      phase: presentation.connection.phase,
+    }));
+
+    // Keep every environment subscribed while this time window is mounted. Filtering
+    // only the view avoids evicting sibling usage caches when switching scopes.
+    const environments: EnvironmentUsageStatus[] = [];
+    for (const option of options) {
+      const { environmentId } = option;
+      const connectionResult = get(environmentCatalog.stateAtom(environmentId));
+      // Keep reading the environment-scoped atom while disconnected so a prior
+      // successful value remains visible. Wait through the first connection attempt,
+      // then treat retries as terminal coverage so a down machine cannot block the UI.
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
-      statuses.push({
-        environmentId,
-        label: presentation.entry.target.label,
-        isPending: result.waiting,
-        error: result._tag === "Failure" ? "This environment could not report usage." : null,
+      const failed = option.phase === "connected" && result._tag === "Failure";
+      environments.push({
+        ...option,
+        isPending:
+          (option.phase === "available" && connectionResult.waiting) ||
+          option.phase === "connecting" ||
+          (option.phase === "connected" && result.waiting),
+        error: failed ? "This environment could not report usage." : null,
         summary: Option.getOrNull(AsyncResult.value(result)),
       });
     }
-    return statuses;
-  }).pipe(Atom.withLabel(`web-usage:window:${windowKey}`)),
+
+    return {
+      isCatalogReady: catalog.isReady,
+      options,
+      environments,
+    };
+  }).pipe(Atom.withLabel(`web-usage:${key}`)),
 );
 
 export interface UsageView {
   readonly merged: MergedUsage;
+  /** All catalog entries, including entries outside the active filter. */
+  readonly options: readonly EnvironmentUsageOption[];
+  /** Coverage entries in the active filter. */
   readonly environments: readonly EnvironmentUsageStatus[];
-  /** True until at least one environment has answered. */
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  /** True until at least one connected environment has answered. */
   readonly isPending: boolean;
-  /**
-   * True while environments that have not failed are still answering. Failed
-   * environments are reported through their own error rows: totals will not
-   * improve by waiting on them, so they must not read as "still reporting".
-   */
   readonly isPartial: boolean;
   readonly refresh: () => void;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
-  const windowKey = useMemo(
+export function useUsage(
+  input: UsageSummaryInput,
+  selectedEnvironmentId: EnvironmentId | null,
+): UsageView {
+  const key = useMemo(
     () =>
       JSON.stringify({
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        timeZone: input.timeZone,
-        resolution: input.resolution,
-        sinceTime: input.sinceTime,
-        untilTime: input.untilTime,
+        input: {
+          sinceDay: input.sinceDay,
+          untilDay: input.untilDay,
+          timeZone: input.timeZone,
+          resolution: input.resolution,
+          sinceTime: input.sinceTime,
+          untilTime: input.untilTime,
+        },
       }),
     [
       input.sinceDay,
@@ -91,20 +127,25 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       input.untilTime,
     ],
   );
-  const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const atom = usageByWindowAtom(key);
+  const value = useAtomValue(atom);
+  const scope = resolveEnvironmentUsageScope(value.options, selectedEnvironmentId);
+  const environments = useMemo(() => {
+    if (scope.selectedEnvironmentId === null) return value.environments;
+    return value.environments.filter(
+      (environment) => environment.environmentId === scope.selectedEnvironmentId,
+    );
+  }, [scope.selectedEnvironmentId, value.environments]);
 
-  // Refreshing only the derived atom would re-read the per-environment SWR
-  // queries within their stale window and change nothing. Refresh each
-  // environment's query so the button always rescans.
   const refresh = useCallback(() => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
+    const { input } = JSON.parse(key) as UsageAtomKey;
     for (const environment of environments) {
+      if (environment.phase !== "connected") continue;
       appAtomRegistry.refresh(
         serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
       );
     }
-  }, [environments, windowKey]);
+  }, [environments, key]);
 
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
@@ -121,16 +162,15 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     return mergeUsage(answered, USAGE_CONTRACT_VERSION);
   }, [environments]);
 
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
-    (environment) => environment.summary === null && environment.error === null,
-  ).length;
+  const loadingState = getEnvironmentUsageLoadingState(environments);
 
   return {
     merged,
+    options: value.options,
     environments,
-    isPending: answeredCount === 0 && stillReporting > 0,
-    isPartial: answeredCount > 0 && stillReporting > 0,
+    selectedEnvironmentId: scope.selectedEnvironmentId,
+    isPending: !value.isCatalogReady || loadingState.isPending,
+    isPartial: loadingState.isPartial,
     refresh,
   };
 }

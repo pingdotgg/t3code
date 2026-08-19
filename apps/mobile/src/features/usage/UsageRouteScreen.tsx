@@ -1,4 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
+import type { MenuAction } from "@react-native-menu/menu";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -11,12 +13,13 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
@@ -41,9 +44,47 @@ export function UsageRouteScreen() {
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
+  const [environmentFilter, setEnvironmentFilter] = useState<EnvironmentId | null>(null);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const { merged, options, environments, selectedEnvironmentId, isPending, isPartial, refresh } =
+    useUsage(window, environmentFilter);
+
+  useEffect(() => {
+    if (environmentFilter !== null && selectedEnvironmentId === null) {
+      setEnvironmentFilter(null);
+    }
+  }, [environmentFilter, selectedEnvironmentId]);
+
+  const environmentActions = useMemo<readonly MenuAction[]>(
+    () => [
+      {
+        id: "all",
+        title: "All environments",
+        state: selectedEnvironmentId === null ? "on" : "off",
+      },
+      ...options.map((environment) => ({
+        id: `environment:${environment.environmentId}`,
+        title: environment.label,
+        state:
+          environment.environmentId === selectedEnvironmentId ? ("on" as const) : ("off" as const),
+      })),
+    ],
+    [options, selectedEnvironmentId],
+  );
+  const selectedEnvironmentLabel =
+    selectedEnvironmentId === null
+      ? "All environments"
+      : (options.find((environment) => environment.environmentId === selectedEnvironmentId)
+          ?.label ?? "All environments");
+  const selectedEnvironmentControlLabel =
+    selectedEnvironmentLabel.length > 20
+      ? `${selectedEnvironmentLabel.slice(0, 19)}…`
+      : selectedEnvironmentLabel;
+  const usableEnvironmentCount = environments.filter(
+    (environment) =>
+      environment.summary !== null && !merged.staleEnvironments.includes(environment.environmentId),
+  ).length;
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -69,10 +110,11 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  // The pull spinner tracks re-scans of environments that have answered
-  // before. The initial scan renders its own placeholder, and an unreachable
-  // environment stays pending forever — neither may pin the spinner on.
-  const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
+  // The pull spinner tracks re-scans of connected environments that have
+  // answered before. The initial scan renders its own placeholder.
+  const refreshing = environments.some(
+    (entry) => entry.phase === "connected" && entry.isPending && entry.summary !== null,
+  );
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -109,21 +151,51 @@ export function UsageRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
       >
-        <SegmentedControl
-          options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
-          selected={windowDays}
-          onSelect={selectWindow}
-        />
+        <View className="gap-3">
+          <SegmentedControl
+            options={WINDOW_OPTIONS.map((option) => ({
+              value: option.days,
+              label: option.label,
+            }))}
+            selected={windowDays}
+            onSelect={selectWindow}
+          />
+          <View className="max-w-full items-start">
+            <ControlPillMenu
+              title="Filter environments"
+              actions={[...environmentActions]}
+              onPressAction={({ nativeEvent }) => {
+                setEnvironmentFilter(
+                  nativeEvent.event === "all"
+                    ? null
+                    : (nativeEvent.event.slice("environment:".length) as EnvironmentId),
+                );
+              }}
+            >
+              <ControlPill
+                variant="pill"
+                label={selectedEnvironmentControlLabel}
+                accessibilityLabel={`Filter environments, ${selectedEnvironmentLabel}`}
+              />
+            </ControlPillMenu>
+          </View>
+        </View>
 
         <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
 
-        {isPending ? (
+        {isPending || (usableEnvironmentCount === 0 && isPartial) ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
             Scanning provider transcripts…
           </Text>
-        ) : environments.length === 0 ? (
+        ) : options.length === 0 ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
             Connect an environment to see usage.
+          </Text>
+        ) : usableEnvironmentCount === 0 ? (
+          <Text className="py-16 text-center text-base text-foreground-muted">
+            {selectedEnvironmentId === null
+              ? "No connected environment could report usage."
+              : "This environment is unavailable for usage."}
           </Text>
         ) : (
           <>
@@ -449,21 +521,31 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment still answering,
- * one that failed, or one whose transcripts another environment already
- * reported.
+ * Explains incomplete totals without hiding healthy environment data.
  */
 function UsageCoverageNotice(props: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly merged: MergedUsage;
   readonly isPartial: boolean;
 }) {
+  const settling = props.environments.filter(
+    (environment) => environment.phase === "connecting" || environment.phase === "reconnecting",
+  );
+  const unavailable = props.environments.filter(
+    (environment) =>
+      !environment.isPending &&
+      (environment.phase === "available" ||
+        environment.phase === "offline" ||
+        environment.phase === "error"),
+  );
   const failed = props.environments.filter((environment) => environment.error !== null);
   const stale = props.environments.filter((environment) =>
     props.merged.staleEnvironments.includes(environment.environmentId),
   );
   const duplicateSources = props.merged.duplicateSources;
   if (
+    settling.length === 0 &&
+    unavailable.length === 0 &&
     failed.length === 0 &&
     stale.length === 0 &&
     duplicateSources.length === 0 &&
@@ -479,6 +561,22 @@ function UsageCoverageNotice(props: {
           Some environments are still reporting. Totals are partial.
         </Text>
       ) : null}
+      {settling.map((environment) => (
+        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
+          {environment.label} is {environment.phase}.
+        </Text>
+      ))}
+      {unavailable.map((environment) => (
+        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
+          {environment.label} is{" "}
+          {environment.phase === "available"
+            ? "not connected"
+            : environment.phase === "error"
+              ? "unavailable"
+              : environment.phase}
+          .
+        </Text>
+      ))}
       {failed.map((environment) => (
         <Text key={environment.environmentId} className="text-sm text-foreground-muted">
           {environment.label} could not report usage.
