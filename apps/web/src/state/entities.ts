@@ -222,10 +222,6 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
-export function readThreadStatus(ref: ScopedThreadRef): EnvironmentThreadStatus {
-  return appAtomRegistry.get(environmentThreadDetails.statusAtom(ref));
-}
-
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */
