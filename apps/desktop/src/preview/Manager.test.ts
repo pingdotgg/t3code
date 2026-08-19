@@ -1836,7 +1836,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("does not commit capture transitions when throttling updates fail", () =>
+  effectIt.effect("does not commit failed starts and retries throttle restoration", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const setBackgroundThrottling = vi.fn<(enabled: boolean) => void>();
@@ -1868,13 +1868,19 @@ describe("PreviewManager", () => {
         setBackgroundThrottling.mockImplementationOnce(() => {
           throw new Error("stop throttling update failed");
         });
-        const failedStop = yield* Effect.exit(
-          manager.stopRecording("tab_capture_throttling_failure"),
-        );
-        expect(Exit.isFailure(failedStop)).toBe(true);
-
         yield* manager.stopRecording("tab_capture_throttling_failure");
         expect(setBackgroundThrottling.mock.calls).toEqual([[false], [false], [true], [true]]);
+
+        yield* manager.startRecording("tab_capture_throttling_failure");
+        yield* manager.stopRecording("tab_capture_throttling_failure");
+        expect(setBackgroundThrottling.mock.calls).toEqual([
+          [false],
+          [false],
+          [true],
+          [true],
+          [false],
+          [true],
+        ]);
       }),
     ),
   );
@@ -2410,8 +2416,11 @@ describe("PreviewManager", () => {
         );
         expect(recordingFrames).toHaveLength(1);
 
+        setBackgroundThrottling.mockImplementationOnce(() => {
+          throw new Error("picture-in-picture throttling restore failed");
+        });
         yield* manager.closePictureInPicture("tab_pip");
-        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true], [true]]);
         expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
         expect(states.at(-1)?.pictureInPicture).toBe(false);
         const capturesAfterClose = capturePage.mock.calls.length;

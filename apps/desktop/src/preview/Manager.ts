@@ -623,7 +623,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           copy.delete(tabId);
         });
         if (remainingSessions.size === 0) {
-          yield* setFrameCaptureBackgroundThrottling(true);
+          yield* setFrameCaptureBackgroundThrottling(true).pipe(
+            Effect.retry({ times: 2 }),
+            Effect.catch((error) =>
+              Effect.logWarning("Failed to restore preview frame capture throttling.", { error }),
+            ),
+          );
         }
         return [current.scope, remainingSessions] as const;
       }),
