@@ -59,6 +59,7 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
+import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
@@ -1275,24 +1276,10 @@ export default function ThreadTerminalDrawer({
   }, [onNewTerminal]);
   const confirmCloseTerminal = useCallback(
     (terminalId: string) => {
-      const localApi = readLocalApi();
-      const close = () => onCloseTerminal(terminalId);
-      if (!localApi) {
-        close();
-        return;
-      }
       const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void localApi.dialogs
-        .confirm(
-          [
-            `Close terminal "${label}"?`,
-            "This stops the running process and clears its history.",
-          ].join("\n"),
-          { variant: "destructive" },
-        )
-        .then((confirmed) => {
-          if (confirmed) close();
-        });
+      void confirmTerminalClose(label).then((confirmed) => {
+        if (confirmed) onCloseTerminal(terminalId);
+      });
     },
     [onCloseTerminal, terminalLabelById],
   );
