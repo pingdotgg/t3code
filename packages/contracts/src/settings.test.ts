@@ -219,6 +219,18 @@ describe("provider enabled defaults", () => {
   });
 });
 
+describe("ServerSettings automatic server updates", () => {
+  it("defaults automatic updates off for legacy settings", () => {
+    expect(decodeServerSettings({}).automaticallyUpdateWhenIdle).toBe(false);
+  });
+
+  it("accepts automatic update opt-in patches", () => {
+    expect(
+      decodeServerSettingsPatch({ automaticallyUpdateWhenIdle: true }).automaticallyUpdateWhenIdle,
+    ).toBe(true);
+  });
+});
+
 describe("ServerSettings worktree defaults", () => {
   it("defaults start-from-origin on for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);

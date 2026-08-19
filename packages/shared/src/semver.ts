@@ -8,7 +8,8 @@ interface ParsedSemver {
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
 
 export function normalizeSemverVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const [withoutBuildMetadata = ""] = version.trim().split("+", 2);
+  const [main, prerelease] = withoutBuildMetadata.split("-", 2);
   const segments: string[] = [];
   for (const segment of (main ?? "").split(".")) {
     const trimmed = segment.trim();

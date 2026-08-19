@@ -18,6 +18,7 @@ import {
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import * as ServerSelfUpdate from "../cloud/selfUpdate.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -25,6 +26,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
 
     return handlers
       .handle(
@@ -93,15 +95,26 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
-            Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
-          );
-          return yield* orchestrationEngine
-            .dispatch(normalizedCommand)
+          return yield* serverSelfUpdate
+            .withCommandAdmission(
+              Effect.gen(function* () {
+                const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
+                  Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
+                );
+                return yield* orchestrationEngine
+                  .dispatch(normalizedCommand)
+                  .pipe(
+                    Effect.catch((cause) =>
+                      failEnvironmentInternal("orchestration_dispatch_failed", cause),
+                    ),
+                  );
+              }),
+            )
             .pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("orchestration_dispatch_failed", cause),
-              ),
+              Effect.catchTags({
+                ServerSelfUpdateError: (cause) =>
+                  failEnvironmentInternal("orchestration_dispatch_failed", cause),
+              }),
             );
         }),
       );

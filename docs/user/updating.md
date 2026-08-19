@@ -28,8 +28,26 @@ The update does not remove saved threads, settings, or project files.
 | **Update the desktop app** | Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                     |
 | **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use. |
 
-The available action depends on how that server was started. T3 Code does not update connected
-servers silently in the background.
+The available action depends on how that server was started.
+
+## Automatic Server Updates
+
+In **Settings** → **Connections**, turn on **Automatic server updates** for an environment to keep
+its background-service server aligned with newer clients. The setting is off by default. Use
+**Enable auto-updates** beside Remote environments to apply the opt-in to every currently connected
+environment.
+
+When an opted-in server is older than the connected client, T3 Code waits for a live activity
+snapshot and for every agent turn, provider startup, and background task in that environment to
+finish. It downloads and preflights the new version, then checks the server's authoritative activity
+snapshot again immediately before activation. If new work started during the download, the prepared
+version is not activated. Once that check passes, the server rejects new agent commands until the
+service launcher hands off to the replacement process. Automatic updates only move a server forward
+to the client version; they never downgrade it.
+
+Connections and the conversation notice show whether an update is waiting for activity to finish,
+downloading, restarting, or failed. Servers that are not managed by the T3 Code background service
+show how to enable the feature instead of accepting the toggle.
 
 An older background-service launcher may ask you to run the exact
 `npx t3@<version> service update` command on the server machine. That one local update installs the

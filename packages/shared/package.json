@@ -111,6 +111,10 @@
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
     },
+    "./automaticServerUpdate": {
+      "types": "./src/automaticServerUpdate.ts",
+      "import": "./src/automaticServerUpdate.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"

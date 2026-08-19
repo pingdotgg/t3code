@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { ServerAutomaticUpdateDeferredError, ServerSelfUpdateError } from "@t3tools/contracts";
 import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,11 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly automaticUpdateIdle?: (
+    order: string[],
+    targetVersion: string,
+  ) => Effect.Effect<void, ServerSelfUpdateError | ServerAutomaticUpdateDeferredError>;
+  readonly install?: (order: string[]) => Effect.Effect<void>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
 }
 
@@ -33,6 +39,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       Effect.gen(function* () {
         if (input.command === "npm") {
           order.push("install");
+          yield* options.install?.(order) ?? Effect.void;
           const prefix = input.args[input.args.indexOf("--prefix") + 1];
           if (prefix === undefined) return yield* Effect.die("missing npm prefix");
           const entry = path.join(prefix, "node_modules", "t3", "dist", "bin.mjs");
@@ -89,6 +96,13 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
+    Effect.provideService(
+      ServerSelfUpdate.ServerSelfUpdateIdleCheck,
+      ServerSelfUpdate.ServerSelfUpdateIdleCheck.of({
+        assertIdle: (targetVersion) =>
+          options.automaticUpdateIdle?.(order, targetVersion) ?? Effect.void,
+      }),
+    ),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
   return { selfUpdate, order };
@@ -127,6 +141,193 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
         "local update required",
       );
+    }),
+  );
+
+  it.effect("rejects automatic downgrades before staging", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness();
+      const error = yield* selfUpdate
+        .update({ targetVersion: "0.0.1", automatic: true })
+        .pipe(Effect.flip);
+
+      expect(error.reason).toContain("newer version");
+      expect(order).toEqual([]);
+    }),
+  );
+
+  it.effect("suppresses repeated automatic attempts after failure until a manual retry", () =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const { selfUpdate } = yield* makeHarness({
+        requestUpdate: () =>
+          Effect.sync(() => {
+            requests += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ServiceLauncherClient.ServiceLauncherClientError({ operation: "send" }),
+              ),
+            ),
+          ),
+      });
+
+      yield* selfUpdate.update({ targetVersion: "1.1.0", automatic: true }).pipe(Effect.flip);
+      yield* selfUpdate.update({ targetVersion: "1.1.0", automatic: true }).pipe(Effect.flip);
+      expect(requests).toBe(1);
+
+      yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip);
+      expect(requests).toBe(1);
+      yield* selfUpdate.update({ targetVersion: "1.1.0", automatic: true }).pipe(Effect.flip);
+      expect(requests).toBe(1);
+
+      yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(requests).toBe(2);
+    }),
+  );
+
+  it.effect("does not wedge updates when a manual retry is interrupted", () =>
+    Effect.gen(function* () {
+      const retryStarted = yield* Deferred.make<void>();
+      const releaseRetry = yield* Deferred.make<void>();
+      let requests = 0;
+      const { selfUpdate } = yield* makeHarness({
+        requestUpdate: () =>
+          Effect.sync(() => {
+            requests += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ServiceLauncherClient.ServiceLauncherClientError({ operation: "send" }),
+              ),
+            ),
+          ),
+      });
+
+      yield* selfUpdate.update({ targetVersion: "1.1.0", automatic: true }).pipe(Effect.flip);
+      const retryFiber = yield* selfUpdate
+        .update({ targetVersion: "1.1.0" }, () =>
+          Deferred.succeed(retryStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRetry)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(retryStarted);
+      const interruptFiber = yield* Fiber.interrupt(retryFiber).pipe(Effect.forkChild);
+      yield* Deferred.succeed(releaseRetry, undefined);
+      yield* Fiber.join(interruptFiber);
+
+      yield* selfUpdate.update({ targetVersion: "1.1.0", automatic: true }).pipe(Effect.flip);
+      expect(requests).toBe(1);
+      yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(requests).toBe(2);
+    }),
+  );
+
+  it.effect("rechecks automatic updates after staging and before activation", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({
+        automaticUpdateIdle: (order, targetVersion) =>
+          Effect.sync(() => order.push("idle-check")).pipe(
+            Effect.andThen(
+              new ServerAutomaticUpdateDeferredError({
+                reason: "new work started while downloading",
+                targetVersion,
+              }),
+            ),
+          ),
+      });
+      const error = yield* selfUpdate
+        .update({ targetVersion: "1.1.0", automatic: true })
+        .pipe(Effect.flip);
+
+      expect(error.reason).toContain("new work started");
+      expect(order).toEqual(["install", "preflight", "idle-check"]);
+    }),
+  );
+
+  it.effect("keeps admission closed if an automatic update caller disconnects during handoff", () =>
+    Effect.gen(function* () {
+      const requestStarted = yield* Deferred.make<void>();
+      const releaseRequest = yield* Deferred.make<void>();
+      const { selfUpdate, order } = yield* makeHarness({
+        requestUpdate: () =>
+          Deferred.succeed(requestStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRequest)),
+            Effect.as("launcher-id"),
+          ),
+      });
+      const updateFiber = yield* selfUpdate
+        .update({ targetVersion: "1.1.0", automatic: true })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(requestStarted);
+      const interruptFiber = yield* Fiber.interrupt(updateFiber).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      const duringHandoff = yield* selfUpdate
+        .withCommandAdmission(Effect.succeed("started"))
+        .pipe(Effect.flip);
+      expect(duringHandoff.reason).toContain("cannot start new work");
+
+      yield* Deferred.succeed(releaseRequest, undefined);
+      yield* Fiber.join(interruptFiber);
+      const afterAcceptance = yield* selfUpdate
+        .withCommandAdmission(Effect.succeed("started"))
+        .pipe(Effect.flip);
+      expect(afterAcceptance.reason).toContain("cannot start new work");
+      expect(order).toEqual(["install", "preflight"]);
+    }),
+  );
+
+  it.effect("allows automatic update staging to be interrupted before handoff", () =>
+    Effect.gen(function* () {
+      const installStarted = yield* Deferred.make<void>();
+      const releaseInstall = yield* Deferred.make<void>();
+      let installs = 0;
+      const { selfUpdate, order } = yield* makeHarness({
+        install: () => {
+          installs += 1;
+          return installs === 1
+            ? Deferred.succeed(installStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseInstall)),
+              )
+            : Effect.void;
+        },
+      });
+      const updateFiber = yield* selfUpdate
+        .update({ targetVersion: "1.1.0", automatic: true })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(installStarted);
+      const interruptFiber = yield* Fiber.interrupt(updateFiber).pipe(Effect.forkChild);
+      yield* Deferred.succeed(releaseInstall, undefined);
+      yield* Fiber.join(interruptFiber);
+
+      expect(order).toEqual(["install"]);
+      expect(yield* selfUpdate.update({ targetVersion: "1.1.0", automatic: true })).toEqual({
+        targetVersion: "1.1.0",
+        method: "boot-service",
+        updateId: "launcher-id",
+      });
+    }),
+  );
+
+  it.effect("blocks new commands after an automatic handoff is accepted", () =>
+    Effect.gen(function* () {
+      const { selfUpdate } = yield* makeHarness();
+      yield* selfUpdate.update({ targetVersion: "1.1.0", automatic: true });
+
+      const error = yield* selfUpdate
+        .withCommandAdmission(Effect.succeed("started"))
+        .pipe(Effect.flip);
+      expect(error.reason).toContain("cannot start new work");
+    }),
+  );
+
+  it.effect("keeps command admission open for manual updates", () =>
+    Effect.gen(function* () {
+      const { selfUpdate } = yield* makeHarness();
+      yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      expect(yield* selfUpdate.withCommandAdmission(Effect.succeed("started"))).toBe("started");
     }),
   );
 

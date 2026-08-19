@@ -615,6 +615,8 @@ export const ServerSelfUpdateInput = Schema.Struct({
   /** Exact npm version of the `t3` package to install (never a dist-tag, so
       the server and the acknowledging client agree on what was requested). */
   targetVersion: TrimmedNonEmptyString,
+  /** Automatic updates are re-checked for idle work immediately before activation. */
+  automatic: Schema.optional(Schema.Boolean),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 
@@ -643,10 +645,23 @@ export const ServerSelfUpdateProgressEvent = Schema.Union([
 ]);
 export type ServerSelfUpdateProgressEvent = typeof ServerSelfUpdateProgressEvent.Type;
 
+export class ServerAutomaticUpdateDeferredError extends Schema.TaggedErrorClass<ServerAutomaticUpdateDeferredError>()(
+  "ServerAutomaticUpdateDeferredError",
+  {
+    reason: TrimmedNonEmptyString,
+    targetVersion: TrimmedNonEmptyString,
+  },
+) {
+  override get message(): string {
+    return `Automatic server update deferred: ${this.reason}`;
+  }
+}
+
 export class ServerSelfUpdateError extends Schema.TaggedErrorClass<ServerSelfUpdateError>()(
   "ServerSelfUpdateError",
   {
     reason: TrimmedNonEmptyString,
+
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

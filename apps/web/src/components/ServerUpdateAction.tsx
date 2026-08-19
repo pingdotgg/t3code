@@ -55,6 +55,18 @@ export function ServerUpdateProgress({
       </div>
     );
   }
+  if (state.status === "pending") {
+    return (
+      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="size-1.5 shrink-0 rounded-full border border-current" aria-hidden="true" />
+        <span>
+          {state.reason === "active-work"
+            ? "Waiting for active work to finish…"
+            : "Checking activity before updating…"}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="mt-1 flex items-center gap-2 text-xs font-medium text-foreground">
       <span

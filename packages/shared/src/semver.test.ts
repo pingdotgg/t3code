@@ -46,6 +46,17 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
+  it("ignores build metadata when parsing and comparing versions", () => {
+    expect(parseSemver("1.2.3+build.7")).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+      prerelease: [],
+    });
+    expect(compareSemverVersions("1.2.3+build.7", "1.2.3+build.8")).toBe(0);
+    expect(compareSemverVersions("1.2.3-beta.1+build.7", "1.2.3-beta.1")).toBe(0);
+  });
+
   it("falls back to lexical comparison for malformed numeric segments", () => {
     expect(compareSemverVersions("1.2.3abc", "1.2.10")).toBeGreaterThan(0);
   });

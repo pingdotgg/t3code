@@ -27,6 +27,7 @@ import {
   type DesktopServerExposureState,
   type DesktopWslState,
   type EnvironmentId,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import {
@@ -125,6 +126,7 @@ import {
   usePrimaryEnvironment,
 } from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
@@ -1348,6 +1350,87 @@ function NetworkAccessDescription({
   );
 }
 
+function AutomaticServerUpdateControl({
+  environmentId,
+  serverConfig,
+  compact = false,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly serverConfig: ServerConfig | null;
+  readonly compact?: boolean;
+}) {
+  const enabled = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.automaticallyUpdateWhenIdle,
+  );
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const capability = resolveServerSelfUpdateCapability(serverConfig);
+  const supported = capability === "boot-service";
+  const disabledReason =
+    capability === "desktop-managed"
+      ? "This server updates with the desktop app on its machine."
+      : capability === "respawn"
+        ? "Reinstall the T3 Code background service to enable automatic updates."
+        : capability === null
+          ? "Install the T3 Code background service to enable automatic updates."
+          : null;
+  const control = (
+    <Switch
+      aria-label="Automatically update this server when idle"
+      checked={supported && enabled}
+      disabled={!supported}
+      onCheckedChange={(checked) => updateSettings({ automaticallyUpdateWhenIdle: checked })}
+    />
+  );
+  const controlWithExplanation = disabledReason ? (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex">{control}</span>} />
+      <TooltipPopup side="top" className="max-w-80">
+        {disabledReason}
+      </TooltipPopup>
+    </Tooltip>
+  ) : (
+    control
+  );
+
+  if (compact) {
+    const compactControl = (
+      <label
+        className={cn(
+          "flex w-fit items-center gap-2 pt-1 text-xs text-muted-foreground",
+          supported ? "cursor-pointer" : "cursor-not-allowed",
+        )}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {control}
+        <span>Auto-update when idle</span>
+      </label>
+    );
+    return disabledReason ? (
+      <Tooltip>
+        <TooltipTrigger render={compactControl} />
+        <TooltipPopup side="top" className="max-w-80">
+          {disabledReason}
+        </TooltipPopup>
+      </Tooltip>
+    ) : (
+      compactControl
+    );
+  }
+
+  return (
+    <SettingsRow
+      title="Automatic server updates"
+      description={
+        supported
+          ? "Install newer server versions after every session in this environment is idle."
+          : disabledReason
+      }
+      control={controlWithExplanation}
+    />
+  );
+}
+
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   removingEnvironmentId: EnvironmentId | null;
@@ -1461,6 +1544,13 @@ function SavedBackendListRow({
                 {versionMismatch.clientVersion}
               </TooltipPopup>
             </Tooltip>
+          ) : null}
+          {environment.serverConfig !== null ? (
+            <AutomaticServerUpdateControl
+              environmentId={environmentId}
+              serverConfig={environment.serverConfig}
+              compact
+            />
           ) : null}
           {environment.connection.error && !resumingServerUpdate ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
@@ -1746,6 +1836,15 @@ function CloudRemoteEnvironmentRows({
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
+  const automaticUpdateEnvironments = useMemo(
+    () =>
+      environments.filter(
+        (environment) =>
+          environment.connection.phase === "connected" &&
+          resolveServerSelfUpdateCapability(environment.serverConfig) === "boot-service",
+      ),
+    [environments],
+  );
   const primaryEnvironment = usePrimaryEnvironment();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
@@ -1753,6 +1852,9 @@ export function ConnectionsSettings() {
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -1820,6 +1922,7 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
+  const [isEnablingAutomaticUpdates, setIsEnablingAutomaticUpdates] = useState(false);
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
@@ -2244,6 +2347,42 @@ export function ConnectionsSettings() {
     savedBackendSshPort,
     savedBackendSshUsername,
   ]);
+
+  const handleEnableAutomaticUpdates = async () => {
+    if (automaticUpdateEnvironments.length === 0) return;
+
+    setIsEnablingAutomaticUpdates(true);
+    try {
+      const results = await Promise.all(
+        automaticUpdateEnvironments.map((environment) =>
+          updateEnvironmentSettings({
+            environmentId: environment.environmentId,
+            input: { patch: { automaticallyUpdateWhenIdle: true } },
+          }),
+        ),
+      );
+      const interrupted = results.some(
+        (result) => result._tag === "Failure" && isAtomCommandInterrupted(result),
+      );
+      if (interrupted) return;
+      const failures = results.filter((result) => result._tag === "Failure");
+      if (failures.length > 0) {
+        toastManager.add({
+          type: "error",
+          title: "Some environments could not be updated",
+          description: `Enabled automatic updates on ${results.length - failures.length} of ${results.length} connected environments.`,
+        });
+        return;
+      }
+      toastManager.add({
+        type: "success",
+        title: "Automatic updates enabled",
+        description: `Applied to ${results.length} connected environment${results.length === 1 ? "" : "s"}.`,
+      });
+    } finally {
+      setIsEnablingAutomaticUpdates(false);
+    }
+  };
 
   const handleConnectSavedBackend = useCallback(
     async (environmentId: EnvironmentId) => {
@@ -3024,7 +3163,9 @@ export function ConnectionsSettings() {
                     ? "Update failed"
                     : primaryServerUpdateState.status === "running"
                       ? "Updating server"
-                      : "Server update available"
+                      : primaryServerUpdateState.status === "pending"
+                        ? "Automatic update waiting"
+                        : "Server update available"
                 }
                 description={
                   primaryServerUpdateState.status !== "idle" ? (
@@ -3048,7 +3189,8 @@ export function ConnectionsSettings() {
                 control={
                   primaryVersionMismatch &&
                   primaryEnvironmentId !== null &&
-                  primaryServerUpdateState.status !== "running" ? (
+                  (primaryServerUpdateState.status === "idle" ||
+                    primaryServerUpdateState.status === "failed") ? (
                     <ServerUpdateAction
                       environmentId={primaryEnvironmentId}
                       serverLabel={primaryEnvironment?.label ?? "this server"}
@@ -3058,6 +3200,12 @@ export function ConnectionsSettings() {
                     />
                   ) : undefined
                 }
+              />
+            ) : null}
+            {primaryEnvironmentId !== null && primaryServerConfig !== null ? (
+              <AutomaticServerUpdateControl
+                environmentId={primaryEnvironmentId}
+                serverConfig={primaryServerConfig}
               />
             ) : null}
             {desktopBridge ? (
@@ -3383,65 +3531,91 @@ export function ConnectionsSettings() {
       <SettingsSection
         {...searchableSetting("remote-environments")}
         headerAction={
-          <Dialog
-            open={addBackendDialogOpen}
-            onOpenChange={(open) => {
-              setAddBackendDialogOpen(open);
-              if (!open) {
-                setSavedBackendError(null);
-              }
-            }}
-          >
+          <div className="flex items-center gap-1">
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <DialogTrigger
-                    render={
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
-                        aria-label="Add environment"
-                      >
-                        <PlusIcon className="size-3" />
-                        <span>Add environment</span>
-                      </Button>
-                    }
-                  />
+                  <span className="inline-flex">
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      disabled={
+                        isEnablingAutomaticUpdates || automaticUpdateEnvironments.length === 0
+                      }
+                      onClick={() => void handleEnableAutomaticUpdates()}
+                    >
+                      {isEnablingAutomaticUpdates ? (
+                        <RefreshCwIcon className="size-3 animate-spin" />
+                      ) : null}
+                      <span>
+                        {isEnablingAutomaticUpdates ? "Applying…" : "Enable auto-updates"}
+                      </span>
+                    </Button>
+                  </span>
                 }
               />
-              <TooltipPopup side="top">Add environment</TooltipPopup>
+              <TooltipPopup side="top">
+                {automaticUpdateEnvironments.length === 0
+                  ? "Connect a background-service environment to enable automatic updates."
+                  : "Enable automatic updates for every connected background-service environment."}
+              </TooltipPopup>
             </Tooltip>
-            <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
-              <DialogHeader>
-                <DialogTitle>Add Environment</DialogTitle>
-                <DialogDescription>Pair another environment to this client.</DialogDescription>
-              </DialogHeader>
-              <DialogPanel>
-                <div className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {renderConnectionModeCard({
-                      mode: "remote",
-                      title: "Remote link",
-                      description: "Enter a backend host and pairing code.",
-                      icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
-                    })}
-                    {desktopBridge
-                      ? renderConnectionModeCard({
-                          mode: "ssh",
-                          title: "SSH",
-                          description: "Use local SSH config, agent, and tunnels for the backend.",
-                          icon: <TerminalIcon aria-hidden className="size-4" />,
-                        })
-                      : null}
+            <Dialog
+              open={addBackendDialogOpen}
+              onOpenChange={(open) => {
+                setAddBackendDialogOpen(open);
+                if (!open) {
+                  setSavedBackendError(null);
+                }
+              }}
+            >
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <DialogTrigger
+                      render={
+                        <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                          <PlusIcon className="size-3" />
+                          <span>Add environment</span>
+                        </Button>
+                      }
+                    />
+                  }
+                />
+                <TooltipPopup side="top">Add environment</TooltipPopup>
+              </Tooltip>
+              <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
+                <DialogHeader>
+                  <DialogTitle>Add Environment</DialogTitle>
+                  <DialogDescription>Pair another environment to this client.</DialogDescription>
+                </DialogHeader>
+                <DialogPanel>
+                  <div className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {renderConnectionModeCard({
+                        mode: "remote",
+                        title: "Remote link",
+                        description: "Enter a backend host and pairing code.",
+                        icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
+                      })}
+                      {desktopBridge
+                        ? renderConnectionModeCard({
+                            mode: "ssh",
+                            title: "SSH",
+                            description:
+                              "Use local SSH config, agent, and tunnels for the backend.",
+                            icon: <TerminalIcon aria-hidden className="size-4" />,
+                          })
+                        : null}
+                    </div>
+                    <AnimatedHeight>
+                      {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+                    </AnimatedHeight>
                   </div>
-                  <AnimatedHeight>
-                    {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
-                  </AnimatedHeight>
-                </div>
-              </DialogPanel>
-            </DialogPopup>
-          </Dialog>
+                </DialogPanel>
+              </DialogPopup>
+            </Dialog>
+          </div>
         }
       >
         {savedEnvironments.map((environment) => (

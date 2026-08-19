@@ -161,6 +161,7 @@ import {
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
   ServerSelfUpdateError,
+  ServerAutomaticUpdateDeferredError,
   ServerSelfUpdateInput,
   ServerSelfUpdateProgressEvent,
   ServerSelfUpdateResult,
@@ -362,7 +363,11 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
 export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
   payload: ServerSelfUpdateInput,
   success: ServerSelfUpdateResult,
-  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ServerSelfUpdateError,
+    ServerAutomaticUpdateDeferredError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 export const WsServerUpdateServerWithProgressRpc = Rpc.make(
@@ -370,7 +375,11 @@ export const WsServerUpdateServerWithProgressRpc = Rpc.make(
   {
     payload: ServerSelfUpdateInput,
     success: ServerSelfUpdateProgressEvent,
-    error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+    error: Schema.Union([
+      ServerSelfUpdateError,
+      ServerAutomaticUpdateDeferredError,
+      EnvironmentAuthorizationError,
+    ]),
     stream: true,
   },
 );

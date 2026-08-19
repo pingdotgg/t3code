@@ -1,10 +1,12 @@
 import {
   EnvironmentId,
+  type OrchestrationThreadShell,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { isAutomaticServerUpdateThreadActive } from "@t3tools/shared/automaticServerUpdate";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -31,6 +33,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerConfigProjection,
+  automaticServerUpdateDecision,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
@@ -38,10 +41,105 @@ import {
   projectServerWelcome,
   resolveServerConfigValue,
   resolveServerUpdateProgressResult,
+  serverUpdateStateForAutomaticDecision,
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
 } from "./server.ts";
+
+type ActivityThread = Pick<
+  OrchestrationThreadShell,
+  "session" | "latestTurn" | "backgroundLiveness"
+>;
+
+const IDLE_THREAD: ActivityThread = {
+  session: null,
+  latestTurn: null,
+  backgroundLiveness: null,
+};
+
+describe("automatic server update decisions", () => {
+  it("only targets a semver-newer client on launcher-managed opted-in servers", () => {
+    const eligible = {
+      enabled: true,
+      selfUpdate: "boot-service" as const,
+      clientVersion: "1.3.0",
+      serverVersion: "1.2.0",
+      shellStatus: "live" as const,
+      threads: [IDLE_THREAD],
+    };
+
+    expect(automaticServerUpdateDecision(eligible)).toEqual({
+      status: "ready",
+      fromVersion: "1.2.0",
+      targetVersion: "1.3.0",
+    });
+    expect(automaticServerUpdateDecision({ ...eligible, enabled: false })).toEqual({
+      status: "ineligible",
+    });
+    expect(automaticServerUpdateDecision({ ...eligible, selfUpdate: "desktop-managed" })).toEqual({
+      status: "ineligible",
+    });
+    expect(automaticServerUpdateDecision({ ...eligible, selfUpdate: "respawn" })).toEqual({
+      status: "ineligible",
+    });
+    expect(automaticServerUpdateDecision({ ...eligible, selfUpdate: null })).toEqual({
+      status: "ineligible",
+    });
+    expect(
+      automaticServerUpdateDecision({
+        ...eligible,
+        clientVersion: "1.2.0",
+        serverVersion: "1.3.0",
+      }),
+    ).toEqual({ status: "ineligible" });
+    expect(
+      automaticServerUpdateDecision({ ...eligible, clientVersion: "dev", serverVersion: "1.2.0" }),
+    ).toEqual({ status: "ineligible" });
+  });
+
+  it("waits for a live shell and every active-work signal to clear", () => {
+    const input = {
+      enabled: true,
+      selfUpdate: "boot-service" as const,
+      clientVersion: "1.3.0",
+      serverVersion: "1.2.0",
+      shellStatus: "live" as const,
+      threads: [IDLE_THREAD],
+    };
+    const activeSession = {
+      status: "ready" as const,
+      activeTurnId: "turn-1",
+    } as ActivityThread["session"];
+    const runningTurn = { state: "running" as const } as ActivityThread["latestTurn"];
+
+    expect(automaticServerUpdateDecision({ ...input, shellStatus: "cached" })).toEqual({
+      status: "pending",
+      reason: "synchronizing",
+      fromVersion: "1.2.0",
+      targetVersion: "1.3.0",
+    });
+
+    for (const thread of [
+      { ...IDLE_THREAD, session: { ...activeSession, status: "starting" } },
+      { ...IDLE_THREAD, session: { ...activeSession, status: "running" } },
+      { ...IDLE_THREAD, session: activeSession },
+      { ...IDLE_THREAD, latestTurn: runningTurn },
+      { ...IDLE_THREAD, backgroundLiveness: "working" as const },
+      { ...IDLE_THREAD, backgroundLiveness: "monitoring" as const },
+    ]) {
+      expect(isAutomaticServerUpdateThreadActive(thread)).toBe(true);
+      expect(automaticServerUpdateDecision({ ...input, threads: [thread] })).toEqual({
+        status: "pending",
+        reason: "active-work",
+        fromVersion: "1.2.0",
+        targetVersion: "1.3.0",
+      });
+    }
+
+    expect(isAutomaticServerUpdateThreadActive(IDLE_THREAD)).toBe(false);
+  });
+});
 
 const CONFIG = {
   availableEditors: [],
@@ -228,6 +326,39 @@ describe("server state projection", () => {
     expect(serverUpdateStateForServerVersion(failed, "0.0.30")).toBe(failed);
     expect(serverUpdateStateForServerVersion(failed, null)).toBe(failed);
     expect(serverUpdateStateForServerVersion(failed, "0.0.31")).toEqual({ status: "idle" });
+  });
+
+  it("projects automatic waits without overwriting active or failed operations", () => {
+    const pending = {
+      status: "pending" as const,
+      reason: "active-work" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    };
+    const running = {
+      status: "running" as const,
+      stage: "downloading" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    };
+    const failed = {
+      status: "failed" as const,
+      stage: "downloading" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+      message: "Nope",
+    };
+
+    expect(serverUpdateStateForAutomaticDecision({ status: "idle" }, pending)).toEqual(pending);
+    expect(serverUpdateStateForAutomaticDecision(pending, null)).toEqual({ status: "idle" });
+    expect(serverUpdateStateForAutomaticDecision(running, pending)).toBe(running);
+    expect(serverUpdateStateForAutomaticDecision(failed, pending)).toBe(failed);
+    expect(
+      serverUpdateStateForAutomaticDecision(failed, {
+        ...pending,
+        targetVersion: "0.0.32",
+      }),
+    ).toEqual({ ...pending, targetVersion: "0.0.32" });
   });
 
   it.effect("correlates launcher outcomes and fails immediately after rollback", () =>

@@ -42,7 +42,8 @@ import {
   ProjectWriteFileError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
-  type ServerSelfUpdateError,
+  ServerAutomaticUpdateDeferredError,
+  ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -59,6 +60,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -1125,6 +1127,11 @@ const makeWsRpcLayer = (
               }
               return result;
             }).pipe(
+              serverSelfUpdate.withCommandAdmission,
+              Effect.catchTags({
+                ServerSelfUpdateError: (cause) =>
+                  new OrchestrationDispatchCommandError({ message: cause.reason, cause }),
+              }),
               Effect.mapError((cause) =>
                 isOrchestrationDispatchCommandError(cause)
                   ? cause
@@ -1469,7 +1476,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
           observeRpcStream(
             WS_METHODS.serverUpdateServerWithProgress,
-            Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) =>
+            Stream.callback<
+              ServerSelfUpdateProgressEvent,
+              ServerSelfUpdateError | ServerAutomaticUpdateDeferredError
+            >((queue) =>
               serverSelfUpdate
                 .update(input, (stage) =>
                   Queue.offer(queue, {
@@ -1486,6 +1496,7 @@ const makeWsRpcLayer = (
                   ),
                   Effect.catchTags({
                     ServerSelfUpdateError: (error) => Queue.fail(queue, error),
+                    ServerAutomaticUpdateDeferredError: (error) => Queue.fail(queue, error),
                   }),
                   Effect.andThen(Queue.end(queue)),
                   Effect.forkScoped,

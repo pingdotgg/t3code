@@ -101,6 +101,32 @@ describe("ServerUpdateAction", () => {
 });
 
 describe("ServerUpdateProgress", () => {
+  it("shows why an automatic update is waiting", () => {
+    const activeWorkMarkup = renderToStaticMarkup(
+      <ServerUpdateProgress
+        state={{
+          status: "pending",
+          reason: "active-work",
+          fromVersion: "0.0.30",
+          targetVersion: "0.0.31",
+        }}
+      />,
+    );
+    const synchronizingMarkup = renderToStaticMarkup(
+      <ServerUpdateProgress
+        state={{
+          status: "pending",
+          reason: "synchronizing",
+          fromVersion: "0.0.30",
+          targetVersion: "0.0.31",
+        }}
+      />,
+    );
+
+    expect(activeWorkMarkup).toContain("Waiting for active work to finish…");
+    expect(synchronizingMarkup).toContain("Checking activity before updating…");
+  });
+
   it("shows one calm status row for the restart wait", () => {
     const markup = renderToStaticMarkup(
       <ServerUpdateProgress
