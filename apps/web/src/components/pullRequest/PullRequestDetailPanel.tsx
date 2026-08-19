@@ -103,6 +103,7 @@ import {
   buildResolveConflictsPrompt,
   handoffPrompt,
   handoffReviewComments,
+  latestPullRequestReviewOutcomes,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestComposerTarget,
@@ -123,7 +124,9 @@ import {
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
+  PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
+  pullRequestReviewOutcomeToneClassName,
   resolvePullRequestState,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
@@ -142,6 +145,12 @@ const ACTION_SUCCESS_LABELS: Record<PullRequestAction, string> = {
   "enable-auto-merge":
     "Auto-merge turned on — merges as soon as this is ready, sooner if it already is",
   "disable-auto-merge": "Auto-merge turned off",
+};
+
+const MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
+  merge: "Merge",
+  squash: "Squash",
+  rebase: "Rebase",
 };
 
 /** Said as the thing that did not happen, rather than as the operation that returned an error. */
@@ -457,9 +466,11 @@ export function PullRequestDetailPanel({
     if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
   }, [condensed]);
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>("merge");
-  const [confirmAction, setConfirmAction] = useState<
-    "merge" | "close" | "enable-auto-merge" | null
-  >(null);
+  const [confirmation, setConfirmation] = useState<{
+    readonly open: boolean;
+    readonly action: "merge" | "close" | "enable-auto-merge";
+  }>({ open: false, action: "merge" });
+  const confirmAction = confirmation.action;
   // Which handoff is preparing, keyed so a per-finding button can say "Preparing..." on itself
   // alone. One at a time whatever the key: they all check the same pull request out.
   const [handoff, setHandoff] = useState<string | null>(null);
@@ -1010,6 +1021,7 @@ export function PullRequestDetailPanel({
   const selectedMergeMethod = allowedMergeMethods.includes(mergeMethod)
     ? mergeMethod
     : (allowedMergeMethods[0] ?? "merge");
+  const selectedMergeMethodLabel = MERGE_METHOD_LABELS[selectedMergeMethod];
   const conflicting = detail?.state === "open" && detail.mergeability === "conflicting";
   // Only an outright yes arms it. A host that reports nothing has not said the merge is already
   // spoken for, and an off switch for something that may not be on says the wrong thing twice.
@@ -1075,6 +1087,19 @@ export function PullRequestDetailPanel({
     : null;
   const checksSummary = detail ? summarizePullRequestChecks(detail.checks) : null;
   const checksState = detail ? pullRequestChecksState(detail.checks) : null;
+  // Approvals that still stand, and only those. A superseded one is dimmed beside the reviewer
+  // who gave it, so counting it here would have the header assert in a number what the row next
+  // to it has just qualified.
+  //
+  // Not counted at all from a conversation this page only holds the recent end of: an approval
+  // older than the window would be missing, and "1" beside a tick is read as the whole answer.
+  // The Summary tab's row can say it may be short; a bare number cannot, so it stays away.
+  const approvalCount =
+    detail && !detail.commentsTruncated
+      ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
+          (entry) => entry.outcome === "approved" && !entry.stale,
+        ).length
+      : 0;
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">
@@ -1281,7 +1306,9 @@ export function PullRequestDetailPanel({
                         allowedMergeMethods.length > 0 ? (
                         <MenuItem
                           disabled={actionPending}
-                          onClick={() => setConfirmAction("enable-auto-merge")}
+                          onClick={() =>
+                            setConfirmation({ open: true, action: "enable-auto-merge" })
+                          }
                         >
                           <GitMergeIcon className="size-3.5" />
                           Enable auto-merge
@@ -1310,7 +1337,7 @@ export function PullRequestDetailPanel({
                                     icon and the label need their own row to share a line. */}
                                 <span className="flex min-w-0 items-center gap-2">
                                   <GitMergeIcon className="size-3.5" />
-                                  <span className="capitalize">{method}</span>
+                                  <span>{MERGE_METHOD_LABELS[method]}</span>
                                 </span>
                               </MenuRadioItem>
                             ))}
@@ -1347,7 +1374,7 @@ export function PullRequestDetailPanel({
                       <MenuItem
                         variant="destructive"
                         disabled={actionPending}
-                        onClick={() => setConfirmAction("close")}
+                        onClick={() => setConfirmation({ open: true, action: "close" })}
                       >
                         <GitPullRequestClosedIcon className="size-3.5" />
                         Close pull request
@@ -1445,9 +1472,9 @@ export function PullRequestDetailPanel({
                 <Button
                   size="xs"
                   disabled={actionPending}
-                  onClick={() => setConfirmAction("merge")}
+                  onClick={() => setConfirmation({ open: true, action: "merge" })}
                 >
-                  {pendingAction === "merge" ? "Merging..." : "Merge"}
+                  {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
                 </Button>
               ) : null}
             </>
@@ -1813,6 +1840,24 @@ export function PullRequestDetailPanel({
                             ? "…"
                             : detail.commits.length.toLocaleString()}
                       </span>
+                      {/* Only once somebody has approved: a nought beside a tick would read as a
+                          verdict of its own on a change nobody has looked at yet. */}
+                      {approvalCount > 0 ? (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            pullRequestReviewOutcomeToneClassName("approved"),
+                          )}
+                        >
+                          <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
+                          {approvalCount.toLocaleString()}
+                          {/* The icon is decorative and a name written onto a generic span is
+                              not announced, so the bare number says what it counts in words. */}
+                          <span className="sr-only">
+                            {approvalCount === 1 ? "approval" : "approvals"}
+                          </span>
+                        </span>
+                      ) : null}
                     </PullRequestMetaLine>
                     <Button
                       size="xs"
@@ -1946,8 +1991,11 @@ export function PullRequestDetailPanel({
       </div>
 
       <AlertDialog
-        open={confirmAction !== null}
-        onOpenChange={(open) => !open && setConfirmAction(null)}
+        open={confirmation.open}
+        onOpenChange={(open) => setConfirmation((current) => ({ ...current, open }))}
+        onOpenChangeComplete={(open) => {
+          if (!open) setConfirmation({ open: false, action: "merge" });
+        }}
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
@@ -1979,7 +2027,7 @@ export function PullRequestDetailPanel({
               disabled={actionPending}
               onClick={() => {
                 const action = confirmAction;
-                setConfirmAction(null);
+                setConfirmation((current) => ({ ...current, open: false }));
                 if (action === "merge") void perform("merge", selectedMergeMethod);
                 if (action === "enable-auto-merge")
                   void perform("enable-auto-merge", selectedMergeMethod);
@@ -1987,7 +2035,7 @@ export function PullRequestDetailPanel({
               }}
             >
               {confirmAction === "merge"
-                ? "Merge"
+                ? selectedMergeMethodLabel
                 : confirmAction === "enable-auto-merge"
                   ? "Enable auto-merge"
                   : "Close"}
