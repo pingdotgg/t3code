@@ -16,7 +16,12 @@ In T3 Code Settings, your Devin provider can stay like this:
 ```text
 Display name: Devin
 Binary path: devin
-Home path: empty
+Profile path: empty
+Config file: empty
+Agent type: Default coding agent
+Permission mode: Auto (read-only)
+Process sandbox: off
+Respect workspace trust: on
 Launch arguments: empty
 ```
 
@@ -69,27 +74,86 @@ tokenized the same way as a shell command, so quoted arguments are supported.
 Example:
 
 ```text
-Launch arguments: --verbose --log-level debug
+Launch arguments: --model opus
 ```
 
 This produces a command like:
 
 ```text
-devin acp --verbose --log-level debug
+devin acp --model opus
 ```
+
+Normally, prefer T3 Code's model picker. `Launch arguments` remains available for ACP options added
+by newer Devin releases before T3 Code has a dedicated control.
 
 Do not put environment variable assignments in `Launch arguments`. Use the provider's
 **Environment variables** section for those, and mark tokens or API keys as sensitive.
+
+## Agent, Config, Sandbox, And Trust Controls
+
+The provider settings expose every Devin CLI option that changes an ACP runtime:
+
+- `Config file` maps to the top-level `--config` option.
+- `Agent type` maps to `devin acp --agent-type`. Use separate provider instances when you want a
+  persistent default, read-only review, or no-tools summarizer preset.
+- `Process sandbox` maps to the top-level `--sandbox` option.
+- `Respect workspace trust` maps to `--respect-workspace-trust`; it stays enabled by default.
+- `Permission mode` maps to `DEVIN_PERMISSION_MODE`.
+- T3 Code's model and reasoning pickers map to Devin's live ACP session config options.
+
+These controls are arguments, not shell text, so paths containing spaces remain one value.
+
+## Permission Mode
+
+T3 Code defaults to Devin's `normal` permission mode. The other selectable modes match the installed
+Devin CLI: `accept-edits`, `autonomous`, `smart`, and `dangerous`.
+Each mode grants progressively broader automatic approval; use `dangerous` only in an environment
+where unrestricted tool execution is intended.
 
 ## Authentication
 
 Devin's CLI authentication is handled by Devin itself, not by T3 Code. Run the login command that the
 Devin CLI documentation recommends before you start a session, then confirm the provider status in
-T3 Code Settings.
+T3 Code Settings. T3 Code reuses that
+saved CLI login across new chats; it does not open browser verification merely because Devin ACP
+advertises an authentication method. If the first prompt actually reports that the saved login is
+missing or expired, T3 Code invokes Devin's advertised browser authentication once and retries that
+prompt once. Unrelated prompt failures never trigger login.
 
 If Devin uses an API key or base URL that needs to be per-provider, add those variables to the
 provider's **Environment variables** section and mark the values as sensitive. T3 Code stores
 sensitive values as server secrets and does not send them back to the app after saving.
+
+## CLI Functionality In T3 Code
+
+T3 Code discovers Devin's ACP commands from each live session instead of freezing a version-specific
+list. Commands such as `/compact`, `/context`, `/mcp`, `/plan`, `/status`, `/workspace`, and
+project-local skills appear in the composer command menu when the installed CLI advertises them.
+T3 Code keeps its native `/model` entry so model and reasoning changes use the structured picker
+rather than a duplicate text command.
+
+Every other top-level CLI function has a native T3 equivalent or remains available without leaving
+T3 Code through the integrated terminal:
+
+| Devin CLI function                                          | T3 Code path                                                                                                     |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Prompt, `--print`, `--model`, `--permission-mode`           | Composer and provider/model controls                                                                             |
+| `--continue`, `--resume`, `list`                            | Persisted T3 threads and sidebar                                                                                 |
+| `--config`, `--sandbox`, `--respect-workspace-trust`        | Provider settings                                                                                                |
+| `--prompt-file`, `--export`                                 | Integrated terminal when the exact Devin file format is required; normal prompts and history stay in T3 threads  |
+| ACP slash commands and skills                               | Composer `/` menu, discovered per session                                                                        |
+| `models`; `rules list/show/paths`; `skills list/show/paths` | Model picker and live skill commands; full inspection commands in the integrated terminal                        |
+| `auth`; `mcp`; `plugins`; `cloud`                           | Live `/login`, `/logout`, `/status`, and `/mcp` where advertised; full administration in the integrated terminal |
+| `version`, `update`                                         | Provider status and one-click `devin update`                                                                     |
+| `migrate`, `sandbox`, `setup`, `uninstall`                  | Integrated terminal so Devin owns every interactive prompt and destructive confirmation                          |
+| `acp`                                                       | Managed automatically by the provider; advanced flags can be added under `Launch arguments`                      |
+
+Administrative commands stay terminal-based because several are interactive or destructive. This
+keeps their complete CLI prompts and confirmation gates instead of replacing them with partial UI
+wrappers. With the default provider profile, the integrated terminal and provider inherit the same
+Devin state. If a provider uses an isolated `Profile path`, set `DEVIN_HOME` to that path and set
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` to its `config`, `data`, and `cache`
+subdirectories in the terminal command so it targets the same isolated profile.
 
 ## Token Usage And Cost
 
