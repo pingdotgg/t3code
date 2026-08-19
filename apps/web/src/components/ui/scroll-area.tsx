@@ -46,6 +46,10 @@ function ScrollArea({
           chainVerticalScroll && "overscroll-y-auto",
           scrollFade &&
             "scroll-p-[var(--fade-size)] mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] [--fade-size:1.5rem]",
+          // Base UI's overflow-x vars are logical (start = the scroll-start edge), while the
+          // mask utilities are physical — under dir="rtl" the start edge is the right one.
+          scrollFade &&
+            "rtl:mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] rtl:mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))]",
           scrollbarGutter && "scrollbar-gutter-stable",
           hideScrollbars &&
             "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",

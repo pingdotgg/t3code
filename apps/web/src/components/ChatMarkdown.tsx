@@ -1,3 +1,4 @@
+import { DirectionProvider, type TextDirection } from "@base-ui/react/direction-provider";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -431,7 +432,29 @@ function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
 
-function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table">) {
+// Strong-RTL code points (Hebrew, Arabic and friends, incl. presentation forms).
+const STRONG_RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u;
+// First letter decides (UBA P2/P3): digits, punctuation and symbols are neutral.
+const FIRST_LETTER = /\p{L}/u;
+
+// The direction a block of text renders in — what `dir="auto"` would resolve.
+export function firstStrongDirection(text: string): TextDirection {
+  const letter = FIRST_LETTER.exec(text)?.[0];
+  return letter && STRONG_RTL_CHAR.test(letter) ? "rtl" : "ltr";
+}
+
+function hastTextContent(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as { type?: string; value?: string; children?: unknown[] };
+  if (n.type === "text") return n.value ?? "";
+  return (n.children ?? []).map(hastTextContent).join("");
+}
+
+function MarkdownTable({
+  children,
+  dir = "ltr",
+  ...props
+}: Omit<React.ComponentProps<"table">, "dir"> & { dir?: TextDirection }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
@@ -506,19 +529,23 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
     >
-      <ScrollArea
-        // Direction lives on the scroll viewport, not just the table, so an overflowing
-        // RTL table opens scrolled to its first (rightmost) column.
-        dir={dir}
-        chainVerticalScroll
-        scrollFade
-        hideScrollbars
-        className="w-full max-w-full rounded-none"
-      >
-        <table ref={tableRef} {...props}>
-          {children}
-        </table>
-      </ScrollArea>
+      {/* A concrete direction on the scroll viewport (not just the table) so an
+          overflowing RTL table opens at its first, rightmost column — and the same
+          value fed to Base UI, whose scroll-fade math reads its DirectionProvider
+          rather than the DOM `dir`. */}
+      <DirectionProvider direction={dir}>
+        <ScrollArea
+          dir={dir}
+          chainVerticalScroll
+          scrollFade
+          hideScrollbars
+          className="w-full max-w-full rounded-none"
+        >
+          <table ref={tableRef} {...props}>
+            {children}
+          </table>
+        </ScrollArea>
+      </DirectionProvider>
       <div className="mt-0.5 flex items-center justify-between select-none">
         <Tooltip>
           <TooltipTrigger
@@ -1867,8 +1894,8 @@ function ChatMarkdown({
         }
         return <ChatMarkdownImageFallback alt={altText} />;
       },
-      table({ node: _node, ...props }) {
-        return <MarkdownTable dir="auto" {...props} />;
+      table({ node, dir: _dir, ...props }) {
+        return <MarkdownTable dir={firstStrongDirection(hastTextContent(node))} {...props} />;
       },
       details({ node: _node, children, open: detailsOpen }) {
         return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
