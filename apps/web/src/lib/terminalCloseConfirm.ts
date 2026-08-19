@@ -8,9 +8,10 @@ export function isTerminalCloseConfirmPending(): boolean {
 }
 
 /**
- * Shared confirmation for every user-initiated terminal close (drawer buttons,
- * panel buttons, and the `terminal.close` keybinding). Auto-exit cleanup skips
- * this path and closes directly.
+ * Confirmation for individual terminal close actions: drawer buttons, panel
+ * buttons, the `terminal.close` keybinding, and closing a terminal surface from
+ * the tab strip. Auto-exit cleanup and bulk tab closes skip this path and close
+ * directly.
  */
 export async function confirmTerminalClose(label: string): Promise<boolean> {
   const localApi = readLocalApi();
@@ -23,6 +24,8 @@ export async function confirmTerminalClose(label: string): Promise<boolean> {
       ),
       { variant: "destructive" },
     );
+  } catch {
+    return false;
   } finally {
     pendingConfirmations -= 1;
   }
