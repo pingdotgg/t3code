@@ -663,6 +663,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       currentRuntimeMode,
       props.onUpdateModelSelection,
       props.onUpdateRuntimeMode,
+      props.optionChangeBlocked,
+      props.optionChangeBlockedInstanceId,
       providerOptionDescriptors,
       settingsOwnerId,
       threadProviderGroups,

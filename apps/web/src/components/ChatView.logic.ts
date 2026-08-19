@@ -466,9 +466,8 @@ export function getStartedThreadModelChangeBlockReason(input: {
 
 /**
  * Providers that cannot change models mid-thread also bind their option values
- * to the active session. Locked provider-option rows render disabled and the
- * committed selection stays in force; there is no toast or click-to-apply
- * path.
+ * to the active session. Locked provider-option rows stay clickable and warn
+ * with a toast instead of applying; the committed selection stays in force.
  *
  * Compare provider *instance* ids, not driver kinds: two Grok instances must
  * keep independent, editable options when composing a handoff away from the
