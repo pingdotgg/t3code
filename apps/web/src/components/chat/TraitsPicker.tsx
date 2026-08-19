@@ -214,6 +214,7 @@ export interface TraitsMenuContentProps {
   onPromptChange: (prompt: string) => void;
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
+  onOptionSelected?: () => void;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
 }
@@ -227,6 +228,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
+  onOptionSelected,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
@@ -279,6 +281,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           ? ULTRATHINK_PROMPT_PREFIX
           : applyClaudePromptEffortPrefix(prompt, "ultrathink");
       onPromptChange(nextPrompt);
+      onOptionSelected?.();
       return;
     }
     if (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id) return;
@@ -287,6 +290,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       onPromptChange(stripped);
     }
     updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
+    onOptionSelected?.();
   };
 
   if (!hasAnyControls) {
@@ -323,6 +327,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                     key={option.id}
                     value={option.id}
                     hideIndicator
+                    className="cursor-pointer"
                     // Base UI keeps radio menus open by default. Close on pick so
                     // the traits menu behaves like the model picker.
                     closeOnClick
@@ -369,10 +374,17 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   updateDescriptors(
                     replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
                   );
+                  onOptionSelected?.();
                 }}
               >
                 {(["on", "off"] as const).map((value) => (
-                  <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
+                  <MenuRadioItem
+                    key={value}
+                    value={value}
+                    hideIndicator
+                    className="cursor-pointer"
+                    closeOnClick
+                  >
                     <span className="flex w-full min-w-0 items-center justify-between gap-3">
                       <span>{value === "on" ? "On" : "Off"}</span>
                     </span>
@@ -507,13 +519,14 @@ export const TraitsPicker = memo(function TraitsPicker({
       }}
     >
       <MenuTrigger
+        className="cursor-pointer"
         render={
           <ComposerControl
             variant={triggerVariant ?? "ghost"}
             className={cn(
               isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
-                : "shrink-0 whitespace-nowrap",
+                ? "min-w-0 max-w-40 shrink cursor-pointer justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                : "shrink-0 cursor-pointer whitespace-nowrap",
               triggerClassName,
             )}
           />
@@ -543,6 +556,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           onPromptChange={onPromptChange}
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
+          onOptionSelected={() => setIsMenuOpen(false)}
           {...persistence}
         />
       </MenuPopup>
