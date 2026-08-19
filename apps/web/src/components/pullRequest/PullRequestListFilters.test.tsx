@@ -46,6 +46,7 @@ interface CheckboxItemProps {
   readonly checked?: boolean;
   readonly onCheckedChange?: (checked: boolean) => void;
   readonly onClick?: () => void;
+  readonly onKeyDown?: (event: unknown) => void;
   readonly children?: ReactNode;
 }
 
@@ -80,6 +81,17 @@ function findOnlyButtons(
 
 /** Enough of a click for the handler, which only ever stops the row from swallowing it. */
 const clickEvent = () => ({ preventDefault: () => undefined, stopPropagation: () => undefined });
+
+/**
+ * Enough of a key press for the row handler. `preventBaseUIHandler` is the one the menu reads:
+ * a handler that only prevents the default still lets the row toggle after it.
+ */
+const keyEvent = (key: string, shiftKey: boolean) => ({
+  key,
+  shiftKey,
+  preventDefault: () => undefined,
+  preventBaseUIHandler: vi.fn(),
+});
 
 function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) {
   return PullRequestFiltersMenu({
@@ -315,6 +327,35 @@ describe("pull request filters menu", () => {
       environmentId: "env-2",
       hiddenKeys: [],
     });
+  });
+
+  it("narrows to one project from the keyboard", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
+    );
+
+    // Arrow keys reach the row but never the button inside it, so the row carries the action.
+    const event = keyEvent("Enter", true);
+    rows[2]?.onKeyDown?.(event);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: projectTwo.id,
+      environmentId: projectTwo.environmentId,
+      hiddenKeys: [],
+    });
+    // Without this the row toggles as well and the later of the two selections is what sticks.
+    expect(event.preventBaseUIHandler).toHaveBeenCalled();
+  });
+
+  it("leaves a plain enter to the row's own checkbox", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
+    );
+
+    rows[2]?.onKeyDown?.(keyEvent("Enter", false));
+    rows[2]?.onKeyDown?.(keyEvent("o", false));
+    expect(onProjectSelection).not.toHaveBeenCalled();
   });
 
   it("hides both copies of a repository two servers share", () => {

@@ -439,6 +439,21 @@ export function PullRequestFiltersMenu({
                   // The row takes its name from its contents, and the action below carries an
                   // aria-label that would otherwise be folded into it.
                   {...(reason === undefined ? { "aria-label": project.title } : {})}
+                  // The keyboard's way to the row's own action: arrow keys reach the row but
+                  // never the button inside it. A plain letter would be taken by the menu's
+                  // typeahead and a bare Enter is the checkbox's, so the action wears the
+                  // modifier. Only `preventBaseUIHandler` stops the row toggling too — the menu
+                  // reads that, not `defaultPrevented` — and without it the press would both
+                  // narrow and toggle, leaving whichever landed second.
+                  onKeyDown={
+                    reason === undefined
+                      ? (event) => {
+                          if (event.key !== "Enter" || !event.shiftKey) return;
+                          event.preventBaseUIHandler();
+                          onlyProject(project);
+                        }
+                      : undefined
+                  }
                   className={cn(
                     "group/project",
                     reason !== undefined && "data-disabled:pointer-events-auto",
@@ -461,11 +476,11 @@ export function PullRequestFiltersMenu({
                     {reason === undefined ? (
                       <button
                         type="button"
-                        // The row's own checkbox is the keyboard path — unchecking the others
-                        // says the same thing — so this stays out of the tab order rather than
-                        // giving every project two stops.
+                        // Shift+Enter on the row is the keyboard path, so this stays out of the
+                        // tab order rather than giving every project a second stop — and Tab
+                        // inside an open menu closes it rather than moving within it.
                         tabIndex={-1}
-                        aria-label={`List only ${project.title}`}
+                        aria-label={`List only ${project.title}, shift enter`}
                         // The row's checkbox would otherwise swallow the press as a toggle.
                         onClick={(event) => {
                           event.preventDefault();
