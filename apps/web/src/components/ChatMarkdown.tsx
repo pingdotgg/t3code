@@ -1652,12 +1652,16 @@ function ChatMarkdown({
             String((props as Record<string, unknown>)["data-alert"] ?? "")
           ];
         if (!alert) {
-          return <blockquote {...props}>{children}</blockquote>;
+          return (
+            <blockquote dir="auto" {...props}>
+              {children}
+            </blockquote>
+          );
         }
         // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
         // text under a colored title — which is how the host renders it.
         return (
-          <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+          <div role="note" dir="auto" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
             <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
               <alert.Icon aria-hidden className="size-3.5 shrink-0" />
               {alert.label}
@@ -1672,8 +1676,19 @@ function ChatMarkdown({
             .length ?? 0;
         const gutterStyle = orderedListGutterStyle(itemCount, start);
         return (
-          <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
+          <ol
+            dir="auto"
+            {...props}
+            start={start}
+            style={gutterStyle ? { ...style, ...gutterStyle } : style}
+          />
         );
+      },
+      // `dir="auto"`: the browser picks each list's / quote's / table's base direction from its
+      // first strong character, so Hebrew/Arabic content gets its markers, bar and column order
+      // on the right while English blocks stay LTR (paired with the bidi rules in index.css).
+      ul({ node: _node, ...props }) {
+        return <ul dir="auto" {...props} />;
       },
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
@@ -1845,7 +1860,7 @@ function ChatMarkdown({
         return <ChatMarkdownImageFallback alt={altText} />;
       },
       table({ node: _node, ...props }) {
-        return <MarkdownTable {...props} />;
+        return <MarkdownTable dir="auto" {...props} />;
       },
       details({ node: _node, children, open: detailsOpen }) {
         return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;

@@ -2104,6 +2104,24 @@ code {
 
 /* Chat markdown rendering */
 
+/* Bidi: Hebrew/Arabic messages. Every leaf block resolves its own base direction
+   from its first strong character (`plaintext`), so a Hebrew paragraph reads and
+   aligns right-to-left while the English block above it stays put — no global
+   flip, mixed-language threads just work. Containers that carry a directional
+   decoration (list markers, blockquote bar, table column order) get `dir="auto"`
+   in ChatMarkdown.tsx and use logical properties below. Code stays LTR. */
+.chat-markdown :is(p, li, h1, h2, h3, h4, h5, h6, td, th, dt, dd) {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+.chat-markdown pre,
+.chat-markdown code,
+.chat-markdown .chat-markdown-codeblock {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
@@ -2160,7 +2178,7 @@ code {
      custom property, so without this a task-list under a 3+ digit ordered
      list would inherit the outer gutter instead of its own default. */
   --list-gutter: 1.25rem;
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
   list-style-type: disc;
 }
 
@@ -2171,7 +2189,7 @@ code {
    nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {
   --list-gutter: 1.25rem;
-  padding-left: var(--list-gutter, 1.25rem);
+  padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
 
@@ -2205,7 +2223,8 @@ code {
 }
 
 .chat-markdown li.task-list-item input[type="checkbox"] {
-  margin: 0 0.35em 0.15em calc(-1 * var(--list-gutter, 1.25rem));
+  margin-block: 0 0.15em;
+  margin-inline: calc(-1 * var(--list-gutter, 1.25rem)) 0.35em;
   vertical-align: middle;
 }
 
@@ -2229,8 +2248,8 @@ code {
 }
 
 .chat-markdown blockquote {
-  border-left: 2px solid var(--contrast-border);
-  padding-left: 0.8rem;
+  border-inline-start: 2px solid var(--contrast-border);
+  padding-inline-start: 0.8rem;
   color: var(--contrast-muted-foreground);
 }
 
@@ -2355,7 +2374,7 @@ code {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+  text-align: start;
 }
 
 .chat-markdown thead th {
