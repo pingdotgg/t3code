@@ -187,10 +187,10 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       cleanupEpochRef.current += 1;
       previousTokenProviderRef.current = null;
       // Unmounting is not a sign-out: the user is usually still signed in, so
-      // detach the provider without ending lock-screen activities or wiping the
-      // persisted registration (a remount reuses both).
+      // detach the awareness token provider without ending the live T3 Connect
+      // session. A hung Clerk remount reuses that session; sign-out still goes
+      // through deactivateCloudRelayAccount.
       releaseAgentAwarenessRelayTokenProvider();
-      setManagedRelaySession(appAtomRegistry, null);
     },
     [],
   );
