@@ -4,7 +4,7 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import {
@@ -14,7 +14,7 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
+import { ChevronDownIcon, FolderClosedIcon, LayoutGridIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
@@ -46,6 +46,7 @@ import {
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { OpenWithDialog } from "./OpenWithDialog";
 
 type OpenInOption = {
   label: string;
@@ -210,6 +211,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
+  const [openWithOpen, setOpenWithOpen] = useState(false);
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const remoteCapableEditors = useRemoteCapableEditors();
@@ -344,10 +346,27 @@ export const OpenInPicker = memo(function OpenInPicker({
               {remote.mode === "remote-links" && !remoteHintSeen && (
                 <MenuItem disabled>Opens over SSH. Needs your key on {environmentLabel}</MenuItem>
               )}
+              {/* Discovered applications are plain local commands with no
+                  deep-link scheme, so they only apply when the server runs the
+                  command itself. */}
+              {remote.mode === "local-exec" && openInCwd && (
+                <MenuItem onClick={() => setOpenWithOpen(true)}>
+                  <LayoutGridIcon aria-hidden="true" className={getOpenInIconClass("generic")} />
+                  Open with…
+                </MenuItem>
+              )}
             </>
           )}
         </MenuPopup>
       </Menu>
+      {openInCwd && (
+        <OpenWithDialog
+          environmentId={environmentId}
+          cwd={openInCwd}
+          open={openWithOpen}
+          onOpenChange={setOpenWithOpen}
+        />
+      )}
     </Group>
   );
 });

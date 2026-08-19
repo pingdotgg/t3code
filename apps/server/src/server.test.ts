@@ -107,6 +107,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as InstalledApplications from "./process/InstalledApplications.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
@@ -388,6 +389,7 @@ const buildAppUnderTest = (options?: {
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
+    installedApplications?: Partial<InstalledApplications.InstalledApplications["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
@@ -655,6 +657,10 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ExternalLauncher.ExternalLauncher)({
             resolveAvailableEditors: () => Effect.succeed([]),
             ...options?.layers?.externalLauncher,
+          }),
+          Layer.mock(InstalledApplications.InstalledApplications)({
+            list: Effect.succeed([]),
+            ...options?.layers?.installedApplications,
           }),
           Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
             resolveTargets: () => Effect.succeed([]),
@@ -5094,6 +5100,41 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(openedInput, { cwd: "/tmp/project", editor: "cursor" });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes shell.openInApplication through the host's own scan", () =>
+    Effect.gen(function* () {
+      let launched: string | null = null;
+      const app = { id: "zed.desktop", name: "Zed", command: "/usr/bin/zed", args: [] };
+      yield* buildAppUnderTest({
+        layers: {
+          installedApplications: { list: Effect.succeed([app]) },
+          externalLauncher: {
+            launchApplication: ({ application }) =>
+              Effect.sync(() => {
+                launched = application.command;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const open = (applicationId: string) =>
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.shellOpenInApplication]({ cwd: "/tmp/project", applicationId }),
+          ).pipe(Effect.result),
+        );
+
+      assert.equal((yield* open(app.id))._tag, "Success");
+      assert.equal(launched, "/usr/bin/zed");
+
+      // The client only names an id; one the host did not discover must launch
+      // nothing, which is what keeps a client from choosing the command.
+      launched = null;
+      assert.equal((yield* open("not-installed"))._tag, "Failure");
+      assert.isNull(launched);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
