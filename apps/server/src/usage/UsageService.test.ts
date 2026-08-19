@@ -9,10 +9,12 @@ import { ServerSettings as ServerSettingsSchema } from "@t3tools/contracts";
 
 import { resolveDevinTranscriptDirs } from "./UsageService.ts";
 
+const decodeServerSettings = Schema.decodeSync(ServerSettingsSchema);
+
 it.layer(NodeServices.layer)("UsageService", (it) => {
   describe("resolveDevinTranscriptDirs", () => {
     it.effect("includes unique Devin instance homes alongside the default home", () => {
-      const settings = Schema.decodeSync(ServerSettingsSchema)({
+      const settings = decodeServerSettings({
         providerInstances: {
           devin_default: {
             driver: "devin",
@@ -36,8 +38,8 @@ it.layer(NodeServices.layer)("UsageService", (it) => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
         expect(yield* resolveDevinTranscriptDirs(settings)).toEqual([
-          path.resolve(NodeOS.homedir(), ".devin"),
-          path.resolve(NodeOS.homedir(), ".devin-work"),
+          path.resolve(NodeOS.homedir(), ".local", "share", "devin"),
+          path.resolve(NodeOS.homedir(), ".devin-work", "data", "devin"),
         ]);
       });
     });

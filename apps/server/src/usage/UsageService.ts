@@ -39,7 +39,7 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { resolveDevinHomePath } from "../provider/Drivers/DevinHome.ts";
+import { resolveDevinUsageTranscriptDirectory } from "../provider/Drivers/DevinHome.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -106,13 +106,13 @@ const toDevinHomeConfig = (config: unknown): DevinHomeConfig => {
 
 export const resolveDevinTranscriptDirs = Effect.fn("UsageService.resolveDevinTranscriptDirs")(
   function* (settings: DevinTranscriptSettings) {
-    const devinHome = yield* resolveDevinHomePath(settings.providers.devin);
+    const devinHome = yield* resolveDevinUsageTranscriptDirectory(settings.providers.devin);
     const dirs = [devinHome];
     const seen = new Set(dirs);
 
     for (const instance of Object.values(settings.providerInstances)) {
       if (instance.driver !== "devin") continue;
-      const dir = yield* resolveDevinHomePath(toDevinHomeConfig(instance.config));
+      const dir = yield* resolveDevinUsageTranscriptDirectory(toDevinHomeConfig(instance.config));
       if (seen.has(dir)) continue;
       seen.add(dir);
       dirs.push(dir);
