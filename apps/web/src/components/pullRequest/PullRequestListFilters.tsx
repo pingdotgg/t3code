@@ -488,8 +488,10 @@ export function PullRequestFiltersMenu({
                           onlyProject(project);
                         }}
                         // Highlighted rather than hovered: a menu row highlights under the
-                        // pointer and under arrow keys alike, so both reach the action.
-                        className="pointer-events-none inline-flex shrink-0 cursor-pointer items-center self-stretch rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-data-highlighted/project:pointer-events-auto group-data-highlighted/project:opacity-100"
+                        // pointer and under arrow keys alike, so both reach the action. A touch
+                        // screen highlights nothing, so there it simply stays out — a tap on the
+                        // row hides the project, which is the opposite of what this offers.
+                        className="pointer-events-none inline-flex shrink-0 cursor-pointer items-center self-stretch rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground max-sm:pointer-events-auto max-sm:opacity-100 group-data-highlighted/project:pointer-events-auto group-data-highlighted/project:opacity-100"
                       >
                         Only
                       </button>
