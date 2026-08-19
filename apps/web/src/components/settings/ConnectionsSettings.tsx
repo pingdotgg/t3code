@@ -3460,7 +3460,12 @@ export function ConnectionsSettings() {
         />
       </SettingsSection>
 
-      <MirrorLinksSection environments={environments} />
+      <MirrorLinksSection
+        environments={environments.filter(
+          (environment) =>
+            environment.serverConfig?.environment.capabilities.projectMirroring === true,
+        )}
+      />
     </SettingsPageContainer>
   );
 }
