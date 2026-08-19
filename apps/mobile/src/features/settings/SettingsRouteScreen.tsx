@@ -43,6 +43,7 @@ import {
   runAppUpdateCheck,
 } from "../updates/app-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { BackgroundConnectionSettingsSection } from "../background-connection/BackgroundConnectionSettingsSection";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -126,6 +127,8 @@ function LocalSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
+
+        <BackgroundConnectionSettingsSection />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
@@ -512,6 +515,8 @@ function ConfiguredSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
+
+        <BackgroundConnectionSettingsSection />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
