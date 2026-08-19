@@ -6524,6 +6524,13 @@ function ChatViewContent(props: ChatViewProps) {
                             respondingRequestIds={respondingRequestIds}
                             showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                             activeProposedPlan={activeProposedPlan}
+                            activeTasksProgress={activeThreadShell?.planProgress ?? null}
+                            activeTaskSteps={
+                              activeThreadShell?.planProgress &&
+                              activePlan?.turnId === (activeLatestTurn?.turnId ?? null)
+                                ? activePlan.steps
+                                : null
+                            }
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={lockedProvider}
