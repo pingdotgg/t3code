@@ -181,6 +181,7 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { streamingMarkdownRenderDelay } from "./ChatMarkdown.logic";
 
 interface ChatMarkdownProps {
   text: string;
@@ -323,6 +324,33 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
+
+function useStreamingMarkdownText(text: string, isStreaming: boolean): string {
+  const [renderedText, setRenderedText] = useState(text);
+  const lastRenderedAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    if (!isStreaming) {
+      lastRenderedAtRef.current = Date.now();
+      setRenderedText((current) => (current === text ? current : text));
+      return;
+    }
+
+    const delay = streamingMarkdownRenderDelay({
+      lastRenderedAt: lastRenderedAtRef.current,
+      now: Date.now(),
+    });
+    const timeout = setTimeout(() => {
+      lastRenderedAtRef.current = Date.now();
+      setRenderedText(text);
+    }, delay);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [isStreaming, text]);
+
+  return isStreaming ? renderedText : text;
+}
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -2168,6 +2196,7 @@ function useChatMarkdownState({
   imageBaseDir,
   onImageExpand,
 }: ChatMarkdownProps) {
+  const renderedText = useStreamingMarkdownText(text, isStreaming);
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const expandMedia = onImageExpand ?? setLocalMediaPreview;
@@ -2588,7 +2617,7 @@ function useChatMarkdownState({
       resolvedTheme,
       serverConfig,
       skills,
-      text,
+      text: renderedText,
       threadRef,
       updateThreadPullRequestLink,
     }),
@@ -2614,7 +2643,7 @@ function useChatMarkdownState({
       resolvedTheme,
       serverConfig,
       skills,
-      text,
+      renderedText,
       threadRef,
       updateThreadPullRequestLink,
     ],
@@ -2624,6 +2653,7 @@ function useChatMarkdownState({
     handleCopy,
     markdownUrlTransform,
     localMediaPreview,
+    renderedText,
     setLocalMediaPreview,
   };
 }
@@ -3110,6 +3140,7 @@ function ChatMarkdown({
     handleCopy,
     markdownUrlTransform,
     localMediaPreview,
+    renderedText,
     setLocalMediaPreview,
   } = useChatMarkdownState({ text, ...props });
   const remarkPlugins = useMemo(
@@ -3139,7 +3170,7 @@ function ChatMarkdown({
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {renderedText}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (

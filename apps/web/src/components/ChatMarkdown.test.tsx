@@ -8,6 +8,7 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { STREAMING_MARKDOWN_RENDER_INTERVAL_MS } from "./ChatMarkdown.logic";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
@@ -121,6 +122,7 @@ describe("ChatMarkdown streaming", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let renderer: ReactTestRenderer | undefined;
 
     try {
@@ -144,11 +146,15 @@ describe("ChatMarkdown streaming", () => {
           <ChatMarkdown cwd="/tmp/project" text={"```text\nrecovered\n```"} isStreaming />,
         );
       });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STREAMING_MARKDOWN_RENDER_INTERVAL_MS);
+      });
       expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(1);
       expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
       expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
     } finally {
       await act(async () => renderer?.unmount());
+      vi.useRealTimers();
       vi.unstubAllGlobals();
       vi.restoreAllMocks();
     }
@@ -221,6 +227,9 @@ describe("ChatMarkdown streaming", () => {
             isStreaming
           />,
         );
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STREAMING_MARKDOWN_RENDER_INTERVAL_MS);
       });
       const copyUpdated = codeButton(mounted, "Copied");
       await act(async () => {
