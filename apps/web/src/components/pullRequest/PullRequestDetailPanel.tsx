@@ -576,8 +576,23 @@ export function PullRequestDetailPanel({
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   // Which action is in flight, not merely that one is: every control here is disabled while any
   // of them runs, but only the button that was pressed may say what it is doing.
-  const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
-  const actionPending = pendingAction !== null;
+  const [pendingAction, setPendingAction] = useState<{
+    readonly pullRequestKey: string;
+    readonly action: PullRequestAction;
+  } | null>(null);
+  const activePendingAction =
+    pendingAction?.pullRequestKey === pullRequestKey ? pendingAction : null;
+  const actionPending = activePendingAction !== null;
+  // A successful merge returns no updated detail. Suppress only its control while the host catches
+  // up, so stale data cannot briefly offer it again or leave every other action disabled.
+  const [completedMergeKey, setCompletedMergeKey] = useState<string | null>(null);
+  const mergeCompleted = completedMergeKey === pullRequestKey;
+  useEffect(() => {
+    if (!mergeCompleted || detail === null || detail.state === "open") {
+      return;
+    }
+    setCompletedMergeKey((current) => (current === pullRequestKey ? null : current));
+  }, [detail, mergeCompleted, pullRequestKey]);
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   // Scoped to the pull request it was typed against, since this one panel shows a different one
   // every time it is opened and a half-written title must not follow it there.
@@ -626,8 +641,9 @@ export function PullRequestDetailPanel({
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
   ) => {
-    if (pendingAction !== null) return;
-    setPendingAction(action);
+    if (actionPending) return;
+    const startedAction = { pullRequestKey, action };
+    setPendingAction(startedAction);
     const result = await runAction({
       environmentId,
       input: {
@@ -637,8 +653,8 @@ export function PullRequestDetailPanel({
         ...(updateMethod ? { updateMethod } : {}),
       },
     });
-    setPendingAction(null);
     if (result._tag === "Failure") {
+      setPendingAction((current) => (current === startedAction ? null : current));
       // The host's own sentence, because it is the only thing that says why. A merge strategy a
       // branch policy forbids is refused at completion and nowhere earlier — Azure DevOps
       // publishes no per-strategy availability to hide the control with — so "action failed"
@@ -657,6 +673,10 @@ export function PullRequestDetailPanel({
       });
       return;
     }
+    if (action === "merge") {
+      setCompletedMergeKey(pullRequestKey);
+    }
+    setPendingAction((current) => (current === startedAction ? null : current));
     toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
     // A branch update moves the head commit, which leaves the diff atom pointed at a comparison
     // that no longer exists — the same staleness the manual refresh button fixes, so it goes
@@ -1302,10 +1322,12 @@ export function PullRequestDetailPanel({
               ) : primaryAction === "merge" ? (
                 <Button
                   size="xs"
-                  disabled={actionPending}
+                  disabled={actionPending || mergeCompleted}
                   onClick={() => setConfirmation({ open: true, action: "merge" })}
                 >
-                  {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
+                  {activePendingAction?.action === "merge" || mergeCompleted
+                    ? "Merging..."
+                    : selectedMergeMethodLabel}
                 </Button>
               ) : null}
               <Menu>
