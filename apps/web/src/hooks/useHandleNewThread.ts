@@ -280,6 +280,14 @@ export function useNewThreadHandler() {
               setModelSelection(emptyStoredDraftThread.draftId, carryModelSelection, {
                 replaceOptions: true,
               });
+            } else if (project?.defaultModelSelection) {
+              // Reusing an empty draft with nothing to carry a selection
+              // from: the project's configured default is a deliberate
+              // per-project choice and takes priority over whatever model
+              // this draft happened to be left on.
+              setModelSelection(emptyStoredDraftThread.draftId, project.defaultModelSelection, {
+                replaceOptions: true,
+              });
             }
           }
           // The workspace context must also ride along here: when projectRef
@@ -345,6 +353,15 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        if (!carryModelSelection && project?.defaultModelSelection) {
+          // This empty draft (the one already open) has no model selection
+          // of its own yet: the project's configured default is a
+          // deliberate per-project choice and takes priority over whatever
+          // model this draft happened to be left on.
+          setModelSelection(currentRouteTarget.draftId, project.defaultModelSelection, {
+            replaceOptions: true,
+          });
+        }
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -416,6 +433,12 @@ export function useNewThreadHandler() {
           // complete snapshot — absent options mean "no options", not "keep
           // whatever sticky state just wrote".
           setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
+        } else if (project?.defaultModelSelection) {
+          // A brand new thread with nothing to carry a selection from: the
+          // project's configured default is a deliberate per-project choice
+          // and takes priority over the sticky map's cross-project "last
+          // used model".
+          setModelSelection(draftId, project.defaultModelSelection, { replaceOptions: true });
         }
         carryComposerContentTo(draftId);
 
