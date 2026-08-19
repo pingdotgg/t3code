@@ -87,4 +87,35 @@ describe("CommandPalette merged archive and project-location seam", () => {
     expect(descriptionMarkup).toContain(">·</span>");
     expect(descriptionMarkup).toContain(">E:\\Projects\\local-project</span>");
   });
+
+  it("keeps the rendered remote fallback searchable", () => {
+    const project: Project = {
+      id: projectId,
+      environmentId,
+      title: "Remote project",
+      workspaceRoot: "/workspace/remote-project",
+      repositoryIdentity: null,
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5",
+      },
+      createdAt: "2026-08-18T12:00:00.000Z",
+      updatedAt: "2026-08-18T12:00:00.000Z",
+      scripts: [],
+    };
+    const [projectItem] = buildLocationAwareProjectActionItems({
+      projects: [project],
+      valuePrefix: "new-thread-in",
+      icon: () => null,
+      getLocation: () => undefined,
+      runProject: async () => undefined,
+    });
+
+    expect(projectItem?.searchTerms).toEqual([
+      "Remote project",
+      "/workspace/remote-project",
+      "Remote",
+    ]);
+    expect(renderToStaticMarkup(projectItem?.description)).toContain(">Remote</span>");
+  });
 });

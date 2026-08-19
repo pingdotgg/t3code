@@ -26,7 +26,9 @@ export function buildLocationAwareProjectActionItems(
     ...actionInput,
     searchTerms: (project) => [
       ...(searchTerms?.(project) ?? []),
-      ...projectCommandLocationSearchTerms(getLocation(project)),
+      ...projectCommandLocationSearchTerms(
+        getLocation(project) ?? { kind: "remote", label: "Remote" },
+      ),
     ],
     renderDescription: (project) => (
       <ProjectCommandSubtitle
