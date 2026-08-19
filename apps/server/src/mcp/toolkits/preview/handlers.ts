@@ -86,7 +86,9 @@ const handlers = {
   preview_scroll: (input) =>
     invokeTargeted<void>("scroll", input, input.timeoutMs).pipe(Effect.as({})),
   preview_evaluate: (input) =>
-    invokeTargeted<unknown>("evaluate", input).pipe(Effect.map((result) => result ?? null)),
+    invokeTargeted<unknown>("evaluate", input, input.timeoutMs).pipe(
+      Effect.map((result) => result ?? null),
+    ),
   preview_wait_for: (input) =>
     invokeTargeted<void>("waitFor", input, input.timeoutMs).pipe(Effect.as({})),
   preview_recording_start: (input) =>

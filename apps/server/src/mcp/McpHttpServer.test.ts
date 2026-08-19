@@ -300,6 +300,20 @@ it.effect("registers annotated tools and preserves authenticated request context
       }
       expect(routedRequests.find(({ operation }) => operation === "press")?.timeoutMs).toBe(1_234);
       expect(routedRequests.find(({ operation }) => operation === "scroll")?.timeoutMs).toBe(1_234);
+
+      const evaluation = yield* server
+        .callTool({
+          name: "preview_evaluate",
+          arguments: { expression: "document.title", timeoutMs: 1_234 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(evaluation.isError).toBe(false);
+      expect(routedRequests.find(({ operation }) => operation === "evaluate")?.timeoutMs).toBe(
+        1_234,
+      );
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
