@@ -276,7 +276,21 @@ describe("ArchivedThreadsPanel", () => {
     expect(markup).toContain("Remote archive unavailable");
     expect(markup).toContain("Archive project");
 
-    clickCapturedButton("Try loading archives again");
+    clickCapturedButton("Try again to load archives");
+
+    expect(testDoubles.archiveState.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows the retry alert when every archive fails", () => {
+    testDoubles.archiveState.error = "Every archive is unavailable";
+
+    const markup = renderToStaticMarkup(<ArchivedThreadsPanel />);
+
+    expect(markup).toContain("Could not load every archive");
+    expect(markup).toContain("Every archive is unavailable");
+    expect(markup).not.toContain("Could not load archived threads");
+
+    clickCapturedButton("Try again to load archives");
 
     expect(testDoubles.archiveState.refresh).toHaveBeenCalledOnce();
   });

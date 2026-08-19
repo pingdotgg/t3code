@@ -5,6 +5,7 @@ import {
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CircleAlertIcon,
   EllipsisIcon,
   LoaderIcon,
   Trash2Icon,
@@ -24,6 +25,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { readLocalApi } from "../../localApi";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -590,25 +592,24 @@ export function ArchivedThreadsPanel() {
         query={archiveSearchQuery}
         onQueryChange={setArchiveSearchQuery}
       />
-      {archiveError && archivedGroups.length > 0 ? (
-        <div
-          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-          role="alert"
-        >
-          <p className="font-medium">Could not load every archive</p>
-          <p className="mt-1 text-muted-foreground">{archiveError}</p>
-          <Button
-            className="mt-2"
-            size="xs"
-            variant="outline"
-            aria-label="Try loading archives again"
-            onClick={refreshArchivedThreads}
-          >
-            Try again
-          </Button>
-        </div>
+      {archiveError ? (
+        <Alert variant="error" controlAlignment="first-line">
+          <CircleAlertIcon />
+          <AlertTitle>Could not load every archive</AlertTitle>
+          <AlertDescription>{archiveError}</AlertDescription>
+          <AlertAction>
+            <Button
+              size="xs"
+              variant="outline"
+              aria-label="Try again to load archives"
+              onClick={refreshArchivedThreads}
+            >
+              Try again
+            </Button>
+          </AlertAction>
+        </Alert>
       ) : null}
-      {archivedGroups.length === 0 ? (
+      {archivedGroups.length === 0 && (!archiveError || isLoadingArchive) ? (
         <SettingsSection title={archiveSetting.title}>
           <SettingsRow
             title={
@@ -620,21 +621,17 @@ export function ArchivedThreadsPanel() {
                 )}
                 {isLoadingArchive
                   ? "Loading archived threads"
-                  : archiveError
-                    ? "Could not load archived threads"
-                    : archiveSearch.isSearching && hasArchivedThreads
-                      ? "No matching archived threads"
-                      : "No archived threads"}
+                  : archiveSearch.isSearching && hasArchivedThreads
+                    ? "No matching archived threads"
+                    : "No archived threads"}
               </span>
             }
             description={
               isLoadingArchive
                 ? "Checking connected environments."
-                : archiveError
-                  ? archiveError
-                  : archiveSearch.isSearching && hasArchivedThreads
-                    ? `No archived conversation titles match "${archiveSearchQuery.trim()}".`
-                    : "Archived threads will appear here."
+                : archiveSearch.isSearching && hasArchivedThreads
+                  ? `No archived conversation titles match "${archiveSearchQuery.trim()}".`
+                  : "Archived threads will appear here."
             }
           />
         </SettingsSection>
