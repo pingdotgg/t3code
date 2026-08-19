@@ -52,6 +52,7 @@ const TERMINAL_DELETE_TO_LINE_START = "\u0015";
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   BracketLeft: ["["],
   BracketRight: ["]"],
+  Comma: [","],
   Digit0: ["0"],
   Digit1: ["1"],
   Digit2: ["2"],

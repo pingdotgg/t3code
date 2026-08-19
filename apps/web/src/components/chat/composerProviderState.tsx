@@ -46,6 +46,10 @@ type TraitsRenderInput = {
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
+  onOptionSelect?: () => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  focusSelectedPrimaryOption?: boolean;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -94,6 +98,10 @@ function renderTraitsControl(
     modelOptions,
     prompt,
     onPromptChange,
+    onOptionSelect,
+    open,
+    onOpenChange,
+    focusSelectedPrimaryOption,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
@@ -113,6 +121,10 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      {...(onOptionSelect ? { onOptionSelect } : {})}
+      {...(open !== undefined ? { open } : {})}
+      {...(onOpenChange ? { onOpenChange } : {})}
+      {...(focusSelectedPrimaryOption !== undefined ? { focusSelectedPrimaryOption } : {})}
     />
   );
 }

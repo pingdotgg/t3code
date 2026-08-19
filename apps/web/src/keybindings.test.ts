@@ -6,6 +6,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   formatShortcutLabel,
   isChatNewShortcut,
@@ -668,6 +669,43 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("resolves the model options picker default only outside terminal focus", () => {
+    const shortcut = event({ key: "<", code: "Comma", metaKey: true, shiftKey: true });
+
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "modelOptionsPicker.toggle",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "modelOptionsPicker.toggle",
+    );
+  });
+
+  it("resolves a custom model options picker binding", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("e", { altKey: true }),
+        command: "modelOptionsPicker.toggle",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "e", ctrlKey: true, altKey: true }), keybindings, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "modelOptionsPicker.toggle",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 
