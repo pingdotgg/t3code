@@ -28,8 +28,12 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     @State private var keyboardHeight: CGFloat = 0
 
     var body: some View {
+        // The page is deliberately not offset. The drawer is presented over the
+        // workspace, so the rows, header and composer underneath stay exactly
+        // where they were and only the drawer and its scrim move with the
+        // finger. Translating the page as well read as the whole screen being
+        // shoved downwards, which is not what a drawer does.
         content
-            .offset(y: state.reveal)
             .overlay {
                 scrim(progress: progress)
             }
@@ -61,6 +65,14 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                     query = ""
                     resignKeyboard()
                 }
+            }
+            // …but the request above is made while the field is still above the
+            // window's top edge, where it can be dropped. Renew it whenever the
+            // drawer is open and nothing has taken focus, which covers a swipe
+            // that settles before the field was ever on screen and any other
+            // path that opens the drawer without a drag.
+            .onChange(of: state.isOpen) { _, _ in
+                renewSearchFocusIfNeeded()
             }
             .onReceive(
                 NotificationCenter.default.publisher(
@@ -108,7 +120,13 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             )
 
             drawer(openHeight: measured, topInset: topInset)
-                .offset(y: state.reveal - measured - topInset)
+                .offset(
+                    y: FeatureCommandDrawerGeometry.drawerOffset(
+                        reveal: state.reveal,
+                        openHeight: measured,
+                        topInset: topInset
+                    )
+                )
                 .opacity(state.isVisible ? 1 : 0)
                 .accessibilityHidden(!state.isOpen)
                 .onChange(of: measured, initial: true) { _, height in
@@ -133,7 +151,21 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     private func settle(velocity: CGFloat, openHeight: CGFloat) {
         withAnimation(settleAnimation) {
             state.endDrag(velocity: velocity, openHeight: openHeight)
+        } completion: {
+            // The last chance to focus, once the drawer has physically arrived:
+            // a swipe can settle open before the search field was ever on
+            // screen, and a request made then is dropped with no further state
+            // change to retry from.
+            renewSearchFocusIfNeeded()
         }
+    }
+
+    private func renewSearchFocusIfNeeded() {
+        guard FeatureCommandDrawerFocus.needsFocusRenewal(
+            state: state,
+            isFocused: isQueryFocused
+        ) else { return }
+        isQueryFocused = true
     }
 
     private func close() {

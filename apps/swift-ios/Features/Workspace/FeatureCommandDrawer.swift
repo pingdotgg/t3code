@@ -78,6 +78,23 @@ enum FeatureCommandDrawerGeometry {
         return openHeight + (raw - openHeight) * overshootResistance
     }
 
+    /// Where the drawer layer sits for a given reveal, measured from the top of
+    /// the page it is laid out in.
+    ///
+    /// The drawer is presented *over* the workspace rather than pushing it: the
+    /// page underneath never translates, so this offset carries the entire
+    /// travel of the pull. At rest the whole drawer, including the window's top
+    /// inset it draws under, hangs above the top edge; at full reveal its
+    /// bottom edge lands at `topInset + openHeight` and its top sits exactly on
+    /// the window's top edge.
+    static func drawerOffset(
+        reveal: CGFloat,
+        openHeight: CGFloat,
+        topInset: CGFloat
+    ) -> CGFloat {
+        reveal - openHeight - topInset
+    }
+
     static func progress(reveal: CGFloat, openHeight: CGFloat) -> CGFloat {
         guard openHeight > 0 else { return 0 }
         return min(max(reveal / openHeight, 0), 1)
@@ -246,6 +263,27 @@ struct FeatureCommandDrawerState: Equatable, Sendable {
 enum FeatureCommandDrawerFocus {
     static func searchIsFocused(for state: FeatureCommandDrawerState) -> Bool {
         state.isVisible
+    }
+
+    /// Whether the focus request has to be made again.
+    ///
+    /// Asking at the start of the pull is what puts the keyboard's height into
+    /// the open height before the finger lifts, but at that moment the search
+    /// field is still above the window's top edge, and a request for a field
+    /// that is not on screen yet can simply be dropped. A long drag hid that:
+    /// the field was on screen for most of a second before the release, so a
+    /// later pass took the focus anyway. An ordinary swipe settles in a quarter
+    /// of a second, so the drawer can arrive at its rest position with nothing
+    /// focused and no further state change to trigger a retry.
+    ///
+    /// The answer is therefore not "has it been asked" but "is the drawer open
+    /// and still unfocused" — which stays true until the request actually
+    /// lands, and is false as soon as it does.
+    static func needsFocusRenewal(
+        state: FeatureCommandDrawerState,
+        isFocused: Bool
+    ) -> Bool {
+        state.isOpen && !isFocused
     }
 }
 

@@ -108,6 +108,132 @@ struct FeatureCommandDrawerTests {
         )
     }
 
+    // MARK: - Presented over the page (issue #122 rework)
+
+    @Test
+    func theDrawerCarriesTheWholeTravelSoThePageUnderneathNeverMoves() {
+        // Alex rejected the build where the page translated with the drawer:
+        // the whole screen looked shoved downwards. The drawer is presented
+        // over the workspace, so every point of the pull has to land in the
+        // drawer's own offset and nothing else.
+        let openHeight: CGFloat = 778
+        let topInset: CGFloat = 62
+        let atRest = FeatureCommandDrawerGeometry.drawerOffset(
+            reveal: 0, openHeight: openHeight, topInset: topInset
+        )
+
+        for reveal in stride(from: CGFloat(0), through: openHeight, by: 64) {
+            let offset = FeatureCommandDrawerGeometry.drawerOffset(
+                reveal: reveal, openHeight: openHeight, topInset: topInset
+            )
+            // All of the movement, and only the movement, is the drawer's.
+            #expect(offset - atRest == reveal)
+        }
+    }
+
+    @Test
+    func theClosedDrawerHangsEntirelyAboveTheTopEdge() {
+        let openHeight: CGFloat = 778
+        let topInset: CGFloat = 62
+        // The layer is `topInset + openHeight` tall and top-aligned in the page,
+        // so its bottom edge is the offset plus its own height.
+        let height = topInset + openHeight
+        let closedBottom = FeatureCommandDrawerGeometry.drawerOffset(
+            reveal: 0, openHeight: openHeight, topInset: topInset
+        ) + height
+
+        #expect(closedBottom == 0)
+    }
+
+    @Test
+    func theOpenDrawersBottomEdgeAgreesWithTheOpenEdgeItAdvertises() {
+        let windowHeight: CGFloat = 874
+        let topInset: CGFloat = 62
+        let bottomInset: CGFloat = 34
+        let pageHeight = windowHeight - topInset - bottomInset
+        let openHeight = FeatureCommandDrawerGeometry.openHeight(
+            availableHeight: pageHeight,
+            keyboardHeight: Self.keyboardHeight,
+            bottomInset: bottomInset
+        )
+        let height = topInset + openHeight
+        // Page-local bottom edge of the fully revealed drawer…
+        let bottom = FeatureCommandDrawerGeometry.drawerOffset(
+            reveal: openHeight, openHeight: openHeight, topInset: topInset
+        ) + height
+        // …converted to window coordinates must be the advertised open edge, so
+        // removing the page's translation cannot have moved the drawer.
+        #expect(bottom + topInset == FeatureCommandDrawerGeometry.openEdge(
+            windowHeight: windowHeight,
+            topInset: topInset,
+            bottomInset: bottomInset,
+            keyboardHeight: Self.keyboardHeight
+        ))
+    }
+
+    // MARK: - Autofocus
+
+    @Test
+    func aSwipeThatSettlesBeforeTheFieldIsOnScreenStillGetsTheKeyboard() {
+        // Test 91: the keyboard stopped coming up on its own. The request is
+        // made at the start of the pull, when the search field is still above
+        // the window's top edge and the request can be dropped; the long drag
+        // of the rejected build hid that, and a quarter-second swipe does not.
+        var state = FeatureCommandDrawerState()
+        state.beginDrag()
+        state.updateDrag(translation: 140, openHeight: 442)
+
+        // Nothing to renew mid-pull: the initial request owns that window, and
+        // renewing here would fight it.
+        #expect(
+            FeatureCommandDrawerFocus.needsFocusRenewal(state: state, isFocused: false) == false
+        )
+
+        state.endDrag(velocity: 0, openHeight: 442)
+        #expect(state.isOpen)
+        // The drawer has arrived and nothing took focus, so ask again.
+        #expect(FeatureCommandDrawerFocus.needsFocusRenewal(state: state, isFocused: false))
+        // …and stop asking the moment it lands, so the renewal cannot loop.
+        #expect(
+            FeatureCommandDrawerFocus.needsFocusRenewal(state: state, isFocused: true) == false
+        )
+    }
+
+    @Test
+    func aClosedDrawerNeverAsksForTheKeyboard() {
+        var state = FeatureCommandDrawerState()
+        #expect(
+            FeatureCommandDrawerFocus.needsFocusRenewal(state: state, isFocused: false) == false
+        )
+
+        // An abandoned pull settles closed and must take the keyboard with it
+        // rather than renewing a request behind a drawer nobody can see.
+        state.beginDrag()
+        state.updateDrag(translation: 40, openHeight: 442)
+        state.endDrag(velocity: 0, openHeight: 442)
+        #expect(state.isOpen == false)
+        #expect(
+            FeatureCommandDrawerFocus.needsFocusRenewal(state: state, isFocused: false) == false
+        )
+
+        state.settle(open: true, openHeight: 442)
+        state.close()
+        #expect(
+            FeatureCommandDrawerFocus.needsFocusRenewal(state: state, isFocused: false) == false
+        )
+    }
+
+    @Test
+    func anyPathThatOpensTheDrawerAsksForTheKeyboard() {
+        // Not only the swipe: a drawer opened without a drag at all must still
+        // arrive focused.
+        var state = FeatureCommandDrawerState()
+        state.settle(open: true, openHeight: 442)
+
+        #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state))
+        #expect(FeatureCommandDrawerFocus.needsFocusRenewal(state: state, isFocused: false))
+    }
+
     @Test
     func presentingTheDrawerGivesTheSearchFieldTheKeyboard() {
         var state = FeatureCommandDrawerState()
