@@ -1,7 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
@@ -24,6 +24,9 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
+import { assetEnvironment } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
@@ -51,6 +54,7 @@ import {
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
 } from "./filePath";
+import { shareWorkspaceFile, WorkspaceFileShareInterrupted } from "./shareWorkspaceFile";
 import { useWorkspaceFileAssetUrl } from "./workspaceFileAssetUrl";
 
 type FileViewMode = "preview" | "source";
@@ -495,6 +499,35 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath: assetPreviewPath,
     threadId,
   });
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
+  const preparedConnection = usePreparedConnection(environmentId);
+  const downloadHttpBaseUrl =
+    preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
+  const handleDownloadFile = useCallback(() => {
+    if (
+      environmentId === null ||
+      threadId === null ||
+      relativePath === null ||
+      downloadHttpBaseUrl === null
+    ) {
+      return;
+    }
+    void shareWorkspaceFile({
+      environmentId,
+      threadId,
+      path: relativePath,
+      httpBaseUrl: downloadHttpBaseUrl,
+      createAssetUrl,
+    }).catch((cause: unknown) => {
+      if (cause instanceof WorkspaceFileShareInterrupted) return;
+      Alert.alert(
+        "Unable to download file",
+        cause instanceof Error ? cause.message : "An error occurred.",
+      );
+    });
+  }, [createAssetUrl, downloadHttpBaseUrl, environmentId, relativePath, threadId]);
   const previewUri =
     assetPreviewUri === null || previewRevision === 0
       ? assetPreviewUri
@@ -636,6 +669,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             >
               Copy path
             </NativeHeaderToolbar.MenuAction>
+            {downloadHttpBaseUrl !== null ? (
+              <NativeHeaderToolbar.MenuAction
+                icon="square.and.arrow.down"
+                onPress={handleDownloadFile}
+              >
+                Download
+              </NativeHeaderToolbar.MenuAction>
+            ) : null}
             {isBrowserFile && typeof assetPreviewUri === "string" ? (
               <NativeHeaderToolbar.MenuAction
                 icon="safari"

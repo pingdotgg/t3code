@@ -45,14 +45,29 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-export function assetResponseHeaders(filePath: string): Record<string, string> {
+export function assetResponseHeaders(
+  filePath: string,
+  downloadFileName?: string,
+): Record<string, string> {
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
+    ...(downloadFileName ? { "Content-Disposition": contentDisposition(downloadFileName) } : {}),
     ...(filePath.toLowerCase().endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
+}
+
+// RFC 6266 attachment disposition with an RFC 5987 UTF-8 fallback for
+// filenames that do not survive the quoted-string form.
+function contentDisposition(fileName: string): string {
+  const asciiFileName = fileName.replace(/["\\\r\n]/g, "_").replace(/[^ -~]/g, "_");
+  const encodedFileName = encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${asciiFileName}"; filename*=UTF-8''${encodedFileName}`;
 }
 
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
@@ -219,7 +234,7 @@ export const assetRouteLayer = HttpRouter.add(
     }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
-      headers: assetResponseHeaders(asset.path),
+      headers: assetResponseHeaders(asset.path, asset.downloadFileName),
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );

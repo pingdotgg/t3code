@@ -97,6 +97,12 @@ import {
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
+import {
+  canCopyWorkspaceFileToClipboard,
+  copyWorkspaceFileToClipboard,
+  downloadWorkspaceFile,
+  type WorkspaceFileTransferAction,
+} from "../workspaceFileTransfer";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
@@ -822,6 +828,7 @@ interface MarkdownFileLinkProps {
   onOpen: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
   onOpenInPanel: (workspaceRelativePath: string, line: number | undefined) => void;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  onFileTransfer?: ((action: WorkspaceFileTransferAction) => void) | undefined;
   className?: string | undefined;
 }
 
@@ -1128,6 +1135,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpen,
   onOpenInPanel,
   onOpenInBrowser,
+  onFileTransfer,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
@@ -1267,6 +1275,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
+            ...(onFileTransfer ? ([{ id: "download", label: "Download file" }] as const) : []),
+            ...(onFileTransfer && canCopyWorkspaceFileToClipboard()
+              ? ([{ id: "copy-file", label: "Copy file" }] as const)
+              : []),
           ] as const,
           { x: event.clientX, y: event.clientY },
         );
@@ -1285,6 +1297,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         }
         if (clicked === "copy-full") {
           handleCopy(targetPath, "Full path");
+          return;
+        }
+        if (clicked === "download" || clicked === "copy-file") {
+          onFileTransfer?.(clicked);
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -1293,7 +1309,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     },
-    [displayPath, handleCopy, handleOpenInBrowser, handleOpenInEditor, onOpenInBrowser, targetPath],
+    [
+      displayPath,
+      handleCopy,
+      handleOpenInBrowser,
+      handleOpenInEditor,
+      onFileTransfer,
+      onOpenInBrowser,
+      targetPath,
+    ],
   );
 
   return (
@@ -1349,6 +1373,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
+    previous.onFileTransfer === next.onFileTransfer &&
     previous.className === next.className
   );
 }
@@ -1473,6 +1498,21 @@ function ChatMarkdown({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
+  const transferMarkdownFile = useCallback(
+    (action: WorkspaceFileTransferAction, filePath: string) => {
+      if (!threadRef || preparedConnection._tag === "None") return;
+      const input = {
+        threadRef,
+        filePath,
+        httpBaseUrl: preparedConnection.value.httpBaseUrl,
+        createAssetUrl,
+      };
+      void (action === "download"
+        ? downloadWorkspaceFile(input)
+        : copyWorkspaceFileToClipboard(input));
+    },
+    [createAssetUrl, preparedConnection, threadRef],
+  );
   // A bare filename resolves to the workspace root, which is rarely where the
   // file is, so ask the index before opening.
   const openFileInPanel = useCallback(
@@ -1547,6 +1587,9 @@ function ChatMarkdown({
             isBrowserPreviewFile(fileLinkMeta.filePath)
               ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
               : undefined
+          }
+          onFileTransfer={
+            threadRef ? (action) => transferMarkdownFile(action, fileLinkMeta.filePath) : undefined
           }
           className={className}
         />
@@ -1780,6 +1823,7 @@ function ChatMarkdown({
     skills,
     text,
     threadRef,
+    transferMarkdownFile,
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 

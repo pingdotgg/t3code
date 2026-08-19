@@ -18,6 +18,10 @@ import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import {
+  canCopyWorkspaceFileToClipboard,
+  type WorkspaceFileTransferAction,
+} from "~/workspaceFileTransfer";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
@@ -31,6 +35,10 @@ interface FileBrowserPanelProps {
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  /** Present when the host surface can download/copy workspace files. */
+  onFileTransfer?:
+    | ((action: WorkspaceFileTransferAction, relativePath: string) => void)
+    | undefined;
 }
 
 const TREE_UNSAFE_CSS = `
@@ -105,6 +113,7 @@ export default function FileBrowserPanel({
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
+  onFileTransfer,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
@@ -150,14 +159,24 @@ export default function FileBrowserPanel({
     const position = pointerIsFresh
       ? { x: pointer.x, y: pointer.y }
       : { x: anchorRect.left, y: anchorRect.bottom };
+    const canTransfer =
+      onFileTransfer !== undefined && entryKindsRef.current.get(relativePath) === "file";
     try {
       const clicked = await api.contextMenu.show(
         [
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
+          ...(canTransfer ? ([{ id: "download", label: "Download file" }] as const) : []),
+          ...(canTransfer && canCopyWorkspaceFileToClipboard()
+            ? ([{ id: "copy-file", label: "Copy file" }] as const)
+            : []),
         ],
         position,
       );
+      if (clicked === "download" || clicked === "copy-file") {
+        onFileTransfer?.(clicked, relativePath);
+        return;
+      }
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);
