@@ -26,6 +26,40 @@ describe("serverSettings helpers", () => {
     );
   });
 
+  it("preserves a stored Vibe-Proxy key unless a replacement is explicitly supplied", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      vibeProxy: {
+        enabled: true,
+        baseUrl: "http://vibe-proxy.local:8954",
+        apiKey: "",
+        apiKeyRedacted: true,
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        vibeProxy: { baseUrl: "http://vibe-proxy.local:9000" },
+      }).vibeProxy,
+    ).toEqual({
+      enabled: true,
+      baseUrl: "http://vibe-proxy.local:9000",
+      apiKey: "",
+      apiKeyRedacted: true,
+    });
+
+    expect(
+      applyServerSettingsPatch(current, {
+        vibeProxy: { apiKey: "replacement" },
+      }).vibeProxy,
+    ).toEqual({
+      enabled: true,
+      baseUrl: "http://vibe-proxy.local:8954",
+      apiKey: "replacement",
+      apiKeyRedacted: false,
+    });
+  });
+
   it("extracts persisted observability settings", () => {
     expect(
       extractPersistedServerObservabilitySettings({

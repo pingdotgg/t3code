@@ -171,6 +171,15 @@ export function applyServerSettingsPatch(
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    ...(patch.vibeProxy?.apiKey !== undefined
+      ? {
+          vibeProxy: {
+            ...next.vibeProxy,
+            apiKey: patch.vibeProxy.apiKey,
+            apiKeyRedacted: false,
+          },
+        }
+      : {}),
     ...(backgroundActivity !== undefined
       ? {
           backgroundActivity: {

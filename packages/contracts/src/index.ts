@@ -31,4 +31,5 @@ export * from "./previewAutomation.ts";
 export * from "./threadReference.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
+export * from "./vibeProxy.ts";
 export * from "./rpc.ts";

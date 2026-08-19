@@ -5,6 +5,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/agentic-operator"
+  | "/settings/usages"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
@@ -27,6 +28,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/agentic-operator": "Operator",
+  "/settings/usages": "Usages",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
@@ -43,6 +45,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "agentic-operator",
     title: "Enable Operator",
     to: "/settings/agentic-operator",
+  },
+  {
+    id: "vibe-proxy-enabled",
+    title: "Vibe-Proxy usage",
+    to: "/settings/usages",
+  },
+  {
+    id: "vibe-proxy-base-url",
+    title: "API base URL",
+    to: "/settings/usages",
+  },
+  {
+    id: "vibe-proxy-api-key",
+    title: "API key",
+    to: "/settings/usages",
   },
   {
     id: "color-scheme",

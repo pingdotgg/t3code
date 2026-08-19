@@ -723,6 +723,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
     }),
+    vibeProxyUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:vibe-proxy-usage",
+      tag: WS_METHODS.serverGetVibeProxyUsage,
+      staleTimeMs: 0,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",
@@ -735,6 +740,14 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    refreshVibeProxyUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-vibe-proxy-usage",
+      tag: WS_METHODS.serverRefreshVibeProxyUsage,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId }) => environmentId,

@@ -106,6 +106,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as VibeProxyUsageService from "./usage/VibeProxyUsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
@@ -417,6 +418,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const vibeProxyUsage = yield* VibeProxyUsageService.VibeProxyUsageService;
       const worktreeCleanup = yield* Effect.serviceOption(WorktreeCleanup.WorktreeCleanup);
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
@@ -1571,6 +1573,14 @@ const makeWsRpcLayer = (
           ),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverGetVibeProxyUsage]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverGetVibeProxyUsage, vibeProxyUsage.readCached, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverRefreshVibeProxyUsage]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverRefreshVibeProxyUsage, vibeProxyUsage.refresh, {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
