@@ -1783,6 +1783,12 @@ html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
   color: var(--code-foreground);
 }
 
+/* Overlay is portaled onto document.body, so it cannot use the .chat-markdown
+   ancestor the inline mermaid code block uses. */
+html[data-theme-id] .chat-markdown-mermaid-overlay-scene {
+  background: var(--code-background);
+}
+
 html[data-theme-id] .chat-markdown pre {
   background-color: var(--code-background);
   color: var(--code-foreground);
@@ -2262,7 +2268,9 @@ code {
   touch-action: none;
   cursor: grab;
   user-select: none;
-  /* Same surface as the inline mermaid code block, so theme fills stay readable. */
+  /* Default palette matches the inline mermaid code block. Custom themes tint
+     --secondary/--input with the accent, so the overlay uses --code-background
+     via html[data-theme-id] .chat-markdown-mermaid-overlay-scene. */
   background: var(--secondary);
 
   @variant dark {
