@@ -33,7 +33,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
@@ -991,7 +991,7 @@ function ThreadSettingsModelsScreen() {
   return (
     <>
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader
+        <AndroidScreenHeader
           actions={[
             {
               accessibilityLabel: session.pendingModel ? "Save thread settings" : "Done",
@@ -1117,7 +1117,7 @@ function ThreadSettingsChoiceScreen() {
     <>
       <NativeStackScreenOptions options={{ headerShown: Platform.OS !== "android" }} />
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader title={route.params.title} onBack={() => navigation.goBack()} />
+        <AndroidScreenHeader title={route.params.title} onBack={() => navigation.goBack()} />
       ) : null}
       <ThreadSettingsChoiceContent submenu={route.params} onSelected={() => navigation.goBack()} />
     </>
