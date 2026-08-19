@@ -31,7 +31,7 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn } from "../lib/utils";
 import { useRecentThreadsStore } from "../recentThreadsStore";
-import { readProject, readThreadShell, readThreadStatus } from "../state/entities";
+import { readProject, readThreadShell } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -40,7 +40,7 @@ function isLiveRecentThreadKey(key: string): boolean {
   const ref = parseScopedThreadKey(key);
   if (!ref) return false;
   const shell = readThreadShell(ref);
-  return shell !== null && shell.archivedAt === null && readThreadStatus(ref) !== "deleted";
+  return shell !== null && shell.archivedAt === null;
 }
 
 /** Recent thread keys that still resolve to a live, unarchived thread. */

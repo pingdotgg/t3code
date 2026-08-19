@@ -19,10 +19,19 @@ export function withRecentThreadKey(
   return [opened, ...current.filter((key) => key !== opened)].slice(0, MAX_RECENT_THREAD_KEYS);
 }
 
+export function withoutRecentThreadKey(
+  current: ReadonlyArray<string>,
+  removed: string,
+): ReadonlyArray<string> {
+  if (!current.includes(removed)) return current;
+  return current.filter((key) => key !== removed);
+}
+
 interface RecentThreadsStore {
   /** Scoped thread keys in visit order, newest first. */
   recentThreadKeys: ReadonlyArray<string>;
   recordThreadVisit: (threadKey: string) => void;
+  forgetThread: (threadKey: string) => void;
 }
 
 export const useRecentThreadsStore = create<RecentThreadsStore>((set) => ({
@@ -30,6 +39,12 @@ export const useRecentThreadsStore = create<RecentThreadsStore>((set) => ({
   recordThreadVisit: (threadKey) => {
     set((state) => {
       const next = withRecentThreadKey(state.recentThreadKeys, threadKey);
+      return next === state.recentThreadKeys ? state : { recentThreadKeys: next };
+    });
+  },
+  forgetThread: (threadKey) => {
+    set((state) => {
+      const next = withoutRecentThreadKey(state.recentThreadKeys, threadKey);
       return next === state.recentThreadKeys ? state : { recentThreadKeys: next };
     });
   },

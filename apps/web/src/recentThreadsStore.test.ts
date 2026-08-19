@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { MAX_RECENT_THREAD_KEYS, withRecentThreadKey } from "./recentThreadsStore";
+import {
+  MAX_RECENT_THREAD_KEYS,
+  withRecentThreadKey,
+  withoutRecentThreadKey,
+} from "./recentThreadsStore";
 
 describe("withRecentThreadKey", () => {
   it("prepends a newly opened thread", () => {
@@ -26,5 +30,19 @@ describe("withRecentThreadKey", () => {
     expect(next).toHaveLength(MAX_RECENT_THREAD_KEYS);
     expect(next[0]).toBe("env:new");
     expect(next).not.toContain(`env:${MAX_RECENT_THREAD_KEYS - 1}`);
+  });
+});
+
+describe("withoutRecentThreadKey", () => {
+  it("removes a deleted thread without changing the remaining order", () => {
+    expect(withoutRecentThreadKey(["env:a", "env:b", "env:c"], "env:b")).toEqual([
+      "env:a",
+      "env:c",
+    ]);
+  });
+
+  it("returns the same array when the thread is absent", () => {
+    const current = ["env:a", "env:b"];
+    expect(withoutRecentThreadKey(current, "env:c")).toBe(current);
   });
 });
