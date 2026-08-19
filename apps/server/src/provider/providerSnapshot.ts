@@ -256,4 +256,11 @@ export function buildServerProvider(input: {
 export const collectStreamAsString = <E>(
   stream: Stream.Stream<Uint8Array, E>,
 ): Effect.Effect<string, E> =>
-  collectUint8StreamText({ stream }).pipe(Effect.map((collected) => collected.text));
+  // Drain the process output as fast as it arrives. Folding straight over the stream
+  // backpressures the child once the OS pipe fills, and a CLI that `process.exit()`s
+  // without waiting for stdout to flush then drops whatever is still queued - silently,
+  // with exit code 0. Buffering costs nothing extra here because the fold accumulates
+  // the whole output anyway.
+  collectUint8StreamText({ stream: Stream.buffer(stream, { capacity: "unbounded" }) }).pipe(
+    Effect.map((collected) => collected.text),
+  );

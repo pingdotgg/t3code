@@ -83,6 +83,49 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.ok(provider.models["claude-haiku-4-5"]);
   });
 
+  it("flags output cut after a slug line as truncated", () => {
+    // How a slow reader sees it: the CLI exits 0 mid-listing, right after a header.
+    const stdout = [
+      "anthropic/claude-sonnet-4-5",
+      JSON.stringify({ id: "claude-sonnet-4-5", providerID: "anthropic", name: "Sonnet 4.5" }),
+      "openai/gpt-4o",
+      "",
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.truncated, true);
+  });
+
+  it("flags output cut inside a model body as truncated", () => {
+    const stdout = [
+      "anthropic/claude-sonnet-4-5",
+      JSON.stringify({ id: "claude-sonnet-4-5", providerID: "anthropic", name: "Sonnet 4.5" }),
+      "openai/gpt-4o",
+      '{ "id": "gpt-4o", "providerID": "op',
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.truncated, true);
+  });
+
+  it("does not flag complete output as truncated", () => {
+    const stdout = [
+      "anthropic/claude-sonnet-4-5",
+      JSON.stringify({ id: "claude-sonnet-4-5", providerID: "anthropic", name: "Sonnet 4.5" }),
+      "",
+    ].join("\n");
+
+    NodeAssert.equal(parseModelsCliOutput(stdout).truncated, false);
+    NodeAssert.equal(parseModelsCliOutput("").truncated, false);
+  });
+
+  it("does not flag a bodyless listing as truncated", () => {
+    // `opencode models` without `--verbose` prints slugs only.
+    const stdout = ["anthropic/claude-sonnet-4-5", "openai/gpt-4o", ""].join("\n");
+
+    NodeAssert.equal(parseModelsCliOutput(stdout).truncated, false);
+  });
+
   it("handles Windows-style CRLF line endings", () => {
     const stdout =
       "anthropic/claude-sonnet-4-5\r\n" +
