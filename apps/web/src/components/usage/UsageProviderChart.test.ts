@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildDayColumns, niceScale } from "./UsageProviderChart";
+import { buildDayColumns, niceScale, providersWithUsage } from "./UsageProviderChart";
 
 describe("niceScale", () => {
   it("never puts the peak above the top of the scale", () => {
@@ -93,6 +93,25 @@ describe("buildDayColumns", () => {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+
+  it("omits providers with no usage in the selected window", () => {
+    const claudeOnly = new Map([
+      [
+        "2026-08-01",
+        {
+          day: "2026-08-01",
+          costUsd: 20,
+          totalTokens: 200,
+          byProvider: new Map([
+            ["codex" as const, { costUsd: 0, totalTokens: 0 }],
+            ["claude" as const, { costUsd: 20, totalTokens: 200 }],
+          ]),
+        },
+      ],
+    ]);
+
+    expect(providersWithUsage(buildDayColumns(days, claudeOnly, "cost"))).toEqual(["claude"]);
   });
 });
 
