@@ -1665,9 +1665,10 @@ export default function ThreadTerminalDrawer({
                                   <PopoverTrigger
                                     openOnHover
                                     render={
-                                      <button
-                                        type="button"
-                                        className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                                      <Button
+                                        size="icon-micro"
+                                        variant="ghost-muted"
+                                        className="shrink-0 opacity-0 transition focus-visible:opacity-100 group-hover:opacity-100"
                                         onClick={() => onCloseTerminal(terminalId)}
                                         aria-label={closeTerminalLabel}
                                       />
