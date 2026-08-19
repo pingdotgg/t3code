@@ -3419,215 +3419,220 @@ export function makeClaudeAdapterV2(
             return next;
           });
 
-          for (const toolCall of input.context.toolCalls.values()) {
-            const artifacts = buildToolCallArtifacts({
-              context: input.context,
-              nativeItemId: toolCall.nativeItemId,
-              toolName: toolCall.toolName,
-              classification: toolCall.classification,
-              toolInput: toolCall.input,
-              threadId: toolCall.threadId,
-              runId: toolCall.runId,
-              rootNodeId: toolCall.rootNodeId,
-              parentNodeId: toolCall.parentNodeId,
-              ordinal: toolCall.ordinal,
-              output: NO_CLAUDE_NATIVE_TOOL_OUTPUT,
-              status: "failed",
-              startedAt: toolCall.startedAt,
-              updatedAt: input.completedAt,
-            });
-            yield* emitToolCallArtifacts(artifacts);
-          }
-          input.context.toolCalls.clear();
+          yield* Effect.gen(function* () {
+            for (const toolCall of input.context.toolCalls.values()) {
+              const artifacts = buildToolCallArtifacts({
+                context: input.context,
+                nativeItemId: toolCall.nativeItemId,
+                toolName: toolCall.toolName,
+                classification: toolCall.classification,
+                toolInput: toolCall.input,
+                threadId: toolCall.threadId,
+                runId: toolCall.runId,
+                rootNodeId: toolCall.rootNodeId,
+                parentNodeId: toolCall.parentNodeId,
+                ordinal: toolCall.ordinal,
+                output: NO_CLAUDE_NATIVE_TOOL_OUTPUT,
+                status: "failed",
+                startedAt: toolCall.startedAt,
+                updatedAt: input.completedAt,
+              });
+              yield* emitToolCallArtifacts(artifacts);
+            }
+            input.context.toolCalls.clear();
 
-          if (
-            input.context.assistant.emittedNativeItemIds.size === 0 &&
-            input.context.assistant.fallbackText.length > 0
-          ) {
-            const ordinal = yield* resolveItemOrdinal(
-              input.context,
-              input.context.assistant.fallbackNativeItemId,
-            );
-            const artifacts = buildAssistantArtifacts({
-              idAllocator,
-              turnInput: input.context.input,
-              providerTurnId: input.context.providerTurnId,
-              nativeItemId: input.context.assistant.fallbackNativeItemId,
-              text: input.context.assistant.fallbackText,
-              ordinal,
-              startedAt: input.context.startedAt,
-              completedAt: input.completedAt,
+            if (
+              input.context.assistant.emittedNativeItemIds.size === 0 &&
+              input.context.assistant.fallbackText.length > 0
+            ) {
+              const ordinal = yield* resolveItemOrdinal(
+                input.context,
+                input.context.assistant.fallbackNativeItemId,
+              );
+              const artifacts = buildAssistantArtifacts({
+                idAllocator,
+                turnInput: input.context.input,
+                providerTurnId: input.context.providerTurnId,
+                nativeItemId: input.context.assistant.fallbackNativeItemId,
+                text: input.context.assistant.fallbackText,
+                ordinal,
+                startedAt: input.context.startedAt,
+                completedAt: input.completedAt,
+              });
+              yield* Effect.all(
+                [
+                  emitProviderEvent({
+                    type: "node.updated",
+                    driver: CLAUDE_PROVIDER,
+                    node: artifacts.node,
+                  }),
+                  emitProviderEvent({
+                    type: "message.updated",
+                    driver: CLAUDE_PROVIDER,
+                    message: artifacts.message,
+                  }),
+                  emitProviderEvent({
+                    type: "turn_item.updated",
+                    driver: CLAUDE_PROVIDER,
+                    turnItem: artifacts.turnItem,
+                  }),
+                ],
+                { concurrency: 1 },
+              );
+            }
+
+            const providerRetry = yield* Ref.modify(providerRetries, (current) => {
+              const retry = current.get(input.context.providerTurnId);
+              if (retry === undefined) {
+                return [undefined, current] as const;
+              }
+              const updated = new Map(current);
+              updated.delete(input.context.providerTurnId);
+              return [retry, updated] as const;
             });
+            if (providerRetry !== undefined && input.status !== "failed") {
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: makeProviderRetryTurnItem({
+                  idAllocator,
+                  driver: CLAUDE_PROVIDER,
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  nodeId: input.context.input.rootNodeId,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  itemOrdinal: providerRetry.itemOrdinal,
+                  failure: providerRetry.failure,
+                  retry: providerRetry.retry,
+                  status: input.status,
+                  startedAt: providerRetry.startedAt,
+                  updatedAt: input.completedAt,
+                }),
+              });
+            }
+
+            const threadDisposition = input.threadDisposition ?? "reusable";
+            const terminalEvent: ProviderAdapterV2Event =
+              input.status === "failed"
+                ? {
+                    type: "turn.terminal",
+                    driver: CLAUDE_PROVIDER,
+                    providerThreadId: input.context.input.providerThread.id,
+                    providerTurnId: input.context.providerTurnId,
+                    runOrdinal: input.context.input.runOrdinal,
+                    failureItemOrdinal: yield* resolveItemOrdinal(
+                      input.context,
+                      `terminal-failure:${input.context.providerTurnId}`,
+                    ),
+                    status: input.status,
+                    failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
+                    ...(providerRetry === undefined
+                      ? {}
+                      : {
+                          retry: providerRetry.retry,
+                          retryStartedAt: providerRetry.startedAt,
+                        }),
+                    threadDisposition,
+                  }
+                : {
+                    type: "turn.terminal",
+                    driver: CLAUDE_PROVIDER,
+                    providerThreadId: input.context.input.providerThread.id,
+                    providerTurnId: input.context.providerTurnId,
+                    runOrdinal: input.context.input.runOrdinal,
+                    status: input.status,
+                    failure: null,
+                    threadDisposition,
+                  };
             yield* Effect.all(
               [
                 emitProviderEvent({
-                  type: "node.updated",
+                  type: "provider_turn.updated",
                   driver: CLAUDE_PROVIDER,
-                  node: artifacts.node,
+                  providerTurn: providerTurnPayload({
+                    context: input.context,
+                    status: input.status,
+                    completedAt: input.completedAt,
+                  }),
                 }),
-                emitProviderEvent({
-                  type: "message.updated",
-                  driver: CLAUDE_PROVIDER,
-                  message: artifacts.message,
+                // Surface this native thread's roster before the root turn
+                // terminals so writeFinalRunEvents preserves it. Failed or
+                // interrupted turns drop only this thread's roster so sibling
+                // native threads keep their Waiting state.
+                Effect.gen(function* () {
+                  const nativeThreadId =
+                    input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
+                  if (nativeThreadId !== null) {
+                    if (input.status !== "completed") {
+                      yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
+                      yield* clearNativeThreadTaskIdSet(
+                        wakeEligibleBackgroundTasksByNativeThread,
+                        nativeThreadId,
+                      );
+                      yield* clearNativeThreadTaskIdSet(
+                        opaqueBackgroundTaskReplayTombstonesByNativeThread,
+                        nativeThreadId,
+                      );
+                    }
+                  }
+                  const roster =
+                    nativeThreadId === null
+                      ? new Map<string, OrchestrationV2PendingBackgroundTask>()
+                      : rosterForNativeThread(
+                          yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                          nativeThreadId,
+                        );
+                  const clearConversationHead =
+                    input.status === "completed" &&
+                    input.context.input.providerThread.nativeConversationHeadRef !== null;
+                  const providerThread: OrchestrationV2ProviderThread = {
+                    ...input.context.input.providerThread,
+                    providerSessionId: session.id,
+                    ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
+                    firstRunOrdinal:
+                      input.context.input.providerThread.firstRunOrdinal ??
+                      input.context.input.runOrdinal,
+                    lastRunOrdinal: input.context.input.runOrdinal,
+                    pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
+                    status: input.status === "completed" ? "active" : "idle",
+                    updatedAt: input.completedAt,
+                  };
+                  yield* rememberProviderThread(providerThread);
+                  yield* emitProviderEvent({
+                    type: "provider_thread.updated" as const,
+                    driver: CLAUDE_PROVIDER,
+                    providerThread,
+                  });
                 }),
-                emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver: CLAUDE_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                }),
+                emitProviderEvent(terminalEvent),
               ],
               { concurrency: 1 },
             );
-          }
-
-          const providerRetry = yield* Ref.modify(providerRetries, (current) => {
-            const retry = current.get(input.context.providerTurnId);
-            if (retry === undefined) {
-              return [undefined, current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(input.context.providerTurnId);
-            return [retry, updated] as const;
-          });
-          if (providerRetry !== undefined && input.status !== "failed") {
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: makeProviderRetryTurnItem({
-                idAllocator,
-                driver: CLAUDE_PROVIDER,
-                threadId: input.context.input.threadId,
-                runId: input.context.input.runId,
-                nodeId: input.context.input.rootNodeId,
-                providerThreadId: input.context.input.providerThread.id,
-                providerTurnId: input.context.providerTurnId,
-                itemOrdinal: providerRetry.itemOrdinal,
-                failure: providerRetry.failure,
-                retry: providerRetry.retry,
-                status: input.status,
-                startedAt: providerRetry.startedAt,
-                updatedAt: input.completedAt,
-              }),
+            yield* Ref.update(interruptedTurns, (current) => {
+              const next = new Set(current);
+              next.delete(input.context.providerTurnId);
+              return next;
             });
-          }
-
-          const threadDisposition = input.threadDisposition ?? "reusable";
-          const terminalEvent: ProviderAdapterV2Event =
-            input.status === "failed"
-              ? {
-                  type: "turn.terminal",
-                  driver: CLAUDE_PROVIDER,
-                  providerThreadId: input.context.input.providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                  runOrdinal: input.context.input.runOrdinal,
-                  failureItemOrdinal: yield* resolveItemOrdinal(
-                    input.context,
-                    `terminal-failure:${input.context.providerTurnId}`,
-                  ),
-                  status: input.status,
-                  failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
-                  ...(providerRetry === undefined
-                    ? {}
-                    : {
-                        retry: providerRetry.retry,
-                        retryStartedAt: providerRetry.startedAt,
-                      }),
-                  threadDisposition,
-                }
-              : {
-                  type: "turn.terminal",
-                  driver: CLAUDE_PROVIDER,
-                  providerThreadId: input.context.input.providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                  runOrdinal: input.context.input.runOrdinal,
-                  status: input.status,
-                  failure: null,
-                  threadDisposition,
-                };
-          yield* Effect.all(
-            [
-              emitProviderEvent({
-                type: "provider_turn.updated",
-                driver: CLAUDE_PROVIDER,
-                providerTurn: providerTurnPayload({
-                  context: input.context,
-                  status: input.status,
-                  completedAt: input.completedAt,
-                }),
+            yield* Ref.update(steeredTurns, (current) => {
+              const next = new Map(current);
+              next.delete(input.context.providerTurnId);
+              return next;
+            });
+            yield* Ref.update(turnFrameCounts, (current) => {
+              const next = new Map(current);
+              next.delete(input.context.providerTurnId);
+              return next;
+            });
+          }).pipe(
+            Effect.ensuring(
+              Ref.update(finalizingTurnIds, (current) => {
+                const next = new Set(current);
+                next.delete(input.context.providerTurnId);
+                return next;
               }),
-              // Surface this native thread's roster before the root turn
-              // terminals so writeFinalRunEvents preserves it. Failed or
-              // interrupted turns drop only this thread's roster so sibling
-              // native threads keep their Waiting state.
-              Effect.gen(function* () {
-                const nativeThreadId =
-                  input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
-                if (nativeThreadId !== null) {
-                  if (input.status !== "completed") {
-                    yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
-                    yield* clearNativeThreadTaskIdSet(
-                      wakeEligibleBackgroundTasksByNativeThread,
-                      nativeThreadId,
-                    );
-                    yield* clearNativeThreadTaskIdSet(
-                      opaqueBackgroundTaskReplayTombstonesByNativeThread,
-                      nativeThreadId,
-                    );
-                  }
-                }
-                const roster =
-                  nativeThreadId === null
-                    ? new Map<string, OrchestrationV2PendingBackgroundTask>()
-                    : rosterForNativeThread(
-                        yield* Ref.get(pendingBackgroundTasksByNativeThread),
-                        nativeThreadId,
-                      );
-                const clearConversationHead =
-                  input.status === "completed" &&
-                  input.context.input.providerThread.nativeConversationHeadRef !== null;
-                const providerThread: OrchestrationV2ProviderThread = {
-                  ...input.context.input.providerThread,
-                  providerSessionId: session.id,
-                  ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
-                  firstRunOrdinal:
-                    input.context.input.providerThread.firstRunOrdinal ??
-                    input.context.input.runOrdinal,
-                  lastRunOrdinal: input.context.input.runOrdinal,
-                  pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
-                  status: input.status === "completed" ? "active" : "idle",
-                  updatedAt: input.completedAt,
-                };
-                yield* rememberProviderThread(providerThread);
-                yield* emitProviderEvent({
-                  type: "provider_thread.updated" as const,
-                  driver: CLAUDE_PROVIDER,
-                  providerThread,
-                });
-              }),
-              emitProviderEvent(terminalEvent),
-            ],
-            { concurrency: 1 },
+            ),
           );
-          yield* Ref.update(interruptedTurns, (current) => {
-            const next = new Set(current);
-            next.delete(input.context.providerTurnId);
-            return next;
-          });
-          yield* Ref.update(steeredTurns, (current) => {
-            const next = new Map(current);
-            next.delete(input.context.providerTurnId);
-            return next;
-          });
-          yield* Ref.update(turnFrameCounts, (current) => {
-            const next = new Map(current);
-            next.delete(input.context.providerTurnId);
-            return next;
-          });
-          yield* Ref.update(finalizingTurnIds, (current) => {
-            const next = new Set(current);
-            next.delete(input.context.providerTurnId);
-            return next;
-          });
         });
 
         // A steer handoff keeps the T3 turn alive so the steered work still
@@ -4402,6 +4407,27 @@ export function makeClaudeAdapterV2(
                 }
                 return next;
               });
+              const handoffCompletedAt = yield* DateTime.now;
+              for (const toolCall of context.toolCalls.values()) {
+                const artifacts = buildToolCallArtifacts({
+                  context,
+                  nativeItemId: toolCall.nativeItemId,
+                  toolName: toolCall.toolName,
+                  classification: toolCall.classification,
+                  toolInput: toolCall.input,
+                  threadId: toolCall.threadId,
+                  runId: toolCall.runId,
+                  rootNodeId: toolCall.rootNodeId,
+                  parentNodeId: toolCall.parentNodeId,
+                  ordinal: toolCall.ordinal,
+                  output: NO_CLAUDE_NATIVE_TOOL_OUTPUT,
+                  status: "interrupted",
+                  startedAt: toolCall.startedAt,
+                  updatedAt: handoffCompletedAt,
+                });
+                yield* emitToolCallArtifacts(artifacts);
+              }
+              context.toolCalls.clear();
               yield* boundSteeringHandoff(context);
               return;
             }
