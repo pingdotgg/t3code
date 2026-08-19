@@ -79,8 +79,6 @@ function ActiveSshPasswordPrompt({
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       setOpen(true);
-      inputRef.current?.focus();
-      inputRef.current?.select();
     });
     return () => {
       window.cancelAnimationFrame(frame);
@@ -162,7 +160,7 @@ function ActiveSshPasswordPrompt({
         if (!open) onRemove(request.requestId);
       }}
     >
-      <DialogPopup className="max-w-md" showCloseButton={false}>
+      <DialogPopup className="max-w-md" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>SSH Password Required</DialogTitle>
           <DialogDescription>
