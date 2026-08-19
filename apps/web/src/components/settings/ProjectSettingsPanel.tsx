@@ -906,7 +906,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     instanceEntries={instanceEntries}
                     modelOptionsByInstance={modelOptionsByInstance}
                     triggerVariant="outline"
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    triggerClassName="min-w-0 max-w-80 shrink text-foreground/90 hover:text-foreground"
                     onOpenProviderSetup={(instanceId) => {
                       void navigate({
                         to: "/settings/providers",
