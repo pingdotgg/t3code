@@ -258,17 +258,7 @@ describe("CodexSessionRuntime collab integration", () => {
             id: CHILD_A,
             sessionId: CHILD_A,
             parentThreadId: ROOT,
-            source: {
-              subAgent: {
-                thread_spawn: {
-                  agent_path: "/root/alpha",
-                  agent_nickname: "alpha",
-                  agent_role: "reviewer",
-                  depth: 1,
-                  parent_thread_id: ROOT,
-                },
-              },
-            },
+            source: {},
             agentNickname: "alpha",
             agentRole: "reviewer",
           },

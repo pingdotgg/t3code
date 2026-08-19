@@ -746,7 +746,7 @@ type CodexCollabAgentToolCall =
       { readonly type: "collabAgentToolCall" }
     >;
 
-function readCollabSpawnChildThreadIds(item: CodexCollabAgentToolCall): ReadonlyArray<string> {
+function readCollabSpawnChildThreadIds(item: CodexCollabAgentToolCall) {
   if (item.tool !== "spawnAgent" || item.status === "failed") {
     return [];
   }
@@ -761,9 +761,7 @@ function readCollabSpawnChildThreadIds(item: CodexCollabAgentToolCall): Readonly
   );
 }
 
-function readCollabSpawnFailedChildThreadIds(
-  item: CodexCollabAgentToolCall,
-): ReadonlyArray<string> {
+function readCollabSpawnFailedChildThreadIds(item: CodexCollabAgentToolCall) {
   if (item.tool !== "spawnAgent") {
     return [];
   }

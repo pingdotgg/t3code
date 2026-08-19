@@ -59,7 +59,9 @@ rl.on("line", (line) => {
       });
     }
     const notifications =
-      script.notificationsByTurn?.[turnStartCount - 1] ?? script.notifications ?? [];
+      script.notificationsByTurn !== undefined
+        ? (script.notificationsByTurn[turnStartCount - 1] ?? [])
+        : (script.notifications ?? []);
     for (const notification of notifications) {
       write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
     }
