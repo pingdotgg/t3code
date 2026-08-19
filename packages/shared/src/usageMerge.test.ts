@@ -12,6 +12,7 @@ import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
+    sourceIndex: 0,
     day: "2026-08-07" as UsageDay,
     provider: "claude",
     model: "claude-fable-5",
@@ -124,7 +125,10 @@ describe("mergeUsage", () => {
         environment(
           "env-b",
           summary(
-            [bucket(), bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 })],
+            [
+              bucket(),
+              bucket({ sourceIndex: 1, provider: "codex", model: "gpt-5.6-sol", costUsd: 4 }),
+            ],
             [sharedClaude, { provider: "codex", hostId: "mac", homePath: "/home/theo/.codex" }],
           ),
         ),
@@ -222,6 +226,39 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.duplicateSources).toHaveLength(1);
+  });
+
+  it("drops only overlapping roots when one environment scans multiple Claude homes", () => {
+    const shared = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/Users/theo/.claude",
+      volumeId: "16777220:1234",
+    };
+    const personal = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/Users/theo/.claude-personal",
+      volumeId: "16777220:5678",
+    };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([bucket({ costUsd: 10 })], [shared])),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 10 }), bucket({ sourceIndex: 1, costUsd: 7 })],
+            [shared, personal],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(17);
+    expect(merged.records).toBe(10);
+    expect(merged.sessions).toBe(2);
+    expect(merged.duplicateSources).toEqual(["env-b: /Users/theo/.claude"]);
   });
 
   it("totals sessions from per-directory distinct counts, not per-bucket sums", () => {

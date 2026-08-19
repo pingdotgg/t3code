@@ -35,8 +35,6 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -52,6 +50,7 @@ import {
   type ScanCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
+import { resolveUsageTranscriptSources } from "./usageTranscriptSources.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -89,7 +88,10 @@ const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 export class UsageService extends Context.Service<
   UsageService,
   {
-    readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readSummary: (
+      input: UsageSummaryInput,
+      workspaceCwds?: readonly string[],
+    ) => Effect.Effect<UsageSummary, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -184,21 +186,10 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
-
   /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
+  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
+    workspaceCwds: readonly string[],
+  ) {
     // A settings failure must surface as an error: swallowing it here would
     // present "zero usage from every provider" as a valid answer.
     const settings = yield* settingsService.getSettings.pipe(
@@ -215,14 +206,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
-
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-    ];
+    return yield* resolveUsageTranscriptSources(settings, process.env, workspaceCwds);
   });
 
   /**
@@ -290,7 +274,10 @@ export const make = Effect.gen(function* () {
       return records;
     });
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  const readSummary = Effect.fn("UsageService.readSummary")(function* (
+    input: UsageSummaryInput,
+    workspaceCwds: readonly string[] = [config.cwd],
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -327,9 +314,11 @@ export const make = Effect.gen(function* () {
     yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
-    // The home resolvers ask for `Path` themselves; satisfy them from the
-    // instance we already hold so `readSummary` stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    // The source resolvers ask for Path themselves; satisfy them from the
+    // instance we already hold so readSummary stays context-free.
+    const dirs = yield* resolveTranscriptDirs(workspaceCwds).pipe(
+      Effect.provideService(Path.Path, path),
+    );
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -340,20 +329,26 @@ export const make = Effect.gen(function* () {
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
-    const aggregator = new UsageAggregator({
-      timeZone: input.timeZone,
-      sinceDay: input.sinceDay,
-      untilDay: input.untilDay,
-      resolution: input.resolution ?? "day",
-      ...hourlyWindow,
-      rates,
-    });
-
     const sources: UsageSource[] = [];
+    const buckets: UsageSummary["buckets"][number][] = [];
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
+    const seenDedupeKeys = new Set<string>();
 
     for (const { provider, dir } of dirs) {
+      const sourceIndex = sources.length;
+      const aggregator = new UsageAggregator(
+        {
+          sourceIndex,
+          timeZone: input.timeZone,
+          sinceDay: input.sinceDay,
+          untilDay: input.untilDay,
+          resolution: input.resolution ?? "day",
+          ...hourlyWindow,
+          rates,
+        },
+        seenDedupeKeys,
+      );
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
@@ -406,6 +401,7 @@ export const make = Effect.gen(function* () {
         distinctSessions: sessionIds.size,
         message: null,
       });
+      buckets.push(...aggregator.finish().buckets);
     }
 
     const pruned = pruneScanCache(fileCache, {
@@ -417,7 +413,6 @@ export const make = Effect.gen(function* () {
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();
 
-    const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
@@ -427,7 +422,14 @@ export const make = Effect.gen(function* () {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
-      buckets: aggregated.buckets,
+      buckets: buckets.sort(
+        (a, b) =>
+          a.day.localeCompare(b.day) ||
+          (a.hourStart ?? "").localeCompare(b.hourStart ?? "") ||
+          a.provider.localeCompare(b.provider) ||
+          a.model.localeCompare(b.model) ||
+          a.sourceIndex - b.sourceIndex,
+      ),
       sources,
       pricing: {
         status: ratesStatus,

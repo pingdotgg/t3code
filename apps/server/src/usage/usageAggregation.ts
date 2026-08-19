@@ -57,6 +57,7 @@ interface MutableBucket {
 }
 
 export interface AggregateOptions {
+  readonly sourceIndex: number;
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
@@ -83,15 +84,16 @@ export interface AggregateResult {
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #seen: Set<string>;
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
   #duplicatesDropped = 0;
   #outOfWindow = 0;
 
-  constructor(options: AggregateOptions) {
+  constructor(options: AggregateOptions, seenDedupeKeys: Set<string> = new Set()) {
     this.#options = options;
+    this.#seen = seenDedupeKeys;
     this.#toDay = makeDayFormatter(options.timeZone);
     if (options.resolution === "hour") {
       if (options.sinceTimeMs === undefined || options.untilTimeMs === undefined) {
@@ -182,6 +184,7 @@ export class UsageAggregator {
     for (const [key, bucket] of this.#buckets) {
       const [day = "", hourStart = "", provider = "", model = ""] = key.split("\u0000");
       buckets.push({
+        sourceIndex: this.#options.sourceIndex,
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
         provider: provider as UsageBucket["provider"],
