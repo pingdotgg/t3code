@@ -43,7 +43,7 @@ describe("ComposerStashBadge", () => {
     expect(markup).not.toContain("invisible");
   });
 
-  it("keeps a compact footer entry point when a drawer occupies the tab", () => {
+  it("keeps a compact inline entry point when a drawer occupies the tab", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashBadge
         count={3}
@@ -55,11 +55,14 @@ describe("ComposerStashBadge", () => {
       />,
     );
 
-    expect(markup).toContain("rounded-md");
+    expect(markup).toContain('data-slot="button"');
+    expect(markup).toContain("rounded-sm");
+    expect(markup).toContain("focus-visible:ring-2");
+    expect(markup).toContain("pointer-coarse:after:min-h-11");
     expect(markup).toContain("Stashed prompts: 3. Open stash.");
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).not.toContain("chat-composer-stash-tab");
     expect(markup).not.toContain("rounded-t-xl");
-    expect(markup).not.toContain("pointer-events-none");
+    expect(markup).not.toContain(" pointer-events-none ");
   });
 });
