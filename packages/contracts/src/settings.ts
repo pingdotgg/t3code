@@ -552,6 +552,8 @@ const DevinPermissionMode = Schema.Literals([
   "autonomous",
 ]);
 
+const DevinAgentType = Schema.Literals(["default", "review", "summarizer"]);
+
 export const DevinSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -575,6 +577,56 @@ export const DevinSettings = makeProviderSettingsSchema(
         description: "Custom Devin home and config directory.",
         providerSettingsForm: {
           placeholder: "~/.devin",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    configPath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Config file",
+        description: "Optional Devin JSON config passed with `devin --config`.",
+        providerSettingsForm: {
+          placeholder: "~/.config/devin/config.json",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    agentType: DevinAgentType.pipe(
+      Schema.withDecodingDefault(Effect.succeed("default" as const)),
+      Schema.annotateKey({
+        title: "Agent type",
+        description:
+          "Use Devin's standard coding agent, read-only review agent, or no-tools summarizer.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "default", label: "Default coding agent" },
+            { value: "review", label: "Review (read-only)" },
+            { value: "summarizer", label: "Summarizer (no tools)" },
+          ],
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    sandbox: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Process sandbox",
+        description: "Run Devin exec-tool processes in the CLI's research-preview sandbox.",
+        providerSettingsForm: {
+          control: "switch",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    respectWorkspaceTrust: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Respect workspace trust",
+        description: "Keep Devin's workspace trust checks enabled for ACP sessions.",
+        providerSettingsForm: {
+          control: "switch",
           clearWhenEmpty: "omit",
         },
       }),
@@ -614,7 +666,16 @@ export const DevinSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs", "permissionMode"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "configPath",
+      "agentType",
+      "permissionMode",
+      "sandbox",
+      "respectWorkspaceTrust",
+      "launchArgs",
+    ],
   },
 );
 export type DevinSettings = typeof DevinSettings.Type;
