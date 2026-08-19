@@ -647,9 +647,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           const configuredUrls = [
             ...new Set([
               ...state.retainedConfiguredUrls.keys(),
-              ...[...state.listeners.keys()].flatMap(
-                (registration) => registration.configuredUrls,
-              ),
+              ...[...state.listeners.keys()].flatMap((registration) => registration.configuredUrls),
             ]),
           ];
           const snapshot = yield* scanUnlocked(configuredUrls);
@@ -662,7 +660,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       });
     },
     Effect.catchCause((cause: Cause.Cause<never>) =>
-      Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
+      Cause.hasInterrupts(cause)
+        ? Effect.failCause(cause)
+        : Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
     ),
   );
 
@@ -856,42 +856,42 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     configuredUrls: ReadonlyArray<string>,
     listener: Listener,
   ) {
-      const { registration, replayResult, worker } = yield* Effect.uninterruptible(
-        Effect.gen(function* () {
-          const notifications = yield* Queue.unbounded<ListenerNotification>();
-          const replayResult = yield* Deferred.make<Exit.Exit<void>>();
-          const stoppedRef = yield* Ref.make(false);
-          const registration: ListenerRegistration = {
-            listener,
-            configuredUrls,
-            notifications,
-            stoppedRef,
-          };
-          yield* notificationLock.withPermit(
-            Effect.gen(function* () {
-              const snapshot = yield* Ref.modify(stateRef, (state) => {
-                const replay = projectWebProbeSnapshot(state.lastSnapshot, configuredUrls);
-                const listeners = new Map(state.listeners);
-                listeners.set(registration, replay);
-                return [replay, { ...state, listeners }];
-              });
-              yield* Queue.offer(notifications, {
-                servers: snapshot,
-                deliveryResult: replayResult,
-                isReplay: true,
-              });
-            }),
-          );
-          const worker = yield* Effect.forkScoped(runListenerNotifications(registration));
-          yield* Effect.addFinalizer(() => stopListener(registration, worker));
-          return { registration, worker, replayResult };
-        }),
-      );
-      const replayExit = yield* Deferred.await(replayResult);
-      if (Exit.isFailure(replayExit)) {
-        yield* stopListener(registration, worker);
-        return yield* Effect.failCause(replayExit.cause);
-      }
+    const { registration, replayResult, worker } = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const notifications = yield* Queue.unbounded<ListenerNotification>();
+        const replayResult = yield* Deferred.make<Exit.Exit<void>>();
+        const stoppedRef = yield* Ref.make(false);
+        const registration: ListenerRegistration = {
+          listener,
+          configuredUrls,
+          notifications,
+          stoppedRef,
+        };
+        yield* notificationLock.withPermit(
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.modify(stateRef, (state) => {
+              const replay = projectWebProbeSnapshot(state.lastSnapshot, configuredUrls);
+              const listeners = new Map(state.listeners);
+              listeners.set(registration, replay);
+              return [replay, { ...state, listeners }];
+            });
+            yield* Queue.offer(notifications, {
+              servers: snapshot,
+              deliveryResult: replayResult,
+              isReplay: true,
+            });
+          }),
+        );
+        const worker = yield* Effect.forkScoped(runListenerNotifications(registration));
+        yield* Effect.addFinalizer(() => stopListener(registration, worker));
+        return { registration, worker, replayResult };
+      }),
+    );
+    const replayExit = yield* Deferred.await(replayResult);
+    if (Exit.isFailure(replayExit)) {
+      yield* stopListener(registration, worker);
+      return yield* Effect.failCause(replayExit.cause);
+    }
   });
 
   const subscribe: PortDiscovery["Service"]["subscribe"] = (input, listener) =>

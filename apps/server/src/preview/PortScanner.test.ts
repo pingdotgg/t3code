@@ -695,6 +695,50 @@ effectIt.effect("does not swallow process probe interruption", () =>
   }),
 );
 
+effectIt("does not swallow terminal-triggered scan interruption", () => {
+  const terminalScanStarted = Deferred.makeUnsafe<void>();
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() => {
+    probeCount += 1;
+    if (probeCount === 1) {
+      return Effect.succeed({
+        stdout: "",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      });
+    }
+    return Effect.gen(function* () {
+      yield* Deferred.succeed(terminalScanStarted, undefined).pipe(Effect.ignore);
+      return yield* Effect.never;
+    });
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain();
+    const registration = yield* scanner
+      .registerTerminalProcesses({
+        threadId: "thread-1",
+        terminalId: "terminal-1",
+        processIds: [42],
+      })
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(terminalScanStarted);
+
+    const exit = yield* Fiber.interrupt(registration);
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    }
+  }).pipe(Effect.provide(layer));
+});
+
 effectIt("rescans once after terminal PIDs settle without repeating unchanged probes", () => {
   let probeCount = 0;
   const replayedPorts: Array<ReadonlyArray<number>> = [];
