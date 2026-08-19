@@ -482,7 +482,10 @@ export function useSettingsRestore(onRestored?: () => void) {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const targetEnvironmentId =
-    resolveGeneralSettingsEnvironmentId(environments, primaryEnvironmentId) ?? primaryEnvironmentId;
+    resolveGeneralSettingsEnvironmentId(
+      environments.filter((environment) => environment.connection.phase === "connected"),
+      primaryEnvironmentId,
+    ) ?? primaryEnvironmentId;
   const textGenSettings = useEnvironmentSettings(
     targetEnvironmentId ?? (primaryEnvironmentId as EnvironmentId),
   );
@@ -504,6 +507,18 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS,
     serverProviders,
   );
+
+  const liveStateRef = useRef({
+    targetEnvironmentId,
+    updateTextGenSettings,
+    defaultTextGenerationModelSelection,
+  });
+  liveStateRef.current = {
+    targetEnvironmentId,
+    updateTextGenSettings,
+    defaultTextGenerationModelSelection,
+  };
+
   const isTextGenerationModelDirty =
     textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
     textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
@@ -719,14 +734,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
-    updateTextGenSettings({
-      textGenerationModelSelection: defaultTextGenerationModelSelection,
+    liveStateRef.current.updateTextGenSettings({
+      textGenerationModelSelection: liveStateRef.current.defaultTextGenerationModelSelection,
     });
     onRestored?.();
   }, [
     changedSettingLabels,
     clearThemeHalves,
-    defaultTextGenerationModelSelection,
     onRestored,
     setFollowSystem,
     setTheme,
@@ -734,7 +748,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     theme,
     themeHalves,
     updateSettings,
-    updateTextGenSettings,
   ]);
 
   return {
@@ -1840,7 +1853,10 @@ export function GeneralSettingsPanel() {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const targetEnvironmentId =
-    resolveGeneralSettingsEnvironmentId(environments, primaryEnvironmentId) ?? primaryEnvironmentId;
+    resolveGeneralSettingsEnvironmentId(
+      environments.filter((environment) => environment.connection.phase === "connected"),
+      primaryEnvironmentId,
+    ) ?? primaryEnvironmentId;
   const textGenSettings = useEnvironmentSettings(
     targetEnvironmentId ?? (primaryEnvironmentId as EnvironmentId),
   );

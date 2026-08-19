@@ -309,10 +309,10 @@ describe("resolveGeneralSettingsEnvironmentId", () => {
     isCustom: false,
     capabilities: null,
   };
-  const env = (id: EnvironmentId, hasModels = true) => ({
+  const env = (id: EnvironmentId, hasModels = true, enabled?: boolean) => ({
     environmentId: id,
     serverConfig: {
-      providers: [{ installed: hasModels, models: hasModels ? [mockModel] : [] }],
+      providers: [{ installed: hasModels, enabled, models: hasModels ? [mockModel] : [] }],
     },
   });
 
@@ -326,6 +326,15 @@ describe("resolveGeneralSettingsEnvironmentId", () => {
     expect(
       resolveGeneralSettingsEnvironmentId(
         [env(primaryEnvId, false), env(wslEnvId, true)],
+        primaryEnvId,
+      ),
+    ).toBe(wslEnvId);
+  });
+
+  it("falls back to connected environment with models when primary environment has installed models that are disabled", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, true, false), env(wslEnvId, true, true)],
         primaryEnvId,
       ),
     ).toBe(wslEnvId);

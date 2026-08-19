@@ -338,13 +338,19 @@ export function resolveGeneralSettingsEnvironmentId(
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly serverConfig?: {
-      readonly providers?: ReadonlyArray<Pick<ServerProvider, "installed" | "models">> | null;
+      readonly providers?: ReadonlyArray<
+        Pick<ServerProvider, "installed" | "models"> & {
+          readonly enabled?: boolean | undefined;
+        }
+      > | null;
     } | null;
   }>,
   primaryEnvironmentId: EnvironmentId | null,
 ): EnvironmentId | null {
   const hasModels = (env?: (typeof environments)[number]) =>
-    env?.serverConfig?.providers?.some((p) => Boolean(p.installed && p.models?.length)) ?? false;
+    env?.serverConfig?.providers?.some((p) =>
+      Boolean(p.installed && p.enabled !== false && p.models?.length),
+    ) ?? false;
 
   const primary = environments.find((env) => env.environmentId === primaryEnvironmentId);
   if (hasModels(primary)) {
