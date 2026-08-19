@@ -2802,7 +2802,7 @@ export function GeneralSettingsPanel() {
                   instanceEntries={textGenerationModelInstanceEntries}
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
                   triggerVariant="outline"
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  triggerClassName="min-w-0 max-w-80 shrink text-foreground/90 hover:text-foreground"
                   {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
                   getModelDisabledReason={textGenerationModelDisabledReason}
                   {...(environmentId
