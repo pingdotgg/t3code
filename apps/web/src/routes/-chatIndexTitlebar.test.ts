@@ -15,9 +15,15 @@ describe("hosted static onboarding header", () => {
 
     const onboardingHeader = routeSource.slice(onboardingStart, onboardingEnd);
 
-    expect(onboardingHeader).toContain("h-[var(--workspace-topbar-height)]");
-    expect(onboardingHeader).toContain("min-h-[var(--workspace-topbar-height)]");
-    expect(onboardingHeader).toContain("COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS");
+    expect(onboardingHeader).toContain("<WorkspacePageHeader");
     expect(onboardingHeader).not.toMatch(/(?:^|\s)(?:[\w-]+:)*py-/);
+
+    const headerSource = NodeFS.readFileSync(
+      new URL("../components/WorkspacePageHeader.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(headerSource).toContain("h-[var(--workspace-topbar-height)]");
+    expect(headerSource).toContain("min-h-[var(--workspace-topbar-height)]");
+    expect(headerSource).toContain("COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS");
   });
 });
