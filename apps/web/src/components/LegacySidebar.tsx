@@ -1138,6 +1138,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
@@ -2002,6 +2003,28 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     setRenamingTitle(title);
     renamingCommittedRef.current = false;
   }, []);
+  useEffect(() => {
+    if (!activeRouteThreadKey) return;
+    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        platform: navigator.platform,
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: false,
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      });
+      if (command !== "thread.rename") return;
+      const activeThread = sidebarThreadByKey.get(activeRouteThreadKey);
+      if (!activeThread) return;
+      event.preventDefault();
+      event.stopPropagation();
+      startThreadRename(activeRouteThreadKey, activeThread.title);
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, [activeRouteThreadKey, keybindings, sidebarThreadByKey, startThreadRename]);
 
   const commitRename = useCallback(
     async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {

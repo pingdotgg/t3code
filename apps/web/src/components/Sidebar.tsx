@@ -3137,6 +3137,17 @@ export default function Sidebar() {
           modelPickerOpen: isModelPickerOpen(),
         },
       });
+      if (command === "thread.rename") {
+        const activeThread = routeThreadKey ? threadByKey.get(routeThreadKey) : null;
+        if (!activeThread) return;
+        event.preventDefault();
+        event.stopPropagation();
+        startThreadRename(
+          scopeThreadRef(activeThread.environmentId, activeThread.id),
+          activeThread.title,
+        );
+        return;
+      }
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
@@ -3169,6 +3180,7 @@ export default function Sidebar() {
     orderedThreadKeys,
     routeTerminalOpen,
     routeThreadKey,
+    startThreadRename,
     threadByKey,
   ]);
 
