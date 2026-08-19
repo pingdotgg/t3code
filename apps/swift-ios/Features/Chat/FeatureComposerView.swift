@@ -25,6 +25,7 @@ struct FeatureComposerView: View {
     private let powerFeatures: FeatureComposerPowerFeatures
     private let onSend: () -> Void
     private let onStop: () -> Void
+    private let onDismissKeyboard: (() -> Void)?
     private let onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)?
     private let onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)?
 
@@ -46,6 +47,7 @@ struct FeatureComposerView: View {
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
+        onDismissKeyboard: (() -> Void)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
         onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil
     ) {
@@ -66,6 +68,7 @@ struct FeatureComposerView: View {
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
         self.powerFeatures = powerFeatures
+        self.onDismissKeyboard = onDismissKeyboard
         self.onApprovalDecision = onApprovalDecision
         self.onUserInputSubmit = onUserInputSubmit
     }
@@ -234,6 +237,13 @@ struct FeatureComposerView: View {
 
     private var composerFooter: some View {
         HStack(spacing: 2) {
+            if FeatureComposerKeyboardDismissPolicy.showsDismissControl(
+                isFocused: focused.wrappedValue,
+                canDismiss: onDismissKeyboard != nil
+            ) {
+                dismissKeyboardButton
+            }
+
             FeatureImageAttachmentPicker(
                 attachments: $attachments,
                 preparationState: $attachmentPreparation,
@@ -263,6 +273,26 @@ struct FeatureComposerView: View {
         .padding(.horizontal, 7)
         .padding(.top, 2)
         .padding(.bottom, 8)
+    }
+
+    /// A grown composer plus the keyboard can hide the whole transcript, so the
+    /// draft needs an escape hatch that is not a scroll gesture. Only the focus
+    /// state changes, which leaves the draft — and its caret — exactly where it was.
+    private var dismissKeyboardButton: some View {
+        Button {
+            onDismissKeyboard?()
+            focused.wrappedValue = false
+        } label: {
+            Image(systemName: "keyboard.chevron.compact.down")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(T3Colors.textSecondary)
+                .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hide keyboard")
+        .accessibilityHint("Keeps your draft and shows the thread")
+        .accessibilityIdentifier("composer-dismiss-keyboard")
     }
 
     private var submitButton: some View {
@@ -455,6 +485,16 @@ struct FeatureComposerGrowingTextInput: ViewModifier {
         content
             .lineLimit(1...)
             .layoutPriority(1)
+    }
+}
+
+/// The explicit "hide keyboard" control only earns its place in the footer while
+/// the keyboard is actually up, and only where the surface behind the composer is
+/// worth getting back to — the thread transcript passes a dismiss handler, other
+/// composers do not.
+enum FeatureComposerKeyboardDismissPolicy {
+    static func showsDismissControl(isFocused: Bool, canDismiss: Bool) -> Bool {
+        isFocused && canDismiss
     }
 }
 
