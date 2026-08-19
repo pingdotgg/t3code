@@ -394,6 +394,32 @@ export function resolveAdjacentThreadId<T>(input: {
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
 }
 
+/**
+ * The sidebar's project scope is a list of logical project keys, where an
+ * empty list means "all projects".
+ */
+export function toggleProjectScopeKey(
+  scopeKeys: readonly string[],
+  scopeKey: string,
+): readonly string[] {
+  return scopeKeys.includes(scopeKey)
+    ? scopeKeys.filter((key) => key !== scopeKey)
+    : [...scopeKeys, scopeKey];
+}
+
+/**
+ * Drops picks whose project group is gone (project removed, environment
+ * dropped, grouping mode changed). Returns the same array when nothing was
+ * dropped so callers can feed it straight back into state without a loop.
+ */
+export function pruneProjectScopeKeys(
+  scopeKeys: readonly string[],
+  availableScopeKeys: ReadonlySet<string>,
+): readonly string[] {
+  const kept = scopeKeys.filter((key) => availableScopeKeys.has(key));
+  return kept.length === scopeKeys.length ? scopeKeys : kept;
+}
+
 export function shouldNavigateAfterProjectRemoval(input: {
   routeTarget: ThreadRouteTarget | null;
   projectThreads: readonly {

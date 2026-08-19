@@ -17,6 +17,8 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  pruneProjectScopeKeys,
+  toggleProjectScopeKey,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -1681,5 +1683,28 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("toggleProjectScopeKey", () => {
+  it("adds a key in pick order and removes it again", () => {
+    expect(toggleProjectScopeKey([], "alpha")).toEqual(["alpha"]);
+    expect(toggleProjectScopeKey(["alpha"], "beta")).toEqual(["alpha", "beta"]);
+    expect(toggleProjectScopeKey(["alpha", "beta"], "alpha")).toEqual(["beta"]);
+  });
+
+  it("returns an empty selection when the last key is toggled off", () => {
+    expect(toggleProjectScopeKey(["alpha"], "alpha")).toEqual([]);
+  });
+});
+
+describe("pruneProjectScopeKeys", () => {
+  it("drops keys whose project group disappeared", () => {
+    expect(pruneProjectScopeKeys(["alpha", "beta"], new Set(["beta"]))).toEqual(["beta"]);
+  });
+
+  it("keeps the same array when every key survives", () => {
+    const scopeKeys = ["alpha", "beta"];
+    expect(pruneProjectScopeKeys(scopeKeys, new Set(["alpha", "beta", "gamma"]))).toBe(scopeKeys);
   });
 });

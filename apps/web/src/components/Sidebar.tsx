@@ -132,6 +132,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planPinnedReorder,
+  pruneProjectScopeKeys,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
@@ -142,6 +143,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  toggleProjectScopeKey,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -175,7 +177,7 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
@@ -1926,30 +1928,46 @@ export default function Sidebar() {
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
-  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
-  const scopedProjectGroup = useMemo(
+  // An empty selection means "all projects"; picking several narrows the list
+  // to their union, so two projects can be watched without the rest.
+  const [projectScopeKeys, setProjectScopeKeys] = useState<readonly string[]>([]);
+  const scopedProjectGroups = useMemo(
     () =>
-      projectScopeKey === null
-        ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
+      projectScopeKeys.length === 0
+        ? []
+        : projectGroups.filter((project) => projectScopeKeys.includes(project.projectKey)),
+    [projectGroups, projectScopeKeys],
   );
+  // Trigger and empty state read like the old single-project scope whenever
+  // exactly one project is picked.
+  const soleScopedProjectGroup =
+    scopedProjectGroups.length === 1 ? (scopedProjectGroups[0] ?? null) : null;
   const scopedProjectKeys = useMemo(
     () =>
-      scopedProjectGroup === null
+      scopedProjectGroups.length === 0
         ? null
         : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+            scopedProjectGroups.flatMap((group) =>
+              group.memberProjectRefs.map(
+                (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+              ),
             ),
           ),
-    [scopedProjectGroup],
+    [scopedProjectGroups],
+  );
+  // Pick order says nothing about what the list shows, so resets key off the
+  // sorted selection: reordering picks must not reset paging or selection.
+  const projectScopeSelectionKey = useMemo(
+    () => (projectScopeKeys.length === 0 ? "all" : [...projectScopeKeys].toSorted().join("\u0000")),
+    [projectScopeKeys],
+  );
+  const projectGroupKeys = useMemo(
+    () => new Set(projectGroups.map((project) => project.projectKey)),
+    [projectGroups],
   );
   useEffect(() => {
-    if (projectScopeKey !== null && scopedProjectGroup === null) {
-      setProjectScopeKey(null);
-    }
-  }, [projectScopeKey, scopedProjectGroup]);
+    setProjectScopeKeys((keys) => pruneProjectScopeKeys(keys, projectGroupKeys));
+  }, [projectGroupKeys]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -1980,7 +1998,7 @@ export default function Sidebar() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, projectScopeSelectionKey]);
 
   const handleProjectSettings = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
@@ -2148,7 +2166,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = projectScopeSelectionKey;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -3480,69 +3498,70 @@ export default function Sidebar() {
                       />
                     }
                   >
-                    {scopedProjectGroup ? (
+                    {soleScopedProjectGroup ? (
                       <ProjectFavicon
-                        environmentId={scopedProjectGroup.environmentId}
-                        cwd={scopedProjectGroup.workspaceRoot}
-                        faviconPath={scopedProjectGroup.faviconPath}
+                        environmentId={soleScopedProjectGroup.environmentId}
+                        cwd={soleScopedProjectGroup.workspaceRoot}
+                        faviconPath={soleScopedProjectGroup.faviconPath}
                         className="size-4 shrink-0"
                       />
                     ) : (
                       <FolderIcon className="size-4 shrink-0" />
                     )}
                     <span className="min-w-0 flex-1 truncate">
-                      {scopedProjectGroup?.displayName ?? "All projects"}
+                      {soleScopedProjectGroup
+                        ? soleScopedProjectGroup.displayName
+                        : scopedProjectGroups.length === 0
+                          ? "All projects"
+                          : `${scopedProjectGroups.length} projects`}
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
                   <MenuPopup align="start" className="w-(--anchor-width)">
-                    <MenuRadioGroup
-                      value={projectScopeKey ?? "all"}
-                      onValueChange={(value) =>
-                        setProjectScopeKey(value === "all" ? null : (value as string))
-                      }
+                    <MenuCheckboxItem
+                      checked={projectScopeKeys.length === 0}
+                      onCheckedChange={() => setProjectScopeKeys([])}
+                      closeOnClick={false}
+                      className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                     >
-                      <MenuRadioItem
-                        value="all"
-                        closeOnClick
-                        className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-                      >
-                        <FolderIcon className="size-4 shrink-0" />
-                        <span className="min-w-0 truncate text-sm">All projects</span>
-                      </MenuRadioItem>
-                      {projectGroups.map((project) => {
-                        const scopeKey = project.projectKey;
-                        return (
-                          <MenuRadioItem
-                            key={scopeKey}
-                            value={scopeKey}
-                            closeOnClick
-                            className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                      <FolderIcon className="size-4 shrink-0" />
+                      <span className="min-w-0 truncate text-sm">All projects</span>
+                    </MenuCheckboxItem>
+                    {projectGroups.map((project) => {
+                      const scopeKey = project.projectKey;
+                      return (
+                        <MenuCheckboxItem
+                          key={scopeKey}
+                          checked={projectScopeKeys.includes(scopeKey)}
+                          onCheckedChange={() =>
+                            setProjectScopeKeys((keys) => toggleProjectScopeKey(keys, scopeKey))
+                          }
+                          closeOnClick={false}
+                          className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                        >
+                          <ProjectFavicon
+                            environmentId={project.environmentId}
+                            cwd={project.workspaceRoot}
+                            faviconPath={project.faviconPath}
+                            className="size-4 shrink-0"
+                          />
+                          <span className="min-w-0 truncate text-sm">{project.displayName}</span>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost-muted"
+                            aria-label={`Project settings for ${project.displayName}`}
+                            title={`Project settings for ${project.displayName}`}
+                            className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              void handleProjectSettings(event, project);
+                            }}
                           >
-                            <ProjectFavicon
-                              environmentId={project.environmentId}
-                              cwd={project.workspaceRoot}
-                              faviconPath={project.faviconPath}
-                              className="size-4 shrink-0"
-                            />
-                            <span className="min-w-0 truncate text-sm">{project.displayName}</span>
-                            <Button
-                              size="icon-xs"
-                              variant="ghost-muted"
-                              aria-label={`Project settings for ${project.displayName}`}
-                              title={`Project settings for ${project.displayName}`}
-                              className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                void handleProjectSettings(event, project);
-                              }}
-                            >
-                              <SettingsIcon className="size-3.5" />
-                            </Button>
-                          </MenuRadioItem>
-                        );
-                      })}
-                    </MenuRadioGroup>
+                            <SettingsIcon className="size-3.5" />
+                          </Button>
+                        </MenuCheckboxItem>
+                      );
+                    })}
                   </MenuPopup>
                 </Menu>
                 <Tooltip>
@@ -3924,8 +3943,10 @@ export default function Sidebar() {
                     Add project
                   </button>
                 </>
-              ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+              ) : soleScopedProjectGroup ? (
+                `No threads in ${soleScopedProjectGroup.displayName} yet`
+              ) : scopedProjectGroups.length > 1 ? (
+                "No threads in the selected projects yet"
               ) : (
                 "No threads yet"
               )}
