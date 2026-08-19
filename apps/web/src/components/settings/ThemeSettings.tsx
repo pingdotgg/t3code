@@ -1,8 +1,8 @@
 import {
   CheckIcon,
   CopyIcon,
-  DownloadIcon,
   MoonIcon,
+  PaintbrushIcon,
   PenLineIcon,
   PlusIcon,
   SunIcon,
@@ -870,11 +870,11 @@ export function ThemeLibrary({
               })
             }
           >
-            <PlusIcon />
+            <PaintbrushIcon />
             Create theme
           </Button>
           <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
-            <DownloadIcon />
+            <PlusIcon />
             Add theme
           </Button>
         </div>
