@@ -65,7 +65,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -3089,8 +3088,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // they fall through to the unknown-subtype warning and surface as spurious
     // error rows in client work logs. `background_tasks_changed` is a roster
     // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
-    // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source. `vcs_state_changed`
+    // authoritative per-agent data, and `settleLiveTasks` closes out whatever
+    // they leave live (the SDK's typed `background_tasks` control request
+    // backgrounds tasks, it is not a roster query). `vcs_state_changed`
     // ({kind: commit|push|rebase}) and `code_change_published`
     // ({provider, url, repo}) are informational CLI notices; the work log
     // already shows the underlying git/gh tool calls.
@@ -3630,6 +3630,35 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  /**
+   * Drains `liveTaskIds`, emitting one synthesized terminal `task.completed`
+   * per task still marked live. Call only where nothing can still be running
+   * (after a turn interrupt, before session exit): a task whose own
+   * task_notification never arrives would otherwise leave a row spinning in
+   * the agent panel for the life of the thread.
+   */
+  const settleLiveTasks = Effect.fn("settleLiveTasks")(function* (context: ClaudeSessionContext) {
+    const taskIds = Array.from(context.liveTaskIds);
+    context.liveTaskIds.clear();
+    for (const taskId of taskIds) {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "task.completed",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        payload: {
+          taskId: RuntimeTaskId.make(taskId),
+          status: "stopped",
+          ...taskLinkageFor(context.taskAgents, taskId),
+        },
+        providerRefs: nativeProviderRefs(context),
+      });
+    }
+  });
+
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     context: ClaudeSessionContext,
     options?: { readonly emitExitEvent?: boolean },
@@ -3663,6 +3692,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     for (const pending of [...context.pendingUserInputs.values()]) {
       yield* pending.cancel;
     }
+
+    // The session process is going away, so nothing it spawned can still be
+    // running. Settle before completeTurn so the rows keep their turnId.
+    yield* settleLiveTasks(context);
 
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
@@ -4472,49 +4505,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // Stop every live task first (best-effort per task: one refusal must
       // not strand the rest or block the turn interrupt), then interrupt.
       if (context.query.stopTask && context.liveTaskIds.size > 0) {
-        const liveIds = Array.from(context.liveTaskIds);
         // Bounded: a wedged child's stopTask promise may never settle
         // (Effect.ignore handles rejection, not non-resolution), and the
         // parent interrupt below MUST still run — Stop matters most during
         // runaway fleets (review finding). Per-task timeout keeps one hung
         // child from consuming the whole budget.
         yield* Effect.forEach(
-          liveIds,
+          Array.from(context.liveTaskIds),
           (taskId) =>
-            Effect.gen(function* () {
-              const stopAcknowledged = yield* Effect.tryPromise({
-                // Invoke through the query object: SDK methods rely on `this`.
-                try: () => context.query.stopTask!(taskId),
-                catch: () => undefined,
-              }).pipe(
-                Effect.timeoutOption("3 seconds"),
-                Effect.orElseSucceed(() => Option.none()),
-              );
-              if (Option.isNone(stopAcknowledged) || !context.liveTaskIds.delete(taskId)) {
-                return;
-              }
-
-              // stopTask only acknowledges the control request. Its separate
-              // task_notification can lose the race with interrupt(), so make
-              // the acknowledged stop authoritative for the durable UI state.
-              const stamp = yield* makeEventStamp();
-              yield* offerRuntimeEvent({
-                type: "task.completed",
-                eventId: stamp.eventId,
-                provider: PROVIDER,
-                createdAt: stamp.createdAt,
-                threadId: context.session.threadId,
-                ...(context.turnState
-                  ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
-                  : {}),
-                payload: {
-                  taskId: RuntimeTaskId.make(taskId),
-                  status: "stopped",
-                  ...taskLinkageFor(context.taskAgents, taskId),
-                },
-                providerRefs: nativeProviderRefs(context),
-              });
-            }).pipe(Effect.ignore),
+            Effect.tryPromise({
+              // Invoke through the query object: SDK methods rely on `this`.
+              try: () => context.query.stopTask!(taskId),
+              catch: () => undefined,
+            }).pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
           { concurrency: 8, discard: true },
         ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
       }
@@ -4522,6 +4525,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         try: () => context.query.interrupt(),
         catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
       });
+
+      // stopTask only acknowledges the control request; its task_notification
+      // can be refused, time out, or lose the race with interrupt(). The SDK
+      // exposes no roster query to reconcile against (Query.backgroundTasks
+      // backgrounds tasks, it does not list them), so once the interrupt lands
+      // the turn is dead and T3 has no remaining liveness signal for whatever
+      // is still marked live. Calling those stopped beats a row that counts up
+      // forever.
+      yield* settleLiveTasks(context);
     },
   );
 
