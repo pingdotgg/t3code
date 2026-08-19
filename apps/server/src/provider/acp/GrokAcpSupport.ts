@@ -1,5 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type GrokSettings,
+  type ModelCapabilities,
+  type ModelSelection,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,7 +13,13 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  getModelSelectionOptionValue,
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentValue,
+  getProviderOptionDescriptors,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
@@ -19,6 +30,114 @@ const T3_CODE_OAUTH_REFERRER = "t3code";
 const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+
+export const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+export const GROK_FALLBACK_REASONING_EFFORTS_BY_MODEL: ReadonlyMap<
+  string,
+  { readonly values: ReadonlyArray<string>; readonly defaultValue: string }
+> = new Map([
+  [
+    "grok-4.5",
+    {
+      values: ["high", "medium", "low"],
+      defaultValue: "high",
+    },
+  ],
+]);
+
+/**
+ * Effort levels are advertised per model via ACP `_meta`, so the token guard
+ * is syntactic rather than a fixed catalog: a fixed set would silently drop a
+ * future menu-advertised level. Shared by discovery parsing and session model
+ * metadata so a menu entry cannot advertise an unsafe protocol value.
+ */
+const GROK_REASONING_EFFORT_TOKEN = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
+
+export interface GrokReasoningEffortConstraints {
+  readonly defaultValue: string | undefined;
+  readonly values: ReadonlyArray<string>;
+}
+
+/** Protocol-safe effort token for discovery menus and session model metadata. */
+export function isValidGrokReasoningEffortToken(value: string): boolean {
+  return GROK_REASONING_EFFORT_TOKEN.test(value);
+}
+
+/** Extract the authoritative effort menu advertised for one Grok model. */
+export function grokReasoningEffortConstraintsFromCapabilities(
+  capabilities: ModelCapabilities | null | undefined,
+): GrokReasoningEffortConstraints | null {
+  if (capabilities == null) {
+    return null;
+  }
+  const descriptor = getProviderOptionDescriptors({ caps: capabilities }).find(
+    (candidate) => candidate.id === GROK_REASONING_EFFORT_OPTION_ID && candidate.type === "select",
+  );
+  if (descriptor?.type !== "select") {
+    return null;
+  }
+  const values = descriptor.options
+    .map((option) => option.id)
+    .filter(isValidGrokReasoningEffortToken);
+  if (values.length === 0) {
+    return null;
+  }
+  const currentValue = getProviderOptionCurrentValue(descriptor);
+  return {
+    values,
+    defaultValue:
+      typeof currentValue === "string" && values.includes(currentValue) ? currentValue : undefined,
+  };
+}
+
+/**
+ * Grok ACP has no session/set_config_option (configOptions is null as of
+ * 1.0.0), so reasoning effort is applied through session/set_model metadata.
+ * Malformed stored values are dropped. Well-formed stale values normalize to
+ * the advertised model default when discovered constraints are available.
+ */
+export function resolveGrokReasoningEffortForSession(
+  modelSelection: ModelSelection | null | undefined,
+  constraints?: GrokReasoningEffortConstraints | null,
+): string | undefined {
+  const effort = getModelSelectionStringOptionValue(
+    modelSelection,
+    GROK_REASONING_EFFORT_OPTION_ID,
+  )?.trim();
+  if (!effort || !isValidGrokReasoningEffortToken(effort)) {
+    return undefined;
+  }
+  if (constraints === null) {
+    return undefined;
+  }
+  if (constraints === undefined) {
+    return effort;
+  }
+  return constraints.values.includes(effort) ? effort : constraints.defaultValue;
+}
+
+/** Semantic spawn value used when comparing and tracking active Grok sessions. */
+export function resolveGrokSpawnOptionValue(
+  modelSelection: ModelSelection,
+  optionId: string,
+  constraints?: GrokReasoningEffortConstraints | null,
+): string | boolean | undefined {
+  if (optionId !== GROK_REASONING_EFFORT_OPTION_ID) {
+    return getModelSelectionOptionValue(modelSelection, optionId);
+  }
+  if (constraints === null) {
+    return undefined;
+  }
+  return (
+    resolveGrokReasoningEffortForSession(modelSelection, constraints) ??
+    constraints?.defaultValue ??
+    (constraints === undefined
+      ? GROK_FALLBACK_REASONING_EFFORTS_BY_MODEL.get(
+          resolveGrokAcpBaseModelId(modelSelection.model),
+        )?.defaultValue
+      : undefined)
+  );
+}
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
@@ -119,14 +238,19 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly reasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
   const shouldSwitchModel =
-    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
+    input.requestedModelId !== undefined &&
+    (input.requestedModelId !== input.currentModelId || input.reasoningEffort !== undefined);
   if (!shouldSwitchModel) {
     return Effect.succeed(input.currentModelId);
   }
   return input.runtime
-    .setSessionModel(input.requestedModelId)
+    .setSessionModel(
+      input.requestedModelId,
+      input.reasoningEffort === undefined ? undefined : { reasoningEffort: input.reasoningEffort },
+    )
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
 }

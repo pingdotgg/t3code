@@ -6,6 +6,7 @@ import {
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { useCallback, useEffect, useMemo } from "react";
+import { Alert } from "react-native";
 
 import {
   CommandId,
@@ -18,7 +19,6 @@ import {
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
-
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
@@ -26,9 +26,16 @@ import {
   pickComposerImages,
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import {
+  resolveEffectiveModelSelection,
+  resolveSessionBoundModelSelectionUpdate,
+  startedThreadOptionChangeBlocked,
+  threadShellHasStarted,
+} from "../lib/modelOptions";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
+import { useEnvironmentServerConfig } from "./entities";
 import {
   appendComposerDraftAttachments,
   appendComposerDraftText,
@@ -110,7 +117,7 @@ export function useThreadComposerState() {
   const draftAttachments = selectedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const serverConfig = useEnvironmentServerConfig(selectedThreadShell?.environmentId ?? null);
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
   const selectedThreadRuntime = useMemo(
@@ -120,6 +127,22 @@ export function useThreadComposerState() {
         : (selectedThreadShell?.runtime ?? null),
     [selectedThreadProjection, selectedThreadShell?.runtime],
   );
+  const optionChangeBlocked = startedThreadOptionChangeBlocked({
+    config: serverConfig,
+    threadHasStarted: threadShellHasStarted(selectedThread),
+    threadRuntime: selectedThreadRuntime,
+    selectionInstanceId: selectedThread?.modelSelection.instanceId ?? "",
+  });
+  const optionChangeBlockedInstanceId = optionChangeBlocked
+    ? (selectedThread?.modelSelection.instanceId ?? null)
+    : null;
+  const modelSelection = selectedThread
+    ? resolveEffectiveModelSelection({
+        draftModelSelection: selectedDraft?.modelSelection,
+        committedModelSelection: selectedThread.modelSelection,
+        optionChangeBlocked,
+      })
+    : null;
   const selectedThreadActivityRun = useMemo(
     () =>
       selectedThreadProjection
@@ -169,6 +192,19 @@ export function useThreadComposerState() {
       return null;
     }
 
+    const modelSelectionDecision = resolveSessionBoundModelSelectionUpdate({
+      optionChangeBlocked,
+      committed: thread.modelSelection,
+      requested: draft.modelSelection ?? thread.modelSelection,
+    });
+    if (modelSelectionDecision.type === "reject_model_change") {
+      Alert.alert(
+        "Start a new chat to change models",
+        "This provider does not allow switching models after a conversation has started.",
+      );
+      return null;
+    }
+
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
     // Enqueue publishes the queued atom synchronously (the durable write
@@ -183,7 +219,7 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
-      modelSelection: draft.modelSelection ?? thread.modelSelection,
+      modelSelection: modelSelectionDecision.selection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
       createdAt: metadata.createdAt,
@@ -201,7 +237,7 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [selectedThreadShell]);
+  }, [optionChangeBlocked, selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
@@ -293,12 +329,30 @@ export function useThreadComposerState() {
 
   const onUpdateModelSelection = useCallback(
     (value: ModelSelection) => {
-      if (!selectedThreadKey) {
+      if (!selectedThreadKey || !selectedThreadShell) {
         return;
       }
-      updateComposerDraftSettings(selectedThreadKey, { modelSelection: value });
+      const committed = selectedThreadShell.modelSelection;
+      const decision = resolveSessionBoundModelSelectionUpdate({
+        optionChangeBlocked,
+        committed,
+        requested: value,
+      });
+      if (decision.type === "reject_model_change") {
+        Alert.alert(
+          "Start a new chat to change models",
+          "This provider does not allow switching models after a conversation has started.",
+        );
+        return;
+      }
+      // apply and restore_committed both write the resolved selection: restore
+      // cancels a cross-provider draft and keeps the applied effort when the
+      // menu supplied default options for the same model.
+      updateComposerDraftSettings(selectedThreadKey, {
+        modelSelection: decision.selection,
+      });
     },
-    [selectedThreadKey],
+    [optionChangeBlocked, selectedThreadKey, selectedThreadShell],
   );
 
   const onUpdateRuntimeMode = useCallback(
@@ -329,6 +383,8 @@ export function useThreadComposerState() {
     draftMessage,
     draftAttachments,
     modelSelection,
+    optionChangeBlocked,
+    optionChangeBlockedInstanceId,
     runtimeMode,
     interactionMode,
     activeThreadBusy,

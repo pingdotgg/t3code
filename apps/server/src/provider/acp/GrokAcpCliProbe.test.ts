@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { describe, expect } from "vite-plus/test";
 
+import { grokReasoningEffortMenuFromAcpMeta } from "../Layers/GrokProvider.ts";
 import { makeGrokAcpRuntime } from "./GrokAcpSupport.ts";
 
 const makeProbeRuntime = Effect.gen(function* () {
@@ -65,6 +66,63 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
       // succeed against every Grok build that implements `session/set_model`.
       yield* runtime.setSessionModel(currentModelId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("session/set_model applies reasoning effort metadata to the session", () =>
+    Effect.gen(function* () {
+      const changed = yield* Effect.gen(function* () {
+        const runtime = yield* makeProbeRuntime;
+        const started = yield* runtime.start();
+        const modelState = started.sessionSetupResult.models;
+        const currentModelId = modelState?.currentModelId?.trim();
+        const currentModel = modelState?.availableModels.find(
+          (model) => model.modelId === currentModelId,
+        );
+        const reasoning = grokReasoningEffortMenuFromAcpMeta(currentModel?._meta);
+        expect(currentModelId).toBeDefined();
+        expect(reasoning).toBeDefined();
+        expect(reasoning).not.toBeNull();
+        if (!currentModelId || !reasoning) return undefined;
+
+        const targetEffort =
+          reasoning.entries.find(
+            (entry) => entry.id === "low" && entry.id !== reasoning.currentValue,
+          )?.id ?? reasoning.entries.find((entry) => entry.id !== reasoning.currentValue)?.id;
+        expect(targetEffort).toBeDefined();
+        if (!targetEffort) return undefined;
+
+        yield* runtime
+          .setSessionModel(currentModelId, { reasoningEffort: targetEffort })
+          .pipe(Effect.timeout("20 seconds"));
+        const promptResult = yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "Respond with exactly: grok effort switch ok" }],
+          })
+          .pipe(Effect.timeout("60 seconds"));
+        expect(promptResult.stopReason).toBe("end_turn");
+        return {
+          currentModelId,
+          sessionId: started.sessionId,
+          targetEffort,
+        };
+      }).pipe(Effect.scoped);
+      expect(changed).toBeDefined();
+      if (!changed) return;
+
+      const loadedEffort = yield* Effect.gen(function* () {
+        const runtime = yield* makeProbeRuntime;
+        const loaded = yield* runtime
+          .loadSession(changed.sessionId)
+          .pipe(Effect.timeout("20 seconds"));
+        const modelState = loaded.sessionSetupResult.models;
+        const currentModel = modelState?.availableModels.find(
+          (model) => model.modelId === changed.currentModelId,
+        );
+        return grokReasoningEffortMenuFromAcpMeta(currentModel?._meta)?.currentValue;
+      }).pipe(Effect.scoped);
+
+      expect(loadedEffort).toBe(changed.targetEffort);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("switches when another model is advertised and completes a prompt", () =>

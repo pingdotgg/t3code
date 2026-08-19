@@ -1,8 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import { type ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import { GROK_REASONING_EFFORT_OPTION_ID } from "../../provider/acp/GrokAcpSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
   acpCompletedTurnShouldTerminalizeTool,
@@ -223,22 +226,151 @@ describe("acpRootTurnIsIdle", () => {
 });
 
 describe("GrokAdapterV2 capabilities", () => {
-  it("wires hard Stop teardown but soft non-Stop interrupts in the constructor flavor", () => {
-    const flavor = makeGrokAcpAdapterFlavor({
-      makeRuntime: () => Effect.never,
-    } as unknown as GrokAdapterV2Options);
+  it.effect("refuses runtime creation while the provider is unavailable", () =>
+    Effect.gen(function* () {
+      let runtimeCreations = 0;
+      const flavor = makeGrokAcpAdapterFlavor({
+        isRuntimeReady: Effect.succeed(false),
+        makeRuntime: () => {
+          runtimeCreations += 1;
+          return Effect.never;
+        },
+      } as unknown as GrokAdapterV2Options);
 
-    assert.isFalse(flavor.interruptPromptOnCancel);
-    // User Stop (requestRuntimeRestart) keeps the hard process-group kill and
-    // respawn: Grok cancel is detach-and-continue, so only a process kill
-    // stops the work.
-    assert.isTrue(flavor.restartRuntimeAfterInterrupt);
-    assert.isTrue(flavor.terminateRuntimeProcessGroupOnInterrupt);
-    // Non-Stop interrupts (steering, restart_active) reuse the process and
-    // session; the cancelled work backgrounds and the model decides its fate.
-    assert.isUndefined(flavor.restartRuntimeOnEveryInterrupt);
-    assert.isTrue(flavor.preserveRuntimeOnSettledInterrupt);
-  });
+      const error = yield* Effect.flip(
+        flavor.makeRuntime!({
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "grok-build",
+          },
+        } as never),
+      ).pipe(Effect.provide(NodeServices.layer));
+
+      assert.equal(error._tag, "AcpTransportError");
+      assert.equal(runtimeCreations, 0);
+    }),
+  );
+
+  it.effect("wires hard Stop teardown and dynamic reasoning metadata", () =>
+    Effect.gen(function* () {
+      const flavor = makeGrokAcpAdapterFlavor({
+        makeRuntime: () => Effect.never,
+      } as unknown as GrokAdapterV2Options);
+
+      assert.isFalse(flavor.interruptPromptOnCancel);
+      // User Stop (requestRuntimeRestart) keeps the hard process-group kill and
+      // respawn: Grok cancel is detach-and-continue, so only a process kill
+      // stops the work.
+      assert.isTrue(flavor.restartRuntimeAfterInterrupt);
+      assert.isTrue(flavor.terminateRuntimeProcessGroupOnInterrupt);
+      // Non-Stop interrupts (steering, restart_active) reuse the process and
+      // session; the cancelled work backgrounds and the model decides its fate.
+      assert.isUndefined(flavor.restartRuntimeOnEveryInterrupt);
+      assert.isTrue(flavor.preserveRuntimeOnSettledInterrupt);
+      assert.deepEqual(flavor.sessionModelOptionIds, [GROK_REASONING_EFFORT_OPTION_ID]);
+      assert.isUndefined(
+        yield* flavor.resolveSessionModelMeta!({
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-4.5",
+        }),
+      );
+      assert.deepEqual(
+        yield* flavor.resolveSessionModelMeta!({
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-4.5",
+          options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "high" }],
+        }),
+        { reasoningEffort: "high" },
+      );
+    }),
+  );
+
+  it.effect("validates dynamic effort against the current advertised menu", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("grok");
+      const flavor = makeGrokAcpAdapterFlavor({
+        getModelCapabilities: () =>
+          Effect.succeed({
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning",
+                type: "select",
+                options: [
+                  { id: "high", label: "High", isDefault: true },
+                  { id: "turbo_v2", label: "Turbo V2" },
+                ],
+                currentValue: "high",
+              },
+            ],
+          }),
+        makeRuntime: () => Effect.never,
+      } as unknown as GrokAdapterV2Options);
+      const stale = {
+        instanceId,
+        model: "grok-4.5",
+        options: [{ id: "reasoningEffort", value: "ultra" }],
+      };
+      const future = {
+        instanceId,
+        model: "grok-4.5",
+        options: [{ id: "reasoningEffort", value: "turbo_v2" }],
+      };
+
+      assert.deepEqual(yield* flavor.resolveSessionModelMeta!(stale), {
+        reasoningEffort: "high",
+      });
+      assert.deepEqual(yield* flavor.resolveSessionModelMeta!(future), {
+        reasoningEffort: "turbo_v2",
+      });
+    }),
+  );
+
+  it.effect("resolves session metadata independently for each model", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("grok");
+      const flavor = makeGrokAcpAdapterFlavor({
+        getModelCapabilities: (model: string) =>
+          Effect.succeed(
+            model === "grok-4.5"
+              ? {
+                  optionDescriptors: [
+                    {
+                      id: GROK_REASONING_EFFORT_OPTION_ID,
+                      label: "Reasoning",
+                      type: "select",
+                      options: [
+                        { id: "high", label: "High", isDefault: true },
+                        { id: "low", label: "Low" },
+                      ],
+                      currentValue: "high",
+                    },
+                  ],
+                }
+              : {},
+          ),
+        makeRuntime: () => Effect.never,
+      } as unknown as GrokAdapterV2Options);
+      const low: ModelSelection = {
+        instanceId,
+        model: "grok-4.5",
+        options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "low" }],
+      };
+      const build: ModelSelection = { instanceId, model: "grok-build" };
+      const high: ModelSelection = {
+        instanceId,
+        model: "grok-4.5",
+        options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "high" }],
+      };
+      assert.deepEqual(yield* flavor.resolveSessionModelMeta!(low), {
+        reasoningEffort: "low",
+      });
+      assert.isUndefined(yield* flavor.resolveSessionModelMeta!(build));
+      assert.deepEqual(yield* flavor.resolveSessionModelMeta!(high), {
+        reasoningEffort: "high",
+      });
+    }),
+  );
 
   it("terminalizes only foreground tools under the actual Grok flavor", () => {
     const flavor = makeGrokAcpAdapterFlavor({

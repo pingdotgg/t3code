@@ -21,7 +21,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
   type ReactNode,
@@ -43,7 +43,13 @@ import {
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  readFileAsDataUrl,
+  resolveComposerDisplayModelOptions,
+  resolveDispatchedModelSelection,
+  resolveTraitsOptionChangeBlocked,
+} from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -568,6 +574,8 @@ export interface ChatComposerProps {
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
+  /** Shell-backed started state keeps session-bound options locked while loading. */
+  hasStartedThread: boolean;
   providerCatalogLoaded: boolean;
   providerStatuses: ServerProvider[];
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
@@ -662,6 +670,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     runtimeMode,
     interactionMode,
     lockedProvider,
+    hasStartedThread,
     providerCatalogLoaded,
     providerStatuses,
     activeProjectDefaultModelSelection,
@@ -904,6 +913,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => getComposerPromptInjectionState(prompt),
     [prompt],
   );
+  // Key option lock to the active/committed provider instance, not driver
+  // kind, so a second Grok instance keeps independent editable options.
+  const traitsOptionChangeBlocked = useMemo(
+    () =>
+      resolveTraitsOptionChangeBlocked({
+        providers: providerStatuses,
+        hasStartedThread,
+        runtimeProviderInstanceId: activeThread?.runtime?.providerInstanceId,
+        committedModelSelectionInstanceId: activeThreadModelSelection?.instanceId,
+        selectedInstanceId,
+      }),
+    [
+      activeThread?.runtime?.providerInstanceId,
+      activeThreadModelSelection?.instanceId,
+      providerStatuses,
+      selectedInstanceId,
+      hasStartedThread,
+    ],
+  );
+  // Session-bound options were fixed when the provider session started, so a
+  // locked thread displays and dispatches its committed selection rather than
+  // draft or sticky values the session never applied.
+  const effectiveComposerModelOptions = resolveComposerDisplayModelOptions({
+    optionChangeBlocked: traitsOptionChangeBlocked,
+    selectedInstanceId,
+    selectedModel,
+    committedModelSelectionInstanceId: activeThreadModelSelection?.instanceId,
+    committedModel: activeThreadModelSelection?.model,
+    committedModelOptions: activeThreadModelSelection?.options,
+    draftModelOptions: composerModelOptions?.[selectedInstanceId],
+  });
   const composerProviderState = useMemo(
     () =>
       getComposerProviderState({
@@ -911,12 +951,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         model: selectedModel,
         models: selectedProviderModels,
         promptInjectionState: composerPromptInjectionState,
-        modelOptions: composerModelOptions?.[selectedInstanceId],
+        modelOptions: effectiveComposerModelOptions,
       }),
     [
-      composerModelOptions,
       composerPromptInjectionState,
-      selectedInstanceId,
+      effectiveComposerModelOptions,
       selectedModel,
       selectedProvider,
       selectedProviderModels,
@@ -934,9 +973,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }),
     [providerStatuses, selectedProvider],
   );
+  // Locked same-instance dispatch keeps the exact committed selection so
+  // absent options on pre-feature threads are not rewritten as menu defaults.
+  // Display still uses descriptor-normalized options via composerProviderState.
   const selectedModelSelection = useMemo<ModelSelection>(
-    () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
-    [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
+    () =>
+      resolveDispatchedModelSelection({
+        optionChangeBlocked: traitsOptionChangeBlocked,
+        committedModelSelection: activeThreadModelSelection,
+        selectedInstanceId,
+        selectedModel,
+        selectedModelOptionsForDispatch,
+      }),
+    [
+      activeThreadModelSelection,
+      selectedInstanceId,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      traitsOptionChangeBlocked,
+    ],
   );
   const selectedModelForPicker = selectedModel;
   // Instance-keyed option list so the picker can show each configured
@@ -1240,7 +1295,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
     models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
+    modelOptions: effectiveComposerModelOptions,
+    optionChangeBlocked: traitsOptionChangeBlocked,
     prompt,
     onPromptChange: setPromptFromTraits,
   });
@@ -1251,7 +1307,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
     models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
+    modelOptions: effectiveComposerModelOptions,
+    optionChangeBlocked: traitsOptionChangeBlocked,
     prompt,
     onPromptChange: setPromptFromTraits,
   });

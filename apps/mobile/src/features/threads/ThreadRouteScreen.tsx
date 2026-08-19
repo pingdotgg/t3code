@@ -806,6 +806,8 @@ function ThreadRouteContent(
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}
           onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
+          optionChangeBlocked={composer.optionChangeBlocked}
+          optionChangeBlockedInstanceId={composer.optionChangeBlockedInstanceId}
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}

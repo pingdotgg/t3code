@@ -101,7 +101,9 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             branch: "feature/grok",
             stagedSummary: "M apps/server/src/provider/Drivers/GrokDriver.ts",
             stagedPatch: "diff --git a/.../GrokDriver.ts b/.../GrokDriver.ts",
-            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt", [
+              { id: "reasoningEffort", value: "low" },
+            ]),
           });
 
           expect(generated.subject).toBe("Add Grok provider");
@@ -118,7 +120,9 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             requests.some(
               (request) =>
                 request.method === "session/set_model" &&
-                request.params?.modelId === "grok-mock-alt",
+                request.params?.modelId === "grok-mock-alt" &&
+                (request.params?._meta as Record<string, unknown> | undefined)?.reasoningEffort ===
+                  "low",
             ),
           ).toBe(true);
         }),
@@ -143,6 +147,26 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
           expect(generated.title).toBe("Investigate failing CI");
         }),
     ),
+  );
+
+  it.effect("refuses text generation while the Grok runtime is unavailable", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* makeGrokTextGeneration(
+        decodeGrokSettings({ binaryPath: "/definitely/not/executable/grok" }),
+        process.env,
+        Effect.succeed(false),
+      );
+      const error = yield* Effect.flip(
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "anything",
+          modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build"),
+        }),
+      );
+
+      expect(error._tag).toBe("TextGenerationError");
+      expect(error.detail).toContain("requires Grok v1.0.0 or newer");
+    }),
   );
 
   it.effect("surfaces ACP request failures as text generation errors", () =>

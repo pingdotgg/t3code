@@ -10,9 +10,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { AcpProviderCapabilitiesV2 } from "./Adapters/AcpAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { GROK_REASONING_EFFORT_OPTION_ID } from "../provider/acp/GrokAcpSupport.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { acpSelectionTransition } from "./ProviderSelectionTransition.ts";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
 
 const driver = ProviderDriverKind.make("codex");
@@ -24,6 +27,13 @@ const capabilitiesWithoutModelSwitch = {
   sessions: {
     ...CodexProviderCapabilitiesV2.sessions,
     supportsModelSwitchInSession: false,
+  },
+};
+const grokCapabilitiesWithModelSwitch = {
+  ...AcpProviderCapabilitiesV2,
+  sessions: {
+    ...AcpProviderCapabilitiesV2.sessions,
+    supportsModelSwitchInSession: true,
   },
 };
 
@@ -83,6 +93,44 @@ function testLayer(metadata: Readonly<Record<string, { continuationKey: string }
   return ProviderSwitch.layer.pipe(Layer.provide(registry));
 }
 
+function grokTestLayer() {
+  const grokDriver = ProviderDriverKind.make("grok");
+  const adapter: ProviderAdapterV2Shape = {
+    instanceId: currentInstanceId,
+    driver: grokDriver,
+    getCapabilities: () => Effect.succeed(grokCapabilitiesWithModelSwitch),
+    planSelectionTransition: (input) => Effect.succeed(acpSelectionTransition(input)),
+    openSession: () => Effect.die("ProviderSwitchService tests do not open sessions."),
+  };
+  const registry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+    get: () => Effect.succeed(adapter),
+    list: () => Effect.succeed([currentInstanceId]),
+    getMetadata: () =>
+      Effect.succeed({
+        driver: grokDriver,
+        continuationKey: "grok:account:primary",
+        enabled: true,
+        capabilities: grokCapabilitiesWithModelSwitch,
+      }),
+  });
+  return ProviderSwitch.layer.pipe(Layer.provide(registry));
+}
+
+function grokProjection(): OrchestrationV2ThreadProjection {
+  const current = projection();
+  return {
+    ...current,
+    thread: {
+      ...current.thread,
+      modelSelection: { instanceId: currentInstanceId, model: "grok-4.5" },
+    },
+    providerSessions: current.providerSessions.map((session) => ({
+      ...session,
+      capabilities: grokCapabilitiesWithModelSwitch,
+    })),
+  };
+}
+
 it.effect(
   "restarts and releases the current session for unsupported in-session model changes",
   () =>
@@ -125,4 +173,35 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
       }),
     ),
   ),
+);
+
+it.effect("plans Grok reasoning changes through the live service seam", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const explicitHigh = yield* service.plan({
+      projection: grokProjection(),
+      targetModelSelection: {
+        instanceId: currentInstanceId,
+        model: "grok-4.5",
+        options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "high" }],
+      },
+    });
+    assert.equal(explicitHigh.transition.type, "switch_model_in_session");
+
+    const changedEffort = yield* service.plan({
+      projection: grokProjection(),
+      targetModelSelection: {
+        instanceId: currentInstanceId,
+        model: "grok-4.5",
+        options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "low" }],
+      },
+    });
+    assert.equal(changedEffort.transition.type, "switch_model_in_session");
+
+    const changedModel = yield* service.plan({
+      projection: grokProjection(),
+      targetModelSelection: { instanceId: currentInstanceId, model: "grok-build" },
+    });
+    assert.equal(changedModel.transition.type, "switch_model_in_session");
+  }).pipe(Effect.provide(grokTestLayer())),
 );

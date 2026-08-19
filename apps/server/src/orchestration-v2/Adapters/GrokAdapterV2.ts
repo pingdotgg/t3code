@@ -2,6 +2,8 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   defaultInstanceIdForDriver,
   GrokSettings,
+  type ModelCapabilities,
+  type ModelSelection,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -12,13 +14,16 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import {
+  GROK_REASONING_EFFORT_OPTION_ID,
+  grokReasoningEffortConstraintsFromCapabilities,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
+  resolveGrokReasoningEffortForSession,
 } from "../../provider/acp/GrokAcpSupport.ts";
 import {
   extractXAiAcpBackgroundToolMutation,
@@ -98,6 +103,10 @@ export interface GrokAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
+  readonly getModelCapabilities?: (
+    model: string,
+  ) => Effect.Effect<ModelCapabilities | null | undefined>;
+  readonly isRuntimeReady?: Effect.Effect<boolean>;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly makeRuntime?: (
@@ -154,6 +163,66 @@ const registerGrokAskUserQuestionExtensions = ({
   );
 
 export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdapterV2Flavor {
+  const reasoningEffortConstraintsByModel = new Map<
+    string,
+    ReturnType<typeof grokReasoningEffortConstraintsFromCapabilities>
+  >();
+  const refreshReasoningEffortConstraints = (
+    selection: Parameters<typeof resolveGrokReasoningEffortForSession>[0],
+  ) => {
+    if (options.getModelCapabilities === undefined || selection == null) {
+      return Effect.void;
+    }
+    const modelId = resolveGrokAcpBaseModelId(selection.model);
+    return options.getModelCapabilities(modelId).pipe(
+      Effect.tap((capabilities) =>
+        capabilities === undefined
+          ? Effect.void
+          : Effect.sync(() => {
+              reasoningEffortConstraintsByModel.set(
+                modelId,
+                grokReasoningEffortConstraintsFromCapabilities(capabilities),
+              );
+            }),
+      ),
+      Effect.asVoid,
+    );
+  };
+  const reasoningEffortConstraints = (
+    selection: Parameters<typeof resolveGrokReasoningEffortForSession>[0],
+  ) => {
+    if (selection == null) {
+      return undefined;
+    }
+    const modelId = resolveGrokAcpBaseModelId(selection.model);
+    return reasoningEffortConstraintsByModel.has(modelId)
+      ? reasoningEffortConstraintsByModel.get(modelId)
+      : undefined;
+  };
+  const resolveReasoningEffort = (selection: ModelSelection) =>
+    resolveGrokReasoningEffortForSession(selection, reasoningEffortConstraints(selection));
+  const makeRuntime =
+    options.makeRuntime ??
+    ((input: AcpAdapterV2RuntimeInput) =>
+      makeGrokAcpRuntime({
+        ...input,
+        interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
+        grokSettings: options.settings,
+        environment: options.environment,
+        childProcessSpawner: options.childProcessSpawner,
+      }));
+  const makeReadyRuntime = (input: AcpAdapterV2RuntimeInput) =>
+    (options.isRuntimeReady ?? Effect.succeed(true)).pipe(
+      Effect.flatMap((ready) =>
+        ready
+          ? makeRuntime(input)
+          : new EffectAcpErrors.AcpTransportError({
+              detail: "Grok CLI is unavailable. T3 Code requires Grok v1.0.0 or newer.",
+              cause: "Grok provider runtime is not ready",
+            }),
+      ),
+    );
+
   return {
     driver: GROK_PROVIDER,
     capabilities: GrokProviderCapabilitiesV2,
@@ -179,16 +248,44 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     // still accepts image content blocks (verified with real screenshots).
     supportsImagePrompts: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
-    makeRuntime:
-      options.makeRuntime ??
-      ((input) =>
-        makeGrokAcpRuntime({
-          ...input,
-          interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
-          grokSettings: options.settings,
-          environment: options.environment,
-          childProcessSpawner: options.childProcessSpawner,
-        })),
+    // Grok applies reasoning through session/set_model `_meta`, not ACP config
+    // options.
+    sessionModelOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
+    resolveSessionModelMeta: (selection) =>
+      refreshReasoningEffortConstraints(selection).pipe(
+        Effect.map(() => {
+          const reasoningEffort = resolveReasoningEffort(selection);
+          return reasoningEffort === undefined ? undefined : { reasoningEffort };
+        }),
+      ),
+    readSessionModelMeta: (startResult) => {
+      const modelState = startResult.sessionSetupResult.models;
+      const currentModel = modelState?.availableModels.find(
+        (model) => model.modelId === modelState.currentModelId,
+      );
+      const reasoningEffort = currentModel?._meta?.reasoningEffort;
+      return typeof reasoningEffort === "string" ? { reasoningEffort } : undefined;
+    },
+    normalizeSessionModelSelection: (selection, meta) => {
+      const reasoningEffort = meta?.reasoningEffort;
+      if (typeof reasoningEffort !== "string") return selection;
+      const options = selection.options ?? [];
+      if (!options.some((option) => option.id === GROK_REASONING_EFFORT_OPTION_ID)) {
+        return selection;
+      }
+      return {
+        ...selection,
+        options: options.map((option) =>
+          option.id === GROK_REASONING_EFFORT_OPTION_ID
+            ? { ...option, value: reasoningEffort }
+            : option,
+        ),
+      };
+    },
+    makeRuntime: (input) =>
+      refreshReasoningEffortConstraints(input.modelSelection).pipe(
+        Effect.flatMap(() => makeReadyRuntime(input)),
+      ),
     registerExtensions: registerGrokAcpExtensions,
     extractSubagentUpdate: extractXAiAcpSubagentUpdate,
     extractSubagentEndNotice: extractXAiAcpSubagentEndNotice,
@@ -254,6 +351,10 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         fileSystem,
         idAllocator,
         serverConfig,
+        ...(input.getModelCapabilities === undefined
+          ? {}
+          : { getModelCapabilities: input.getModelCapabilities }),
+        ...(input.isRuntimeReady === undefined ? {} : { isRuntimeReady: input.isRuntimeReady }),
         continuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({
