@@ -63,7 +63,6 @@ export function ModelRowContent(
           <View className="flex-row items-center gap-2">
             <Text
               className="min-w-0 shrink text-base font-t3-medium text-foreground"
-              numberOfLines={props.labelNumberOfLines}
             >
               {props.option.label}
             </Text>
