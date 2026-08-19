@@ -111,10 +111,22 @@ describe("ProviderContinuationService", () => {
       const dispatched = yield* Queue.unbounded<unknown>();
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests;
-        yield* requests.offer(request());
-        const command = (yield* Queue.take(dispatched)) as { readonly creationSource: string };
+        yield* requests.offer({
+          ...request(undefined, "Raw child task summary."),
+          messageText: "Background task completed.",
+        });
+        const command = (yield* Queue.take(dispatched)) as {
+          readonly createdBy: string;
+          readonly creationSource: string;
+          readonly dispatchMode: { readonly type: string };
+          readonly text: string;
+        };
         // ClaudeAdapterV2 keys on this to attach buffered CLI output.
+        assert.equal(command.createdBy, "agent");
         assert.equal(command.creationSource, "provider");
+        assert.deepEqual(command.dispatchMode, { type: "queue_after_active" });
+        assert.equal(command.text, "Background task completed.");
+        assert.notEqual(command.text, "Raw child task summary.");
       }).pipe(
         Effect.provide(
           testLayer({ dispatched, getThreadProjection: () => Effect.succeed(projection) }),
@@ -123,6 +135,30 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+
+  it.effect(
+    "preserves adapter-buffered provider detail without an explicit message override",
+    () => {
+      return Effect.gen(function* () {
+        const dispatched = yield* Queue.unbounded<unknown>();
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests;
+          yield* requests.offer(request(undefined, "Background command completed: sleep 20"));
+          const command = (yield* Queue.take(dispatched)) as {
+            readonly creationSource: string;
+            readonly text: string;
+          };
+          assert.equal(command.creationSource, "provider");
+          assert.equal(command.text, "Background command completed: sleep 20");
+        }).pipe(
+          Effect.provide(
+            testLayer({ dispatched, getThreadProjection: () => Effect.succeed(projection) }),
+          ),
+          Effect.scoped,
+        );
+      });
+    },
+  );
 
   it.effect("delivers a message_text wake as a real prompt, not a buffered wake", () => {
     return Effect.gen(function* () {
@@ -730,6 +766,63 @@ describe("ProviderContinuationService", () => {
         ),
         Effect.scoped,
       );
+    });
+  });
+
+  it.effect("releases an adapter wake when projection lookup fails", () => {
+    return Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      const released = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          failIfCurrent: () => Ref.set(released, true),
+        });
+        for (let attempt = 0; attempt < 20 && !(yield* Ref.get(released)); attempt += 1) {
+          yield* Effect.yieldNow;
+        }
+        assert.isTrue(yield* Ref.get(released));
+        assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
+      }).pipe(
+        Effect.provide(
+          testLayer({
+            dispatched,
+            getThreadProjection: () => Effect.die("projection unavailable"),
+          }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
+  it.effect("releases a guarded adapter wake when dispatch fails", () => {
+    return Effect.gen(function* () {
+      const attempts = yield* Ref.make(0);
+      const released = yield* Ref.make(false);
+      const threads = Layer.mock(ThreadManagementService)({
+        getThreadProjection: () => Effect.succeed(projection),
+        dispatch: () =>
+          Ref.update(attempts, (count) => count + 1).pipe(
+            Effect.andThen(Effect.fail(new Error("simulated adapter dispatch failure") as never)),
+          ),
+      });
+      const worker = workerLive.pipe(
+        Layer.provide(Layer.mergeAll(idAllocatorLayer, continuationRequestsLayer, threads)),
+      );
+
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request((effect) => effect.pipe(Effect.map(Option.some))),
+          failIfCurrent: () => Ref.set(released, true),
+        });
+        for (let attempt = 0; attempt < 20 && !(yield* Ref.get(released)); attempt += 1) {
+          yield* Effect.yieldNow;
+        }
+        assert.isTrue(yield* Ref.get(released));
+        assert.equal(yield* Ref.get(attempts), 1);
+      }).pipe(Effect.provide(Layer.merge(continuationRequestsLayer, worker)), Effect.scoped);
     });
   });
 });

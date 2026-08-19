@@ -23,18 +23,22 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/unstable/ai";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
@@ -1161,7 +1165,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     uuid: "00000000-0000-4000-8000-000000000101",
     session_id: WAKE_NATIVE_SESSION,
   });
-  const makeAssistantTextFrame = (input: { readonly uuid: string; readonly text: string }) =>
+  const makeAssistantTextFrame = (input: {
+    readonly uuid: string;
+    readonly text: string;
+    readonly parentToolUseId?: string | null;
+  }) =>
     claudeSdkFrame({
       type: "assistant",
       message: {
@@ -1179,7 +1187,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           cache_read_input_tokens: 0,
         },
       },
-      parent_tool_use_id: null,
+      parent_tool_use_id: input.parentToolUseId ?? null,
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
     });
@@ -1192,10 +1200,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly isError?: boolean;
     readonly errors?: ReadonlyArray<string>;
     readonly apiErrorStatus?: number;
+    readonly terminalReason?: string;
   }) =>
     claudeSdkFrame({
       type: "result",
       subtype: input.subtype ?? "success",
+      ...(input.terminalReason === undefined ? {} : { terminal_reason: input.terminalReason }),
       duration_ms: 10,
       duration_api_ms: 10,
       is_error: input.isError ?? false,
@@ -1269,6 +1279,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
+    readonly sessionScope?: Scope.Scope;
+    readonly runtimePolicy?: typeof CLAUDE_TEST_RUNTIME_POLICY;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1278,6 +1290,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const offeredMessages: Array<SDKUserMessage> = [];
+      const openedQueries: Array<ClaudeAgentSdkQueryOpenInput> = [];
       const continuationRequests: Array<ProviderContinuationRequest> = [];
       const adapter = makeClaudeAdapterV2({
         instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
@@ -1294,32 +1307,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         },
         queryRunner: {
           allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
-          open: () =>
-            Effect.succeed({
-              messages: Stream.fromQueue(sdkMessages),
-              offer: (message) =>
-                Effect.sync(() => {
-                  offeredMessages.push(message);
-                }),
-              setModel: () => Effect.void,
-              interrupt: options?.interrupt ?? Effect.void,
-              close: options?.close?.(sdkMessages) ?? Effect.void,
+          open: (input) =>
+            Effect.sync(() => {
+              openedQueries.push(input);
+              return {
+                messages: Stream.fromQueue(sdkMessages),
+                offer: (message: SDKUserMessage) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }),
+                setModel: () => Effect.void,
+                interrupt: options?.interrupt ?? Effect.void,
+                close: options?.close?.(sdkMessages) ?? Effect.void,
+              };
             }),
           forkSession: () => Effect.die("unused forkSession"),
           assertComplete: Effect.void,
         },
       });
       const threadId = ThreadId.make("thread-claude-wake");
-      const runtime = yield* adapter.openSession({
+      const runtimePolicy = options?.runtimePolicy ?? CLAUDE_TEST_RUNTIME_POLICY;
+      const openSession = adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
         modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        runtimePolicy,
       });
+      const runtime = yield* options?.sessionScope === undefined
+        ? openSession
+        : openSession.pipe(Effect.provideService(Scope.Scope, options.sessionScope));
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        runtimePolicy,
       });
       const events: Array<ProviderAdapterV2Event> = [];
       yield* runtime.events.pipe(
@@ -1345,6 +1365,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         threadId,
         sdkMessages,
         offeredMessages,
+        openedQueries,
         continuationRequests,
         events,
         terminalEvents,
@@ -2038,6 +2059,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(harness.continuationRequests[0]?.providerThreadId, harness.providerThread.id);
         assert.equal(harness.continuationRequests[0]?.driver, CLAUDE_PROVIDER);
         assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
+        assert.equal(harness.continuationRequests[0]?.messageText, "Background task completed.");
 
         yield* Queue.offer(harness.sdkMessages, wakeResult);
         let settleYields = 0;
@@ -2477,6 +2499,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+        let settleYields = 0;
+        yield* awaitUntil(() => settleYields++ >= 50, "post-settlement child output buffered");
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -2611,6 +2635,289 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.type === "message.updated" && event.message.text === staleText,
           ),
         );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("clears native child state when an interrupt close times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closeStarted = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () => Deferred.succeed(closeStarted, undefined),
+        });
+        const idAllocator = yield* IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-interrupt-timeout-cleanup");
+        const taskId = "task-interrupt-timeout-subagent";
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Start native background work, then stop.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: "toolu-interrupt-timeout-subagent",
+            description: "Native child that cannot survive query invalidation",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Wait for the parent interrupt.",
+            uuid: "00000000-0000-4000-8000-000000000119",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => harness.events.some((event) => event.type === "subagent.updated"),
+          "subagent registration before interrupt timeout",
+        );
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        const interruptFiber = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(closeStarted);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(interruptFiber);
+        yield* awaitUntil(
+          () => harness.terminalEvents().length === 1,
+          "interrupt timeout terminal",
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.nativeTaskRef?.nativeId === taskId &&
+                event.subagent.status === "failed",
+            ),
+          "interrupted subagent terminal",
+        );
+
+        assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+        const terminalSubagent = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        );
+        assert.equal(terminalSubagent?.type, "subagent.updated");
+        assert.equal(
+          terminalSubagent?.type === "subagent.updated" ? terminalSubagent.subagent.status : null,
+          "failed",
+        );
+        assert.equal(
+          terminalSubagent?.type === "subagent.updated" ? terminalSubagent.subagent.result : null,
+          "Background task ended when its Claude session closed.",
+        );
+        assert.lengthOf(
+          harness.events.filter(
+            (event) =>
+              event.type === "node.updated" &&
+              event.node.nativeItemRef?.nativeId === taskId &&
+              event.node.status === "failed",
+          ),
+          2,
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("finalizes running native children when the Claude session closes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sessionScope = yield* Scope.make();
+        const harness = yield* makeWakeHarnessWithOptions({ sessionScope });
+        const now = yield* DateTime.now;
+        const taskId = "task-session-close-subagent";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-session-close-cleanup"),
+            text: "Start native background work, then close the session.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: "toolu-session-close-subagent",
+            description: "Native child invalidated by session close",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Wait for the session to close.",
+            uuid: "00000000-0000-4000-8000-000000000706",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.nativeTaskRef?.nativeId === taskId &&
+                event.subagent.status === "running",
+            ),
+          "running subagent before session close",
+        );
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* Scope.close(sessionScope, Exit.void);
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.nativeTaskRef?.nativeId === taskId &&
+                event.subagent.status === "failed",
+            ),
+          "failed subagent after session close",
+        );
+
+        const terminalSubagent = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        );
+        assert.equal(terminalSubagent?.type, "subagent.updated");
+        assert.equal(
+          terminalSubagent?.type === "subagent.updated" ? terminalSubagent.subagent.result : null,
+          "Background task ended when its Claude session closed.",
+        );
+        assert.lengthOf(
+          harness.events.filter(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === taskId &&
+              event.subagent.status === "failed",
+          ),
+          1,
+        );
+        assert.lengthOf(
+          harness.events.filter(
+            (event) =>
+              event.type === "node.updated" &&
+              event.node.nativeItemRef?.nativeId === taskId &&
+              event.node.status === "failed",
+          ),
+          2,
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("preserves an offered continuation when its buffered wake survives replacement", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-stale-continuation-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, wakeResult);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation offer");
+        const offeredContinuation = harness.continuationRequests[0];
+        assert.isDefined(offeredContinuation?.dispatchIfCurrent);
+
+        const replacementInput = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-stale-continuation-2"),
+          text: "Replace the query policy.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+        });
+        yield* harness.runtime.startTurn({
+          ...replacementInput,
+          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: "/workspace",
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          }),
+        });
+
+        let dispatched = false;
+        const guardedDispatch = yield* offeredContinuation!.dispatchIfCurrent!(
+          Effect.sync(() => {
+            dispatched = true;
+          }),
+        );
+        assert.isTrue(Option.isSome(guardedDispatch));
+        assert.isTrue(dispatched);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("clears buffered work when the continuation worker drops an offer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-dropped-continuation"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, wakeResult);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation offer");
+        const offeredContinuation = harness.continuationRequests[0];
+        assert.isDefined(offeredContinuation?.clearIfCurrent);
+        assert.isDefined(offeredContinuation?.dispatchIfCurrent);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* offeredContinuation!.clearIfCurrent!();
+
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.isTrue(Option.isNone(yield* offeredContinuation!.dispatchIfCurrent!(Effect.void)));
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );
@@ -2843,7 +3150,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
               event.type === "subagent.updated",
           );
-
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -2873,10 +3179,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.continuationRequests, 0);
 
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000206",
+            text: "The background subagent has finished.",
+          }),
+        );
+        let bufferedYields = 0;
+        yield* awaitUntil(() => bufferedYields++ >= 50, "subagent output to buffer");
+        assert.lengthOf(harness.continuationRequests, 0);
+
         yield* Queue.offer(harness.sdkMessages, subagentNotification);
         yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
         assert.equal(harness.continuationRequests[0]?.threadId, harness.threadId);
         assert.equal(harness.continuationRequests[0]?.detail, SUBAGENT_SUMMARY);
+        assert.equal(harness.continuationRequests[0]?.messageText, "Background task completed.");
 
         yield* Queue.offer(
           harness.sdkMessages,
@@ -2885,6 +3203,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             result: "The subagent finished with SUB_SETTLE_DONE.",
           }),
         );
+        const continuationRuntimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -2896,10 +3219,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerTurnOrdinal: 2,
             messageCreatedBy: "agent",
             messageCreationSource: "provider",
+            runtimePolicy: continuationRuntimePolicy,
           }),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
+        assert.lengthOf(harness.openedQueries, 1);
 
         // The replayed notification hydrates the original subagent node with
         // its terminal status and result, and keeps the original run
@@ -2918,6 +3243,1641 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(finalSubagentNode?.status, "completed");
         assert.equal(finalSubagentNode?.runId, subagentNodeEvents[0]?.node.runId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps Agent launch results off the root before aliases register", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const ackTaskId = "task-prealias-ack";
+        const ackToolUseId = "toolu-prealias-ack";
+        const resultTaskId = "task-prealias-result";
+        const resultToolUseId = "toolu-prealias-result";
+        const terminalText = "Terminal child result before alias registration.";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-prealias-launch-results"),
+            text: "Delegate two tasks.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: ackToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Keep running.", run_in_background: true },
+                },
+                {
+                  type: "tool_use",
+                  id: resultToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Return a terminal result.", run_in_background: false },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000206",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: ackToolUseId,
+                  content: [{ type: "text", text: "Async agent launched successfully." }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000207",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              isAsync: true,
+              status: "async_launched",
+              agentId: ackTaskId,
+            },
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: resultToolUseId,
+                  content: [{ type: "text", text: terminalText }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000208",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              agentId: resultTaskId,
+              content: [{ type: "text", text: terminalText }],
+            },
+          }),
+        );
+        for (const [taskId, uuid] of [
+          [ackTaskId, "00000000-0000-4000-8000-000000000209"],
+          [resultTaskId, "00000000-0000-4000-8000-000000000210"],
+        ] as const) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: taskId,
+              description: taskId,
+              subagent_type: "general-purpose",
+              task_type: "local_agent",
+              prompt: taskId,
+              uuid,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) =>
+                event.subagent.nativeTaskRef?.nativeId === resultTaskId &&
+                event.subagent.status === "completed",
+            ),
+          "pre-alias terminal result routed",
+        );
+
+        assert.equal(
+          subagentEvents().findLast((event) => event.subagent.nativeTaskRef?.nativeId === ackTaskId)
+            ?.subagent.status,
+          "running",
+        );
+        assert.equal(
+          subagentEvents().findLast(
+            (event) => event.subagent.nativeTaskRef?.nativeId === resultTaskId,
+          )?.subagent.result,
+          terminalText,
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.threadId === harness.threadId &&
+              (event.turnItem.nativeItemRef?.nativeId === ackToolUseId ||
+                event.turnItem.nativeItemRef?.nativeId === resultToolUseId),
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000211",
+            result: "Delegation launched.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("preserves Agent launch identity across a post-settlement result race", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "task-postsettle-prealias-result";
+        const toolUseId = "toolu-postsettle-prealias-result";
+        const siblingTaskId = "task-postsettle-prealias-sibling";
+        const siblingToolUseId = "toolu-postsettle-prealias-sibling";
+        const terminalText = "Distinct terminal result after the root settled.";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-postsettle-prealias-result-1"),
+            text: "Delegate a task and settle.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: toolUseId,
+                  name: "Agent",
+                  input: { prompt: "Finish after settle.", run_in_background: true },
+                },
+                {
+                  type: "tool_use",
+                  id: siblingToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Remain running.", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000215",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        for (const [nativeTaskId, uuid] of [
+          [taskId, "00000000-0000-4000-8000-000000000218"],
+          [siblingTaskId, "00000000-0000-4000-8000-000000000221"],
+        ] as const) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: nativeTaskId,
+              description: "Post-settlement alias race",
+              subagent_type: "general-purpose",
+              task_type: "local_agent",
+              prompt: nativeTaskId,
+              uuid,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000216",
+            result: "Root settled before the task alias arrived.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolUseId,
+                  content: [{ type: "text", text: terminalText }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000217",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              agentId: taskId,
+              content: [{ type: "text", text: terminalText }],
+            },
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            status: "completed",
+            output_file: "",
+            summary: "Notification fallback after the terminal result.",
+            uuid: "00000000-0000-4000-8000-000000000219",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation offer");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-postsettle-prealias-result-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.nativeTaskRef?.nativeId === taskId,
+            ),
+          "post-settlement subagent replay",
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000220",
+            result: "Post-settlement task completed.",
+            origin: { kind: "task-notification" },
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+
+        const childThreadId = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        )?.subagent.childThreadId;
+        assert.ok(childThreadId);
+        assert.equal(
+          harness.events.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.threadId === childThreadId &&
+              event.turnItem.text === terminalText,
+          ).length,
+          1,
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.threadId === harness.threadId &&
+              event.turnItem.nativeItemRef?.nativeId === toolUseId,
+          ),
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps root tool results containing agentId on the root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const toolUseId = "toolu-root-agent-id-output";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-root-agent-id-output"),
+            text: "Run a root tool whose output includes an agentId field.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: toolUseId,
+                  name: "mcp__example__lookup",
+                  input: { query: "external agent" },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000226",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "dynamic_tool" &&
+                event.turnItem.nativeItemRef?.nativeId === toolUseId &&
+                event.turnItem.threadId === harness.threadId &&
+                event.turnItem.status === "running",
+            ),
+          "root tool started",
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolUseId,
+                  content: [{ type: "text", text: "External lookup complete." }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000227",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              agentId: "external-service-agent",
+              result: "External lookup complete.",
+            },
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "dynamic_tool" &&
+                event.turnItem.nativeItemRef?.nativeId === toolUseId &&
+                event.turnItem.threadId === harness.threadId &&
+                event.turnItem.status === "completed",
+            ),
+          "root tool completed",
+        );
+        assert.isFalse(harness.events.some((event) => event.type === "subagent.updated"));
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000228",
+            result: "Root tool result handled.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("forgets declined Agent approvals before missing-alias inference", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
+        const harness = yield* makeWakeHarnessWithOptions({ runtimePolicy });
+        const now = yield* DateTime.now;
+        const declinedToolUseId = "toolu-declined-agent-launch";
+        const launchToolUseId = "toolu-approved-agent-launch";
+        const taskId = "task-approved-agent-launch";
+        const childText = "Approved child output after a declined launch.";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-declined-agent-launch"),
+            text: "Decline one Agent launch, then approve another.",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        yield* awaitUntil(() => harness.openedQueries.length === 1, "Claude query opened");
+        const canUseTool = harness.openedQueries[0]?.options.canUseTool;
+        assert.ok(canUseTool);
+        if (canUseTool === undefined) {
+          return;
+        }
+
+        const permissionFiber = yield* Effect.promise(() =>
+          canUseTool(
+            "Agent",
+            { prompt: "This launch will be declined.", run_in_background: true },
+            {
+              requestId: "request-declined-agent-launch",
+              signal: new AbortController().signal,
+              toolUseID: declinedToolUseId,
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* awaitUntil(
+          () => harness.events.some((event) => event.type === "runtime_request.updated"),
+          "Agent approval request",
+        );
+        const requestEvent = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }> =>
+            event.type === "runtime_request.updated",
+        );
+        assert.ok(requestEvent);
+        if (requestEvent === undefined) {
+          return;
+        }
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: requestEvent.runtimeRequest.id,
+          decision: "decline",
+        });
+        const declinedResult = yield* Fiber.join(permissionFiber);
+        assert.equal(declinedResult?.behavior, "deny");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: launchToolUseId,
+                  name: "Agent",
+                  input: { prompt: "This launch is valid.", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000235",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            description: "Approved Agent launch",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "This launch is valid.",
+            uuid: "00000000-0000-4000-8000-000000000236",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.nativeTaskRef?.nativeId === taskId,
+            ),
+          "approved subagent registered",
+        );
+        const childThreadId = harness.events.findLast(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        )?.subagent.childThreadId;
+        assert.ok(childThreadId);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000237",
+            text: childText,
+            parentToolUseId: launchToolUseId,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.threadId === childThreadId &&
+                event.turnItem.text === childText,
+            ),
+          "approved child output routed",
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.threadId === harness.threadId &&
+              event.turnItem.text === childText,
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000238",
+            result: "Approval test complete.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("routes subagent permission artifacts by Claude agentID", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
+        const harness = yield* makeWakeHarnessWithOptions({
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const taskId = "task-subagent-permission";
+        const launchToolUseId = "toolu-subagent-permission-launch";
+        const siblingTaskId = "task-subagent-permission-sibling";
+        const siblingToolUseId = "toolu-subagent-permission-sibling";
+        const childToolUseId = "toolu-subagent-permission-child";
+        assert.isTrue(ClaudeProviderCapabilitiesV2.approvals.approvalsCanOriginateFromSubagents);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-subagent-permission"),
+            text: "Delegate a task that needs permission.",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        yield* awaitUntil(() => harness.openedQueries.length === 1, "Claude query opened");
+        const canUseTool = harness.openedQueries[0]?.options.canUseTool;
+        assert.ok(canUseTool);
+        if (canUseTool === undefined) {
+          return;
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: launchToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Run a child command.", run_in_background: true },
+                },
+                {
+                  type: "tool_use",
+                  id: siblingToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Remain idle.", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000212",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            description: "Child permission task",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Run a child command.",
+            uuid: "00000000-0000-4000-8000-000000000213",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: siblingTaskId,
+            description: "Sibling permission task",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Remain idle.",
+            uuid: "00000000-0000-4000-8000-000000000223",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => harness.events.some((event) => event.type === "subagent.updated"),
+          "subagent registered",
+        );
+        const childThreadId = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        )?.subagent.childThreadId;
+        assert.ok(childThreadId);
+
+        const controller = new AbortController();
+        const permissionFiber = yield* Effect.promise(() =>
+          canUseTool(
+            "Bash",
+            { command: "pwd" },
+            {
+              agentID: taskId,
+              requestId: "request-subagent-permission",
+              signal: controller.signal,
+              toolUseID: childToolUseId,
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* awaitUntil(
+          () => harness.events.some((event) => event.type === "runtime_request.updated"),
+          "child permission request",
+        );
+        const requestEvent = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }> =>
+            event.type === "runtime_request.updated",
+        );
+        assert.ok(requestEvent);
+        if (requestEvent === undefined) {
+          return;
+        }
+        const approvalNode = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "node.updated" }> =>
+            event.type === "node.updated" && event.node.kind === "approval_request",
+        )?.node;
+        const approvalItem = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        )?.turnItem;
+        const childToolNode = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "node.updated" }> =>
+            event.type === "node.updated" &&
+            event.node.kind !== "approval_request" &&
+            event.node.nativeItemRef?.nativeId === childToolUseId,
+        )?.node;
+        const childToolItem = harness.events.find(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type !== "approval_request" &&
+            event.turnItem.nativeItemRef?.nativeId === childToolUseId,
+        )?.turnItem;
+        assert.equal(approvalNode?.threadId, childThreadId);
+        assert.isNull(approvalNode?.runId);
+        assert.equal(approvalItem?.threadId, childThreadId);
+        assert.isNull(approvalItem?.runId);
+        assert.equal(childToolNode?.threadId, childThreadId);
+        assert.isNull(childToolNode?.runId);
+        assert.equal(approvalNode?.rootNodeId, childToolNode?.rootNodeId);
+        assert.equal(approvalNode?.parentNodeId, childToolNode?.id);
+        assert.equal(childToolNode?.parentNodeId, childToolNode?.rootNodeId);
+        assert.isAbove(approvalItem?.ordinal ?? 0, childToolItem?.ordinal ?? 0);
+
+        const concurrentRootText = "Root narration while child permission is pending.";
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000229",
+            text: concurrentRootText,
+            parentToolUseId: null,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.threadId === harness.threadId &&
+                event.turnItem.text === concurrentRootText,
+            ),
+          "SDK messages continue while permission is pending",
+        );
+
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: requestEvent.runtimeRequest.id,
+          decision: "accept",
+        });
+        const permissionResult = yield* Fiber.join(permissionFiber);
+        assert.equal(permissionResult?.behavior, "allow");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: childToolUseId,
+                  content: "Child command completed.",
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000222",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              agentId: taskId,
+              stdout: "Child command completed.",
+            },
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "node.updated" &&
+                event.node.nativeItemRef?.nativeId === childToolUseId &&
+                event.node.status === "completed",
+            ),
+          "child permission tool completed",
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "node.updated" &&
+              event.node.nativeItemRef?.nativeId === childToolUseId &&
+              event.node.threadId === harness.threadId,
+          ),
+        );
+
+        const eventsBeforeUnknownRequest = harness.events.length;
+        const unknownResult = yield* Effect.promise(() =>
+          canUseTool(
+            "Bash",
+            { command: "pwd" },
+            {
+              agentID: "task-unknown-permission",
+              requestId: "request-unknown-permission",
+              signal: new AbortController().signal,
+              toolUseID: "toolu-unknown-permission",
+            },
+          ),
+        );
+        assert.equal(unknownResult?.behavior, "deny");
+        assert.lengthOf(harness.events, eventsBeforeUnknownRequest);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000214",
+            result: "Delegation paused for permission.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("routes interleaved post-settlement subagent output through durable aliases", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const firstTaskId = "task-postsettle-first";
+        const firstToolUseId = "toolu-postsettle-first";
+        const secondTaskId = "task-postsettle-second";
+        const secondToolUseId = "toolu-postsettle-second";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        const assistantItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+        const toolItems = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+              event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+          );
+        const taskStarted = (taskId: string, toolUseId: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: `Run ${taskId}`,
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: `Complete ${taskId}.`,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const childToolUse = (parentToolUseId: string, toolUseId: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{ type: "tool_use", id: toolUseId, name: "ChildTool", input: {} }],
+            },
+            parent_tool_use_id: parentToolUseId,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const childToolResult = (parentToolUseId: string, toolUseId: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: toolUseId, content: "done" }],
+            },
+            parent_tool_use_id: parentToolUseId,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const taskNotification = (input: {
+          readonly taskId: string;
+          readonly summary: string;
+          readonly uuid: string;
+          readonly toolUseId?: string;
+        }) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: input.taskId,
+            ...(input.toolUseId === undefined ? {} : { tool_use_id: input.toolUseId }),
+            status: "completed",
+            output_file: "",
+            summary: input.summary,
+            uuid: input.uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-postsettle-1"),
+            text: "Launch two background subagents.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          taskStarted(firstTaskId, firstToolUseId, "00000000-0000-4000-8000-000000000601"),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          taskStarted(secondTaskId, secondToolUseId, "00000000-0000-4000-8000-000000000602"),
+        );
+        yield* awaitUntil(() => subagentEvents().length >= 2, "two subagent nodes");
+        const firstChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === firstTaskId,
+        )?.subagent.childThreadId;
+        const secondChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === secondTaskId,
+        )?.subagent.childThreadId;
+        assert.ok(firstChildThreadId);
+        assert.ok(secondChildThreadId);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000603",
+            text: "Root launch complete.",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000604",
+            result: "Root launch complete.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "launch turn terminal");
+
+        const firstNarration = "First child narration.";
+        const firstFinal = "First child SDK final.";
+        const firstSummary = "First child distinct terminal summary.";
+        const secondNarration = "Second child narration.";
+        const secondFinal = "Second child final.";
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000605",
+            text: firstNarration,
+            parentToolUseId: firstToolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000606",
+            text: secondNarration,
+            parentToolUseId: secondToolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          childToolUse(
+            firstToolUseId,
+            "toolu-postsettle-first-read",
+            "00000000-0000-4000-8000-000000000607",
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          childToolUse(
+            secondToolUseId,
+            "toolu-postsettle-second-read",
+            "00000000-0000-4000-8000-000000000608",
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          childToolResult(
+            firstToolUseId,
+            "toolu-postsettle-first-read",
+            "00000000-0000-4000-8000-000000000609",
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          childToolResult(
+            secondToolUseId,
+            "toolu-postsettle-second-read",
+            "00000000-0000-4000-8000-000000000610",
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000611",
+            text: firstFinal,
+            parentToolUseId: firstToolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000612",
+            text: secondFinal,
+            parentToolUseId: secondToolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          taskNotification({
+            taskId: firstTaskId,
+            summary: firstSummary,
+            uuid: "00000000-0000-4000-8000-000000000613",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          taskNotification({
+            taskId: secondTaskId,
+            toolUseId: secondToolUseId,
+            summary: secondFinal,
+            uuid: "00000000-0000-4000-8000-000000000614",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000615",
+            result: "Root processed both completions.",
+            origin: { kind: "task-notification" },
+          }),
+        );
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-postsettle-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+
+        const firstChildAssistantTexts = assistantItems()
+          .filter((item) => item.threadId === firstChildThreadId)
+          .map((item) => item.text);
+        const secondChildAssistantTexts = assistantItems()
+          .filter((item) => item.threadId === secondChildThreadId)
+          .map((item) => item.text);
+        assert.deepEqual(firstChildAssistantTexts, [firstNarration, firstFinal, firstSummary]);
+        assert.deepEqual(secondChildAssistantTexts, [secondNarration, secondFinal]);
+        assert.deepEqual(
+          toolItems().map((event) => event.turnItem.threadId),
+          [firstChildThreadId, secondChildThreadId, firstChildThreadId, secondChildThreadId],
+        );
+        const rootAssistantTexts = assistantItems()
+          .filter((item) => item.threadId === harness.threadId)
+          .map((item) => item.text);
+        assert.deepEqual(rootAssistantTexts, [
+          "Root launch complete.",
+          "Root processed both completions.",
+        ]);
+        for (const childText of [
+          firstNarration,
+          firstFinal,
+          firstSummary,
+          secondNarration,
+          secondFinal,
+        ]) {
+          assert.notInclude(rootAssistantTexts, childText);
+        }
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("buffers a short subagent registration race without leaking to the root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "task-registration-race";
+        const toolUseId = "toolu-registration-race";
+        const childText = "Child text that arrived before registration.";
+        const assistantItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-registration-race"),
+            text: "Delegate after the child begins responding.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000621",
+            text: childText,
+            parentToolUseId: toolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            description: "Registration race",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Finish after registration.",
+            uuid: "00000000-0000-4000-8000-000000000622",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(() => subagentEvents().length === 1, "subagent registered without alias");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: "Registration race",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Finish after registration.",
+            uuid: "00000000-0000-4000-8000-000000000624",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => assistantItems().some((item) => item.text === childText),
+          "buffered child text",
+        );
+        const childThreadId = subagentEvents().at(-1)?.subagent.childThreadId;
+        assert.ok(childThreadId);
+        assert.equal(
+          assistantItems().find((item) => item.text === childText)?.threadId,
+          childThreadId,
+        );
+        assert.isFalse(
+          assistantItems().some(
+            (item) => item.threadId === harness.threadId && item.text === childText,
+          ),
+        );
+
+        const terminalText = "Terminal result after the late launch alias.";
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolUseId,
+                  content: [{ type: "text", text: terminalText }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000625",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              agentId: taskId,
+              content: [{ type: "text", text: terminalText }],
+            },
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) =>
+                event.subagent.status === "completed" && event.subagent.result === terminalText,
+            ),
+          "late launch alias terminal result",
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000623",
+            result: "Root race handling complete.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "race turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("waits for explicit aliases when sibling task starts are ambiguous", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const firstTaskId = "task-ambiguous-first";
+        const firstToolUseId = "toolu-ambiguous-first";
+        const firstChildText = "First ambiguous child text.";
+        const secondTaskId = "task-ambiguous-second";
+        const secondToolUseId = "toolu-ambiguous-second";
+        const secondChildText = "Second ambiguous child text.";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        const assistantItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-ambiguous-launch-alias"),
+            text: "Delegate two tasks.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: firstToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Return the first child result.", run_in_background: true },
+                },
+                {
+                  type: "tool_use",
+                  id: secondToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Return the second child result.", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000639",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000640",
+            text: secondChildText,
+            parentToolUseId: secondToolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000641",
+            text: firstChildText,
+            parentToolUseId: firstToolUseId,
+          }),
+        );
+        for (const [taskId, description, uuid] of [
+          [secondTaskId, "Second task starts first", "00000000-0000-4000-8000-000000000642"],
+          [firstTaskId, "First task starts second", "00000000-0000-4000-8000-000000000643"],
+        ] as const) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: taskId,
+              description,
+              subagent_type: "general-purpose",
+              task_type: "local_agent",
+              prompt: description,
+              uuid,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* awaitUntil(() => subagentEvents().length === 2, "ambiguous sibling registrations");
+        assert.notIncludeMembers(
+          assistantItems().map((item) => item.text),
+          [firstChildText, secondChildText],
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: firstTaskId,
+            tool_use_id: firstToolUseId,
+            description: "Explicit progress alias available",
+            uuid: "00000000-0000-4000-8000-000000000644",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: secondTaskId,
+            tool_use_id: secondToolUseId,
+            status: "completed",
+            output_file: "",
+            summary: "Second child notification fallback.",
+            uuid: "00000000-0000-4000-8000-000000000645",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            assistantItems().some((item) => item.text === firstChildText) &&
+            assistantItems().some((item) => item.text === secondChildText),
+          "ambiguous sibling buffers drained",
+        );
+
+        const firstChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === firstTaskId,
+        )?.subagent.childThreadId;
+        const secondChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === secondTaskId,
+        )?.subagent.childThreadId;
+        assert.ok(firstChildThreadId);
+        assert.ok(secondChildThreadId);
+        assert.equal(
+          assistantItems().find((item) => item.text === firstChildText)?.threadId,
+          firstChildThreadId,
+        );
+        assert.equal(
+          assistantItems().find((item) => item.text === secondChildText)?.threadId,
+          secondChildThreadId,
+        );
+        assert.isFalse(
+          assistantItems().some(
+            (item) =>
+              item.threadId === harness.threadId &&
+              (item.text === firstChildText || item.text === secondChildText),
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: firstToolUseId,
+                  content: "First child terminal result.",
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000646",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) =>
+                event.subagent.nativeTaskRef?.nativeId === firstTaskId &&
+                event.subagent.status === "completed",
+            ),
+          "late launch alias terminal result",
+        );
+        assert.equal(
+          subagentEvents().findLast(
+            (event) => event.subagent.nativeTaskRef?.nativeId === firstTaskId,
+          )?.subagent.result,
+          "First child terminal result.",
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.threadId === harness.threadId &&
+              event.turnItem.nativeItemRef?.nativeId === firstToolUseId,
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: secondToolUseId,
+                  content: "Second child terminal result.",
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000647",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) =>
+                event.subagent.nativeTaskRef?.nativeId === secondTaskId &&
+                event.subagent.result === "Second child terminal result.",
+            ),
+          "notification alias terminal result",
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.threadId === harness.threadId &&
+              event.turnItem.nativeItemRef?.nativeId === secondToolUseId,
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000648",
+            result: "Root delegation complete.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("disables implicit launch aliases after pending launch overflow", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const launches = Array.from({ length: 33 }, (_, index) => ({
+          taskId: `task-launch-overflow-${index + 1}`,
+          toolUseId: `toolu-launch-overflow-${index + 1}`,
+        }));
+        const finalLaunch = launches.at(-1)!;
+        const childText = "Only the final explicit overflow alias may receive this text.";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        const assistantItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-launch-overflow"),
+            text: "Delegate more tasks than implicit alias recovery can retain.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: launches.map((launch) => ({
+                type: "tool_use" as const,
+                id: launch.toolUseId,
+                name: "Agent",
+                input: { prompt: launch.taskId, run_in_background: true },
+              })),
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000720",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000721",
+            text: childText,
+            parentToolUseId: finalLaunch.toolUseId,
+          }),
+        );
+        for (const [index, launch] of launches.slice(1, -1).entries()) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: launch.taskId,
+              tool_use_id: launch.toolUseId,
+              description: launch.taskId,
+              subagent_type: "general-purpose",
+              task_type: "local_agent",
+              prompt: launch.taskId,
+              uuid: `00000000-0000-4000-8000-${String(722 + index).padStart(12, "0")}`,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: launches[0]!.taskId,
+            description: "Evicted launch starts without an alias",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: launches[0]!.taskId,
+            uuid: "00000000-0000-4000-8000-000000000753",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) => event.subagent.nativeTaskRef?.nativeId === launches[0]!.taskId,
+            ),
+          "alias-free overflow task registration",
+        );
+        assert.notInclude(
+          assistantItems().map((item) => item.text),
+          childText,
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: finalLaunch.taskId,
+            tool_use_id: finalLaunch.toolUseId,
+            description: "Final launch receives its explicit alias",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: finalLaunch.taskId,
+            uuid: "00000000-0000-4000-8000-000000000754",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => assistantItems().some((item) => item.text === childText),
+          "explicit overflow alias buffer drain",
+        );
+
+        const evictedChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === launches[0]!.taskId,
+        )?.subagent.childThreadId;
+        const finalChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === finalLaunch.taskId,
+        )?.subagent.childThreadId;
+        assert.ok(evictedChildThreadId);
+        assert.ok(finalChildThreadId);
+        assert.equal(
+          assistantItems().find((item) => item.text === childText)?.threadId,
+          finalChildThreadId,
+        );
+        assert.notEqual(finalChildThreadId, evictedChildThreadId);
+        assert.isFalse(
+          assistantItems().some(
+            (item) => item.threadId === harness.threadId && item.text === childText,
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000755",
+            result: "Overflow routing complete.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "overflow turn terminal");
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );
@@ -2999,6 +4959,286 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("gives batched sibling subagent results distinct native identities", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const firstTaskId = "task-batched-result-first";
+        const firstToolUseId = "toolu-batched-result-first";
+        const secondTaskId = "task-batched-result-second";
+        const secondToolUseId = "toolu-batched-result-second";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-batched-sibling-results"),
+            text: "Delegate two tasks.",
+            attachments: [],
+          }),
+        );
+        for (const [taskId, toolUseId, uuid] of [
+          [firstTaskId, firstToolUseId, "00000000-0000-4000-8000-000000000631"],
+          [secondTaskId, secondToolUseId, "00000000-0000-4000-8000-000000000632"],
+        ] as const) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: taskId,
+              tool_use_id: toolUseId,
+              description: `Run ${taskId}`,
+              subagent_type: "general-purpose",
+              task_type: "local_agent",
+              prompt: `Complete ${taskId}.`,
+              uuid,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* awaitUntil(() => subagentEvents().length >= 2, "two sibling subagents");
+        const firstChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === firstTaskId,
+        )?.subagent.childThreadId;
+        const secondChildThreadId = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === secondTaskId,
+        )?.subagent.childThreadId;
+        assert.ok(firstChildThreadId);
+        assert.ok(secondChildThreadId);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: firstToolUseId,
+                  content: "First sibling result.",
+                },
+                {
+                  type: "tool_result",
+                  tool_use_id: secondToolUseId,
+                  content: "Second sibling result.",
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000633",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().filter((event) => event.subagent.status === "completed").length >= 2,
+          "two sibling results",
+        );
+
+        const childMessages = harness.events.filter(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
+            event.type === "message.updated" &&
+            (event.message.threadId === firstChildThreadId ||
+              event.message.threadId === secondChildThreadId) &&
+            (event.message.text === "First sibling result." ||
+              event.message.text === "Second sibling result."),
+        );
+        assert.deepEqual(
+          childMessages.map((event) => [event.message.threadId, event.message.text]),
+          [
+            [firstChildThreadId, "First sibling result."],
+            [secondChildThreadId, "Second sibling result."],
+          ],
+        );
+        assert.notEqual(childMessages[0]?.message.id, childMessages[1]?.message.id);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000634",
+            result: "Both delegated tasks completed.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("buffers batched pre-alias Agent results by their own lineage", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const firstTaskId = "task-batched-prealias-first";
+        const firstToolUseId = "toolu-batched-prealias-first";
+        const secondTaskId = "task-batched-prealias-second";
+        const secondToolUseId = "toolu-batched-prealias-second";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-batched-prealias-results"),
+            text: "Delegate two tasks before their aliases arrive.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: firstToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Return the first result.", run_in_background: false },
+                },
+                {
+                  type: "tool_use",
+                  id: secondToolUseId,
+                  name: "Agent",
+                  input: { prompt: "Return the second result.", run_in_background: false },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000701",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: firstToolUseId,
+                  content: "First pre-alias result.",
+                },
+                {
+                  type: "tool_result",
+                  tool_use_id: secondToolUseId,
+                  content: "Second pre-alias result.",
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000702",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              agentId: "task-shared-batched-output",
+              content: [{ type: "text", text: "Shared structured result." }],
+            },
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: secondTaskId,
+            tool_use_id: secondToolUseId,
+            description: "Second task starts first",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Return the second result.",
+            uuid: "00000000-0000-4000-8000-000000000703",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) =>
+                event.subagent.nativeTaskRef?.nativeId === secondTaskId &&
+                event.subagent.status === "completed",
+            ),
+          "second batched pre-alias result",
+        );
+        assert.equal(
+          subagentEvents().findLast(
+            (event) => event.subagent.nativeTaskRef?.nativeId === secondTaskId,
+          )?.subagent.result,
+          "Second pre-alias result.",
+        );
+        assert.isFalse(
+          subagentEvents().some((event) => event.subagent.nativeTaskRef?.nativeId === firstTaskId),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: firstTaskId,
+            tool_use_id: firstToolUseId,
+            description: "First task starts second",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Return the first result.",
+            uuid: "00000000-0000-4000-8000-000000000704",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) =>
+                event.subagent.nativeTaskRef?.nativeId === firstTaskId &&
+                event.subagent.status === "completed",
+            ),
+          "first batched pre-alias result",
+        );
+        assert.equal(
+          subagentEvents().findLast(
+            (event) => event.subagent.nativeTaskRef?.nativeId === firstTaskId,
+          )?.subagent.result,
+          "First pre-alias result.",
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.threadId === harness.threadId &&
+              (event.turnItem.nativeItemRef?.nativeId === firstToolUseId ||
+                event.turnItem.nativeItemRef?.nativeId === secondToolUseId),
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000705",
+            result: "Both pre-alias tasks completed.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );
@@ -3157,6 +5397,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
               event.type === "subagent.updated",
           );
+        const assistantItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -3170,6 +5416,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.offer(harness.sdkMessages, subagentTaskStarted);
         yield* awaitUntil(() => subagentEvents().length >= 1, "subagent node created");
+        const childThreadId = subagentEvents()[0]!.subagent.childThreadId;
         yield* Queue.offer(
           harness.sdkMessages,
           makeResultFrame({
@@ -3286,6 +5533,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // resumed lifecycle.
         assert.equal(reopened?.runId, "run-attempt-claude-wake-8c");
         assert.notEqual(reopened?.runId, subagentEvents()[0]?.subagent.runId);
+        // A duplicate terminal frame from the completed generation must not
+        // close the resumed generation before its new output arrives.
+        yield* Queue.offer(harness.sdkMessages, firstNotification);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            parentToolUseId: SUBAGENT_TOOL_USE_ID,
+            text: "Original launch alias still routes.",
+            uuid: "00000000-0000-4000-8000-000000000413",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            parentToolUseId: RESUME_TOOL_USE_ID,
+            text: SECOND_SUMMARY,
+            uuid: "00000000-0000-4000-8000-000000000414",
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            assistantItems().some(
+              (item) => item.threadId === childThreadId && item.text === SECOND_SUMMARY,
+            ),
+          "resumed child text routed through both aliases",
+        );
+        assert.equal(subagentEvents().at(-1)?.subagent.status, "running");
         yield* Queue.offer(
           harness.sdkMessages,
           makeResultFrame({
@@ -3336,6 +5610,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // The completion keeps the resuming run's attribution.
         assert.equal(finalSubagent?.runId, "run-attempt-claude-wake-8c");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        const childTexts = assistantItems()
+          .filter((item) => item.threadId === childThreadId)
+          .map((item) => item.text);
+        assert.equal(
+          childTexts.filter((text) => text === "Original launch alias still routes.").length,
+          1,
+        );
+        assert.equal(childTexts.filter((text) => text === SECOND_SUMMARY).length, 1);
+        const rootTexts = assistantItems()
+          .filter((item) => item.threadId === harness.threadId)
+          .map((item) => item.text);
+        assert.notInclude(rootTexts, "Original launch alias still routes.");
+        assert.notInclude(rootTexts, SECOND_SUMMARY);
 
         // Only task_started may re-open a terminal subagent: a late
         // task_progress must not flip the row back to running or re-pin idle.
@@ -4577,7 +6864,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "clears buffered wake and continuation state when same-native-thread replacement open fails",
+    "preserves buffered wake and continuation state when same-native-thread replacement open fails",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -4701,7 +6988,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             )
             .pipe(Effect.exit);
           assert.isTrue(Exit.isFailure(failedStart));
-          assert.isFalse(yield* hasPendingBackgroundWork);
+          assert.isTrue(yield* hasPendingBackgroundWork);
+          assert.lengthOf(continuationRequests, 1);
 
           yield* runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -4740,6 +7028,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             () => events.filter((event) => event.type === "turn.terminal").length === 2,
             "retry turn terminal",
           );
+
+          // The already-requested continuation survives the failed process
+          // replacement and drains the wake output after the user retry.
+          yield* Queue.offer(retryProcess, wakeResult);
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: { ...providerThread, status: "active" },
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-replace-open-fail-wake-d"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 3,
+              modelSelection: alternateModel,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* awaitUntil(
+            () => events.filter((event) => event.type === "turn.terminal").length === 3,
+            "preserved continuation terminal",
+          );
+          assert.lengthOf(continuationRequests, 1);
+
           yield* Queue.offer(
             retryProcess,
             claudeSdkFrame({
@@ -4843,6 +7155,934 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isTrue(Exit.isFailure(failedStart));
         // No live process ever existed: do not emit a fabricated empty roster.
         assert.lengthOf(providerThreadRosterEvents(events), 0);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+  it.effect("releases pending work after a failed wake dispatch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const siblingTaskId = "task-failed-wake-sibling";
+        const failedToolUseId = "toolu-failed-wake-child-tool";
+        const failedToolItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === failedToolUseId
+              ? [event.turnItem]
+              : [],
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-failed-wake-dispatch"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: WAKE_TASK_ID,
+            tool_use_id: "toolu-failed-wake-child",
+            description: "Background subagent",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Finish after the parent settles.",
+            uuid: "00000000-0000-4000-8000-000000000631",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: failedToolUseId,
+                  name: "Bash",
+                  input: { command: "printf unfinished" },
+                },
+              ],
+            },
+            parent_tool_use_id: "toolu-failed-wake-child",
+            uuid: "00000000-0000-4000-8000-000000000630",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => failedToolItems().at(-1)?.status === "running",
+          "failed-wake child tool started",
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: siblingTaskId,
+            tool_use_id: "toolu-failed-wake-sibling",
+            description: "Still-running sibling",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Finish after the first sibling's wake fails.",
+            uuid: "00000000-0000-4000-8000-000000000632",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation offer");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        const request = harness.continuationRequests[0];
+        assert.isDefined(request?.dispatchIfCurrent);
+        let dispatchAttempts = 0;
+        const dispatch = Effect.sync(() => {
+          dispatchAttempts += 1;
+        }).pipe(Effect.andThen(Effect.fail("dispatch failure")));
+        const exit = yield* Effect.exit(request!.dispatchIfCurrent!(dispatch));
+        assert.isTrue(Exit.isFailure(exit));
+        assert.equal(dispatchAttempts, 1);
+        yield* request!.failIfCurrent!(Cause.fail("dispatch failure"));
+        yield* awaitUntil(
+          () =>
+            harness.events.findLast((event) => event.type === "subagent.updated")?.subagent
+              .status === "failed",
+          "failed subagent projection",
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: siblingTaskId,
+            status: "completed",
+            output_file: "/tmp/task-failed-wake-sibling.output",
+            summary: "The sibling completed after the failed wake.",
+            uuid: "00000000-0000-4000-8000-000000000633",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+
+        const failedSubagent = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === WAKE_TASK_ID,
+        );
+        assert.equal(failedSubagent?.type, "subagent.updated");
+        assert.equal(
+          failedSubagent?.type === "subagent.updated" ? failedSubagent.subagent.status : null,
+          "failed",
+        );
+        assert.equal(
+          failedSubagent?.type === "subagent.updated" ? failedSubagent.subagent.result : null,
+          "Background task completion could not be delivered.",
+        );
+        const failedSubagentId =
+          failedSubagent?.type === "subagent.updated" ? failedSubagent.subagent.id : null;
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "node.updated" &&
+              event.node.kind === "subagent" &&
+              event.node.nativeItemRef?.nativeId === WAKE_TASK_ID &&
+              event.node.status === "failed",
+          ),
+        );
+        assert.equal(failedToolItems().at(-1)?.status, "failed");
+        assert.equal(failedToolItems().filter((item) => item.status === "failed").length, 1);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "node.updated" &&
+              event.node.kind === "root_turn" &&
+              event.node.nativeItemRef?.nativeId === WAKE_TASK_ID &&
+              event.node.status === "failed",
+          ),
+        );
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "subagent" &&
+              event.turnItem.subagentId === failedSubagentId &&
+              event.turnItem.status === "failed" &&
+              event.turnItem.result === "Background task completion could not be delivered.",
+          ),
+        );
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.text === "Background task completion could not be delivered.",
+          ),
+        );
+        const siblingSubagent = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === siblingTaskId,
+        );
+        assert.equal(siblingSubagent?.type, "subagent.updated");
+        assert.equal(
+          siblingSubagent?.type === "subagent.updated" ? siblingSubagent.subagent.status : null,
+          "running",
+        );
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* awaitUntil(
+          () => harness.continuationRequests.length === 2,
+          "sibling continuation offer",
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "toolu-failed-wake-child",
+                  content: [{ type: "text", text: "Late failed-child launch result." }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            tool_use_result: {
+              agentId: WAKE_TASK_ID,
+              content: [{ type: "text", text: "Late failed-child launch result." }],
+            },
+            uuid: "00000000-0000-4000-8000-000000000634",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Effect.yieldNow;
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === WAKE_TASK_ID &&
+              event.subagent.status === "completed",
+          ),
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-failed-wake-sibling"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "toolu-failed-wake-child",
+                  content: [{ type: "text", text: "Late active failed-child launch result." }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            tool_use_result: {
+              agentId: WAKE_TASK_ID,
+              content: [{ type: "text", text: "Late active failed-child launch result." }],
+            },
+            uuid: "00000000-0000-4000-8000-000000000636",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000635",
+            result: "The sibling completed after the failed wake.",
+            origin: { kind: "task-notification" },
+          }),
+        );
+        yield* awaitUntil(
+          () => harness.terminalEvents().length === 2,
+          "sibling continuation terminal",
+        );
+        const completedSibling = harness.events.findLast(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === siblingTaskId,
+        );
+        assert.equal(completedSibling?.subagent.status, "completed");
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === siblingTaskId &&
+              event.subagent.status === "failed",
+          ),
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === WAKE_TASK_ID &&
+              event.subagent.status === "completed",
+          ),
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("offers an opaque sibling completion after a failed wake dispatch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const siblingTaskId = "task-failed-wake-opaque-sibling";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-failed-wake-opaque"),
+            text: "Run two builds in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: siblingTaskId,
+            description: "Sibling build",
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000637",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "first wake offer");
+        const request = harness.continuationRequests[0]!;
+        const dispatch = Effect.fail("dispatch failure");
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(request.dispatchIfCurrent!(dispatch))));
+        yield* request.failIfCurrent!(Cause.fail("dispatch failure"));
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: siblingTaskId,
+            status: "completed",
+            output_file: "/tmp/task-failed-wake-opaque-sibling.log",
+            summary: "The sibling build completed.",
+            uuid: "00000000-0000-4000-8000-000000000638",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000639",
+            text: "The sibling build has finished.",
+          }),
+        );
+        yield* awaitUntil(() => harness.continuationRequests.length === 2, "opaque sibling offer");
+        assert.equal(harness.continuationRequests[1]?.detail, "The sibling build completed.");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("retains late subagent alias registration across settle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "task-postsettle-registration-race";
+        const toolUseId = "toolu-postsettle-registration-race";
+        const childText = "Child narration before the post-settle alias.";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        const assistantItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-postsettle-registration-race-1"),
+            text: "Delegate before the alias is available.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            description: "Post-settle registration race",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Finish after the parent settles.",
+            uuid: "00000000-0000-4000-8000-000000000625",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(() => subagentEvents().length === 1, "subagent registration");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000626",
+            result: "Root settled before alias registration.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000627",
+            text: childText,
+            parentToolUseId: toolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: "   ",
+            uuid: "00000000-0000-4000-8000-000000000628",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            status: "completed",
+            output_file: "/tmp/task-postsettle-registration-race.output",
+            summary: "Post-settle registration completed.",
+            uuid: "00000000-0000-4000-8000-000000000629",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000630",
+            result: "Post-settle registration completed.",
+            origin: { kind: "task-notification" },
+          }),
+        );
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation offer");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-postsettle-registration-race-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+
+        const childThreadId = subagentEvents()[0]?.subagent.childThreadId;
+        assert.ok(childThreadId);
+        assert.equal(
+          assistantItems().filter(
+            (item) => item.threadId === childThreadId && item.text === childText,
+          ).length,
+          1,
+        );
+        assert.isFalse(
+          assistantItems().some(
+            (item) => item.threadId === harness.threadId && item.text === childText,
+          ),
+        );
+        const completedProviderTurn = harness.events.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(completedProviderTurn?.type, "provider_turn.updated");
+        assert.isNotNull(
+          completedProviderTurn?.type === "provider_turn.updated"
+            ? completedProviderTurn.providerTurn.nativeTurnRef
+            : null,
+        );
+        if (
+          completedProviderTurn?.type === "provider_turn.updated" &&
+          completedProviderTurn.providerTurn.nativeTurnRef !== null
+        ) {
+          assert.notEqual(
+            completedProviderTurn.providerTurn.nativeTurnRef.nativeId,
+            "00000000-0000-4000-8000-000000000627",
+          );
+        }
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("recovers the Agent launch alias when task_started omits tool_use_id", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "task-optional-launch-alias";
+        const toolUseId = "toolu-optional-launch-alias";
+        const childText = "Child text buffered before an alias-free task_started frame.";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        const assistantItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-optional-launch-alias"),
+            text: "Delegate this task.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-before-pending-launch",
+            description: "Task start before any pending launch",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Start before the Agent tool-use frame.",
+            uuid: "00000000-0000-4000-8000-000000000634",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: toolUseId,
+                  name: "Agent",
+                  input: { prompt: "Return the child result.", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000635",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000636",
+            text: childText,
+            parentToolUseId: toolUseId,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            description: "Optional launch alias",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Return the child result.",
+            uuid: "00000000-0000-4000-8000-000000000637",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => assistantItems().some((item) => item.text === childText),
+          "child text routed through recovered launch alias",
+        );
+
+        const childThreadId = subagentEvents().at(-1)?.subagent.childThreadId;
+        assert.ok(childThreadId);
+        assert.equal(
+          assistantItems().find((item) => item.text === childText)?.threadId,
+          childThreadId,
+        );
+        assert.isFalse(
+          assistantItems().some(
+            (item) => item.threadId === harness.threadId && item.text === childText,
+          ),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000638",
+            result: "Root delegation complete.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("does not terminalize a resumed subagent from a cross-turn delivery ack", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "task-cross-turn-resume-ack";
+        const launchToolUseId = "toolu-cross-turn-resume-launch";
+        const resumeToolUseId = "toolu-cross-turn-resume-message";
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === taskId,
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-cross-turn-resume-ack-1"),
+            text: "Launch and complete the subagent.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: launchToolUseId,
+            description: "Cross-turn resume ack",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Complete, then resume.",
+            uuid: "00000000-0000-4000-8000-000000000639",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            tool_use_id: launchToolUseId,
+            status: "completed",
+            output_file: "/tmp/task-cross-turn-resume-ack.output",
+            summary: "Initial generation completed.",
+            uuid: "00000000-0000-4000-8000-000000000640",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000641",
+            result: "Initial generation complete.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        assert.equal(subagentEvents().at(-1)?.subagent.status, "completed");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-cross-turn-resume-ack-2"),
+            text: "Resume the subagent.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: resumeToolUseId,
+                  name: "SendMessage",
+                  input: { agent_id: taskId, message: "Resume." },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000642",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: resumeToolUseId,
+            description: "Cross-turn resume ack",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Complete, then resume.",
+            uuid: "00000000-0000-4000-8000-000000000643",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000644",
+            result: "Resume sent before its acknowledgement arrived.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "resume turn terminal");
+        assert.equal(subagentEvents().at(-1)?.subagent.status, "running");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-cross-turn-resume-ack-3"),
+            text: "Observe the delayed acknowledgement.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: resumeToolUseId,
+                  content: '{"success":true,"message":"Message delivered."}',
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000645",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId === resumeToolUseId &&
+                event.turnItem.status === "completed",
+            ),
+          "delivery acknowledgement projected as a tool result",
+        );
+        assert.equal(subagentEvents().at(-1)?.subagent.status, "running");
+        assert.isNull(subagentEvents().at(-1)?.subagent.result);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000646",
+            result: "Delayed acknowledgement observed.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 3, "ack turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps a subagent tool ordinal stable across turn re-derivation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "task-cross-turn-tool-ordinal";
+        const launchToolUseId = "toolu-cross-turn-tool-launch";
+        const childToolUseId = "toolu-cross-turn-child-tool";
+        const childToolItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === childToolUseId
+              ? [event.turnItem]
+              : [],
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-cross-turn-tool-ordinal-1"),
+            text: "Launch a child tool call.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: launchToolUseId,
+            description: "Cross-turn child tool",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Run one tool across the turn boundary.",
+            uuid: "00000000-0000-4000-8000-000000000647",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: childToolUseId,
+                  name: "Bash",
+                  input: { command: "printf done" },
+                },
+              ],
+            },
+            parent_tool_use_id: launchToolUseId,
+            uuid: "00000000-0000-4000-8000-000000000648",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => childToolItems().at(-1)?.status === "running",
+          "child tool started",
+        );
+        const startedItem = childToolItems().at(-1);
+        assert.isDefined(startedItem);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000649",
+            result: "Root turn settled while the child tool ran.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        assert.equal(childToolItems().at(-1)?.status, "running");
+        assert.isFalse(childToolItems().some((item) => item.status === "failed"));
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-cross-turn-tool-ordinal-2"),
+            text: "Receive the child tool result.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: childToolUseId,
+                  content: "done",
+                },
+              ],
+            },
+            parent_tool_use_id: launchToolUseId,
+            uuid: "00000000-0000-4000-8000-000000000650",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => childToolItems().at(-1)?.status === "completed",
+          "child tool completed",
+        );
+        const completedItem = childToolItems().at(-1);
+        assert.isDefined(completedItem);
+        assert.equal(completedItem?.id, startedItem?.id);
+        assert.equal(completedItem?.ordinal, startedItem?.ordinal);
+        assert.equal(completedItem?.threadId, startedItem?.threadId);
+        const childToolStatuses = childToolItems().map((item) => item.status);
+        assert.equal(childToolStatuses[0], "running");
+        assert.equal(childToolStatuses.at(-1), "completed");
+        assert.equal(childToolStatuses.filter((status) => status === "completed").length, 1);
+        assert.isFalse(childToolStatuses.includes("failed"));
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000651",
+            result: "Child tool result received.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );

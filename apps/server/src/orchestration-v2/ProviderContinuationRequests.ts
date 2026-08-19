@@ -6,16 +6,21 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+
+export const PROVIDER_CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
 export interface ProviderContinuationRequest {
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
+  /** Overrides the queued message text without discarding provider-specific detail. */
+  readonly messageText?: string;
   /**
    * Durable ownership for an app-owned delegated-task completion delivery.
    * The continuation worker re-reads the cohort before dispatching so a later
@@ -44,6 +49,8 @@ export interface ProviderContinuationRequest {
   ) => Effect.Effect<Option.Option<A>, E, R>;
   /** Clears a pending offer that the continuation worker intentionally drops. */
   readonly clearIfCurrent?: () => Effect.Effect<void>;
+  /** Releases adapter state when continuation preparation or dispatch fails. */
+  readonly failIfCurrent?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>;
 }
 
 /**
