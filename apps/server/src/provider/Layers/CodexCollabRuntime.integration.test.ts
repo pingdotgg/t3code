@@ -305,6 +305,26 @@ describe("CodexSessionRuntime collab integration", () => {
         const item = (entry.params as { readonly item?: { readonly type?: unknown } }).item;
         return item?.type !== "subAgentActivity";
       });
+      const failedSpawnStarted = {
+        method: "item/started",
+        params: {
+          threadId: ROOT,
+          turnId: "root-failed-spawn-turn",
+          startedAtMs: 1785898349264,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_failed_spawn",
+            tool: "spawnAgent",
+            status: "inProgress",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            agentsStates: {
+              [CHILD_A]: { message: null, status: "pendingInit" },
+            },
+            prompt: "Audit this work",
+          },
+        },
+      };
       const failedSpawn = {
         method: "item/completed",
         params: {
@@ -369,6 +389,7 @@ describe("CodexSessionRuntime collab integration", () => {
         JSON.stringify({
           rootThreadId: ROOT,
           notifications: [
+            failedSpawnStarted,
             failedSpawn,
             partiallyFailedSpawn,
             ...childTrafficWithoutRegistration,
@@ -402,7 +423,18 @@ describe("CodexSessionRuntime collab integration", () => {
         .filter((event) => event.method === "collabAgent/started")
         .map((event) => (event.payload as { agentThreadId?: string }).agentThreadId)
         .filter((agentThreadId): agentThreadId is string => agentThreadId !== undefined);
-      assert.deepEqual(startedChildIds, [CHILD_B]);
+      assert.deepEqual(new Set(startedChildIds), new Set([CHILD_A, CHILD_B]));
+      const failedChildStatuses = events.filter(
+        (event) =>
+          event.method === "collabAgent/statusChanged" &&
+          (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+      );
+      assert.equal(failedChildStatuses.length, 1);
+      const failedChildStatus = failedChildStatuses[0];
+      assert.isDefined(failedChildStatus);
+      assert.deepEqual((failedChildStatus.payload as { status?: unknown }).status, {
+        type: "systemError",
+      });
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

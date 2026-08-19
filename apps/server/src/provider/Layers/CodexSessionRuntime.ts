@@ -678,6 +678,8 @@ interface CollabChildAgentState {
    * "direct:no-turn" CTA (review finding).
    */
   readonly spawnTurnId: TurnId | undefined;
+  /** Spawn item that first registered this child, for failed-spawn cleanup. */
+  readonly spawnItemId: string | undefined;
 }
 
 function readThreadSpawnSource(thread: { readonly source: unknown }):
@@ -757,6 +759,27 @@ function readCollabSpawnChildThreadIds(item: CodexCollabAgentToolCall): Readonly
       return status !== "errored" && status !== "notFound";
     },
   );
+}
+
+function readCollabSpawnFailedChildThreadIds(
+  item: CodexCollabAgentToolCall,
+): ReadonlyArray<string> {
+  if (item.tool !== "spawnAgent") {
+    return [];
+  }
+
+  const failedThreadIds = new Set<string>();
+  if (item.status === "failed") {
+    for (const threadId of [...item.receiverThreadIds, ...Object.keys(item.agentsStates)]) {
+      failedThreadIds.add(threadId);
+    }
+  }
+  for (const [threadId, state] of Object.entries(item.agentsStates)) {
+    if (state.status === "errored" || state.status === "notFound") {
+      failedThreadIds.add(threadId);
+    }
+  }
+  return Array.from(failedThreadIds);
 }
 
 function readCollabSpawnTitle(prompt: string | null | undefined): string | undefined {
@@ -1084,6 +1107,49 @@ export const makeCodexSessionRuntime = (
           notification.params.item.type === "collabAgentToolCall"
         ) {
           const item = notification.params.item;
+          if (notification.method === "item/completed") {
+            const children = yield* Ref.get(collabChildAgentsRef);
+            const failedChildAgents = readCollabSpawnFailedChildThreadIds(item).flatMap(
+              (agentThreadId) => {
+                const child = children.get(agentThreadId);
+                return child?.spawnItemId === item.id ? [[agentThreadId, child] as const] : [];
+              },
+            );
+            if (failedChildAgents.length > 0) {
+              // A failed completion can arrive after item/started already
+              // emitted task.started. Settle and remove only children owned by
+              // this spawn item so failed attempts cannot leave phantom rows.
+              yield* Ref.update(collabChildAgentsRef, (current) => {
+                const next = new Map(current);
+                for (const [agentThreadId] of failedChildAgents) {
+                  next.delete(agentThreadId);
+                }
+                return next;
+              });
+              yield* Ref.update(collabChildLiveTurnsRef, (current) => {
+                const next = new Map(current);
+                for (const [agentThreadId] of failedChildAgents) {
+                  next.delete(agentThreadId);
+                }
+                return next;
+              });
+              for (const [, child] of failedChildAgents) {
+                yield* emitEvent({
+                  kind: "notification",
+                  threadId: options.threadId,
+                  ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+                  method: "collabAgent/statusChanged",
+                  payload: {
+                    agentThreadId: child.agentThreadId,
+                    ...(child.nickname ? { nickname: child.nickname } : {}),
+                    ...(child.role ? { role: child.role } : {}),
+                    ...(child.agentPath ? { agentPath: child.agentPath } : {}),
+                    status: { type: "systemError" },
+                  },
+                });
+              }
+            }
+          }
           const childThreadIds = readCollabSpawnChildThreadIds(item);
           if (childThreadIds.length > 0) {
             const session = yield* Ref.get(sessionRef);
@@ -1110,6 +1176,7 @@ export const makeCodexSessionRuntime = (
                 depth: existingChild?.depth,
                 parentThreadId: existingChild?.parentThreadId ?? parentThreadId,
                 spawnTurnId: existingChild?.spawnTurnId ?? parentTurnId,
+                spawnItemId: existingChild ? existingChild.spawnItemId : item.id,
               };
               yield* Ref.update(collabChildAgentsRef, (current) => {
                 const next = new Map(current);
@@ -1168,6 +1235,7 @@ export const makeCodexSessionRuntime = (
             parentThreadId:
               spawn.parentThreadId ?? thread.parentThreadId ?? existingChild?.parentThreadId,
             spawnTurnId,
+            spawnItemId: existingChild?.spawnItemId,
           };
           yield* Ref.update(collabChildAgentsRef, (current) => {
             const next = new Map(current);
@@ -1235,6 +1303,7 @@ export const makeCodexSessionRuntime = (
               depth: existing?.depth,
               parentThreadId: existing?.parentThreadId,
               spawnTurnId: existing ? existing.spawnTurnId : activitySpawnTurnId,
+              spawnItemId: existing?.spawnItemId,
             });
             return next;
           });
