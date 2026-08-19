@@ -359,6 +359,8 @@ const RawCommitSchema = Schema.Struct({
 
 const RawDetailSchema = Schema.Struct({
   ...RawListItemSchema.fields,
+  baseRefOid: Schema.optional(Schema.NullOr(Schema.String)),
+  headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   /** Names the fork a pull request came from, which is what qualifies its head ref. */
   headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
   body: Schema.optional(Schema.String),
@@ -370,6 +372,11 @@ const RawDetailSchema = Schema.Struct({
    * the question the page asks is whether one exists.
    */
   autoMergeRequest: Schema.optional(Schema.NullOr(Schema.Unknown)),
+});
+
+const RawPullRequestDiffRevisionSchema = Schema.Struct({
+  baseRefOid: Schema.optional(Schema.NullOr(Schema.String)),
+  headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawActivitySchema = Schema.Struct({
@@ -1023,6 +1030,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
   readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly diffRevision?: { readonly baseOid: string; readonly headOid: string };
   /** Absent where `gh` did not answer for auto-merge at all, which is not the same as off. */
   readonly autoMergeEnabled?: boolean;
 }
@@ -1361,6 +1369,8 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
 }
 
 function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRequestDetail {
+  const baseOid = trimmed(raw.baseRefOid);
+  const headOid = trimmed(raw.headRefOid);
   return {
     ...toListItem(raw),
     headRepositoryOwner: trimmed(raw.headRepositoryOwner?.login),
@@ -1369,6 +1379,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
     mergedAt: trimmed(raw.mergedAt),
     closedAt: trimmed(raw.closedAt),
     checks: toChecks(raw.statusCheckRollup),
+    ...(baseOid === null || headOid === null ? {} : { diffRevision: { baseOid, headOid } }),
     // A JSON null is GitHub saying "nobody armed this"; a missing key is GitHub not saying, and
     // the difference survives here rather than being flattened into false.
     ...(raw.autoMergeRequest === undefined
@@ -1391,6 +1402,7 @@ const decodeSearch = decodeJsonResult(RawSearchSchema);
 const decodeSearchItem = Schema.decodeUnknownExit(RawSearchItemSchema);
 const decodeStats = decodeJsonResult(RawStatsSchema);
 const decodeDetail = decodeJsonResult(RawDetailSchema);
+const decodePullRequestDiffRevision = decodeJsonResult(RawPullRequestDiffRevisionSchema);
 const decodeActivity = decodeJsonResult(RawActivitySchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRepositoryAccess = decodeJsonResult(RawRepositoryAccessSchema);
@@ -1549,6 +1561,16 @@ export function decodePullRequestDetailJson(
   return Result.isSuccess(decoded)
     ? Result.succeed(toDetail(decoded.success))
     : Result.fail(decoded.failure);
+}
+
+export function decodePullRequestDiffRevisionJson(
+  raw: string,
+): Result.Result<{ readonly baseOid: string; readonly headOid: string } | null, DecodeFailure> {
+  const decoded = decodePullRequestDiffRevision(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const baseOid = trimmed(decoded.success.baseRefOid);
+  const headOid = trimmed(decoded.success.headRefOid);
+  return Result.succeed(baseOid === null || headOid === null ? null : { baseOid, headOid });
 }
 
 export function decodePullRequestActivityJson(

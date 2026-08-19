@@ -24,8 +24,8 @@ function pullRequest(overrides: Record<string, unknown> = {}): Record<string, un
     created_on: "2026-06-16T05:04:32.258456+00:00",
     updated_on: "2026-06-16T05:04:33.750542+00:00",
     author: { display_name: "Bilal Hassan", nickname: "bilal", type: "user" },
-    source: { branch: { name: "feat/page" } },
-    destination: { branch: { name: "master" } },
+    source: { branch: { name: "feat/page" }, commit: { hash: "head-oid" } },
+    destination: { branch: { name: "master" }, commit: { hash: "base-oid" } },
     links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/897" } },
     ...overrides,
   };
@@ -105,6 +105,28 @@ describe("decodePullRequestPageJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
+  it("carries the immutable diff endpoints", () => {
+    expect(
+      expectSuccess(decodePullRequestJson(JSON.stringify(pullRequest()))).diffRevision,
+    ).toEqual({ baseOid: "base-oid", headOid: "head-oid" });
+  });
+
+  it("keeps a usable pull request when immutable diff endpoints are null or partial", () => {
+    const nullCommit = expectSuccess(
+      decodePullRequestJson(
+        JSON.stringify(pullRequest({ source: { branch: { name: "feat/page" }, commit: null } })),
+      ),
+    );
+    const partialCommit = expectSuccess(
+      decodePullRequestJson(
+        JSON.stringify(pullRequest({ source: { branch: { name: "feat/page" }, commit: {} } })),
+      ),
+    );
+
+    expect(nullCommit.diffRevision).toBeUndefined();
+    expect(partialCommit.diffRevision).toBeUndefined();
+  });
+
   it("reads reviewers as review requests", () => {
     const decoded = expectSuccess(
       decodePullRequestJson(

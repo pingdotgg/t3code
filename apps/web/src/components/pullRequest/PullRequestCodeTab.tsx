@@ -3,6 +3,7 @@ import type { CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
+  PullRequestDiffResult,
   PullRequestDiffSide,
   PullRequestOmittedFileStat,
   PullRequestRef,
@@ -18,13 +19,22 @@ import {
   Columns2Icon,
   MessageSquareIcon,
   MessageSquareOffIcon,
+  RefreshCwIcon,
   Rows3Icon,
   TextWrapIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -50,8 +60,9 @@ import {
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useEnvironmentQuery } from "~/state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
@@ -70,6 +81,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
 import { PullRequestReviewBar } from "./PullRequestReviewBar";
+import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
@@ -120,6 +132,16 @@ const REPLACE_FILE_COUNTS_CSS = `
 /** Nothing loaded yet, as one identity, so the memos below do not see a new array every render. */
 const NO_SLICES: ReadonlyArray<DiffSlice> = [];
 
+function diffSlice(cursor: string | null, page: PullRequestDiffResult): DiffSlice {
+  return {
+    cursor,
+    patch: page.patch,
+    truncated: page.truncated,
+    nextCursor: page.nextCursor,
+    omittedFileStats: page.omittedFileStats ?? [],
+  };
+}
+
 /** A group while it is still gathering what belongs on its line. */
 interface MutableAnnotationGroup {
   readonly side: PullRequestDiffSide;
@@ -146,6 +168,32 @@ export interface PullRequestAgentSelectionInput {
   readonly request: string;
 }
 
+interface PullRequestCodeSnapshot {
+  readonly detail: PullRequestDetailView;
+  /** Monotonic identity for successful refreshes, including same-revision replacements. */
+  readonly version: number;
+  /** Aggregate first page applied atomically with `detail`. */
+  readonly firstPageDiff: PullRequestDiffResult;
+}
+
+interface AppliedCommitSnapshotIdentity {
+  readonly version: number | null;
+  readonly commit: string | null;
+}
+
+export function shouldRefreshAppliedCommitDiff(
+  previous: AppliedCommitSnapshotIdentity,
+  next: AppliedCommitSnapshotIdentity,
+): boolean {
+  return (
+    previous.version !== null &&
+    next.version !== null &&
+    previous.version !== next.version &&
+    next.commit !== null &&
+    previous.commit === next.commit
+  );
+}
+
 /** The contract's sides named the way the diff viewer names them, and back again. */
 function toViewerSide(side: PullRequestDiffSide) {
   return side === "left" ? ("deletions" as const) : ("additions" as const);
@@ -168,6 +216,54 @@ function getReviewPositionAnchor(position: PullRequestReviewPosition): {
   }
 }
 
+/** The bootstrap occupies the diff body so the toolbar around it never changes ownership. */
+export function PullRequestCodeBootstrapBody({
+  error,
+  onRetry,
+}: {
+  error: string | null;
+  onRetry: () => void;
+}) {
+  return error === null ? (
+    <DiffPanelLoadingState label="Loading pull request diff..." />
+  ) : (
+    <PullRequestsUnavailableState
+      title="Could not load pull request diff"
+      error={error}
+      onRetry={onRetry}
+    />
+  );
+}
+
+/** Keeps an applied diff readable while making a failed attempt to replace it explicit. */
+export function PullRequestCodeRefreshFailure({
+  error,
+  onRetry,
+}: {
+  error: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="flex shrink-0 items-start gap-2 border-b border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs"
+    >
+      <TriangleAlertIcon
+        aria-hidden
+        className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-500"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-foreground">Could not refresh pull request diff</p>
+        <p className="mt-0.5 text-muted-foreground">Showing the last loaded version. {error}</p>
+      </div>
+      <Button size="xs" variant="outline" className="shrink-0" onClick={onRetry}>
+        <RefreshCwIcon aria-hidden className="size-3" />
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 /**
  * Whether the viewer draws this line at all. A line counts the new file on the right and the old
  * one on the left, and each hunk covers one run of each; a line outside every run — a
@@ -182,7 +278,10 @@ function getReviewPositionAnchor(position: PullRequestReviewPosition): {
 export function PullRequestCodeTab({
   environmentId,
   reference,
-  detail,
+  detail: liveDetail,
+  snapshot,
+  bootstrapError,
+  onBootstrapRetry,
   selectedCommitOid,
   onSelectedCommitChange,
   pendingFinding,
@@ -190,11 +289,15 @@ export function PullRequestCodeTab({
   onFixFinding,
   onAddToAgentSelection,
   onRefresh,
-  refreshToken = 0,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  /** Live detail keeps the toolbar available while the first aggregate page is bootstrapped. */
   detail: PullRequestDetailView;
+  /** Cohesive detail and first-page diff; null until the aggregate bootstrap is complete. */
+  snapshot: PullRequestCodeSnapshot | null;
+  bootstrapError: string | null;
+  onBootstrapRetry: () => void | Promise<void>;
   /** Commit whose diff is open. Null keeps the whole pull-request diff selected. */
   selectedCommitOid: string | null;
   onSelectedCommitChange: (oid: string | null) => void;
@@ -205,9 +308,22 @@ export function PullRequestCodeTab({
   /** Absent where there is no active agent composer to receive a local comment. */
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
   onRefresh: () => void;
-  /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
-  refreshToken?: number;
 }) {
+  // Once a snapshot exists, every diff-dependent surface reads its applied detail. Before then,
+  // live detail supplies the same toolbar chrome without allowing any diff request to start here.
+  const detail = snapshot?.detail ?? liveDetail;
+  const hasSnapshot = snapshot !== null;
+  const [bootstrapRetryPending, setBootstrapRetryPending] = useState(false);
+  const retryBootstrap = useCallback(async () => {
+    setBootstrapRetryPending(true);
+    try {
+      await onBootstrapRetry();
+    } finally {
+      setBootstrapRetryPending(false);
+    }
+  }, [onBootstrapRetry]);
+  const snapshotVersion = snapshot?.version ?? 0;
+  const firstPageDiff = snapshot?.firstPageDiff ?? null;
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
@@ -238,10 +354,21 @@ export function PullRequestCodeTab({
   const parseCache = useRef(new Map<string, RenderablePatch>());
 
   const referenceKey = pullRequestReviewKey(reference);
+  const { projectId, repository, number } = reference;
   const commit = selectedCommitOid;
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
-  const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
+  const scopeKey =
+    commit === null ? `${referenceKey}@aggregate:${snapshotVersion}` : `${referenceKey}@${commit}`;
+  const firstPageSlice = useMemo(
+    () => (firstPageDiff === null ? null : diffSlice(null, firstPageDiff)),
+    [firstPageDiff],
+  );
+  const initialSlices = useMemo(
+    () =>
+      hasSnapshot && commit === null && firstPageSlice !== null ? [firstPageSlice] : NO_SLICES,
+    [commit, firstPageSlice, hasSnapshot],
+  );
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -251,79 +378,156 @@ export function PullRequestCodeTab({
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({
+      key: scopeKey,
+      cursor: null,
+      slices: initialSlices,
+    });
     parseCache.current.clear();
-  }, [scopeKey]);
+  }, [initialSlices, scopeKey]);
 
-  const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
+  // Project the new first page synchronously; the reset effect runs after this render.
+  const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : initialSlices;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
   const diffQuery = useEnvironmentQuery(
-    pullRequestEnvironment.diff({
-      environmentId,
-      input: {
-        ...reference,
-        ...(cursor === null ? {} : { cursor }),
-        ...(commit === null ? {} : { commit }),
-      },
-    }),
+    !hasSnapshot || commit === null
+      ? null
+      : pullRequestEnvironment.diff({
+          environmentId,
+          input: {
+            ...reference,
+            ...(cursor === null ? {} : { cursor }),
+            ...(commit === null ? {} : { commit }),
+          },
+        }),
+  );
+  const runDiffQuery = useAtomQueryRunner(pullRequestEnvironment.diff, {
+    reportFailure: false,
+  });
+  const registry = useContext(RegistryContext);
+  const appendDiffPage = useCallback(
+    (pageCursor: string | null, data: PullRequestDiffResult) => {
+      setSliceState((previous) => {
+        const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
+        const next = diffSlice(pageCursor, data);
+        const index = slices.findIndex((slice) => slice.cursor === pageCursor);
+        if (index === -1) {
+          return { key: scopeKey, cursor: pageCursor, slices: [...slices, next] };
+        }
+        const existing = slices[index];
+        if (
+          existing !== undefined &&
+          existing.patch === next.patch &&
+          existing.truncated === next.truncated &&
+          existing.nextCursor === next.nextCursor &&
+          existing.omittedFileStats.length === next.omittedFileStats.length &&
+          existing.omittedFileStats.every((file, index) => {
+            const refreshed = next.omittedFileStats[index];
+            return (
+              refreshed !== undefined &&
+              refreshed.path === file.path &&
+              refreshed.additions === file.additions &&
+              refreshed.deletions === file.deletions
+            );
+          })
+        ) {
+          return previous;
+        }
+        return { key: scopeKey, cursor: pageCursor, slices: [...slices.slice(0, index), next] };
+      });
+    },
+    [scopeKey],
   );
   // Each answer is kept as its own slice. Concatenating the patches and re-parsing the growing
   // text would cost more with every slice, which is the wall the slicing exists to remove.
   useEffect(() => {
-    const data = diffQuery.data;
-    if (data === null) return;
-    setSliceState((previous) => {
-      const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
-      const next = {
-        cursor,
-        patch: data.patch,
-        truncated: data.truncated,
-        nextCursor: data.nextCursor,
-        omittedFileStats: data.omittedFileStats ?? [],
-      };
-      const index = slices.findIndex((slice) => slice.cursor === cursor);
-      if (index === -1) {
-        return { key: scopeKey, cursor, slices: [...slices, next] };
-      }
-      const existing = slices[index];
-      if (
-        existing !== undefined &&
-        existing.patch === next.patch &&
-        existing.truncated === next.truncated &&
-        existing.nextCursor === next.nextCursor &&
-        existing.omittedFileStats.length === next.omittedFileStats.length &&
-        existing.omittedFileStats.every((file, index) => {
-          const refreshed = next.omittedFileStats[index];
-          return (
-            refreshed !== undefined &&
-            refreshed.path === file.path &&
-            refreshed.additions === file.additions &&
-            refreshed.deletions === file.deletions
-          );
-        })
-      ) {
-        return previous;
-      }
-      // A page that came back different means the diff moved under the review. The slices
-      // after it go with the replacement: their cursors were positions in the old diff.
-      return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
-    });
-  }, [cursor, diffQuery.data, scopeKey]);
-  // The refresh button rereads from the first page rather than the page the reader is on:
-  // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
-  const refreshFirstDiffPage = useAtomRefresh(
-    pullRequestEnvironment.diff({
+    if (commit === null || diffQuery.data === null) return;
+    appendDiffPage(cursor, diffQuery.data);
+  }, [appendDiffPage, commit, cursor, diffQuery.data]);
+  const [aggregateCursorLoad, setAggregateCursorLoad] = useState<{
+    key: string;
+    error: string | null;
+    pending: boolean;
+  }>({ key: "", error: null, pending: false });
+  const aggregateCursorGeneration = useRef(0);
+  const aggregateCursorKey =
+    hasSnapshot && commit === null && cursor !== null
+      ? JSON.stringify([environmentId, referenceKey, snapshotVersion, cursor])
+      : null;
+  const refreshAggregateCursor = useCallback(async () => {
+    if (!hasSnapshot || commit !== null || cursor === null || aggregateCursorKey === null) return;
+    const generation = ++aggregateCursorGeneration.current;
+    setAggregateCursorLoad({ key: aggregateCursorKey, error: null, pending: true });
+    const target = {
       environmentId,
-      input: { ...reference, ...(commit === null ? {} : { commit }) },
-    }),
-  );
-  const appliedRefreshToken = useRef(refreshToken);
+      input: { projectId, repository, number, cursor },
+    };
+    registry.refresh(pullRequestEnvironment.diff(target));
+    const result = await runDiffQuery(target);
+    if (generation !== aggregateCursorGeneration.current) return;
+    if (result._tag === "Failure") {
+      setAggregateCursorLoad({
+        key: aggregateCursorKey,
+        error: formatEnvironmentQueryError(result.cause),
+        pending: false,
+      });
+      return;
+    }
+    appendDiffPage(cursor, result.value);
+    setAggregateCursorLoad({ key: aggregateCursorKey, error: null, pending: false });
+  }, [
+    aggregateCursorKey,
+    appendDiffPage,
+    commit,
+    cursor,
+    environmentId,
+    number,
+    projectId,
+    repository,
+    registry,
+    runDiffQuery,
+    hasSnapshot,
+  ]);
   useEffect(() => {
-    if (appliedRefreshToken.current === refreshToken) return;
-    appliedRefreshToken.current = refreshToken;
+    if (aggregateCursorKey === null) return;
+    void refreshAggregateCursor();
+    return () => {
+      aggregateCursorGeneration.current++;
+    };
+  }, [aggregateCursorKey, refreshAggregateCursor]);
+  const diffPage =
+    commit === null && cursor === null
+      ? { error: null, isPending: false }
+      : aggregateCursorKey !== null
+        ? {
+            error:
+              aggregateCursorLoad.key === aggregateCursorKey ? aggregateCursorLoad.error : null,
+            isPending:
+              aggregateCursorLoad.key !== aggregateCursorKey || aggregateCursorLoad.pending,
+          }
+        : diffQuery;
+  // A later snapshot rereads a selected commit from its first page rather than the page the
+  // reader is on: cursors are positions in one snapshot, and a fresh snapshot starts over.
+  const appliedCommitSnapshot = useRef<AppliedCommitSnapshotIdentity>({
+    version: snapshot?.version ?? null,
+    commit,
+  });
+  useEffect(() => {
+    const next = { version: snapshot?.version ?? null, commit };
+    const previous = appliedCommitSnapshot.current;
+    appliedCommitSnapshot.current = next;
+    // A newly selected commit mounts its atom and performs the sole first read. Only a later
+    // applied snapshot for that same commit needs to force the atom whose key did not change.
+    if (!shouldRefreshAppliedCommitDiff(previous, next) || next.commit === null) return;
+    // The panel already refreshes the mutable aggregate after invalidating the host cache.
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    refreshFirstDiffPage();
-  }, [refreshToken, scopeKey, refreshFirstDiffPage]);
+    registry.refresh(
+      pullRequestEnvironment.diff({
+        environmentId,
+        input: { ...reference, commit: next.commit },
+      }),
+    );
+  }, [commit, environmentId, reference, registry, scopeKey, snapshot?.version]);
   const reviewKey = referenceKey;
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -343,13 +547,23 @@ export function PullRequestCodeTab({
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
   const loadDiffFiles = useMemo(
     () =>
-      createPullRequestDiffFileContentsLoader(getDiffFileContents, {
-        environmentId,
-        reference,
-        commit,
-        cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
-      }),
-    [commit, detail.updatedAt, environmentId, getDiffFileContents, reference, referenceKey],
+      !hasSnapshot
+        ? undefined
+        : createPullRequestDiffFileContentsLoader(getDiffFileContents, {
+            environmentId,
+            reference,
+            commit,
+            cacheKey: `pull-request:${environmentId}:${referenceKey}:${snapshotVersion}:${commit ?? "all"}`,
+          }),
+    [
+      commit,
+      environmentId,
+      getDiffFileContents,
+      hasSnapshot,
+      reference,
+      referenceKey,
+      snapshotVersion,
+    ],
   );
 
   // What is offered is the intersection of two different questions: what this host can do at
@@ -553,8 +767,8 @@ export function PullRequestCodeTab({
       sentinel === null ||
       nextCursor === null ||
       nextCursor === cursor ||
-      diffQuery.isPending ||
-      diffQuery.error !== null
+      diffPage.isPending ||
+      diffPage.error !== null
     ) {
       return;
     }
@@ -569,7 +783,7 @@ export function PullRequestCodeTab({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [cursor, diffQuery.error, diffQuery.isPending, nextCursor, sentinel]);
+  }, [cursor, diffPage.error, diffPage.isPending, nextCursor, sentinel]);
 
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
@@ -670,19 +884,32 @@ export function PullRequestCodeTab({
           ref={setSentinel}
           className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
         >
-          {diffQuery.error !== null ? (
+          {diffPage.error !== null ? (
             <>
               <span>The rest of this diff could not be loaded.</span>
-              <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  aggregateCursorKey === null ? diffQuery.refresh() : void refreshAggregateCursor()
+                }
+              >
                 Retry
               </Button>
             </>
-          ) : diffQuery.isPending ? (
+          ) : diffPage.isPending ? (
             "Loading more files..."
           ) : null}
         </div>
       ),
-    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
+    [
+      aggregateCursorKey,
+      nextCursor,
+      diffPage.error,
+      diffPage.isPending,
+      diffQuery.refresh,
+      refreshAggregateCursor,
+    ],
   );
 
   const renderHeaderPrefix = useCallback(
@@ -745,7 +972,7 @@ export function PullRequestCodeTab({
       theme: resolveDiffThemeName(resolvedTheme),
       themeType: resolvedTheme,
       stickyHeaders: true,
-      loadDiffFiles,
+      ...(loadDiffFiles ? { loadDiffFiles } : {}),
       enableGutterUtility: canCommentOnLines && draft === null,
       enableLineSelection: canCommentOnLines && draft === null,
       // Two gestures reach the same place: dragging the line numbers selects a range, and the
@@ -1163,6 +1390,9 @@ export function PullRequestCodeTab({
   const withReviewBar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
+      {hasSnapshot && bootstrapError !== null ? (
+        <PullRequestCodeRefreshFailure error={bootstrapError} onRetry={retryBootstrap} />
+      ) : null}
       {/* The overlay is anchored to this wrapper, not the scroller: absolute positioning
           inside an overflowing element tracks the content's bottom edge, which would carry
           the trigger away with the first scroll. */}
@@ -1173,17 +1403,26 @@ export function PullRequestCodeTab({
     </div>
   );
 
+  if (!hasSnapshot) {
+    return withReviewBar(
+      <PullRequestCodeBootstrapBody
+        error={bootstrapRetryPending ? null : bootstrapError}
+        onRetry={retryBootstrap}
+      />,
+    );
+  }
+
   // Under the toolbar rather than in place of it, so choosing a commit does not take the
   // dropdown that was just used off the screen while its diff loads.
-  if (diffQuery.isPending && loadedSlices.length === 0) {
+  if (diffPage.isPending && loadedSlices.length === 0) {
     return withReviewBar(<DiffPanelLoadingState label="Loading pull request diff..." />);
   }
 
   // A slice that fails once there are files on screen is reported at the end of them instead:
   // the diff already read is worth more than the error that stopped it growing.
-  if (diffQuery.error && loadedSlices.length === 0) {
+  if (diffPage.error && loadedSlices.length === 0) {
     return withReviewBar(
-      <p className="px-4 py-5 text-sm text-muted-foreground">{diffQuery.error}</p>,
+      <p className="px-4 py-5 text-sm text-muted-foreground">{diffPage.error}</p>,
     );
   }
 
@@ -1247,6 +1486,9 @@ export function PullRequestCodeTab({
     <DiffWorkerPoolProvider>
       <div className="flex h-full min-h-0 flex-col">
         {toolbar}
+        {bootstrapError !== null ? (
+          <PullRequestCodeRefreshFailure error={bootstrapError} onRetry={retryBootstrap} />
+        ) : null}
         {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
         {orphanFiles.size > 0 ? (

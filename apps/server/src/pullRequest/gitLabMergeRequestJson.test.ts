@@ -137,6 +137,30 @@ describe("decodeMergeRequestListJson", () => {
 });
 
 describe("decodeMergeRequestDetailJson", () => {
+  it("carries the immutable diff endpoints", () => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(
+        detailJson({
+          diff_refs: { base_sha: "base-oid", head_sha: "head-oid", start_sha: "start-oid" },
+        }),
+      ),
+    );
+
+    expect(detail.diffRevision).toEqual({ baseOid: "start-oid", headOid: "head-oid" });
+  });
+
+  it("keeps usable detail when immutable diff endpoints are null or partial", () => {
+    expect(
+      expectSuccess(decodeMergeRequestDetailJson(detailJson({ diff_refs: { start_sha: null } })))
+        .diffRevision,
+    ).toBeUndefined();
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(detailJson({ diff_refs: { start_sha: "start-oid" } })),
+      ).diffRevision,
+    ).toBeUndefined();
+  });
+
   it("reads the description, file count and pipeline", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(

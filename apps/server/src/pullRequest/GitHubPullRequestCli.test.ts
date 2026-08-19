@@ -2067,6 +2067,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
         ),
       );
       mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output('{"baseRefOid":"base-oid","headRefOid":"head-oid"}')),
+      );
+      mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -2095,7 +2098,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(callAt(0).args.at(-1)).toBe(
         "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup,body,changedFiles,closedAt,headRepositoryOwner,autoMergeRequest",
       );
-      expect(callAt(1).args.at(-1)).toBe("author,comments,reviews,commits");
+      expect(callAt(1).args.join(" ")).toContain("repos/acme/web/pulls/7");
+      expect(detail.diffRevision).toEqual({ baseOid: "base-oid", headOid: "head-oid" });
+      expect(callAt(2).args.at(-1)).toBe("author,comments,reviews,commits");
     }),
   );
 

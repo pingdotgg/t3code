@@ -636,6 +636,8 @@ export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
  */
 export const PullRequestInvalidateInput = Schema.Struct({
   reference: Schema.optional(PullRequestRef),
+  /** With a reference, forget only its aggregate diff; omitted keeps the full refresh behavior. */
+  resource: Schema.optional(Schema.Literal("diff")),
 });
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 
@@ -661,6 +663,17 @@ export const PullRequestDetail = Schema.Struct({
   changedFiles: NonNegativeInt,
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
+  /**
+   * The immutable endpoints of the aggregate diff. Optional for hosts that cannot expose a diff
+   * or do not report both endpoints; unlike branch names and totals, this changes whenever either
+   * side of the comparison moves.
+   */
+  diffRevision: Schema.optional(
+    Schema.Struct({
+      baseOid: TrimmedNonEmptyString,
+      headOid: TrimmedNonEmptyString,
+    }),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   mergedAt: Schema.NullOr(IsoDateTime),

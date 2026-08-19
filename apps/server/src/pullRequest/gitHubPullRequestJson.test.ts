@@ -191,6 +191,8 @@ describe("pull request detail decoding", () => {
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt: "2026-07-05T00:00:00Z",
     body: "Body",
+    baseRefOid: "base-oid",
+    headRefOid: "head-oid",
     statusCheckRollup: [
       { __typename: "CheckRun", name: "build", status: "IN_PROGRESS" },
       { __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "FAILURE" },
@@ -221,6 +223,26 @@ describe("pull request detail decoding", () => {
       ["test", "failure"],
       ["ci/legacy", "success"],
     ]);
+  });
+
+  it("carries the immutable diff endpoints", () => {
+    expect(expectSuccess(decodePullRequestDetailJson(detailJson)).diffRevision).toEqual({
+      baseOid: "base-oid",
+      headOid: "head-oid",
+    });
+  });
+
+  it("keeps usable detail when immutable diff endpoints are null or partial", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const withoutHead = { ...raw, headRefOid: undefined };
+
+    expect(
+      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, baseRefOid: null })))
+        .diffRevision,
+    ).toBeUndefined();
+    expect(
+      expectSuccess(decodePullRequestDetailJson(JSON.stringify(withoutHead))).diffRevision,
+    ).toBeUndefined();
   });
 
   it("reads an auto-merge request as armed, its null as off and its absence as neither", () => {

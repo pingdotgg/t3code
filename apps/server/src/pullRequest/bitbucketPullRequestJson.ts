@@ -52,6 +52,9 @@ const RawUserSchema = Schema.Struct({
  */
 const RawBranchSchema = Schema.Struct({
   branch: Schema.Struct({ name: TrimmedNonEmptyString }),
+  commit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ hash: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)) })),
+  ),
 });
 
 const RawLinkSchema = Schema.Struct({ href: Schema.optional(Schema.String) });
@@ -178,6 +181,7 @@ export interface BitbucketPullRequest {
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
   readonly baseBranch: string;
+  readonly diffRevision?: { readonly baseOid: string; readonly headOid: string };
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   /**
@@ -285,6 +289,8 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     const actor = toActor(reviewer);
     return actor === null ? [] : [actor];
   });
+  const baseOid = raw.destination.commit?.hash ?? null;
+  const headOid = raw.source.commit?.hash ?? null;
   return {
     number: raw.id,
     title: raw.title,
@@ -292,6 +298,7 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     author: toActor(raw.author),
     headBranch: raw.source.branch.name,
     baseBranch: raw.destination.branch.name,
+    ...(baseOid === null || headOid === null ? {} : { diffRevision: { baseOid, headOid } }),
     state: toState(raw),
     isDraft: raw.draft ?? false,
     mergeability: "unknown",

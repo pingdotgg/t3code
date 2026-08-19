@@ -2792,6 +2792,167 @@ it.effect(
     }),
 );
 
+it.effect("scopes diff invalidation while full invalidation and mutations refresh every view", () =>
+  Effect.gen(function* () {
+    let detailCalls = 0;
+    let activityCalls = 0;
+    let aggregateDiffCalls = 0;
+    let commitDiffCalls = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => {
+            detailCalls += 1;
+            return Effect.succeed({
+              ...changeRequest(1, "2026-07-02T00:00:00Z"),
+              body: "detail",
+              changedFiles: 1,
+              diffRevision: { baseOid: "base-oid", headOid: "head-oid" },
+              mergedAt: null,
+              closedAt: null,
+              reviewers: [],
+              checks: [],
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+              viewerPermissions: {
+                actions: ["merge"],
+                comment: true,
+                resolve: true,
+                verdicts: ["comment", "approve", "request-changes"],
+                requestReviewers: true,
+              },
+            });
+          },
+          getChangeRequestActivity: () => {
+            activityCalls += 1;
+            return Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            });
+          },
+          getDiff: (input) => {
+            const commitScoped = input.commit !== undefined;
+            if (commitScoped) commitDiffCalls += 1;
+            else aggregateDiffCalls += 1;
+            return Effect.succeed({
+              patch: commitScoped
+                ? `commit-diff-${commitDiffCalls}`
+                : `aggregate-diff-${aggregateDiffCalls}`,
+              truncated: false,
+              nextCursor: null,
+            });
+          },
+        }),
+      ],
+    });
+
+    yield* Effect.all([
+      service.detail(reference),
+      service.activity(reference),
+      service.diff(reference),
+      service.diff({ ...reference, commit: "commit-oid" }),
+    ]);
+    yield* service.invalidate({ reference, resource: "diff" });
+    const [detail, activity, diff, commitDiff] = yield* Effect.all([
+      service.detail(reference),
+      service.activity(reference),
+      service.diff(reference),
+      service.diff({ ...reference, commit: "commit-oid" }),
+    ]);
+
+    assert.strictEqual(detail.body, "detail");
+    assert.deepStrictEqual(detail.diffRevision, { baseOid: "base-oid", headOid: "head-oid" });
+    assert.deepStrictEqual(activity.comments, []);
+    assert.strictEqual(diff.patch, "aggregate-diff-2");
+    assert.strictEqual(commitDiff.patch, "commit-diff-1");
+    assert.deepStrictEqual(
+      { detailCalls, activityCalls, aggregateDiffCalls, commitDiffCalls },
+      { detailCalls: 1, activityCalls: 1, aggregateDiffCalls: 2, commitDiffCalls: 1 },
+    );
+
+    yield* service.invalidate({ reference });
+    yield* Effect.all([
+      service.detail(reference),
+      service.activity(reference),
+      service.diff(reference),
+      service.diff({ ...reference, commit: "commit-oid" }),
+    ]);
+    assert.deepStrictEqual(
+      { detailCalls, activityCalls, aggregateDiffCalls, commitDiffCalls },
+      { detailCalls: 2, activityCalls: 2, aggregateDiffCalls: 3, commitDiffCalls: 2 },
+    );
+
+    yield* service.comment({ ...reference, body: "freshen every cached view" });
+    yield* Effect.all([
+      service.detail(reference),
+      service.activity(reference),
+      service.diff(reference),
+      service.diff({ ...reference, commit: "commit-oid" }),
+    ]);
+    assert.deepStrictEqual(
+      { detailCalls, activityCalls, aggregateDiffCalls, commitDiffCalls },
+      { detailCalls: 3, activityCalls: 3, aggregateDiffCalls: 4, commitDiffCalls: 3 },
+    );
+  }),
+);
+
+it.effect("does not revive aggregate diff pages after their scoped epoch is evicted", () =>
+  Effect.gen(function* () {
+    const calls = new Map<string, number>();
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: (input) => {
+            const page = input.cursor ?? "first";
+            const call = (calls.get(page) ?? 0) + 1;
+            calls.set(page, call);
+            return Effect.succeed({
+              patch: `${page}-${call}`,
+              truncated: false,
+              nextCursor: null,
+            });
+          },
+        }),
+      ],
+    });
+    const readPages = () =>
+      Effect.all([service.diff(reference), service.diff({ ...reference, cursor: "next-page" })]);
+
+    const initial = yield* readPages();
+    assert.deepStrictEqual(
+      initial.map(({ patch }) => patch),
+      ["first-1", "next-page-1"],
+    );
+
+    yield* service.invalidate({ reference, resource: "diff" });
+    const refreshed = yield* readPages();
+    assert.deepStrictEqual(
+      refreshed.map(({ patch }) => patch),
+      ["first-2", "next-page-2"],
+    );
+
+    // Fill the bounded epoch map past its capacity, evicting `reference`. Its new fallback epoch
+    // must differ from both epochs whose first and continuation pages remain in the diff cache.
+    yield* Effect.forEach(
+      Array.from({ length: 2_048 }, (_, index) => ({ ...reference, number: index + 2 })),
+      (other) => service.invalidate({ reference: other, resource: "diff" }),
+      { discard: true },
+    );
+
+    const afterEviction = yield* readPages();
+    assert.deepStrictEqual(
+      afterEviction.map(({ patch }) => patch),
+      ["first-3", "next-page-3"],
+    );
+  }),
+);
+
 it.effect("carries an armed auto-merge through to the detail, and silence as silence", () =>
   Effect.gen(function* () {
     const detailWith = (autoMergeEnabled: boolean | undefined) =>

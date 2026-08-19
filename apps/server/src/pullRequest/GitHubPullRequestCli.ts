@@ -33,6 +33,7 @@ import {
   decodeActorAvatarsJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
+  decodePullRequestDiffRevisionJson,
   decodePullRequestFilesJson,
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
@@ -1342,16 +1343,42 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.flatMap((result) => {
             const decoded = decodePullRequestDetailJson(result.stdout.trim());
-            return Result.isSuccess(decoded)
-              ? Effect.succeed(decoded.success)
-              : Effect.fail(
-                  new GitHubPullRequestReadError({
-                    command: "gh",
-                    cwd: input.cwd,
-                    operation: "getPullRequestDetail",
-                    cause: decoded.failure,
-                  }),
-                );
+            if (!Result.isSuccess(decoded)) {
+              return Effect.fail(
+                new GitHubPullRequestReadError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  operation: "getPullRequestDetail",
+                  cause: decoded.failure,
+                }),
+              );
+            }
+            const { owner, name } = parseRepositorySelector(input.repository);
+            return github
+              .execute({
+                cwd: input.cwd,
+                args: [
+                  "api",
+                  "--hostname",
+                  input.host,
+                  `repos/${owner}/${name}/pulls/${input.number}`,
+                  "--jq",
+                  "{baseRefOid: .base.sha, headRefOid: .head.sha}",
+                ],
+              })
+              .pipe(
+                Effect.flatMap((revisionResult) => {
+                  const revision = decodePullRequestDiffRevisionJson(revisionResult.stdout.trim());
+                  return Result.isSuccess(revision)
+                    ? Effect.succeed(
+                        revision.success === null
+                          ? decoded.success
+                          : { ...decoded.success, diffRevision: revision.success },
+                      )
+                    : Effect.succeed(decoded.success);
+                }),
+                Effect.orElseSucceed(() => decoded.success),
+              );
           }),
         ),
 

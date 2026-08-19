@@ -41,6 +41,18 @@ const RawPipelineSchema = Schema.Struct({
   source: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+const RawDiffRevisionSchema = Schema.Struct({
+  base_sha: Schema.String,
+  head_sha: Schema.String,
+  start_sha: Schema.String,
+});
+
+const RawOptionalDiffRevisionSchema = Schema.Struct({
+  base_sha: Schema.optional(Schema.NullOr(Schema.String)),
+  head_sha: Schema.optional(Schema.NullOr(Schema.String)),
+  start_sha: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
 const RawMergeRequestSchema = Schema.Struct({
   iid: Schema.Int,
   title: Schema.String,
@@ -87,6 +99,7 @@ const RawMergeRequestSchema = Schema.Struct({
    * single merge request — a list never carries it, however it is asked for.
    */
   diverged_commits_count: Schema.optional(Schema.NullOr(Schema.Int)),
+  diff_refs: Schema.optional(Schema.NullOr(RawOptionalDiffRevisionSchema)),
 });
 
 const RawNoteSchema = Schema.Struct({
@@ -139,15 +152,7 @@ const RawDiscussionSchema = Schema.Struct({
 });
 
 const RawDiffRefsSchema = Schema.Struct({
-  diff_refs: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        base_sha: Schema.String,
-        head_sha: Schema.String,
-        start_sha: Schema.String,
-      }),
-    ),
-  ),
+  diff_refs: Schema.optional(Schema.NullOr(RawDiffRevisionSchema)),
 });
 
 const RawCommitSchema = Schema.Struct({
@@ -222,6 +227,7 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly diffRevision?: { readonly baseOid: string; readonly headOid: string };
   /** False only where GitLab said so; an answer without the field leaves merging permitted. */
   readonly viewerCanMerge: boolean;
   /** The reviewers as GitLab addresses them, which is what writing the set back takes. */
@@ -358,6 +364,8 @@ function toListItem(
 
 function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLabMergeRequestDetail {
   const listItem = toListItem(raw);
+  const baseOid = trimmed(raw.diff_refs?.start_sha);
+  const headOid = trimmed(raw.diff_refs?.head_sha);
   const autoMerge =
     raw.merge_when_pipeline_succeeds == null && raw.auto_merge_enabled == null
       ? undefined
@@ -374,6 +382,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
       return actor === null ? [] : [actor];
     }),
     checks: toChecks(raw),
+    ...(baseOid === null || headOid === null ? {} : { diffRevision: { baseOid, headOid } }),
     viewerCanMerge: raw.user?.can_merge !== false,
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],

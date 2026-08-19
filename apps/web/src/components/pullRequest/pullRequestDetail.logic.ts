@@ -45,6 +45,159 @@ export function editPullRequestThreadComment<
 }
 
 /**
+ * Immutable diff endpoints where the host exposes them, plus the existing fallback signals for a
+ * host without them. Conversation timestamps and review activity deliberately stay out.
+ */
+export function pullRequestCodeRevision(
+  detail: Pick<
+    PullRequestDetailView,
+    | "additions"
+    | "baseBranch"
+    | "baseComparison"
+    | "behindBy"
+    | "changedFiles"
+    | "deletions"
+    | "diffRevision"
+  > & {
+    readonly commits: ReadonlyArray<Pick<PullRequestCommit, "oid">>;
+  },
+): string {
+  return JSON.stringify([
+    detail.baseBranch,
+    detail.diffRevision ?? null,
+    detail.baseComparison ?? null,
+    detail.behindBy ?? null,
+    detail.additions,
+    detail.deletions,
+    detail.changedFiles,
+    detail.commits.map((commit) => commit.oid),
+  ]);
+}
+
+/** Same-code conversation metadata may advance without replacing the applied code snapshot. */
+export function pullRequestCodeTabDetail<T extends Parameters<typeof pullRequestCodeRevision>[0]>(
+  applied: T,
+  appliedRevision: string,
+  observed: T | null,
+): T {
+  return observed !== null && pullRequestCodeRevision(observed) === appliedRevision
+    ? observed
+    : applied;
+}
+
+interface PullRequestDiffRefreshWork<Snapshot, Aggregate> {
+  readonly invalidate: () => Promise<unknown>;
+  readonly readSnapshot: () => Promise<PullRequestDiffRefreshResult<Snapshot>>;
+  readonly refreshAggregate: () => Promise<PullRequestDiffRefreshResult<Aggregate>>;
+  readonly setFailure: (error: string | null) => void;
+  readonly apply: (
+    scope: string,
+    codeRevision: string,
+    snapshot: Snapshot,
+    aggregate: Aggregate,
+  ) => void;
+}
+
+type PullRequestDiffRefreshResult<T> =
+  | { readonly _tag: "Success"; readonly value: T }
+  | { readonly _tag: "Failure"; readonly error: string };
+
+interface PullRequestDiffRefreshRequest<Snapshot, Aggregate> {
+  readonly generation: number;
+  readonly signal: string | null;
+  readonly work: PullRequestDiffRefreshWork<Snapshot, Aggregate>;
+}
+
+/** One latest-wins lane for every automatic and explicit refresh of the panel's current scope. */
+export function createPullRequestDiffRefreshCoordinator<Snapshot, Aggregate>(
+  revisionOf: (snapshot: Snapshot) => string,
+) {
+  let scope: string | null = null;
+  let generation = 0;
+  let appliedRevision: string | null = null;
+  let activeSignal: string | null = null;
+  let queued: PullRequestDiffRefreshRequest<Snapshot, Aggregate> | null = null;
+  let draining: Promise<void> | null = null;
+
+  const setScope = (nextScope: string) => {
+    if (scope === nextScope) return;
+    scope = nextScope;
+    generation++;
+    appliedRevision = null;
+    activeSignal = null;
+    queued = null;
+  };
+
+  const run = async () => {
+    try {
+      while (queued !== null) {
+        const request = queued;
+        queued = null;
+        const requestScope = scope;
+        if (requestScope === null) continue;
+        activeSignal = request.signal;
+        const isCurrent = () => scope === requestScope && generation === request.generation;
+        await request.work.invalidate();
+        if (!isCurrent()) continue;
+        const snapshotResult = await request.work.readSnapshot();
+        if (!isCurrent()) continue;
+        if (snapshotResult._tag === "Failure") {
+          request.work.setFailure(snapshotResult.error);
+          continue;
+        }
+        const snapshot = snapshotResult.value;
+        const codeRevision = revisionOf(snapshot);
+        activeSignal = codeRevision;
+        const aggregateResult = await request.work.refreshAggregate();
+        if (!isCurrent()) continue;
+        if (aggregateResult._tag === "Failure") {
+          request.work.setFailure(aggregateResult.error);
+          continue;
+        }
+        appliedRevision = codeRevision;
+        request.work.setFailure(null);
+        request.work.apply(requestScope, codeRevision, snapshot, aggregateResult.value);
+        activeSignal = null;
+      }
+    } finally {
+      // Clear before the promise settles, so an enqueue can never see a completed drain as live.
+      activeSignal = null;
+      draining = null;
+    }
+  };
+
+  const enqueue = (
+    nextScope: string,
+    signal: string | null,
+    explicit: boolean,
+    work: PullRequestDiffRefreshWork<Snapshot, Aggregate>,
+  ) => {
+    setScope(nextScope);
+    const latestSignal = queued?.signal ?? activeSignal;
+    if (
+      !explicit &&
+      (signal === latestSignal || (draining === null && signal === appliedRevision))
+    ) {
+      return draining ?? Promise.resolve();
+    }
+    generation++;
+    queued = { generation, signal, work };
+    if (draining === null) draining = run();
+    return draining;
+  };
+
+  return {
+    observe: (
+      nextScope: string,
+      snapshot: Snapshot,
+      work: PullRequestDiffRefreshWork<Snapshot, Aggregate>,
+    ) => enqueue(nextScope, revisionOf(snapshot), false, work),
+    refresh: (nextScope: string, work: PullRequestDiffRefreshWork<Snapshot, Aggregate>) =>
+      enqueue(nextScope, null, true, work),
+  };
+}
+
+/**
  * Whether the pull request on a right-panel surface is the thread's own one. Repository and
  * number are not enough: one environment can hold two checkouts of the same repository under
  * different projects, and the other project's checkout is somebody else's branch.

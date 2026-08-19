@@ -13,6 +13,7 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  createPullRequestDiffRefreshCoordinator,
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
@@ -24,6 +25,8 @@ import {
   orderPullRequestComments,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
+  pullRequestCodeRevision,
+  pullRequestCodeTabDetail,
   pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
@@ -119,6 +122,299 @@ describe("review thread comment pages", () => {
       { id: "c3", body: "another loaded comment" },
     ]);
   });
+});
+
+describe("pull request diff freshness", () => {
+  type RefreshResult<T> =
+    | { readonly _tag: "Success"; readonly value: T }
+    | { readonly _tag: "Failure"; readonly error: string };
+  const success = <T>(value: T): RefreshResult<T> => ({ _tag: "Success", value });
+  const failure = (error: string): RefreshResult<never> => ({ _tag: "Failure", error });
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  const codeSource = {
+    baseBranch: "main",
+    baseComparison: "up-to-date" as const,
+    behindBy: 0,
+    additions: 12,
+    deletions: 4,
+    changedFiles: 3,
+    diffRevision: { baseOid: "base-oid", headOid: "head-oid" },
+    commits: [{ oid: "base" }, { oid: "head" }],
+  };
+
+  it("keeps the code revision stable across comment-only updates and covers available base inputs", () => {
+    const revision = pullRequestCodeRevision(codeSource);
+    expect(pullRequestCodeRevision({ ...codeSource, commits: [...codeSource.commits] })).toBe(
+      revision,
+    );
+    expect(
+      pullRequestCodeRevision({
+        ...codeSource,
+        commits: [...codeSource.commits, { oid: "pushed" }],
+      }),
+    ).not.toBe(revision);
+    expect(pullRequestCodeRevision({ ...codeSource, additions: 13 })).not.toBe(revision);
+    expect(pullRequestCodeRevision({ ...codeSource, behindBy: 1 })).not.toBe(revision);
+    expect(pullRequestCodeRevision({ ...codeSource, baseBranch: "release" })).not.toBe(revision);
+    expect(
+      pullRequestCodeRevision({
+        ...codeSource,
+        diffRevision: { ...codeSource.diffRevision, baseOid: "advanced-base" },
+      }),
+    ).not.toBe(revision);
+    expect(
+      pullRequestCodeRevision({
+        ...codeSource,
+        diffRevision: { ...codeSource.diffRevision, headOid: "pushed-head" },
+      }),
+    ).not.toBe(revision);
+  });
+
+  it("falls back to host-agnostic signals when immutable diff endpoints are unavailable", () => {
+    const withoutDiffRevision = { ...codeSource, diffRevision: undefined };
+    const revision = pullRequestCodeRevision(withoutDiffRevision);
+
+    expect(pullRequestCodeRevision({ ...withoutDiffRevision, additions: 13 })).not.toBe(revision);
+  });
+
+  it("overlays same-code conversation detail but retains applied detail across code changes", () => {
+    const applied = { ...codeSource, metadata: "old" };
+    const revision = pullRequestCodeRevision(applied);
+    const conversationUpdate = { ...applied, metadata: "new" };
+    const codeUpdate = {
+      ...conversationUpdate,
+      commits: [...conversationUpdate.commits, { oid: "pushed" }],
+    };
+    expect(pullRequestCodeTabDetail(applied, revision, conversationUpdate)).toBe(
+      conversationUpdate,
+    );
+    expect(pullRequestCodeTabDetail(applied, revision, codeUpdate)).toBe(applied);
+  });
+
+  const concurrencyCases: ReadonlyArray<{
+    readonly name: string;
+    readonly run: () => Promise<void>;
+  }> = [
+    {
+      name: "bootstraps by invalidating, rereading, and forcing the aggregate in order",
+      run: async () => {
+        const coordinator = createPullRequestDiffRefreshCoordinator((revision: string) => revision);
+        const events: string[] = [];
+        await coordinator.observe("env-a/pr-a", "signal-a", {
+          invalidate: async () => {
+            events.push("invalidate");
+          },
+          readSnapshot: async () => {
+            events.push("read");
+            return success("snapshot-a");
+          },
+          refreshAggregate: async () => {
+            events.push("diff");
+            return success("first-page");
+          },
+          setFailure: () => undefined,
+          apply: (_scope, revision, snapshot, aggregate) =>
+            events.push(`apply:${revision}:${snapshot}:${aggregate}`),
+        });
+        expect(events).toEqual([
+          "invalidate",
+          "read",
+          "diff",
+          "apply:snapshot-a:snapshot-a:first-page",
+        ]);
+      },
+    },
+    {
+      name: "coalesces the reread revision while its aggregate is active",
+      run: async () => {
+        const coordinator = createPullRequestDiffRefreshCoordinator((revision: string) => revision);
+        const diff = deferred<RefreshResult<boolean>>();
+        let invalidations = 0;
+        const applied: string[] = [];
+        const work = {
+          invalidate: async () => {
+            invalidations++;
+          },
+          readSnapshot: async () => success("code-b"),
+          refreshAggregate: () => diff.promise,
+          setFailure: () => undefined,
+          apply: (_scope: string, revision: string) => applied.push(revision),
+        };
+        const first = coordinator.observe("env-a/pr-a", "code-a", work);
+        await Promise.resolve();
+        await Promise.resolve();
+        void coordinator.observe("env-a/pr-a", "code-b", work);
+        diff.resolve(success(true));
+        await first;
+        await coordinator.observe("env-a/pr-a", "code-b", work);
+        expect({ invalidations, applied }).toEqual({ invalidations: 1, applied: ["code-b"] });
+      },
+    },
+    {
+      name: "lets the original signal supersede when its reread produced a newer revision",
+      run: async () => {
+        const coordinator = createPullRequestDiffRefreshCoordinator((revision: string) => revision);
+        let nextSnapshot = "b";
+        const applied: string[] = [];
+        const baseline = {
+          invalidate: async () => undefined,
+          readSnapshot: async () => success(nextSnapshot),
+          refreshAggregate: async () => success(true),
+          setFailure: () => undefined,
+          apply: (_scope: string, revision: string) => applied.push(revision),
+        };
+        const bDiff = deferred<RefreshResult<boolean>>();
+        const active = coordinator.observe("env-a/pr-a", "a", {
+          ...baseline,
+          refreshAggregate: () => bDiff.promise,
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        nextSnapshot = "a";
+        void coordinator.observe("env-a/pr-a", "a", baseline);
+        bDiff.resolve(success(true));
+        await active;
+        expect(applied).toEqual(["a"]);
+      },
+    },
+    {
+      name: "applies the coherent reread when invalidation advances the host again",
+      run: async () => {
+        const coordinator = createPullRequestDiffRefreshCoordinator((revision: string) => revision);
+        const applied: string[] = [];
+        await coordinator.observe("env-a/pr-a", "b", {
+          invalidate: async () => undefined,
+          readSnapshot: async () => success("c"),
+          refreshAggregate: async () => success(true),
+          setFailure: () => undefined,
+          apply: (_scope: string, revision: string) => applied.push(revision),
+        });
+        expect(applied).toEqual(["c"]);
+      },
+    },
+    {
+      name: "publishes only the latest detail and first page when a newer signal arrives",
+      run: async () => {
+        type Snapshot = { revision: string; detail: string };
+        const coordinator = createPullRequestDiffRefreshCoordinator<Snapshot, string>(
+          (snapshot) => snapshot.revision,
+        );
+        const oldDiff = deferred<RefreshResult<string>>();
+        const applied: Array<[string, string]> = [];
+        const failures: Array<string | null> = [];
+        const old = coordinator.observe(
+          "env-a/pr-a",
+          { revision: "a", detail: "signal-a" },
+          {
+            invalidate: async () => undefined,
+            readSnapshot: async () => success({ revision: "a", detail: "detail-a" }),
+            refreshAggregate: () => oldDiff.promise,
+            setFailure: (error) => failures.push(error),
+            apply: (_scope, _revision, snapshot, aggregate) =>
+              applied.push([snapshot.detail, aggregate]),
+          },
+        );
+        await Promise.resolve();
+        void coordinator.observe(
+          "env-a/pr-a",
+          { revision: "b", detail: "signal-b" },
+          {
+            invalidate: async () => {
+              // host invalidation/read establishes the exact cohort that may be committed
+            },
+            readSnapshot: async () => success({ revision: "b", detail: "detail-b" }),
+            refreshAggregate: async () => success("diff-b"),
+            setFailure: (error) => failures.push(error),
+            apply: (_scope, _revision, snapshot, aggregate) =>
+              applied.push([snapshot.detail, aggregate]),
+          },
+        );
+        oldDiff.resolve(failure("stale failure"));
+        await old;
+        expect(applied).toEqual([["detail-b", "diff-b"]]);
+        expect(failures).toEqual([null]);
+      },
+    },
+    {
+      name: "retries the same signal after a failed snapshot or aggregate",
+      run: async () => {
+        const coordinator = createPullRequestDiffRefreshCoordinator((revision: string) => revision);
+        let snapshot: RefreshResult<string> = failure("snapshot");
+        let aggregate: RefreshResult<true> = success(true);
+        const applied: string[] = [];
+        const failures: Array<string | null> = [];
+        const work = {
+          invalidate: async () => undefined,
+          readSnapshot: async () => snapshot,
+          refreshAggregate: async () => aggregate,
+          setFailure: (error: string | null) => failures.push(error),
+          apply: (_scope: string, revision: string) => applied.push(revision),
+        };
+        await coordinator.observe("env-a/pr-a", "a", work);
+        expect(applied).toEqual([]);
+        snapshot = success("a");
+        aggregate = failure("aggregate");
+        await coordinator.observe("env-a/pr-a", "a", work);
+        expect(applied).toEqual([]);
+        aggregate = success(true);
+        await coordinator.observe("env-a/pr-a", "a", work);
+        expect(applied).toEqual(["a"]);
+        expect(failures).toEqual(["snapshot", "aggregate", null]);
+      },
+    },
+    {
+      name: "reapplies an explicit same-revision refresh",
+      run: async () => {
+        const coordinator = createPullRequestDiffRefreshCoordinator((revision: string) => revision);
+        let applies = 0;
+        const work = {
+          invalidate: async () => undefined,
+          readSnapshot: async () => success("a"),
+          refreshAggregate: async () => success(true),
+          setFailure: () => undefined,
+          apply: () => applies++,
+        };
+        await coordinator.observe("env-a/pr-a", "a", work);
+        await coordinator.refresh("env-a/pr-a", work);
+        expect(applies).toBe(2);
+      },
+    },
+    {
+      name: "clears queued and applied state on an environment switch",
+      run: async () => {
+        const coordinator = createPullRequestDiffRefreshCoordinator((revision: string) => revision);
+        const oldDiff = deferred<RefreshResult<boolean>>();
+        const applied: string[] = [];
+        const old = coordinator.observe("env-a/pr-a", "same-code", {
+          invalidate: async () => undefined,
+          readSnapshot: async () => success("unused"),
+          refreshAggregate: () => oldDiff.promise,
+          setFailure: () => undefined,
+          apply: () => applied.push("env-a"),
+        });
+        void coordinator.observe("env-b/pr-a", "same-code", {
+          invalidate: async () => undefined,
+          readSnapshot: async () => success("unused"),
+          refreshAggregate: async () => success(true),
+          setFailure: () => undefined,
+          apply: () => applied.push("env-b"),
+        });
+        oldDiff.resolve(success(true));
+        await old;
+        expect(applied).toEqual(["env-b"]);
+      },
+    },
+  ];
+
+  it.each(concurrencyCases)("$name", async ({ run }) => run());
 });
 
 describe("pull request action menu", () => {
