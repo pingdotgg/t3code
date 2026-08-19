@@ -116,6 +116,7 @@ import {
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
   filterCommandPaletteGroups,
+  prioritizeProjectItems,
   filterPinnedBrowseEntries,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
@@ -745,6 +746,16 @@ function OpenCommandPaletteDialog(props: {
         ...targetProject,
         title: group.displayName,
       })),
+    [projectPickerEntries],
+  );
+  const groupMemberRefsByItemValue = useMemo(
+    () =>
+      new Map(
+        projectPickerEntries.map(({ group, targetProject }) => [
+          `new-thread-in:${targetProject.environmentId}:${targetProject.id}`,
+          group.memberProjectRefs,
+        ]),
+      ),
     [projectPickerEntries],
   );
   const projectGroupByTargetKey = useMemo(
@@ -1461,22 +1472,15 @@ function OpenCommandPaletteDialog(props: {
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
-    // The opener's preferred project wins over the viewed thread's, so the
-    // sidebar button opens on whatever its project filter is scoped to.
-    const preferred = openIntent.preferredProjectRef ?? {
-      environmentId: currentProjectEnvironmentId,
-      projectId: currentProjectId,
-    };
-    const currentPrefix =
-      preferred.environmentId && preferred.projectId
-        ? `new-thread-in:${preferred.environmentId}:${preferred.projectId}`
-        : null;
-    const prioritized = currentPrefix
-      ? [
-          ...projectThreadItems.filter((item) => item.value === currentPrefix),
-          ...projectThreadItems.filter((item) => item.value !== currentPrefix),
-        ]
-      : projectThreadItems;
+    // The opener's preferred project wins: the sidebar button passes its
+    // project filter, so the picker opens on whatever the list is scoped to.
+    // Without one the items are already ordered viewed-project-first by
+    // buildSidebarProjectPickerEntries, so there is nothing to hoist.
+    const prioritized = prioritizeProjectItems(
+      projectThreadItems,
+      openIntent.preferredProjectRef,
+      groupMemberRefsByItemValue,
+    );
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [
@@ -1490,8 +1494,7 @@ function OpenCommandPaletteDialog(props: {
   }, [
     clearOpenIntent,
     browseNavigation,
-    currentProjectEnvironmentId,
-    currentProjectId,
+    groupMemberRefsByItemValue,
     openIntent,
     projectThreadItems,
     pushPaletteView,

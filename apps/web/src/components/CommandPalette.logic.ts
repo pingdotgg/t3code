@@ -178,6 +178,38 @@ export function buildProjectActionItems(input: {
   }));
 }
 
+/**
+ * Lists the preferred project's item first so the picker opens on it.
+ *
+ * Matches on logical group membership rather than the exact ref: the sidebar
+ * filter scopes a whole logical project, and the item standing for that group
+ * may target a different member of it (the group representative, or the member
+ * whose environment you are already working in). Comparing refs directly would
+ * silently find nothing in that case.
+ */
+export function prioritizeProjectItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+  preferredProjectRef: ScopedProjectRef | null,
+  groupMemberRefsByValue: ReadonlyMap<string, ReadonlyArray<ScopedProjectRef>>,
+): CommandPaletteActionItem[] {
+  if (preferredProjectRef === null) return [...items];
+
+  const preferredIndex = items.findIndex((item) =>
+    (groupMemberRefsByValue.get(item.value) ?? []).some(
+      (projectRef) =>
+        projectRef.environmentId === preferredProjectRef.environmentId &&
+        projectRef.projectId === preferredProjectRef.projectId,
+    ),
+  );
+  if (preferredIndex <= 0) return [...items];
+
+  return [
+    items[preferredIndex]!,
+    ...items.slice(0, preferredIndex),
+    ...items.slice(preferredIndex + 1),
+  ];
+}
+
 export type BuildThreadActionItemsThread = Pick<
   SidebarThreadSummary,
   | "archivedAt"
