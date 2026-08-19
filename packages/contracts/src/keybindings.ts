@@ -5,6 +5,7 @@ export const MAX_KEYBINDING_VALUE_LENGTH = 64;
 export const MAX_KEYBINDING_WHEN_LENGTH = 256;
 export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
+export const MAX_MODEL_KEYBINDING_ID_LENGTH = 128;
 export const MAX_KEYBINDINGS_COUNT = 256;
 
 export const THREAD_JUMP_KEYBINDING_COMMANDS = [
@@ -84,9 +85,38 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal(".run"),
 ]);
 
+const PROVIDER_INSTANCE_COMMAND_SEGMENT = Schema.NonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/),
+);
+const MODEL_COMMAND_SEGMENT = Schema.NonEmptyString.check(
+  Schema.isMaxLength(MAX_MODEL_KEYBINDING_ID_LENGTH),
+  Schema.isPattern(/^\S+$/),
+);
+const REASONING_COMMAND_SEGMENT = Schema.NonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/),
+);
+
+export const MODEL_SELECT_COMMAND_PATTERN = Schema.TemplateLiteral([
+  Schema.Literal("model.select."),
+  PROVIDER_INSTANCE_COMMAND_SEGMENT,
+  Schema.Literal("."),
+  MODEL_COMMAND_SEGMENT,
+]);
+export type ModelSelectKeybindingCommand = typeof MODEL_SELECT_COMMAND_PATTERN.Type;
+
+export const REASONING_SELECT_COMMAND_PATTERN = Schema.TemplateLiteral([
+  Schema.Literal("reasoning.select."),
+  REASONING_COMMAND_SEGMENT,
+]);
+export type ReasoningSelectKeybindingCommand = typeof REASONING_SELECT_COMMAND_PATTERN.Type;
+
 export const KeybindingCommand = Schema.Union([
   Schema.Literals(STATIC_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
+  MODEL_SELECT_COMMAND_PATTERN,
+  REASONING_SELECT_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 

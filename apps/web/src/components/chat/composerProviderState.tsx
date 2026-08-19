@@ -1,6 +1,7 @@
 import {
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
@@ -35,6 +36,33 @@ export type ComposerProviderState = {
   composerSurfaceClassName?: string;
   modelPickerIconClassName?: string;
 };
+
+export function selectComposerReasoningEffort(input: {
+  provider: ProviderDriverKind;
+  model: string;
+  models: ReadonlyArray<ServerProviderModel>;
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  effort: string;
+}): ReadonlyArray<ProviderOptionSelection> | null {
+  const caps = getProviderModelCapabilities(input.models, input.model, input.provider);
+  const descriptors = getProviderOptionDescriptors({
+    caps,
+    selections: input.modelOptions,
+  });
+  const primarySelectDescriptor = descriptors.find(
+    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      descriptor.type === "select",
+  );
+  if (!primarySelectDescriptor?.options.some((option) => option.id === input.effort)) {
+    return null;
+  }
+  const nextDescriptors = descriptors.map((descriptor) =>
+    descriptor.type === "select" && descriptor.id === primarySelectDescriptor.id
+      ? { ...descriptor, currentValue: input.effort }
+      : descriptor,
+  );
+  return buildProviderOptionSelectionsFromDescriptors(nextDescriptors) ?? [];
+}
 
 type TraitsRenderInput = {
   provider: ProviderDriverKind;

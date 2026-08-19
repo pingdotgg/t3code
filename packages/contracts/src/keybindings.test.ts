@@ -102,6 +102,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedModelPickerJump.command, "modelPicker.jump.1");
 
+    const parsedModelSelect = yield* decode(KeybindingRule, {
+      key: "f15",
+      command: "model.select.codex.gpt-5.6-sol",
+    });
+    assert.strictEqual(parsedModelSelect.command, "model.select.codex.gpt-5.6-sol");
+
+    const parsedReasoningSelect = yield* decode(KeybindingRule, {
+      key: "f19",
+      command: "reasoning.select.high",
+    });
+    assert.strictEqual(parsedReasoningSelect.command, "reasoning.select.high");
+
     const parsedThreadPrevious = yield* decode(KeybindingRule, {
       key: "mod+shift+[",
       command: "thread.previous",
@@ -119,6 +131,21 @@ it.effect("rejects invalid command values", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("rejects malformed direct selection commands", () =>
+  Effect.gen(function* () {
+    for (const command of [
+      "model.select.codex",
+      "model.select.1bad.model",
+      "model.select.codex.model with spaces",
+      "reasoning.select.",
+      "reasoning.select.extra.high",
+    ]) {
+      const result = yield* Effect.exit(decode(KeybindingRule, { key: "f13", command }));
+      assert.strictEqual(result._tag, "Failure");
+    }
   }),
 );
 
