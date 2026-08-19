@@ -381,3 +381,18 @@ it("reports unauthenticated when GitHub JSON has accounts but none are valid", (
     },
   );
 });
+
+it("reports an update hint instead of unauthenticated when gh predates --json", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult("", {
+      stderr: "unknown flag: --json\n\nUsage:  gh auth status [flags]\n",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    }),
+  );
+
+  assert.strictEqual(auth.status, "unknown");
+  assert.match(
+    Option.getOrElse(auth.detail, () => ""),
+    /2\.81\.0/,
+  );
+});

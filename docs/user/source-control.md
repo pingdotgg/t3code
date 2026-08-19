@@ -67,7 +67,7 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
 
 ### For GitHub (Recommended for most users)
 
-1. Install the GitHub CLI on the machine running T3 Code:
+1. Install the GitHub CLI (version 2.81.0 or newer) on the machine running T3 Code:
    ```bash
    brew install gh
    ```
@@ -140,6 +140,7 @@ Control settings**.
 **Common issues:**
 
 - **Provider shows "Not authenticated"** – Run the login command for that provider (e.g., `gh auth login`) in a terminal on the server, then rescan in Settings
+- **GitHub says it could not verify sign-in status** – T3 Code needs GitHub CLI 2.81.0 or newer to check sign-in status. Update `gh` (e.g., `brew upgrade gh`), then rescan
 - **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
 - **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
 
