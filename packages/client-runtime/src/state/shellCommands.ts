@@ -19,5 +19,15 @@ export function createShellEnvironmentAtoms<R, E>(
       label: "environment-data:shell:list-installed-applications",
       tag: WS_METHODS.shellListInstalledApplications,
     }),
+    // Add and remove go through the server rather than a settings patch: the
+    // stored command must come from the host's own scan, never from a client.
+    rememberApplication: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:shell:remember-application",
+      tag: WS_METHODS.shellRememberApplication,
+    }),
+    forgetApplication: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:shell:forget-application",
+      tag: WS_METHODS.shellForgetApplication,
+    }),
   };
 }

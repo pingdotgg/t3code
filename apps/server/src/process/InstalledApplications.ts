@@ -22,6 +22,7 @@ import * as Ref from "effect/Ref";
 import * as NodeOS from "node:os";
 import {
   finalizeInstalledApplications,
+  isRememberableApplication,
   parseDesktopEntry,
   parseMacApplicationBundleName,
   parseWindowsShortcutName,
@@ -66,8 +67,11 @@ const scanLinux = Effect.fn("installedApplications.scanLinux")(function* (
 
   // Honor XDG_DATA_DIRS/XDG_DATA_HOME so Flatpak, Snap, and Nix installs are
   // found, falling back to the spec's defaults when they are unset.
-  const dataHome = env.XDG_DATA_HOME ?? path.join(home, ".local", "share");
-  const dataDirs = (env.XDG_DATA_DIRS ?? "/usr/local/share:/usr/share")
+  // `||` rather than `??`: an empty XDG variable means "unset" in practice, and
+  // `??` would treat it as configured, dropping the system application
+  // directories and resolving the home path relative to the cwd.
+  const dataHome = env.XDG_DATA_HOME || path.join(home, ".local", "share");
+  const dataDirs = (env.XDG_DATA_DIRS || "/usr/local/share:/usr/share")
     .split(":")
     .filter((entry) => entry.length > 0);
   const directories = [dataHome, ...dataDirs].map((base) => path.join(base, "applications"));
@@ -168,7 +172,11 @@ export const make = Effect.gen(function* () {
         : platform === "win32"
           ? yield* scanWindows(env)
           : yield* scanLinux(home, env);
-    return finalizeInstalledApplications(entries).slice(0, MAX_APPLICATIONS);
+    // Filter before capping so an application that could never be stored does
+    // not consume one of the slots.
+    return finalizeInstalledApplications(entries)
+      .filter(isRememberableApplication)
+      .slice(0, MAX_APPLICATIONS);
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),

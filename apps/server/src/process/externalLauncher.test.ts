@@ -11,7 +11,9 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import type { CustomEditor, CustomEditorId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { PROJECT_PATH_PLACEHOLDER } from "./installedApplicationParsing.ts";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as ExternalLauncher from "./externalLauncher.ts";
 
@@ -290,5 +292,114 @@ it.effect("rejects unknown editors through the service API", () =>
     assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
     assert.equal(error.editor, "missing-editor");
     assert.equal(error.message, "Unknown editor: missing-editor");
+  }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
+);
+
+const sublime = (command: string) =>
+  [
+    {
+      id: "custom:sublime" as CustomEditorId,
+      label: "Sublime Text",
+      command,
+      args: [],
+    },
+  ] as const satisfies ReadonlyArray<CustomEditor>;
+
+it.effect("launches a chosen application with the project path appended", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-custom-app-" });
+    const command = path.join(binDir, "subl");
+    yield* fileSystem.writeFileString(command, "#!/bin/sh\n");
+    yield* fileSystem.chmod(command, 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor(
+        { editor: "custom:sublime" as CustomEditorId, cwd: "/workspace/project" },
+        sublime(command),
+      );
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (spawnedCommand) => {
+            spawned = spawnedCommand;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, command);
+    assert.deepEqual(spawned.args, ["/workspace/project"]);
+    assert.equal(spawned.options.detached, true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// The application's own entry decides where the path goes, so an argument that
+// followed `%F` must stay after the path rather than being pushed in front.
+it.effect("substitutes the project path at the position the entry declared", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-custom-app-" });
+    const command = path.join(binDir, "editor");
+    yield* fileSystem.writeFileString(command, "#!/bin/sh\n");
+    yield* fileSystem.chmod(command, 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor(
+        { editor: "custom:editor" as CustomEditorId, cwd: "/workspace/project" },
+        [
+          {
+            id: "custom:editor" as CustomEditorId,
+            label: "Editor",
+            command,
+            args: [PROJECT_PATH_PLACEHOLDER, "--new-window"],
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (spawnedCommand) => {
+            spawned = spawnedCommand;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.deepEqual(spawned.args, ["/workspace/project", "--new-window"]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects a custom id that server settings do not define", () =>
+  Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    // A client naming an id the server does not know must not launch anything.
+    const error = yield* launcher
+      .launchEditor({ editor: "custom:ghost" as CustomEditorId, cwd: "/workspace/project" }, [])
+      .pipe(Effect.flip);
+    assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
+    assert.equal(error.editor, "custom:ghost");
+  }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
+);
+
+it.effect("omits a chosen application whose command no longer resolves", () =>
+  Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const editors = yield* launcher.resolveAvailableEditors(
+      sublime("/nonexistent/definitely-not-installed"),
+    );
+    assert.equal(editors.includes("custom:sublime" as CustomEditorId), false);
   }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
 );

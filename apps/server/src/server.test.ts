@@ -648,6 +648,7 @@ const buildAppUnderTest = (options?: {
           ready: Effect.void,
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          updateCustomEditors: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           streamChanges: Stream.empty,
           ...options?.layers?.serverSettings,
         }),
@@ -5126,6 +5127,71 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ["Zed", "Brave"],
       );
       assert.deepEqual(applications[1]?.args, ["--new-window"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("remembers an application by resolving its command on the host", () =>
+    Effect.gen(function* () {
+      let written: ReadonlyArray<{ readonly command: string }> | null = null;
+      yield* buildAppUnderTest({
+        layers: {
+          installedApplications: {
+            list: Effect.succeed([
+              { id: "zed", name: "Zed", command: "/usr/bin/zed", args: ["--wait"] },
+            ]),
+          },
+          serverSettings: {
+            updateCustomEditors: (customEditors) =>
+              Effect.sync(() => {
+                written = customEditors;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const editorId = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellRememberApplication]({ applicationId: "zed" }),
+        ),
+      );
+
+      assert.equal(editorId, "custom:zed");
+      assert.deepEqual(written, [
+        { id: "custom:zed", label: "Zed", command: "/usr/bin/zed", args: ["--wait"] },
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  // The command must come from the host's own scan. A client naming an
+  // application the host did not discover has to be refused, or
+  // shell.rememberApplication would become a way to plant an arbitrary command.
+  it.effect("refuses to remember an application the host did not discover", () =>
+    Effect.gen(function* () {
+      let written = false;
+      yield* buildAppUnderTest({
+        layers: {
+          installedApplications: { list: Effect.succeed([]) },
+          serverSettings: {
+            updateCustomEditors: () =>
+              Effect.sync(() => {
+                written = true;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellRememberApplication]({ applicationId: "not-installed" }),
+        ).pipe(Effect.result),
+      );
+
+      assert.equal(result._tag, "Failure");
+      assert.equal(written, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

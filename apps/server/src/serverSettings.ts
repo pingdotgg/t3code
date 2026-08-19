@@ -11,6 +11,7 @@
  * @module ServerSettings
  */
 import {
+  type CustomEditor,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -129,6 +130,18 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * Replace the remembered "Open with" applications.
+     *
+     * Separate from `updateSettings` because `customEditors` holds a command
+     * this host will execute and is deliberately absent from the client-facing
+     * `ServerSettingsPatch`. Only server code that resolved the command from
+     * the host's own application scan may call this.
+     */
+    readonly updateCustomEditors: (
+      customEditors: ReadonlyArray<CustomEditor>,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
@@ -167,6 +180,13 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       updateSettings: (patch) =>
         Ref.get(currentSettingsRef).pipe(
           Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
+          Effect.flatMap(normalizeServerSettings),
+          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+          Effect.map(resolveTextGenerationProvider),
+        ),
+      updateCustomEditors: (customEditors) =>
+        Ref.get(currentSettingsRef).pipe(
+          Effect.map((currentSettings) => ({ ...currentSettings, customEditors })),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
@@ -575,6 +595,18 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
+    updateCustomEditors: (customEditors) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache;
+          const next = yield* normalizeServerSettings({ ...current, customEditors });
+          yield* writeSettingsAtomically(next);
+          yield* Cache.set(settingsCache, cacheKey, next);
+          yield* emitChange(next);
+          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          return resolveTextGenerationProvider(materialized);
+        }),
+      ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {

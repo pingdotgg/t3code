@@ -6,14 +6,27 @@
  *
  * @module installedApplicationParsing
  */
-import type { InstalledApplication } from "@t3tools/contracts";
+import {
+  CUSTOM_EDITOR_ID_PREFIX,
+  type CustomEditor,
+  type CustomEditorId,
+  type InstalledApplication,
+} from "@t3tools/contracts";
 
 /**
- * Freedesktop field codes (`%f`, `%U`, ...). They stand in for the files the
- * launcher would substitute; we pass the project path ourselves, so every code
- * is dropped rather than forwarded as a literal argument.
+ * Freedesktop field codes (`%f`, `%U`, ...) stand in for the files the launcher
+ * would substitute. Only the file/URL codes mark where the project path goes;
+ * the rest (icon, name, deprecated codes) carry no argument and are dropped.
  */
-const DESKTOP_ENTRY_FIELD_CODE = /^%[fFuUdDnNickvm]$/;
+const DESKTOP_ENTRY_PATH_FIELD_CODE = /^%[fFuU]$/;
+const DESKTOP_ENTRY_OTHER_FIELD_CODE = /^%[dDnNickvm]$/;
+
+/**
+ * Marks where the project path belongs in an application's argument list.
+ * `Exec=editor %F --new-window` must launch as `editor <path> --new-window`,
+ * so the placeholder position is preserved rather than the path being appended.
+ */
+export const PROJECT_PATH_PLACEHOLDER = "\u0000t3-project-path";
 
 /**
  * Splits an `Exec=` value the way the desktop-entry spec does: whitespace
@@ -73,7 +86,21 @@ export function parseExecArguments(exec: string): ReadonlyArray<string> {
     tokens.push(current);
   }
 
-  return tokens.filter((token) => !DESKTOP_ENTRY_FIELD_CODE.test(token));
+  // Collapse every file/URL code to a single placeholder: an entry may list
+  // more than one, but a project opens in exactly one location.
+  let placed = false;
+  const result: string[] = [];
+  for (const token of tokens) {
+    if (DESKTOP_ENTRY_OTHER_FIELD_CODE.test(token)) continue;
+    if (DESKTOP_ENTRY_PATH_FIELD_CODE.test(token)) {
+      if (placed) continue;
+      placed = true;
+      result.push(PROJECT_PATH_PLACEHOLDER);
+      continue;
+    }
+    result.push(token);
+  }
+  return result;
 }
 
 interface DesktopEntryFields {
@@ -162,33 +189,117 @@ export function parseWindowsShortcutName(shortcutFileName: string): string | nul
   return name;
 }
 
+/**
+ * Slug for an application id. Unicode-aware so a name written entirely in
+ * non-latin script still yields an id instead of collapsing to empty and
+ * dropping the application from the list.
+ */
 function slugify(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 32)
     .replace(/-+$/g, "");
 }
 
 /**
- * Assigns stable, unique ids and sorts by display name. Two applications can
- * legitimately share a name (same app in `/usr/share` and `~/.local/share`),
- * so the first wins and later duplicates are dropped rather than suffixed -
- * the list is a menu, not an inventory.
+ * Assigns stable, unique ids and sorts by display name.
+ *
+ * Sorting happens before ids are handed out, not after, because directory read
+ * order is not guaranteed: assigning first and sorting later would let a
+ * collision suffix land on a different application between two scans, and a
+ * remembered application's id has to stay put.
+ *
+ * The same application really can appear twice (in `/usr/share` and again in
+ * `~/.local/share`), and those exact-name duplicates collapse to one entry.
+ * Two *different* names that happen to slugify alike ("Code - OSS" and "Code
+ * OSS", or any pair sharing the first 32 characters) are distinct applications
+ * and both survive, the later one carrying a numeric suffix.
  */
 export function finalizeInstalledApplications(
   entries: ReadonlyArray<Omit<InstalledApplication, "id">>,
 ): ReadonlyArray<InstalledApplication> {
-  const byId = new Map<string, InstalledApplication>();
-
+  // Collapse exact-name duplicates in scan order, so the caller's directory
+  // precedence decides the winner (a user's ~/.local/share override beats the
+  // system copy of the same application).
+  const byName = new Map<string, Omit<InstalledApplication, "id">>();
   for (const entry of entries) {
-    const id = slugify(entry.name);
-    if (id.length === 0 || byId.has(id)) continue;
+    if (!byName.has(entry.name)) byName.set(entry.name, entry);
+  }
+
+  // Sort before handing out ids, not after: a collision suffix must not depend
+  // on directory read order, or a remembered application's id could move
+  // between scans.
+  const sorted = [...byName.values()].toSorted((left, right) =>
+    left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
+  );
+
+  const byId = new Map<string, InstalledApplication>();
+  for (const entry of sorted) {
+    const base = slugify(entry.name);
+    if (base.length === 0) continue;
+
+    let id = base;
+    let suffix = 2;
+    while (byId.has(id)) {
+      id = `${base}-${suffix}`;
+      suffix += 1;
+    }
     byId.set(id, { id, name: entry.name, command: entry.command, args: entry.args });
   }
 
-  return [...byId.values()].toSorted((left, right) =>
-    left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
+  return [...byId.values()];
+}
+
+/**
+ * Resolves an application's stored arguments against a project path.
+ *
+ * The path replaces the placeholder captured from the application's own entry,
+ * so `editor %F --new-window` runs as `editor <path> --new-window`. Entries
+ * with no placeholder (a macOS bundle, a Windows shortcut, an `Exec` that
+ * names no file code) take the path appended, which is how a command that
+ * accepts a positional path behaves anyway.
+ */
+export function substituteProjectPath(
+  args: ReadonlyArray<string>,
+  projectPath: string,
+): ReadonlyArray<string> {
+  return args.includes(PROJECT_PATH_PLACEHOLDER)
+    ? args.map((arg) => (arg === PROJECT_PATH_PLACEHOLDER ? projectPath : arg))
+    : [...args, projectPath];
+}
+
+/** Mirrors the `CustomEditor` schema bounds so a remembered entry always validates. */
+const CUSTOM_EDITOR_LABEL_MAX_LENGTH = 64;
+const CUSTOM_EDITOR_COMMAND_MAX_LENGTH = 1024;
+
+/**
+ * Whether a discovered application can be stored as a `CustomEditor`.
+ *
+ * A command longer than the schema allows would fail validation on write, so
+ * such an application is left out of the list rather than offered and then
+ * refused at the point the user picks it.
+ */
+export function isRememberableApplication(application: InstalledApplication): boolean {
+  return (
+    application.command.length <= CUSTOM_EDITOR_COMMAND_MAX_LENGTH &&
+    application.name.slice(0, CUSTOM_EDITOR_LABEL_MAX_LENGTH).trim().length > 0
   );
+}
+
+/**
+ * Converts a discovered application into the entry persisted in settings.
+ *
+ * The label is trimmed after truncation: a name whose 64th character falls on
+ * whitespace would otherwise carry a trailing space and fail the schema's
+ * trimmed-string check.
+ */
+export function toCustomEditor(application: InstalledApplication): CustomEditor {
+  return {
+    id: `${CUSTOM_EDITOR_ID_PREFIX}${application.id}` as CustomEditorId,
+    label: application.name.slice(0, CUSTOM_EDITOR_LABEL_MAX_LENGTH).trim(),
+    command: application.command,
+    args: application.args,
+  };
 }

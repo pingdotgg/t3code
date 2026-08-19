@@ -616,8 +616,15 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  // Applications the user picked from the "Open with" list. Server-authoritative:
-  // the command runs on this host, so it is never accepted from a client.
+  // Applications the user picked from the "Open with" list.
+  //
+  // Deliberately absent from `ServerSettingsPatch`: this holds a command that
+  // the host will execute, and `server.updateSettings` shares the
+  // `orchestration:operate` scope with `shell.openInEditor`. Accepting it in a
+  // client patch would let a client with no terminal scope write an arbitrary
+  // command and then launch it. Entries are written only by
+  // `shell.rememberApplication`, which resolves the command from the host's own
+  // application scan.
   customEditors: Schema.Array(CustomEditor).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -759,9 +766,6 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
-  // Whole-array replacement, for the same reason as `providerInstances`: the
-  // list is small and the UI always sends the full set when it edits one entry.
-  customEditors: Schema.optionalKey(Schema.Array(CustomEditor)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

@@ -326,6 +326,14 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
+      updateCustomEditors: (customEditors) =>
+        Effect.gen(function* () {
+          const current = yield* Ref.get(settingsRef);
+          const next = { ...current, customEditors };
+          yield* Ref.set(settingsRef, next);
+          yield* PubSub.publish(changes, next);
+          return next;
+        }),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

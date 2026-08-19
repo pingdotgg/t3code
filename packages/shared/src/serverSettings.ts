@@ -187,9 +187,6 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
-    // Replace, never merge: index-wise merging would strip a removed trailing
-    // entry's fields instead of dropping the entry.
-    ...(patch.customEditors !== undefined ? { customEditors: patch.customEditors } : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),

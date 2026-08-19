@@ -2,7 +2,12 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { ExternalLauncherError, InstalledApplication, LaunchEditorInput } from "./editor.ts";
+import {
+  CustomEditorId,
+  ExternalLauncherError,
+  InstalledApplication,
+  LaunchEditorInput,
+} from "./editor.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
@@ -205,6 +210,8 @@ export const WS_METHODS = {
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
   shellListInstalledApplications: "shell.listInstalledApplications",
+  shellRememberApplication: "shell.rememberApplication",
+  shellForgetApplication: "shell.forgetApplication",
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
@@ -655,6 +662,25 @@ export const WsShellListInstalledApplicationsRpc = Rpc.make(
   },
 );
 
+/**
+ * Adds a discovered application to the Open menu.
+ *
+ * Takes only the id of an application the host itself discovered; the server
+ * resolves the command from its own scan. The client never supplies a command,
+ * which is what keeps `server.updateSettings` from becoming a way to run an
+ * arbitrary binary at the same scope that can launch one.
+ */
+export const WsShellRememberApplicationRpc = Rpc.make(WS_METHODS.shellRememberApplication, {
+  payload: Schema.Struct({ applicationId: Schema.String }),
+  success: CustomEditorId,
+  error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
+});
+
+export const WsShellForgetApplicationRpc = Rpc.make(WS_METHODS.shellForgetApplication, {
+  payload: Schema.Struct({ editorId: CustomEditorId }),
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
@@ -1034,6 +1060,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsShellListInstalledApplicationsRpc,
+  WsShellRememberApplicationRpc,
+  WsShellForgetApplicationRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
   WsSubscribeVcsStatusRpc,

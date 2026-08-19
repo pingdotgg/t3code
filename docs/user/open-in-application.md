@@ -20,7 +20,8 @@ machine you are looking at. That is the machine that actually runs the program, 
 same whether you are on the desktop app or connected from a browser or phone.
 
 An application stays in the **Open** menu only while T3 Code can still find it. If you uninstall the
-program, its entry drops off the list until you choose it again.
+program, its entry disappears from the menu and comes back on its own if you reinstall it. To drop
+it for good, remove it from the **Open with…** list.
 
 **Open with…** does not appear when you are connected to a remote environment over SSH links. That
 mode can only use editors that know how to open a workspace remotely.

@@ -21,6 +21,7 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { substituteProjectPath } from "./installedApplicationParsing.ts";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -398,7 +399,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       editor: custom.id,
       target: input.cwd,
       command: custom.command,
-      args: [...custom.args, input.cwd],
+      args: substituteProjectPath(custom.args, input.cwd),
     };
   }
 

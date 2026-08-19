@@ -13,6 +13,7 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
   type CustomEditor,
+  ExternalLauncherUnknownEditorError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -68,6 +69,7 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as InstalledApplications from "./process/InstalledApplications.ts";
+import { toCustomEditor } from "./process/installedApplicationParsing.ts";
 import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
@@ -1850,6 +1852,51 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.shellListInstalledApplications, installedApplications.list, {
             "rpc.aggregate": "workspace",
           }),
+        [WS_METHODS.shellRememberApplication]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.shellRememberApplication,
+            // The client names a discovered application; the command comes from
+            // this host's own scan. That is what keeps a client from writing an
+            // arbitrary command into settings and then launching it.
+            Effect.gen(function* () {
+              const applications = yield* installedApplications.list;
+              const application = applications.find(
+                (candidate) => candidate.id === input.applicationId,
+              );
+              if (application === undefined) {
+                return yield* new ExternalLauncherUnknownEditorError({
+                  editor: input.applicationId,
+                });
+              }
+              const entry = toCustomEditor(application);
+              const current = yield* serverSettings.getSettings.pipe(
+                Effect.map((settings) => settings.customEditors),
+                Effect.orElseSucceed(() => [] as ReadonlyArray<CustomEditor>),
+              );
+              const customEditors = current.some((candidate) => candidate.id === entry.id)
+                ? current.map((candidate) => (candidate.id === entry.id ? entry : candidate))
+                : [...current, entry];
+              yield* serverSettings.updateCustomEditors(customEditors).pipe(Effect.orDie);
+              return entry.id;
+            }),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.shellForgetApplication]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.shellForgetApplication,
+            // Read-modify-write on the server so two quick removals cannot each
+            // reinstate the other from a stale client snapshot.
+            Effect.gen(function* () {
+              const current = yield* serverSettings.getSettings.pipe(
+                Effect.map((settings) => settings.customEditors),
+                Effect.orElseSucceed(() => [] as ReadonlyArray<CustomEditor>),
+              );
+              const customEditors = current.filter((entry) => entry.id !== input.editorId);
+              if (customEditors.length === current.length) return;
+              yield* serverSettings.updateCustomEditors(customEditors).pipe(Effect.orDie);
+            }),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.filesystemBrowse]: (input) =>
           observeRpcEffect(
             WS_METHODS.filesystemBrowse,
