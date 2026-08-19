@@ -3,7 +3,11 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  resolveSnoozePresets,
+  type ChangeRequestSettleSource,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
@@ -135,10 +139,11 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       </Text>
       <View className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
       <SymbolView
-        name={props.expanded ? "chevron.up" : "chevron.down"}
+        name="chevron.down"
         size={10}
         tintColor={colorScheme === "dark" ? SNOOZE_ACCENT_DARK : SNOOZE_ACCENT_LIGHT}
         type="monochrome"
+        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
@@ -171,10 +176,11 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
       </Text>
       <View className="h-px flex-1 bg-border" />
       <SymbolView
-        name={props.expanded ? "chevron.up" : "chevron.down"}
+        name="chevron.down"
         size={10}
         tintColor={mutedColor}
         type="monochrome"
+        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
@@ -363,11 +369,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly canMovePinnedDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  /** Reports this row's live PR state for the partition's merge and close
-      rules. Mirrors web's onChangeRequestState. */
+  /** Reports this row's live PR (state + last activity) for the partition's
+      merge and close rules. Mirrors web's onChangeRequestState. */
   readonly onChangeRequestState?: (
     threadKey: string,
-    state: "open" | "closed" | "merged" | null,
+    changeRequest: ChangeRequestSettleSource | null,
   ) => void;
   readonly projectCwd?: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
@@ -398,10 +404,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
   const prState = pr?.state ?? null;
+  const prUpdatedAt = pr?.updatedAt ?? null;
   const threadKey = `${thread.environmentId}:${thread.id}`;
   useEffect(() => {
-    onChangeRequestState?.(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+    onChangeRequestState?.(
+      threadKey,
+      prState === null ? null : { state: prState, updatedAt: prUpdatedAt },
+    );
+  }, [onChangeRequestState, prState, prUpdatedAt, threadKey]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");
