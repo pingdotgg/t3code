@@ -384,6 +384,15 @@ describe("CodexSessionRuntime collab integration", () => {
         const item = (entry.params as { readonly item?: { readonly type?: unknown } }).item;
         return item?.type !== "subAgentActivity";
       });
+      const childARegistration = wireFixture.notifications.find((entry) => {
+        const item = (
+          entry.params as {
+            readonly item?: { readonly agentThreadId?: unknown; readonly type?: unknown };
+          }
+        ).item;
+        return item?.type === "subAgentActivity" && item.agentThreadId === CHILD_A;
+      });
+      assert.isDefined(childARegistration);
       const failedSpawnStarted = {
         method: "item/started",
         params: {
@@ -468,6 +477,7 @@ describe("CodexSessionRuntime collab integration", () => {
         JSON.stringify({
           rootThreadId: ROOT,
           notifications: [
+            childARegistration,
             failedSpawnStarted,
             failedSpawn,
             partiallyFailedSpawn,
@@ -502,7 +512,7 @@ describe("CodexSessionRuntime collab integration", () => {
         .filter((event) => event.method === "collabAgent/started")
         .map((event) => (event.payload as { agentThreadId?: string }).agentThreadId)
         .filter((agentThreadId): agentThreadId is string => agentThreadId !== undefined);
-      assert.deepEqual(new Set(startedChildIds), new Set([CHILD_A, CHILD_B]));
+      assert.deepEqual(startedChildIds, [CHILD_B]);
       const failedChildStatuses = events.filter(
         (event) =>
           event.method === "collabAgent/statusChanged" &&

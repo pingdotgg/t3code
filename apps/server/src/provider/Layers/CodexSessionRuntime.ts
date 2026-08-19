@@ -1176,7 +1176,7 @@ export const makeCodexSessionRuntime = (
                 depth: existingChild?.depth,
                 parentThreadId: existingChild?.parentThreadId ?? parentThreadId,
                 spawnTurnId: existingChild?.spawnTurnId ?? parentTurnId,
-                spawnItemId: existingChild ? existingChild.spawnItemId : item.id,
+                spawnItemId: existingChild?.spawnItemId ?? item.id,
               };
               yield* Ref.update(collabChildAgentsRef, (current) => {
                 const next = new Map(current);
