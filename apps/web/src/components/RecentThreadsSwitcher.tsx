@@ -20,34 +20,32 @@ import {
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { recentThreadsDirectionFromCommand, resolveShortcutCommand } from "../keybindings";
+import { isModelPickerOpen } from "../modelPickerVisibility";
+import {
+  type RecentThreadsSwitcherSession,
+  reconcileRecentThreadsSwitcherSession,
+  shouldCommitRecentThreadsSwitcherOnKeyUp,
+} from "../recentThreadsSwitcherLogic";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn } from "../lib/utils";
 import { useRecentThreadsStore } from "../recentThreadsStore";
-import { readProject, readThreadShell } from "../state/entities";
+import { readProject, readThreadShell, readThreadStatus } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 
-interface SwitcherSession {
-  /** Scoped thread keys frozen when the switcher opened, newest visit first. */
-  entries: ReadonlyArray<string>;
-  selectedIndex: number;
-  /** Modifiers held on open; releasing all of them commits the selection. */
-  holdsCtrl: boolean;
-  holdsMeta: boolean;
-  holdsAlt: boolean;
+function isLiveRecentThreadKey(key: string): boolean {
+  const ref = parseScopedThreadKey(key);
+  if (!ref) return false;
+  const shell = readThreadShell(ref);
+  return shell !== null && shell.archivedAt === null && readThreadStatus(ref) !== "deleted";
 }
 
 /** Recent thread keys that still resolve to a live, unarchived thread. */
 function liveRecentThreadKeys(): string[] {
-  const live: string[] = [];
-  for (const key of useRecentThreadsStore.getState().recentThreadKeys) {
-    const ref = parseScopedThreadKey(key);
-    if (!ref) continue;
-    const shell = readThreadShell(ref);
-    if (shell === null || shell.archivedAt !== null) continue;
-    live.push(key);
-  }
-  return live;
+  return useRecentThreadsStore.getState().recentThreadKeys.filter(isLiveRecentThreadKey);
 }
 
 export function RecentThreadsSwitcher() {
@@ -57,12 +55,23 @@ export function RecentThreadsSwitcher() {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
-  const [session, setSession] = useState<SwitcherSession | null>(null);
+  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const terminalOpen = useTerminalUiStateStore((state) =>
+    routeThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+      : false,
+  );
+  const previewOpen = useRightPanelStore((state) =>
+    routeThreadRef
+      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
+      : false,
+  );
+  const [session, setSession] = useState<RecentThreadsSwitcherSession | null>(null);
   // Keydown and keyup are native window listeners with no React flush between
   // them, so the ref is written eagerly on every transition — reading state
   // through the render-synced ref would let a keyup commit a cancelled session.
   const sessionRef = useRef(session);
-  const updateSession = (next: SwitcherSession | null) => {
+  const updateSession = (next: RecentThreadsSwitcherSession | null) => {
     sessionRef.current = next;
     setSession(next);
   };
@@ -72,14 +81,19 @@ export function RecentThreadsSwitcher() {
     updateSession(null);
   });
 
-  const commit = useEffectEvent((index?: number) => {
+  const commit = useEffectEvent((requestedKey?: string) => {
     const current = sessionRef.current;
     if (!current) return;
+    const reconciled = reconcileRecentThreadsSwitcherSession(current, isLiveRecentThreadKey);
     updateSession(null);
-    const key = current.entries[index ?? current.selectedIndex];
-    const ref = key === undefined ? null : parseScopedThreadKey(key);
-    const shell = ref === null ? null : readThreadShell(ref);
-    if (!ref || shell === null || shell.archivedAt !== null) return;
+    if (!reconciled) return;
+    const key =
+      requestedKey !== undefined && reconciled.entries.includes(requestedKey)
+        ? requestedKey
+        : reconciled.entries[reconciled.selectedIndex];
+    if (key === undefined) return;
+    const ref = parseScopedThreadKey(key);
+    if (!ref || !isLiveRecentThreadKey(key)) return;
     void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
   });
 
@@ -105,7 +119,13 @@ export function RecentThreadsSwitcher() {
     }
     const direction = recentThreadsDirectionFromCommand(
       resolveShortcutCommand(event, keybindings, {
-        context: { terminalFocus: isTerminalFocused() },
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen,
+          previewFocus: isPreviewFocused(),
+          previewOpen,
+          modelPickerOpen: isModelPickerOpen(),
+        },
       }),
     );
     if (direction === null) return;
@@ -117,10 +137,15 @@ export function RecentThreadsSwitcher() {
     if (event.repeat) return;
     const step = direction === "next" ? 1 : -1;
     if (current) {
-      const count = current.entries.length;
+      const reconciled = reconcileRecentThreadsSwitcherSession(current, isLiveRecentThreadKey);
+      if (!reconciled) {
+        cancel();
+        return;
+      }
+      const count = reconciled.entries.length;
       updateSession({
-        ...current,
-        selectedIndex: (current.selectedIndex + step + count) % count,
+        ...reconciled,
+        selectedIndex: (reconciled.selectedIndex + step + count) % count,
       });
       return;
     }
@@ -140,41 +165,51 @@ export function RecentThreadsSwitcher() {
       holdsCtrl: event.ctrlKey,
       holdsMeta: event.metaKey,
       holdsAlt: event.altKey,
+      holdsShift: event.shiftKey,
+      triggerKey: event.code || event.key,
     });
   });
 
   const handleWindowKeyUp = useEffectEvent((event: KeyboardEvent) => {
     const current = sessionRef.current;
     if (!current) return;
-    if (!current.holdsCtrl && !current.holdsMeta && !current.holdsAlt) return;
-    const stillHeld =
-      (current.holdsCtrl && event.getModifierState("Control")) ||
-      (current.holdsMeta && event.getModifierState("Meta")) ||
-      (current.holdsAlt && event.getModifierState("Alt"));
-    if (!stillHeld) commit();
+    if (shouldCommitRecentThreadsSwitcherOnKeyUp(current, event)) commit();
   });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => handleWindowKeyDown(event);
     const onKeyUp = (event: KeyboardEvent) => handleWindowKeyUp(event);
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[data-testid="recent-threads-switcher"]')
+      ) {
+        return;
+      }
+      cancel();
+    };
     const onWindowBlur = () => cancel();
     // Capture phase so held-modifier cycling beats focused editors and the
     // terminal drawer, mirroring the sidebar toggle listener.
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("blur", onWindowBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("blur", onWindowBlur);
     };
   }, []);
 
   if (!session) return null;
+  const reconciled = reconcileRecentThreadsSwitcherSession(session, isLiveRecentThreadKey);
+  if (!reconciled) return null;
   return (
     <RecentThreadsSwitcherOverlay
-      entries={session.entries}
-      selectedIndex={session.selectedIndex}
+      entries={reconciled.entries}
+      selectedIndex={reconciled.selectedIndex}
       onSelect={commit}
     />
   );
@@ -187,7 +222,7 @@ function RecentThreadsSwitcherOverlay({
 }: {
   entries: ReadonlyArray<string>;
   selectedIndex: number;
-  onSelect: (index: number) => void;
+  onSelect: (threadKey: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -196,20 +231,20 @@ function RecentThreadsSwitcherOverlay({
   }, [selectedIndex]);
 
   return (
-    <div className="fixed inset-0 z-100 flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-0 z-100 flex justify-center px-4">
       <div
         ref={listRef}
         role="listbox"
         aria-label="Recent threads"
         data-testid="recent-threads-switcher"
-        className="dialog-glass mt-[14vh] flex h-fit max-h-[60vh] w-full max-w-md flex-col gap-0.5 overflow-y-auto rounded-2xl border p-1.5"
+        className="dialog-glass pointer-events-auto mt-[14vh] flex h-fit max-h-[60vh] w-full max-w-md flex-col gap-0.5 overflow-y-auto rounded-2xl border p-1.5"
       >
         {entries.map((threadKey, index) => (
           <RecentThreadsSwitcherRow
             key={threadKey}
             threadKey={threadKey}
             selected={index === selectedIndex}
-            onClick={() => onSelect(index)}
+            onClick={() => onSelect(threadKey)}
           />
         ))}
       </div>

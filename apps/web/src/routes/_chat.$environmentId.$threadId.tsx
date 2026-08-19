@@ -78,11 +78,11 @@ function ChatThreadRouteView() {
 
   const serverThreadShellExists = serverThreadShell !== null;
   useEffect(() => {
-    if (!threadRef || !serverThreadShellExists) {
+    if (!threadRef || !serverThreadShellExists || serverThreadStatus === "deleted") {
       return;
     }
     useRecentThreadsStore.getState().recordThreadVisit(scopedThreadKey(threadRef));
-  }, [serverThreadShellExists, threadRef]);
+  }, [serverThreadShellExists, serverThreadStatus, threadRef]);
 
   if (!threadRef) {
     return null;
