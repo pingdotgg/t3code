@@ -1,5 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_MODEL, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  type OrchestrationCommand,
+  type OrchestrationSession,
+  type OrchestrationThread,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -11,10 +21,39 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
+import { OrchestrationCommandInvariantError } from "./orchestration/Errors.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
+import { ProviderSessionDirectoryPersistenceError } from "./provider/Errors.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+
+const sessionUpdatedAt = "2026-01-01T00:00:00.000Z";
+
+function sessionThread(
+  threadId: ThreadId,
+  status: OrchestrationSession["status"],
+  activeTurnId: TurnId | null = null,
+): Pick<OrchestrationThread, "id" | "session" | "deletedAt"> {
+  return {
+    id: threadId,
+    deletedAt: null,
+    session: {
+      threadId,
+      status,
+      providerName: "codex" as const,
+      runtimeMode: "full-access" as const,
+      activeTurnId,
+      lastError: null,
+      updatedAt: sessionUpdatedAt,
+    },
+  };
+}
+
+const queryWithThreads = (
+  threads: ReadonlyArray<Pick<OrchestrationThread, "id" | "session" | "deletedAt">>,
+) => ({ getCommandReadModel: () => Effect.succeed({ threads }) }) as never;
 
 it("uses the canonical Codex default for auto-bootstrapped model selection", () => {
   assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(), {
@@ -69,6 +108,109 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
     }),
   ),
 );
+
+it.effect("reconciles provider sessions inherited from the previous server", () => {
+  const threadId = ThreadId.make("thread-startup-reconcile");
+  const startingThreadId = ThreadId.make("thread-startup-starting");
+  const resumeCursor = { schemaVersion: 1, sessionId: "session-startup-reconcile" };
+  const bindingFailure = new ProviderSessionDirectoryPersistenceError({
+    operation: "ProviderSessionDirectory.getBinding",
+    detail: "simulated invalid binding",
+  });
+  const bindingWriteFailure = new ProviderSessionDirectoryPersistenceError({
+    operation: "ProviderSessionDirectory.upsert",
+    detail: "simulated binding write failure",
+  });
+  const upserts: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
+  const dispatches: Array<OrchestrationCommand> = [];
+
+  return ServerRuntimeStartup.reconcileProviderSessions.pipe(
+    Effect.provideService(
+      ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+      queryWithThreads([
+        {
+          ...sessionThread(threadId, "running", TurnId.make("turn-startup-reconcile")),
+          deletedAt: "2026-01-02T00:00:00.000Z",
+        },
+        sessionThread(startingThreadId, "starting"),
+        sessionThread(ThreadId.make("thread-startup-ready"), "ready"),
+      ]),
+    ),
+    Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, {
+      getBinding: (candidate: ThreadId) =>
+        candidate === threadId
+          ? Effect.succeed(
+              Option.some({
+                threadId,
+                provider: ProviderDriverKind.make("codex"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "running",
+                resumeCursor,
+              }),
+            )
+          : Effect.fail(bindingFailure),
+      upsert: (binding: ProviderSessionDirectory.ProviderRuntimeBinding) =>
+        Effect.sync(() => upserts.push(binding)).pipe(
+          Effect.andThen(Effect.fail(bindingWriteFailure)),
+        ),
+    } satisfies Partial<ProviderSessionDirectory.ProviderSessionDirectory["Service"]> as never),
+    Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
+      dispatch: (command: OrchestrationCommand) =>
+        Effect.sync(() => dispatches.push(command)).pipe(Effect.as({ sequence: 1 })),
+    } satisfies Partial<OrchestrationEngine.OrchestrationEngineService["Service"]> as never),
+    Effect.provide(NodeServices.layer),
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.equal(upserts.length, 1);
+        assert.equal(upserts[0]?.status, "stopped");
+        assert.deepStrictEqual(upserts[0]?.resumeCursor, resumeCursor);
+        assert.deepStrictEqual(upserts[0]?.runtimePayload, { activeTurnId: null });
+
+        assert.equal(dispatches.length, 2);
+        const command = dispatches[0];
+        assert.equal(command?.type, "thread.session.set");
+        if (command?.type === "thread.session.set") {
+          assert.equal(command.threadId, threadId);
+          assert.equal(command.session.status, "stopped");
+          assert.equal(command.session.activeTurnId, null);
+          assert.notEqual(command.session.updatedAt, sessionUpdatedAt);
+          assert.equal(command.session.updatedAt, command.createdAt);
+        }
+        const startingCommand = dispatches[1];
+        assert.equal(startingCommand?.type, "thread.session.set");
+        if (startingCommand?.type === "thread.session.set") {
+          assert.equal(startingCommand.threadId, startingThreadId);
+        }
+      }),
+    ),
+  );
+});
+
+it.effect("fails startup reconciliation when a session cannot be settled", () => {
+  const threadId = ThreadId.make("thread-startup-reconcile-failure");
+  const failure = new OrchestrationCommandInvariantError({
+    commandType: "thread.session.set",
+    detail: "simulated reconciliation failure",
+  });
+
+  return ServerRuntimeStartup.reconcileProviderSessions.pipe(
+    Effect.provideService(
+      ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+      queryWithThreads([
+        sessionThread(threadId, "running", TurnId.make("turn-startup-reconcile-failure")),
+      ]),
+    ),
+    Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, {
+      getBinding: () => Effect.succeed(Option.none()),
+    } satisfies Partial<ProviderSessionDirectory.ProviderSessionDirectory["Service"]> as never),
+    Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
+      dispatch: () => Effect.fail(failure),
+    } satisfies Partial<OrchestrationEngine.OrchestrationEngineService["Service"]> as never),
+    Effect.provide(NodeServices.layer),
+    Effect.flip,
+    Effect.tap((error) => Effect.sync(() => assert.equal(error, failure))),
+  );
+});
 
 it.effect("launchStartupHeartbeat does not block the caller while counts are loading", () =>
   Effect.scoped(
