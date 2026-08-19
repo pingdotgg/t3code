@@ -61,6 +61,7 @@ const PROVIDER = ProviderDriverKind.make("opencode");
  * rather than misread (mirrors GROK_RESUME_VERSION / CURSOR_RESUME_VERSION).
  */
 const OPENCODE_RESUME_VERSION = 1 as const;
+const MAX_PENDING_ACTUAL_MODEL_TURNS = 16;
 
 /**
  * Decode a persisted resume cursor into the upstream `ses_…` id. Anything
@@ -221,6 +222,14 @@ function isOpenCodeDefaultTitle(title: string): boolean {
   return OPENCODE_DEFAULT_TITLE_PATTERN.test(title);
 }
 
+function actualModelFromPart(part: Part): string | undefined {
+  if (part.type !== "step-finish") {
+    return undefined;
+  }
+  const modelID = (part as Part & { readonly modelID?: unknown }).modelID;
+  return typeof modelID === "string" ? trimText(modelID) : undefined;
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -230,11 +239,14 @@ interface OpenCodeSessionContext {
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
+  readonly turnIdByMessageId: Map<string, TurnId>;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
+  activeActualModel: string | undefined;
+  readonly completedTurnsWithoutModel: Map<TurnId, "completed" | "failed">;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
@@ -252,6 +264,32 @@ interface OpenCodeSessionContext {
    *   - tears down the OpenCode server process for scope-owned servers.
    */
   readonly sessionScope: Scope.Closeable;
+}
+
+export function rememberCompletedTurnWithoutModel(
+  pendingTurns: Map<TurnId, "completed" | "failed">,
+  turnId: TurnId,
+  state: "completed" | "failed",
+): void {
+  pendingTurns.delete(turnId);
+  pendingTurns.set(turnId, state);
+  if (pendingTurns.size <= MAX_PENDING_ACTUAL_MODEL_TURNS) {
+    return;
+  }
+  const oldestTurnId = pendingTurns.keys().next().value;
+  if (oldestTurnId !== undefined) {
+    pendingTurns.delete(oldestTurnId);
+  }
+}
+
+export function rememberMessageTurn(
+  messageTurns: Map<string, TurnId>,
+  messageId: string,
+  turnId: TurnId,
+): void {
+  if (!messageTurns.has(messageId)) {
+    messageTurns.set(messageId, turnId);
+  }
 }
 
 export interface OpenCodeAdapterLiveOptions {
@@ -799,6 +837,39 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    const captureActualModel = Effect.fn("captureActualModel")(function* (
+      context: OpenCodeSessionContext,
+      part: Part,
+      raw: unknown,
+    ) {
+      const actualModel = actualModelFromPart(part);
+      const partTurnId = context.turnIdByMessageId.get(part.messageID);
+      if (!actualModel || !partTurnId) {
+        return;
+      }
+      if (context.activeTurnId === partTurnId) {
+        context.activeActualModel = actualModel;
+        return;
+      }
+      const completedState = context.completedTurnsWithoutModel.get(partTurnId);
+      if (!completedState) {
+        return;
+      }
+      context.completedTurnsWithoutModel.delete(partTurnId);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: partTurnId,
+          raw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: completedState,
+          actualModel,
+        },
+      });
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -845,10 +916,14 @@ export function makeOpenCodeAdapter(
         case "message.updated": {
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "assistant") {
+            if (turnId) {
+              rememberMessageTurn(context.turnIdByMessageId, event.properties.info.id, turnId);
+            }
             for (const part of context.partById.values()) {
               if (part.messageID !== event.properties.info.id) {
                 continue;
               }
+              yield* captureActualModel(context, part, event);
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
           }
@@ -857,6 +932,7 @@ export function makeOpenCodeAdapter(
 
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
+          context.turnIdByMessageId.delete(event.properties.messageID);
           break;
         }
 
@@ -908,7 +984,14 @@ export function makeOpenCodeAdapter(
         case "message.part.updated": {
           const part = event.properties.part;
           context.partById.set(part.id, part);
+          if (turnId) {
+            rememberMessageTurn(context.turnIdByMessageId, part.messageID, turnId);
+          }
           const messageRole = messageRoleForPart(context, part);
+
+          if (messageRole === "assistant") {
+            yield* captureActualModel(context, part, event);
+          }
 
           if (messageRole === "assistant") {
             yield* emitAssistantTextDelta(context, part, turnId, event);
@@ -1074,7 +1157,18 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
+            const actualModel = context.activeActualModel;
             context.activeTurnId = undefined;
+            context.activeActualModel = undefined;
+            if (actualModel) {
+              context.completedTurnsWithoutModel.delete(turnId);
+            } else {
+              rememberCompletedTurnWithoutModel(
+                context.completedTurnsWithoutModel,
+                turnId,
+                "completed",
+              );
+            }
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -1085,6 +1179,7 @@ export function makeOpenCodeAdapter(
               type: "turn.completed",
               payload: {
                 state: "completed",
+                ...(actualModel ? { actualModel } : {}),
               },
             });
           }
@@ -1094,7 +1189,20 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          const actualModel = context.activeActualModel;
           context.activeTurnId = undefined;
+          context.activeActualModel = undefined;
+          if (activeTurnId) {
+            if (actualModel) {
+              context.completedTurnsWithoutModel.delete(activeTurnId);
+            } else {
+              rememberCompletedTurnWithoutModel(
+                context.completedTurnsWithoutModel,
+                activeTurnId,
+                "failed",
+              );
+            }
+          }
           yield* updateProviderSession(
             context,
             {
@@ -1114,6 +1222,7 @@ export function makeOpenCodeAdapter(
               payload: {
                 state: "failed",
                 errorMessage: message,
+                ...(actualModel ? { actualModel } : {}),
               },
             });
           }
@@ -1397,9 +1506,12 @@ export function makeOpenCodeAdapter(
           partById: new Map(),
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
+          turnIdByMessageId: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
+          activeActualModel: undefined,
+          completedTurnsWithoutModel: new Map(),
           activeAgent: undefined,
           activeVariant: undefined,
           stopped: yield* Ref.make(false),
@@ -1476,6 +1588,9 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
+      if (steeringTurnId === undefined) {
+        context.activeActualModel = undefined;
+      }
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
       yield* updateProviderSession(
@@ -1519,6 +1634,7 @@ export function makeOpenCodeAdapter(
             ? Effect.void
             : Effect.gen(function* () {
                 context.activeTurnId = undefined;
+                context.activeActualModel = undefined;
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
                 yield* updateProviderSession(

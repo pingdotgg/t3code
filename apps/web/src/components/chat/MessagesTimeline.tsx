@@ -1124,20 +1124,37 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         {row.showAssistantMeta ? (
-          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
-            <AssistantCopyButton row={row} />
-            {!row.message.streaming && (
+          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums">
+            {row.message.actualModel ? (
               <Tooltip>
                 <TooltipTrigger
-                  render={<p className="text-muted-foreground text-xs tabular-nums" />}
+                  render={
+                    <p
+                      data-assistant-actual-model
+                      className="max-w-[22rem] truncate text-muted-foreground"
+                    />
+                  }
                 >
-                  {formatDayAwareTimestamp(row.message.updatedAt, ctx.timestampFormat)}
+                  Model: {row.message.actualModel}
                 </TooltipTrigger>
-                <TooltipPopup>
-                  {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
-                </TooltipPopup>
+                <TooltipPopup>Actual model: {row.message.actualModel}</TooltipPopup>
               </Tooltip>
-            )}
+            ) : null}
+            <div className="flex items-center gap-2 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+              <AssistantCopyButton row={row} />
+              {!row.message.streaming && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<p className="text-muted-foreground text-xs tabular-nums" />}
+                  >
+                    {formatDayAwareTimestamp(row.message.updatedAt, ctx.timestampFormat)}
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
+                  </TooltipPopup>
+                </Tooltip>
+              )}
+            </div>
           </div>
         ) : null}
       </div>

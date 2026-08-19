@@ -20,6 +20,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
@@ -37,6 +38,8 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  rememberCompletedTurnWithoutModel,
+  rememberMessageTurn,
 } from "./OpenCodeAdapter.ts";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
@@ -68,6 +71,7 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventGate: null as Promise<void> | null,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -88,6 +92,7 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventGate = null;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -206,6 +211,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       event: {
         subscribe: async () => ({
           stream: (async function* () {
+            if (runtimeMock.state.subscribedEventGate) {
+              await runtimeMock.state.subscribedEventGate;
+            }
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
             }
@@ -1055,6 +1063,33 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it("bounds completed turns waiting for actual model metadata", () => {
+    const pendingTurns = new Map<ReturnType<typeof TurnId.make>, "completed" | "failed">();
+    for (let index = 0; index < 20; index += 1) {
+      rememberCompletedTurnWithoutModel(
+        pendingTurns,
+        TurnId.make(`turn-pending-model-${index}`),
+        "completed",
+      );
+    }
+
+    NodeAssert.equal(pendingTurns.size, 16);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-0")), false);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-3")), false);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-4")), true);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-19")), true);
+  });
+
+  it("does not rebind a message to a newer active turn", () => {
+    const messageTurns = new Map<string, ReturnType<typeof TurnId.make>>();
+    const originalTurnId = TurnId.make("turn-original-message");
+    rememberMessageTurn(messageTurns, "msg-late-role", originalTurnId);
+    rememberMessageTurn(messageTurns, "msg-late-role", TurnId.make("turn-new-active"));
+
+    NodeAssert.equal(messageTurns.size, 1);
+    NodeAssert.equal(messageTurns.get("msg-late-role"), originalTurnId);
+  });
+
   it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>
     Effect.sync(() => {
       const firstUpdate = mergeOpenCodeAssistantText(undefined, "Hello");
@@ -1066,6 +1101,142 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         ["Hello", "lo world", ""],
       );
       NodeAssert.equal(secondUpdate.latestText, "Hellolo world");
+    }),
+  );
+
+  it.effect("enriches turn completion when the response model arrives after idle", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-actual-model");
+      let releaseEvents: (() => void) | undefined;
+      runtimeMock.state.subscribedEventGate = new Promise<void>((resolve) => {
+        releaseEvents = resolve;
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: { id: "msg-actual-model", role: "assistant" },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-step-finish",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-actual-model",
+              type: "step-finish",
+              reason: "stop",
+              modelID: "gpt-5.6-luna",
+              cost: 0,
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "identify the model",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "kedvai/auto"),
+      });
+      releaseEvents?.();
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completions = events.filter((event) => event.type === "turn.completed");
+      NodeAssert.equal(completions.length, 2);
+      NodeAssert.equal(completions[0]?.payload.actualModel, undefined);
+      NodeAssert.equal(completions[1]?.payload.actualModel, "gpt-5.6-luna");
+    }),
+  );
+
+  it.effect("captures a stored response model when message metadata arrives after idle", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-stored-actual-model");
+      let releaseEvents: (() => void) | undefined;
+      runtimeMock.state.subscribedEventGate = new Promise<void>((resolve) => {
+        releaseEvents = resolve;
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-stored-step-finish",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-stored-actual-model",
+              type: "step-finish",
+              reason: "stop",
+              modelID: "gpt-5.6-luna",
+              cost: 0,
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: { id: "msg-stored-actual-model", role: "assistant" },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "identify the stored model",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "kedvai/auto"),
+      });
+      releaseEvents?.();
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completions = events.filter((event) => event.type === "turn.completed");
+      NodeAssert.equal(completions.length, 2);
+      NodeAssert.equal(completions[0]?.payload.actualModel, undefined);
+      NodeAssert.equal(completions[1]?.payload.actualModel, "gpt-5.6-luna");
     }),
   );
 
