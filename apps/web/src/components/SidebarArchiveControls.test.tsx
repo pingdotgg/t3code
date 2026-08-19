@@ -117,6 +117,10 @@ describe("SidebarSettledDivider", () => {
     expect(markup).toContain('aria-label="Archiving settled threads"');
     expect(markup).toContain("disabled");
     expect(markup).toContain("Archive all");
+    expect(markup).toContain("enabled:cursor-pointer");
+    expect(markup).toContain("enabled:hover:bg-sidebar-row-hover");
+    expect(markup).toContain("enabled:hover:text-sidebar-foreground");
+    expect(markup).toContain("disabled:cursor-not-allowed");
   });
 
   it("isolates archive-all clicks from the shelf toggle", () => {

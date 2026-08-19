@@ -126,7 +126,7 @@ export function SidebarSettledDivider({
               event.stopPropagation();
               onArchiveAll();
             }}
-            className="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:opacity-50"
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-sidebar-muted-foreground/70 transition-colors enabled:cursor-pointer enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ArchiveIcon aria-hidden className="size-3" />
             Archive all
