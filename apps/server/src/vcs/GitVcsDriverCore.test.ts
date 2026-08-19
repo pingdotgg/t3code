@@ -635,6 +635,57 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("cools down a failed remote default branch probe across mutations", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const probeAttempts = yield* Ref.make(0);
+      const failingProbeSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (!command.args.includes("ls-remote")) {
+            return yield* delegate.spawn(command);
+          }
+          yield* Ref.update(probeAttempts, (count) => count + 1);
+          // A probe that cannot spawn fails its cache entry instead of resolving to
+          // null, the same channel a timed-out probe fails through.
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+          });
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingProbeSpawner),
+      );
+
+      yield* Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* Ref.set(probeAttempts, 0);
+
+        yield* driver.statusDetailsRemote(cwd);
+        // Ordinary mutations cannot move the remote's HEAD, so they must not drop the
+        // entry and send the next status read back through the failing probe.
+        yield* driver.fetchRemote({ cwd, remoteName: "origin" });
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(yield* Ref.get(probeAttempts), 1);
+
+        yield* TestClock.adjust("6 minutes");
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(yield* Ref.get(probeAttempts), 2);
+      }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>
@@ -1098,6 +1149,55 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.branch, "release");
         assert.equal(status.upstreamRef, "upstream/release");
         assert.equal(status.isDefaultBranch, false);
+      }),
+    );
+
+    it.effect("prefers the remote default branch over a stale local origin HEAD", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["checkout", "-b", "dev"]);
+        yield* git(cwd, ["push", "-u", "origin", "dev"]);
+        // The project switched its default branch to `dev` after this clone was
+        // made. Git never rewrites `refs/remotes/origin/HEAD` on fetch or pull, so
+        // the local snapshot is left pointing at the branch that used to be default.
+        yield* git(remote, ["symbolic-ref", "HEAD", "refs/heads/dev"]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+
+        assert.equal(status.branch, "dev");
+        assert.equal(status.isDefaultBranch, true);
+      }),
+    );
+
+    it.effect("falls back to the local origin HEAD when the remote is unreachable", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const pathService = yield* Path.Path;
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        yield* git(cwd, [
+          "remote",
+          "set-url",
+          "origin",
+          pathService.join(remote, "missing-remote.git"),
+        ]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+
+        assert.equal(status.branch, "main");
+        assert.equal(status.isDefaultBranch, true);
       }),
     );
 
