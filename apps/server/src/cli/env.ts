@@ -10,34 +10,53 @@
  * without a human opening a pairing dialog once per machine.
  *
  * This reuses the exact probe-and-bootstrap path clients call on pairing
- * (`preparePairingRegistration` from `@t3tools/client-runtime/connection`)
- * and persists the result using the same `PersistedSavedEnvironmentRecord`
- * shape the desktop app reads from disk on launch. It intentionally does
- * NOT touch the live `EnvironmentRegistry` / `EnvironmentSupervisor`
- * machinery a running client uses - that graph exists to supervise a
- * long-lived connection, which a one-shot CLI invocation has no business
- * standing up. A client picks up the new entry the next time it reads its
- * own catalog file (normally on launch).
+ * (`preparePairingRegistration` from `@t3tools/client-runtime/connection`).
+ * It intentionally does NOT touch the live `EnvironmentRegistry` /
+ * `EnvironmentSupervisor` machinery a running client uses - that graph
+ * exists to supervise a long-lived connection, which a one-shot CLI
+ * invocation has no business standing up.
  *
- * Secrets are handled conservatively: by default no bearer token is
- * persisted, matching the shape of `PersistedSavedEnvironmentRecord` itself,
- * which has no secret field - only the desktop app's own storage layer adds
- * one (`encryptedBearerToken`, encrypted at rest via Electron's
- * `safeStorage`), and this command has no access to that. Pass
- * `--print-token` to have the bootstrapped bearer token printed once so a
- * provisioning script can store it wherever it already stores other
- * secrets, instead of this command inventing a second, unencrypted place
- * for it to live on disk.
+ * ---
  *
- * Path assumption worth double-checking before relying on this in
- * automation: the default catalog path is derived from the same
- * `--base-dir` / `T3CODE_HOME` convention the server CLI already uses
- * elsewhere (`ServerConfig.deriveServerPaths`), on the assumption that it
- * lines up with the desktop app's own state directory on the same machine.
- * That has not been verified against every desktop build; pass
- * `--catalog-path` explicitly if you are not sure, and compare against
- * whatever `DesktopEnvironment`'s `savedEnvironmentRegistryPath` resolves to
- * for your install.
+ * Revised after review (thank you, Macroscope and Bugbot, both caught real
+ * bugs in the first version):
+ *
+ * 1. The desktop app's actual catalog is `connection-catalog.json`
+ *    (`DesktopConnectionCatalogStore`) - a single blob encrypted whole via
+ *    Electron's `safeStorage` (OS keychain-backed). `saved-environments.json`
+ *    (`DesktopSavedEnvironments`) is a *legacy* plaintext-ish format that
+ *    only gets read once, to migrate into the encrypted catalog, and only
+ *    when `connection-catalog.json` does not exist yet. Once a desktop app
+ *    has launched and migrated, writing to `saved-environments.json` is a
+ *    complete no-op - the first version of this command targeted exactly
+ *    that file, unconditionally.
+ *
+ *    This command cannot safely write into an already-migrated encrypted
+ *    catalog: doing that means either reproducing Electron's `safeStorage`
+ *    (tied to the OS keychain and the desktop app's own identity - not
+ *    something a headless Node process can reasonably replicate) or writing
+ *    plaintext into a field the app expects to be encrypted. So it checks
+ *    for a sibling `connection-catalog.json` first and refuses with an
+ *    explicit error if one exists, rather than silently doing nothing or
+ *    corrupting anything. It only ever writes the legacy format, which is
+ *    only useful pre-first-launch (e.g. pre-seeding a brand new machine's
+ *    catalog as part of provisioning, before the desktop app has ever run
+ *    there) - a narrower claim than the original PR description made.
+ *
+ * 2. Round-tripping every existing record through
+ *    `PersistedSavedEnvironmentRecordSchema` silently dropped any
+ *    `encryptedBearerToken` (or other fields that schema doesn't know
+ *    about) on *every other* record in the file, not just the one being
+ *    added - a real, reported data-loss bug. Existing records are now
+ *    carried through as opaque JSON objects and never decoded against a
+ *    narrowing schema; only the new record being inserted is
+ *    schema-validated. Whatever fields already live on other records -
+ *    known to this file or not - survive untouched.
+ *
+ * 3. Read/write errors now carry an operation discriminator, matching
+ *    `DesktopSavedEnvironmentsReadError` / `WriteError` /
+ *    `DocumentDecodeError` conventions instead of collapsing every failure
+ *    mode into one message.
  */
 import { preparePairingRegistration } from "@t3tools/client-runtime/connection";
 import * as ClientCapabilities from "@t3tools/client-runtime/platform";
@@ -46,7 +65,6 @@ import {
   type PersistedSavedEnvironmentRecord,
   PersistedSavedEnvironmentRecordSchema,
 } from "@t3tools/contracts";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -62,33 +80,98 @@ import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
 
-const CatalogDocumentSchema = Schema.Struct({
-  version: Schema.optionalKey(Schema.Number),
-  records: Schema.optionalKey(Schema.Array(PersistedSavedEnvironmentRecordSchema)),
-});
-type CatalogDocument = { readonly version: number; readonly records: readonly PersistedSavedEnvironmentRecord[] };
+/**
+ * An existing catalog record, kept as an opaque JSON object rather than
+ * decoded against `PersistedSavedEnvironmentRecordSchema`. That schema is
+ * the *contract* shape used to validate the one new record this command
+ * writes - it is deliberately NOT used to parse records already in the
+ * file, because doing so drops any field it doesn't know about
+ * (`encryptedBearerToken` being the one that actually bit us in review).
+ */
+type OpaqueCatalogRecord = Readonly<Record<string, unknown>>;
 
-const CatalogDocumentJson = fromLenientJson(CatalogDocumentSchema);
-const decodeCatalogDocumentJson = Schema.decodeEffect(CatalogDocumentJson);
-const encodeCatalogDocumentJson = Schema.encodeEffect(CatalogDocumentJson);
-
-export class EnvCatalogWriteError extends Schema.TaggedErrorClass<EnvCatalogWriteError>()(
-  "EnvCatalogWriteError",
-  { path: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Could not write the environment catalog at ${this.path}.`;
-  }
+interface CatalogDocument {
+  readonly version: number;
+  readonly records: readonly OpaqueCatalogRecord[];
 }
+
+const readEnvironmentId = (record: OpaqueCatalogRecord): string | undefined =>
+  typeof record["environmentId"] === "string" ? (record["environmentId"] as string) : undefined;
+
+const CatalogReadOperation = Schema.Literals(["read-file", "parse-json"]);
+type CatalogReadOperation = typeof CatalogReadOperation.Type;
 
 export class EnvCatalogReadError extends Schema.TaggedErrorClass<EnvCatalogReadError>()(
   "EnvCatalogReadError",
-  { path: Schema.String, cause: Schema.Defect() },
+  { operation: CatalogReadOperation, path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Could not read the environment catalog at ${this.path}.`;
+    return `Could not read the environment catalog during ${this.operation} at ${this.path}.`;
   }
 }
+
+const CatalogWriteOperation = Schema.Literals([
+  "encode-catalog",
+  "create-directory",
+  "write-temporary-file",
+  "replace-catalog-file",
+]);
+type CatalogWriteOperation = typeof CatalogWriteOperation.Type;
+
+export class EnvCatalogWriteError extends Schema.TaggedErrorClass<EnvCatalogWriteError>()(
+  "EnvCatalogWriteError",
+  { operation: CatalogWriteOperation, path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not write the environment catalog during ${this.operation} at ${this.path}.`;
+  }
+}
+
+export class EnvCatalogEncryptedCatalogExistsError extends Schema.TaggedErrorClass<EnvCatalogEncryptedCatalogExistsError>()(
+  "EnvCatalogEncryptedCatalogExistsError",
+  { encryptedCatalogPath: Schema.String },
+) {
+  override get message(): string {
+    return [
+      `${this.encryptedCatalogPath} already exists.`,
+      "That is the desktop app's real, current catalog - a single blob encrypted",
+      "whole via Electron's safeStorage (OS keychain-backed). This command has no",
+      "access to that, running outside Electron, so it cannot safely add to an",
+      "already-migrated catalog without either reimplementing OS-keychain",
+      "encryption or writing something the app can't read. It only supports",
+      "pre-seeding a legacy-format catalog before a desktop app has ever launched",
+      "on this machine (i.e. before that file exists). Pair through the desktop",
+      "app's own dialog for an already-provisioned machine instead.",
+    ].join(" ");
+  }
+}
+
+export type EnvCatalogPreflightError = EnvCatalogReadError | EnvCatalogEncryptedCatalogExistsError;
+
+/**
+ * Refuses to proceed if the sibling encrypted catalog
+ * (`connection-catalog.json`) already exists next to `catalogPath` - see
+ * the module doc comment for why writing to the legacy file at that point
+ * would be silently ignored by the desktop app, not merely unnecessary.
+ */
+export const assertLegacyCatalogIsSafeToWrite = Effect.fn("env.assertLegacyCatalogIsSafeToWrite")(
+  function* (
+    fileSystem: FileSystem.FileSystem,
+    path: Path.Path["Service"],
+    catalogPath: string,
+  ): Effect.fn.Return<void, EnvCatalogPreflightError> {
+    const encryptedCatalogPath = path.join(path.dirname(catalogPath), "connection-catalog.json");
+    const exists = yield* fileSystem.exists(encryptedCatalogPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new EnvCatalogReadError({ operation: "read-file", path: encryptedCatalogPath, cause }),
+      ),
+    );
+    if (exists) {
+      return yield* new EnvCatalogEncryptedCatalogExistsError({ encryptedCatalogPath });
+    }
+  },
+);
 
 export const readCatalog = Effect.fn("env.readCatalog")(function* (
   fileSystem: FileSystem.FileSystem,
@@ -98,19 +181,28 @@ export const readCatalog = Effect.fn("env.readCatalog")(function* (
     Effect.catch((error) =>
       error.reason._tag === "NotFound"
         ? Effect.succeed<string | null>(null)
-        : Effect.fail(new EnvCatalogReadError({ path: catalogPath, cause: error })),
+        : Effect.fail(
+            new EnvCatalogReadError({ operation: "read-file", path: catalogPath, cause: error }),
+          ),
     ),
   );
   if (raw === null) {
     return { version: 1, records: [] };
   }
-  const decoded = yield* decodeCatalogDocumentJson(raw).pipe(
-    Effect.mapError((cause) => new EnvCatalogReadError({ path: catalogPath, cause })),
-  );
-  return { version: decoded.version ?? 1, records: decoded.records ?? [] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    return yield* new EnvCatalogReadError({ operation: "parse-json", path: catalogPath, cause });
+  }
+  const document = parsed as { version?: number; records?: readonly OpaqueCatalogRecord[] };
+  return {
+    version: typeof document.version === "number" ? document.version : 1,
+    records: Array.isArray(document.records) ? document.records : [],
+  };
 });
 
-// Same shape of atomic write already used by the desktop app's saved
+// Same atomic-write shape already used by the desktop app's own saved
 // environments store: write to a sibling temp file, then rename over the
 // real path, so a crash mid-write cannot leave a half-written catalog.
 export const writeCatalog = Effect.fn("env.writeCatalog")(function* (
@@ -121,28 +213,48 @@ export const writeCatalog = Effect.fn("env.writeCatalog")(function* (
 ): Effect.fn.Return<void, EnvCatalogWriteError> {
   const directory = path.dirname(catalogPath);
   const tempPath = `${catalogPath}.${process.pid}.tmp`;
-  const encoded = yield* encodeCatalogDocumentJson(document).pipe(
-    Effect.mapError((cause) => new EnvCatalogWriteError({ path: catalogPath, cause })),
-  );
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(document, null, 2);
+  } catch (cause) {
+    return yield* new EnvCatalogWriteError({
+      operation: "encode-catalog",
+      path: catalogPath,
+      cause,
+    });
+  }
   yield* fileSystem.makeDirectory(directory, { recursive: true }).pipe(
-    Effect.mapError((cause) => new EnvCatalogWriteError({ path: catalogPath, cause })),
+    Effect.mapError(
+      (cause) => new EnvCatalogWriteError({ operation: "create-directory", path: directory, cause }),
+    ),
   );
   yield* fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
-    Effect.mapError((cause) => new EnvCatalogWriteError({ path: catalogPath, cause })),
+    Effect.mapError(
+      (cause) =>
+        new EnvCatalogWriteError({ operation: "write-temporary-file", path: tempPath, cause }),
+    ),
   );
   yield* fileSystem.rename(tempPath, catalogPath).pipe(
-    Effect.mapError((cause) => new EnvCatalogWriteError({ path: catalogPath, cause })),
+    Effect.mapError(
+      (cause) =>
+        new EnvCatalogWriteError({ operation: "replace-catalog-file", path: catalogPath, cause }),
+    ),
   );
 });
 
-/** Replaces any existing record for the same environment rather than appending a duplicate. */
+/**
+ * Replaces any existing record for the same environment rather than
+ * appending a duplicate. Existing records are passed through opaque and
+ * untouched - see the module doc comment for why this must not decode them
+ * against a narrowing schema.
+ */
 export function upsertEnvironmentRecord(
-  records: readonly PersistedSavedEnvironmentRecord[],
+  records: readonly OpaqueCatalogRecord[],
   nextRecord: PersistedSavedEnvironmentRecord,
-): readonly PersistedSavedEnvironmentRecord[] {
+): readonly OpaqueCatalogRecord[] {
   return [
-    ...records.filter((record) => record.environmentId !== nextRecord.environmentId),
-    nextRecord,
+    ...records.filter((record) => readEnvironmentId(record) !== nextRecord.environmentId),
+    nextRecord as OpaqueCatalogRecord,
   ];
 }
 
@@ -170,16 +282,17 @@ const pairingCodeFlag = Flag.string("pairing-code").pipe(
 
 const catalogPathFlag = Flag.string("catalog-path").pipe(
   Flag.withDescription(
-    "Path to the saved-environment catalog file. Defaults to <base-dir>/userdata/saved-environments.json - " +
-      "verify this matches your desktop install's own path before relying on it in automation.",
+    "Path to the legacy-format catalog file to pre-seed. Defaults to " +
+      "<base-dir>/userdata/saved-environments.json. Only safe to use before a desktop " +
+      "app has ever launched on this machine - see --help on this command for why.",
   ),
   Flag.optional,
 );
 
 const printTokenFlag = Flag.boolean("print-token").pipe(
   Flag.withDescription(
-    "Print the bootstrapped bearer token once. No token is persisted by this command otherwise: " +
-      "PersistedSavedEnvironmentRecord has no secret field, so store it yourself if you need it.",
+    "Print the bootstrapped bearer token once. No token is persisted by this command: " +
+      "the legacy catalog format this writes has no secret field of its own either.",
   ),
   Flag.withDefault(false),
 );
@@ -200,7 +313,9 @@ export const envAddCommand = Command.make("add", {
   baseDir: baseDirFlag,
 }).pipe(
   Command.withDescription(
-    "Register a remote environment into a saved-environment catalog without a pairing dialog.",
+    "Pre-seed a legacy-format saved-environment catalog, before a desktop app's first " +
+      "launch on this machine. Refuses if the real (encrypted) catalog already exists - " +
+      "see --help.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -225,6 +340,8 @@ export const envAddCommand = Command.make("add", {
           return path.join(derived.stateDir, "saved-environments.json");
         }));
 
+      yield* assertLegacyCatalogIsSafeToWrite(fileSystem, path, catalogPath);
+
       const document = yield* readCatalog(fileSystem, catalogPath);
       const now = DateTime.formatIso(yield* DateTime.now);
       const nextRecord: PersistedSavedEnvironmentRecord = {
@@ -235,6 +352,10 @@ export const envAddCommand = Command.make("add", {
         createdAt: now,
         lastConnectedAt: null,
       };
+      // Validate the shape of only the record we're adding - everything
+      // else in the file stays untouched and undecoded (see above).
+      yield* Schema.decodeUnknownEffect(PersistedSavedEnvironmentRecordSchema)(nextRecord);
+
       yield* writeCatalog(fileSystem, path, catalogPath, {
         version: document.version,
         records: upsertEnvironmentRecord(document.records, nextRecord),
@@ -257,6 +378,6 @@ export const envAddCommand = Command.make("add", {
 );
 
 export const envCommand = Command.make("env").pipe(
-  Command.withDescription("Manage the saved-environment catalog headlessly."),
+  Command.withDescription("Pre-seed a saved-environment catalog headlessly, before first launch."),
   Command.withSubcommands([envAddCommand]),
 );
