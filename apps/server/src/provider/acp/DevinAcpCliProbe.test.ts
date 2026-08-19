@@ -11,6 +11,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { describe, expect } from "vite-plus/test";
 
@@ -59,7 +60,12 @@ describe.runIf(process.env.T3_DEVIN_ACP_PROBE === "1")("Devin ACP CLI probe", ()
       if (process.env.T3_DEVIN_ACP_PROBE_CWD) {
         expect(availableCommands).toContain("t3-hardening");
       }
-    }).pipe(Effect.timeout(180_000), Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.timeout(180_000),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      TestClock.withLive,
+    ),
   );
 
   it.effect("starts an authenticated session and streams a minimal response", () =>
@@ -96,7 +102,12 @@ describe.runIf(process.env.T3_DEVIN_ACP_PROBE === "1")("Devin ACP CLI probe", ()
       expect(result.stopReason).not.toBe("cancelled");
       expect((yield* Ref.get(output)).trim()).toBe("T3_DEVIN_ACP_OK");
       expect(requestLifecycle.some((entry) => entry.startsWith("authenticate:"))).toBe(false);
-    }).pipe(Effect.timeout(180_000), Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.timeout(180_000),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      TestClock.withLive,
+    ),
   );
 
   it.effect("selects every advertised model without reauthenticating", () =>
@@ -139,7 +150,12 @@ describe.runIf(process.env.T3_DEVIN_ACP_PROBE === "1")("Devin ACP CLI probe", ()
       }
       expect(requestLifecycle.some((entry) => entry.startsWith("authenticate:"))).toBe(false);
       yield* Effect.logInfo(`T3_DEVIN_ALL_MODELS_OK count=${modelValues.length}`);
-    }).pipe(Effect.timeout(600_000), Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.timeout(600_000),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      TestClock.withLive,
+    ),
   );
 });
 
@@ -147,10 +163,15 @@ describe.runIf(process.env.T3_DEVIN_ACP_CONTEXT_PROBE === "1")(
   "Devin ACP paid context probe",
   () => {
     it.effect(
-      "preserves context while switching across live model families",
+      "preserves context while switching through every advertised model",
       () =>
         Effect.gen(function* () {
-          const runtime = yield* makeProbeRuntime();
+          const requestLifecycle: Array<string> = [];
+          const runtime = yield* makeProbeRuntime((event) =>
+            Effect.sync(() => {
+              requestLifecycle.push(`${event.method}:${event.status}`);
+            }),
+          );
           const output = yield* Ref.make("");
           yield* runtime.handleSessionUpdate((notification) => {
             const update = notification.update;
@@ -172,58 +193,63 @@ describe.runIf(process.env.T3_DEVIN_ACP_CONTEXT_PROBE === "1")(
             return;
           }
 
-          const modelValues = collectSessionConfigOptionValues(modelOption);
-          const familyPatterns = [
-            /^gpt-5-6-sol-medium$/,
-            /^claude-opus-5-medium$/,
-            /^gemini-3-7-flash-medium$/,
-            /^grok-4-6-medium$/,
-            /^kimi-k3-high$/,
-            /^glm-5-2$/,
-            /^deepseek-v4-flash-low$/,
-            /^swe-1-7$/,
-          ];
-          const familyModels = familyPatterns.flatMap((pattern) => {
-            const match = modelValues.find((value) => pattern.test(value));
-            return match ? [match] : [];
-          });
-          expect(familyModels).toHaveLength(familyPatterns.length);
+          const modelValues = [...new Set(collectSessionConfigOptionValues(modelOption))];
+          const initialModel =
+            typeof modelOption.currentValue === "string"
+              ? modelOption.currentValue
+              : modelValues[0];
+          expect(initialModel).toBeDefined();
+          expect(modelValues.length).toBeGreaterThan(1);
+          if (!initialModel) {
+            return;
+          }
 
-          const reliableModel = familyModels[0]!;
-          yield* runtime.setModel(reliableModel);
           const sentinel = "T3-MID-CONTEXT-MODELS-7D4B";
-          yield* runtime.prompt({
-            prompt: [
-              {
-                type: "text",
-                text: `Remember ${sentinel} for this conversation and reply with exactly CONTEXT_SET`,
-              },
-            ],
-          });
+          yield* runtime
+            .prompt({
+              prompt: [
+                {
+                  type: "text",
+                  text: `Remember ${sentinel} for this conversation and reply with exactly CONTEXT_SET`,
+                },
+              ],
+            })
+            .pipe(Effect.timeout("180 seconds"));
           yield* Effect.sleep("2 seconds");
           expect((yield* Ref.get(output)).trim()).toBe("CONTEXT_SET");
 
-          for (const modelValue of familyModels.slice(1)) {
-            yield* runtime.setModel(modelValue);
+          for (const modelValue of modelValues) {
+            if (modelValue === initialModel) {
+              continue;
+            }
+            yield* runtime.setModel(modelValue).pipe(Effect.timeout("30 seconds"));
           }
-          yield* runtime.setModel(reliableModel);
+          yield* runtime.setModel(initialModel).pipe(Effect.timeout("30 seconds"));
 
           yield* Ref.set(output, "");
-          yield* runtime.prompt({
-            prompt: [
-              {
-                type: "text",
-                text: "Reply with exactly the conversation sentinel from the first user message.",
-              },
-            ],
-          });
+          yield* runtime
+            .prompt({
+              prompt: [
+                {
+                  type: "text",
+                  text: "Reply with exactly the conversation sentinel from the first user message.",
+                },
+              ],
+            })
+            .pipe(Effect.timeout("180 seconds"));
           yield* Effect.sleep("2 seconds");
           expect((yield* Ref.get(output)).trim()).toBe(sentinel);
+          expect(requestLifecycle.some((entry) => entry.startsWith("authenticate:"))).toBe(false);
           yield* Effect.logInfo(
-            `T3_DEVIN_MID_CONTEXT_MODELS_OK count=${familyModels.length} sentinel=${sentinel}`,
+            `T3_DEVIN_MID_CONTEXT_MODELS_OK count=${modelValues.length} sentinel=${sentinel}`,
           );
-        }).pipe(Effect.timeout(300_000), Effect.scoped, Effect.provide(NodeServices.layer)),
-      300_000,
+        }).pipe(
+          Effect.timeout(600_000),
+          Effect.scoped,
+          Effect.provide(NodeServices.layer),
+          TestClock.withLive,
+        ),
+      600_000,
     );
   },
 );
