@@ -196,13 +196,13 @@ function RecentThreadsSwitcherOverlay({
   }, [selectedIndex]);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-100 flex justify-center px-4">
+    <div className="fixed inset-0 z-100 flex justify-center px-4">
       <div
         ref={listRef}
         role="listbox"
         aria-label="Recent threads"
         data-testid="recent-threads-switcher"
-        className="dialog-glass pointer-events-auto mt-[14vh] flex h-fit max-h-[60vh] w-full max-w-md flex-col gap-0.5 overflow-y-auto rounded-2xl border p-1.5"
+        className="dialog-glass mt-[14vh] flex h-fit max-h-[60vh] w-full max-w-md flex-col gap-0.5 overflow-y-auto rounded-2xl border p-1.5"
       >
         {entries.map((threadKey, index) => (
           <RecentThreadsSwitcherRow
@@ -238,10 +238,12 @@ function RecentThreadsSwitcherRow({
     <button
       type="button"
       role="option"
-      // Keyboard interaction is owned by the window listener; keep rows out of
-      // the tab order so focus stays where the user left it.
+      // Keyboard interaction is owned by the window listener. Keep rows out of
+      // the tab order and prevent pointer focus so committing preserves the
+      // focus the user had before opening the switcher.
       tabIndex={-1}
       aria-selected={selected}
+      onPointerDown={(event) => event.preventDefault()}
       onClick={onClick}
       className={cn(
         "flex w-full cursor-pointer flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left",
