@@ -62,7 +62,9 @@ import {
   isKnownWhenVariable,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
+  keybindingPillTokenLabel,
   parseWhenExpressionDraft,
+  shouldPreserveKeybindingCaptureFocusNavigation,
   type KeybindingCommandOption,
   type KeybindingRow,
   type WhenVariableOption,
@@ -80,21 +82,7 @@ function KeybindingPill({ value }: { value: string }) {
     <KbdGroup className="bg-transparent p-0 shadow-none">
       {parts.map((part) => (
         <Kbd key={part} className="min-w-6 justify-center px-1.5">
-          {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
+          {keybindingPillTokenLabel(part, navigator.platform)}
         </Kbd>
       ))}
     </KbdGroup>
@@ -775,7 +763,7 @@ function KeybindingTableRow({
   };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Tab") return;
+    if (shouldPreserveKeybindingCaptureFocusNavigation(event)) return;
     event.preventDefault();
     if (event.key === "Escape") {
       setDraft({ keyDraft: row.key, isRecording: false });
@@ -946,7 +934,7 @@ function NewKeybindingTableRow({
   };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Tab") return;
+    if (shouldPreserveKeybindingCaptureFocusNavigation(event)) return;
     event.preventDefault();
     if (event.key === "Escape") {
       setDraft({ keyDraft: "", isRecording: false });

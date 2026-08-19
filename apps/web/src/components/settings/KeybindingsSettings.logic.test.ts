@@ -8,7 +8,9 @@ import {
   commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
+  keybindingPillTokenLabel,
   parseWhenExpressionDraft,
+  shouldPreserveKeybindingCaptureFocusNavigation,
   shortcutToKeybindingInput,
   unknownWhenVariables,
   whenAstToExpression,
@@ -62,6 +64,37 @@ describe("KeybindingsSettings.logic", () => {
         "Win32",
       ),
     ).toBe("mod+shift+k");
+  });
+
+  it("captures modified Tab shortcuts while preserving focus navigation", () => {
+    expect(
+      shouldPreserveKeybindingCaptureFocusNavigation({
+        key: "Tab",
+        metaKey: false,
+        ctrlKey: false,
+        altKey: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldPreserveKeybindingCaptureFocusNavigation({
+        key: "Tab",
+        metaKey: false,
+        ctrlKey: true,
+        altKey: false,
+      }),
+    ).toBe(false);
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "Tab", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
+        "MacIntel",
+      ),
+    ).toBe("ctrl+shift+tab");
+  });
+
+  it("formats modified Tab keybinding pills for the current platform", () => {
+    expect(keybindingPillTokenLabel("ctrl", "MacIntel")).toBe("⌃");
+    expect(keybindingPillTokenLabel("ctrl", "Win32")).toBe("Ctrl");
+    expect(keybindingPillTokenLabel("tab", "Win32")).toBe("Tab");
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {
