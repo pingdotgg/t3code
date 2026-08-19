@@ -2,8 +2,11 @@ import { useAuth } from "@clerk/expo";
 import { AuthView, UserProfileView } from "@clerk/expo/native";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 
+import { AppText as Text } from "../../components/AppText";
+import { useThemeColor } from "../../lib/useThemeColor";
+import { useCloudAuthLoadState } from "../cloud/CloudAuthProvider";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 
 export function SettingsAuthRouteScreen() {
@@ -20,6 +23,7 @@ export function SettingsAuthRouteScreen() {
 
 function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { remount, timedOut } = useCloudAuthLoadState();
   const navigation = useNavigation();
   const handleHostBack = useCallback(
     () => navigation.dispatch(StackActions.popTo("SettingsContent")),
@@ -44,7 +48,34 @@ function ConfiguredSettingsAuthRouteScreen() {
         ) : (
           <AuthView isDismissible={false} onHostBack={handleHostBack} />
         )
-      ) : null}
+      ) : (
+        <ClerkLoadPendingView onRetry={() => remount("manual")} timedOut={timedOut} />
+      )}
+    </View>
+  );
+}
+
+function ClerkLoadPendingView(props: { readonly onRetry: () => void; readonly timedOut: boolean }) {
+  const iconColor = useThemeColor("--color-icon");
+
+  return (
+    <View collapsable={false} className="flex-1 items-center justify-center gap-4 px-8">
+      <ActivityIndicator color={iconColor} />
+      <Text className="text-center text-base font-t3-bold text-foreground">
+        {props.timedOut ? "T3 Account is taking too long" : "Checking T3 Account"}
+      </Text>
+      <Text className="text-center text-sm leading-normal text-foreground-muted">
+        {props.timedOut
+          ? "T3 Account did not finish loading. Retry without clearing app data."
+          : "T3 Account is still loading."}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={props.onRetry}
+        className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
+      >
+        <Text className="text-xs font-t3-bold text-foreground">Retry</Text>
+      </Pressable>
     </View>
   );
 }

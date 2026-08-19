@@ -227,9 +227,9 @@ describe("environment shell synchronization", () => {
       expect(yield* SubscriptionRef.get(capturedAfterSequence)).toBe(9);
       expect(yield* Ref.get(capturedCompletionMarker)).toBe(true);
       expect(yield* SubscriptionRef.get(loaderCalls)).toBe(1);
-      const synchronizing = yield* SubscriptionRef.get(shellState);
-      expect(synchronizing.status).toBe("synchronizing");
-      expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(httpSnapshot);
+      const live = yield* SubscriptionRef.get(shellState);
+      expect(live.status).toBe("live");
+      expect(Option.getOrThrow(live.snapshot)).toEqual(httpSnapshot);
 
       yield* Queue.offer(events, { kind: "synchronized" });
       yield* SubscriptionRef.changes(shellState).pipe(
@@ -461,11 +461,11 @@ describe("environment shell synchronization", () => {
         retryAt: null,
       });
       for (let index = 0; index < 100; index += 1) {
-        if ((yield* SubscriptionRef.get(shellState)).status === "synchronizing") break;
+        if ((yield* SubscriptionRef.get(shellState)).status === "live") break;
         yield* Effect.yieldNow;
       }
 
-      expect((yield* SubscriptionRef.get(shellState)).status).toBe("synchronizing");
+      expect((yield* SubscriptionRef.get(shellState)).status).toBe("live");
       expect(yield* Ref.get(saved)).toEqual([]);
 
       yield* Deferred.succeed(releaseSave, undefined);
