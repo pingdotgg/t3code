@@ -226,15 +226,20 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
       continue;
     }
 
-    for (const model of Object.values(provider.models)) {
+    for (const [modelID, model] of Object.entries(provider.models)) {
       const name = nonEmptyTrimmed(model.name);
       if (!name) {
         continue;
       }
 
+      const runtimeModelID = nonEmptyTrimmed(modelID);
+      if (!runtimeModelID) {
+        continue;
+      }
+
       const subProvider = nonEmptyTrimmed(provider.name);
       models.push({
-        slug: `${provider.id}/${model.id}`,
+        slug: `${provider.id}/${runtimeModelID}`,
         name,
         ...(subProvider ? { subProvider } : {}),
         isCustom: false,

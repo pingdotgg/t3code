@@ -308,6 +308,32 @@ export function parseOpenCodeModelSlug(
   };
 }
 
+/**
+ * Hosted OpenCode catalogs (Zen and Go) key models by bare ID. A T3 inventory
+ * slug built from `model.id` can repeat that provider (`opencode-go/opencode-go/…`).
+ * Other providers may legitimately use a key that starts with `provider/`.
+ */
+const OPENCODE_HOSTED_PROVIDER_IDS = new Set(["opencode", "opencode-go"]);
+
+export function toOpenCodeRuntimeModel(
+  slug: string | null | undefined,
+): ParsedOpenCodeModelSlug | null {
+  const parsed = parseOpenCodeModelSlug(slug);
+  if (!parsed) {
+    return null;
+  }
+  if (!OPENCODE_HOSTED_PROVIDER_IDS.has(parsed.providerID)) {
+    return parsed;
+  }
+
+  const prefix = `${parsed.providerID}/`;
+  let modelID = parsed.modelID;
+  while (modelID.startsWith(prefix) && modelID.length > prefix.length) {
+    modelID = modelID.slice(prefix.length);
+  }
+  return { providerID: parsed.providerID, modelID };
+}
+
 export function openCodeQuestionId(
   index: number,
   question: QuestionRequest["questions"][number],

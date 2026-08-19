@@ -207,6 +207,83 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("builds OpenCode Go slugs from the inventory map key, not a namespaced model.id", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["opencode-go", "anthropic"],
+          all: [
+            {
+              id: "opencode-go",
+              name: "OpenCode Go",
+              models: {
+                "deepseek-v4-pro": {
+                  id: "opencode-go/deepseek-v4-pro",
+                  name: "DeepSeek V4 Pro",
+                },
+                "kimi-k2.7-code": {
+                  id: "kimi-k2.7-code",
+                  name: "Kimi K2.7 Code",
+                },
+              },
+            },
+            {
+              id: "anthropic",
+              name: "Anthropic",
+              models: {
+                "claude-sonnet-4-5": {
+                  id: "claude-sonnet-4-5",
+                  name: "Claude Sonnet 4.5",
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const slugs = snapshot.models.map((entry) => entry.slug).toSorted();
+
+      NodeAssert.deepEqual(slugs, [
+        "anthropic/claude-sonnet-4-5",
+        "opencode-go/deepseek-v4-pro",
+        "opencode-go/kimi-k2.7-code",
+      ]);
+    }),
+  );
+
+  it.effect("keeps a catalog map key that already starts with the provider id", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["huggingface"],
+          all: [
+            {
+              id: "huggingface",
+              name: "Hugging Face",
+              models: {
+                "huggingface/CodeBERTa": {
+                  id: "huggingface/CodeBERTa",
+                  name: "CodeBERTa",
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      NodeAssert.deepEqual(
+        snapshot.models.map((entry) => entry.slug),
+        ["huggingface/huggingface/CodeBERTa"],
+      );
+    }),
+  );
+
   it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
