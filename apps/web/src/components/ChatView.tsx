@@ -1611,7 +1611,11 @@ function ChatViewContent(props: ChatViewProps) {
   // by occurrence so a later identical failure still appears.
   const threadErrorBannerKey = getThreadErrorBannerKey(
     routeThreadKey,
-    resolveThreadErrorBannerSessionError({ runtimeErrorKey, threadError }),
+    resolveThreadErrorBannerSessionError({
+      runtimeErrorKey,
+      threadError,
+      localError: localServerError,
+    }),
   );
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,

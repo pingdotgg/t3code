@@ -415,7 +415,7 @@ describe("applyShellStreamEvent", () => {
     expect(active.archivedThreads).toEqual([]);
   });
 
-  it("forces archive membership when archivedAt is set even if location is active", () => {
+  it("strips a mis-tagged archive delta from the home shell even if location is active", () => {
     const next = applyShellStreamEvent(v2ShellSnapshot, {
       kind: "thread.updated",
       sequence: 3,
@@ -423,8 +423,7 @@ describe("applyShellStreamEvent", () => {
       thread: { ...v2ThreadShell, archivedAt: v2ThreadShell.updatedAt },
     });
     expect(next.threads).toEqual([]);
-    expect(next.archivedThreads).toHaveLength(1);
-    expect(next.archivedThreads[0]?.id).toBe(v2ThreadShell.id);
+    expect(next.archivedThreads).toEqual([]);
   });
 
   it("removes a thread from either collection", () => {

@@ -167,7 +167,11 @@ export function threadRuntimeErrorDismissalKey(input: {
 export function resolveThreadErrorBannerSessionError(input: {
   readonly runtimeErrorKey: string | null;
   readonly threadError: string | null;
+  readonly localError?: string | null;
 }): string | null {
+  if (input.localError != null && input.threadError === input.localError) {
+    return input.localError;
+  }
   return input.runtimeErrorKey ?? input.threadError;
 }
 

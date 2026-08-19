@@ -167,6 +167,16 @@ describe("resolveThreadErrorBannerSessionError", () => {
       }),
     ).toBe("send failed");
   });
+
+  it("keys the session mask by the local error while that is what is showing", () => {
+    expect(
+      resolveThreadErrorBannerSessionError({
+        runtimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+        threadError: "send failed",
+        localError: "send failed",
+      }),
+    ).toBe("send failed");
+  });
 });
 
 describe("threadRuntimeErrorDismissalKey", () => {
