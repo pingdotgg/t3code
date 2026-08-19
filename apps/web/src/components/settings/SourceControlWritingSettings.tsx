@@ -197,7 +197,7 @@ export function SourceControlWritingSettingsSection() {
         {...searchableSetting("source-control-writer-model")}
         description="Model for source control text and branch or bookmark names. Off uses the global default."
         control={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2 sm:max-w-[26rem]">
             {usesDedicatedModel && !canEnableDedicatedModel ? (
               <span className="text-sm text-muted-foreground">
                 No text generation providers available.
@@ -211,7 +211,7 @@ export function SourceControlWritingSettingsSection() {
                 instanceEntries={instanceEntries}
                 modelOptionsByInstance={modelOptionsByInstance}
                 triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-80 shrink text-foreground/90 hover:text-foreground"
+                triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
                 triggerAriaLabel="Source control writer model"
                 {...(environmentId
                   ? {
