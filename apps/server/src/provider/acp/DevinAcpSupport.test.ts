@@ -180,6 +180,45 @@ describe("applyDevinAcpModelSelection", () => {
     }),
   );
 
+  it.effect("recognizes the underscored thought level id without a reasoning category", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: undefined,
+        requested: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "adaptive",
+            options: [
+              { value: "adaptive", name: "Adaptive" },
+              { value: "claude-opus-5", name: "Claude Opus 5" },
+            ],
+          },
+          {
+            id: "thought_level",
+            name: "Thought level",
+            type: "select",
+            currentValue: "default",
+            options: [
+              { value: "default", name: "Default" },
+              { value: "high", name: "High" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setConfigOption).toHaveBeenCalledWith("thought_level", "high");
+    }),
+  );
+
   it.effect("falls back to a variant slug when the family slug is not in the model list", () =>
     Effect.gen(function* () {
       const setModel = vi.fn().mockReturnValue(Effect.void);
