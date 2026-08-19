@@ -1,13 +1,25 @@
 import {
+  resolveProviderSkillSourceKind,
+  type ProviderSkillSourceKind,
+} from "@t3tools/client-runtime/providerSkills";
+import {
   type ProjectEntry,
   type ProviderDriverKind,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import {
+  BlocksIcon,
+  FolderGit2Icon,
+  FolderIcon,
+  PackageIcon,
+  SettingsIcon,
+  UserRoundIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -123,8 +135,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
-  const skillSourceLabel =
-    props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+  const skillSourceKind =
+    props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
 
   return (
     <CommandItem
@@ -150,6 +162,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
+      ) : skillSourceKind ? (
+        <SkillSourceIcon kind={skillSourceKind} />
       ) : null}
       <span className="flex min-w-0 flex-1 items-baseline gap-3">
         <span className="shrink-0 font-sans text-xs font-medium">{props.item.label}</span>
@@ -157,9 +171,20 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           {props.item.description}
         </span>
       </span>
-      {skillSourceLabel ? (
-        <span className="shrink-0 pl-2 text-secondary-label text-xs">{skillSourceLabel}</span>
-      ) : null}
     </CommandItem>
   );
 });
+
+const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
+  app: BlocksIcon,
+  repo: FolderGit2Icon,
+  project: FolderIcon,
+  personal: UserRoundIcon,
+  system: SettingsIcon,
+  other: PackageIcon,
+};
+
+function SkillSourceIcon(props: { kind: ProviderSkillSourceKind }) {
+  const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
+  return <Icon aria-hidden="true" className="size-4 shrink-0 text-icon-muted" />;
+}
