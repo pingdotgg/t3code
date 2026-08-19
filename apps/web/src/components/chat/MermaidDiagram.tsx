@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import {
   mermaidSourceAsMarkdownFence,
+  peekCachedMermaidSvg,
   renderMermaidSvg,
   type MermaidColorScheme,
 } from "~/lib/mermaidRendering";
@@ -21,7 +22,10 @@ type MermaidDiagramState =
   | { readonly status: "error"; readonly message: string };
 
 export function MermaidDiagram({ code, theme, isStreaming, onSvgChange }: MermaidDiagramProps) {
-  const [state, setState] = useState<MermaidDiagramState>({ status: "idle" });
+  const [state, setState] = useState<MermaidDiagramState>(() => {
+    const cached = peekCachedMermaidSvg(code, theme);
+    return cached == null ? { status: "idle" } : { status: "ready", svg: cached };
+  });
 
   useEffect(() => {
     const trimmed = code.trim();

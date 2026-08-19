@@ -55,17 +55,22 @@ function enqueueMermaidWork<T>(work: () => Promise<T>): Promise<T> {
   return run;
 }
 
+const MERMAID_MAX_TEXT_SIZE = 50_000;
+
 function mermaidConfig(theme: MermaidColorScheme): Record<string, unknown> {
   return {
     startOnLoad: false,
     securityLevel: "strict",
-    // Diagram `%%{init}%%` / frontmatter must not be able to loosen this.
+    // Mermaid defaults htmlLabels to true (foreignObject HTML). Lock it off so
+    // `%%{init}%%` / frontmatter cannot turn it back on either.
+    htmlLabels: false,
+    maxTextSize: MERMAID_MAX_TEXT_SIZE,
     secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize", "htmlLabels"],
     suppressErrorRendering: true,
     logLevel: "fatal",
     theme: theme === "dark" ? "dark" : "neutral",
     fontFamily: "ui-sans-serif, system-ui, sans-serif",
-    flowchart: { useMaxWidth: true },
+    flowchart: { htmlLabels: false, useMaxWidth: true },
     sequence: { useMaxWidth: true },
     gantt: { useMaxWidth: true },
     class: { useMaxWidth: true },
@@ -88,6 +93,12 @@ function createMermaidCacheKey(code: string, theme: MermaidColorScheme): string 
   return `${theme}:${code}`;
 }
 
+export function peekCachedMermaidSvg(code: string, theme: MermaidColorScheme): string | null {
+  const trimmed = code.trim();
+  if (trimmed.length === 0) return null;
+  return mermaidSvgCache.get(createMermaidCacheKey(trimmed, theme));
+}
+
 export function isMermaidFenceLanguage(language: string | undefined): boolean {
   if (!language) return false;
   return MERMAID_FENCE_LANGUAGES.has(language.trim().toLowerCase());
@@ -103,22 +114,26 @@ export function mermaidSourceAsMarkdownFence(code: string): string {
   return `${fence}mermaid\n${body}\n${fence}`;
 }
 
+const DANGEROUS_SVG_TAGS = "script|iframe|object|embed|foreignObject|form|link|meta|base";
+const DANGEROUS_SVG_URL = "(?:javascript|vbscript|data\\s*:\\s*text\\s*/\\s*html)";
+
 /**
  * Strict-mode mermaid should not emit scripts, but the SVG still lands in the
  * chat DOM via innerHTML. Strip the obvious handlers so a mermaid bug cannot
  * become an XSS gadget.
  */
 export function sanitizeMermaidSvg(svg: string): string {
+  const tagged = new RegExp(`<(${DANGEROUS_SVG_TAGS})\\b[^>]*>[\\s\\S]*?</\\1>`, "gi");
+  const selfClosing = new RegExp(`<(${DANGEROUS_SVG_TAGS})\\b[^>]*/>`, "gi");
+  const dangerousUrl = new RegExp(
+    `\\s+(?:xlink:)?(?:href|src)\\s*=\\s*(?:"${DANGEROUS_SVG_URL}[^"]*"|'${DANGEROUS_SVG_URL}[^']*'|${DANGEROUS_SVG_URL}\\S+)`,
+    "gi",
+  );
   return svg
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<script\b[^>]*\/>/gi, "")
-    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "")
-    .replace(/<iframe\b[^>]*\/>/gi, "")
+    .replace(tagged, "")
+    .replace(selfClosing, "")
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-    .replace(
-      /\s+(?:xlink:)?href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*'|javascript:\S+)/gi,
-      "",
-    );
+    .replace(dangerousUrl, "");
 }
 
 /**
@@ -132,8 +147,8 @@ export function remapMermaidSvgIds(svg: string, suffix: string): string {
   if (suffix.length === 0) return svg;
   const ids: string[] = [];
   const seen = new Set<string>();
-  for (const match of svg.matchAll(/\bid="([^"]+)"/g)) {
-    const id = match[1];
+  for (const match of svg.matchAll(/\bid=(?:"([^"]+)"|'([^']+)')/g)) {
+    const id = match[1] ?? match[2];
     if (id == null || id.length === 0 || seen.has(id)) continue;
     seen.add(id);
     ids.push(id);
@@ -144,11 +159,20 @@ export function remapMermaidSvgIds(svg: string, suffix: string): string {
     const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const next = `${id}${suffix}`;
     remapped = remapped.replace(new RegExp(`id="${escaped}"`, "g"), `id="${next}"`);
-    remapped = remapped.replace(new RegExp(`url\\(#${escaped}\\)`, "g"), `url(#${next})`);
+    remapped = remapped.replace(new RegExp(`id='${escaped}'`, "g"), `id='${next}'`);
+    remapped = remapped.replace(
+      new RegExp(`url\\(\\s*(['"]?)#${escaped}\\1\\s*\\)`, "g"),
+      `url($1#${next}$1)`,
+    );
     remapped = remapped.replace(new RegExp(`href="#${escaped}"`, "g"), `href="#${next}"`);
+    remapped = remapped.replace(new RegExp(`href='#${escaped}'`, "g"), `href='#${next}'`);
     remapped = remapped.replace(
       new RegExp(`xlink:href="#${escaped}"`, "g"),
       `xlink:href="#${next}"`,
+    );
+    remapped = remapped.replace(
+      new RegExp(`xlink:href='#${escaped}'`, "g"),
+      `xlink:href='#${next}'`,
     );
     // Theme selectors live in <style> (`#id .nodeLabel`). Hex colors are
     // `fill:#fff` / `fill: #fff` / `fill="#fff"`. Only rewrite hashes inside

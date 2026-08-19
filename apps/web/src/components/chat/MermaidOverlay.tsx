@@ -122,11 +122,15 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
   useEffect(() => {
     if (!open || sceneEl == null || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
-      if (userAdjustedRef.current) return;
       const size = entries[0]?.contentRect;
       if (size == null) return;
       const last = lastSceneSizeRef.current;
       if (last != null && last.width === size.width && last.height === size.height) return;
+      lastSceneSizeRef.current = { width: size.width, height: size.height };
+      if (userAdjustedRef.current) {
+        commitViewport(viewportRef.current, true);
+        return;
+      }
       fitToScene(sceneEl);
     });
     observer.observe(sceneEl);
@@ -139,7 +143,8 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      const factor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
+      const deltaY = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+      const factor = Math.exp(-deltaY * WHEEL_ZOOM_SENSITIVITY);
       commitViewport(
         zoomMermaidViewportAtPoint(
           viewportRef.current,

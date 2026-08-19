@@ -5,6 +5,7 @@ import {
   __setMermaidLoaderForTests,
   isMermaidFenceLanguage,
   mermaidSourceAsMarkdownFence,
+  peekCachedMermaidSvg,
   prepareMermaidOverlaySvg,
   remapMermaidSvgIds,
   renderMermaidSvg,
@@ -55,6 +56,11 @@ describe("sanitizeMermaidSvg", () => {
     expect(sanitizeMermaidSvg(dirty)).toBe(`<svg><a>x</a></svg>`);
   });
 
+  it("strips foreignObject, object, and data:text/html urls", () => {
+    const dirty = `<svg><foreignObject><div>x</div></foreignObject><object data="x"></object><image src="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="/></svg>`;
+    expect(sanitizeMermaidSvg(dirty)).toBe(`<svg><image/></svg>`);
+  });
+
   it("leaves mermaid marker urls and ordinary attributes alone", () => {
     const svg = `<svg><path marker-end="url(#arrow)" class="edge" /></svg>`;
     expect(sanitizeMermaidSvg(svg)).toBe(svg);
@@ -80,6 +86,13 @@ describe("remapMermaidSvgIds", () => {
     const svg = `<svg id="t3-mermaid-1"><style>#t3-mermaid-1{fill:#1a1a1a;}#t3-mermaid-1 .nodeLabel{color:#ccc;}</style></svg>`;
     expect(remapMermaidSvgIds(svg, "-ov")).toBe(
       `<svg id="t3-mermaid-1-ov"><style>#t3-mermaid-1-ov{fill:#1a1a1a;}#t3-mermaid-1-ov .nodeLabel{color:#ccc;}</style></svg>`,
+    );
+  });
+
+  it("rewrites quoted url() refs and single-quoted ids", () => {
+    const svg = `<svg id='grad'><defs><linearGradient id="fill" /></defs><path style="fill:url('#fill')" marker-end="url('#fill')" href='#grad' /></svg>`;
+    expect(remapMermaidSvgIds(svg, "-ov")).toBe(
+      `<svg id='grad-ov'><defs><linearGradient id="fill-ov" /></defs><path style="fill:url('#fill-ov')" marker-end="url('#fill-ov')" href='#grad-ov' /></svg>`,
     );
   });
 
@@ -118,11 +131,13 @@ describe("renderMermaidSvg", () => {
 
     expect(first).toBe("<svg>ok</svg>");
     expect(second).toBe(first);
+    expect(peekCachedMermaidSvg("graph TD; A-->B;", "dark")).toBe(first);
     expect(runtime.initialize).toHaveBeenCalledTimes(1);
     expect(runtime.render).toHaveBeenCalledTimes(1);
     expect(runtime.initialize).toHaveBeenCalledWith(
       expect.objectContaining({
         securityLevel: "strict",
+        htmlLabels: false,
         startOnLoad: false,
         suppressErrorRendering: true,
         theme: "dark",
@@ -132,6 +147,7 @@ describe("renderMermaidSvg", () => {
       secure: string[];
     };
     expect(config.secure).toContain("securityLevel");
+    expect(config.secure).toContain("htmlLabels");
   });
 
   it("does not reuse a cached svg for a different source of the same length", async () => {
