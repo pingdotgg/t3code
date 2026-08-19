@@ -1,7 +1,7 @@
 import {
+  DownloadIcon,
   ExternalLinkIcon,
   PaletteIcon,
-  PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   ShieldCheckIcon,
@@ -305,8 +305,8 @@ export function ThemeSearchSection({
               const isInstalled = getCustomThemes().some(
                 (theme) => theme.collection?.id === extension.collectionId,
               );
-              const action = isInstalled ? "Update" : "Add";
-              const progressAction = isInstalled ? "Updating" : "Adding";
+              const action = isInstalled ? "Update" : "Install";
+              const progressAction = isInstalled ? "Updating" : "Installing";
               return (
                 <article
                   className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
@@ -349,7 +349,13 @@ export function ThemeSearchSection({
                       variant="outline"
                       onClick={() => void handleInstall(extension, false)}
                     >
-                      {isInstalling ? <Spinner /> : isInstalled ? <RefreshCwIcon /> : <PlusIcon />}
+                      {isInstalling ? (
+                        <Spinner />
+                      ) : isInstalled ? (
+                        <RefreshCwIcon />
+                      ) : (
+                        <DownloadIcon />
+                      )}
                       {isInstalling ? `${progressAction}...` : action}
                     </Button>
                   </div>
