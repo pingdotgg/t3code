@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  applicationIdForName,
   finalizeInstalledApplications,
   isRememberableApplication,
   parseDesktopEntry,
@@ -141,15 +142,17 @@ describe("parseWindowsShortcutName", () => {
 });
 
 describe("finalizeInstalledApplications", () => {
-  it("assigns slug ids and sorts by name", () => {
+  it("sorts by display name and gives each entry a readable id prefix", () => {
     const result = finalizeInstalledApplications([
       { name: "Zed", command: "zed", args: [] },
       { name: "Antigravity", command: "agy", args: [] },
     ]);
     assert.deepEqual(
-      result.map((app) => app.id),
-      ["antigravity", "zed"],
+      result.map((app) => app.name),
+      ["Antigravity", "Zed"],
     );
+    assert.isTrue(result[0]!.id.startsWith("antigravity-"));
+    assert.isTrue(result[1]!.id.startsWith("zed-"));
   });
 
   // Scan order encodes directory precedence, so a user's own override wins.
@@ -162,21 +165,16 @@ describe("finalizeInstalledApplications", () => {
     assert.equal(result[0]?.command, "/usr/bin/zed");
   });
 
-  // Distinct applications whose names slugify alike must both survive.
-  it("suffixes a slug collision instead of dropping the application", () => {
+  // Distinct applications whose readable prefixes match must both survive.
+  it("keeps two applications whose names share a slug", () => {
     const result = finalizeInstalledApplications([
       { name: "Code - OSS", command: "/usr/bin/code-oss", args: [] },
       { name: "Code OSS", command: "/usr/bin/code", args: [] },
     ]);
     assert.equal(result.length, 2);
-    assert.deepEqual(
-      result.map((app) => app.id),
-      ["code-oss", "code-oss-2"],
-    );
+    assert.equal(new Set(result.map((app) => app.id)).size, 2);
   });
 
-  // Ids must not depend on directory read order, or a remembered application
-  // could point at a different program after a rescan.
   it("assigns the same ids regardless of input order", () => {
     const a = { name: "Code - OSS", command: "/usr/bin/code-oss", args: [] };
     const b = { name: "Code OSS", command: "/usr/bin/code", args: [] };
@@ -184,6 +182,22 @@ describe("finalizeInstalledApplications", () => {
       finalizeInstalledApplications([a, b]).map((app) => `${app.id}:${app.command}`),
       finalizeInstalledApplications([b, a]).map((app) => `${app.id}:${app.command}`),
     );
+  });
+
+  // Regression: ids are persisted when a user remembers an application, so
+  // installing another similarly-named program must not renumber an existing
+  // entry onto a different binary.
+  it("keeps an application's id fixed when a colliding name appears later", () => {
+    const alone = finalizeInstalledApplications([
+      { name: "Code OSS", command: "/usr/bin/code", args: [] },
+    ]);
+    const crowded = finalizeInstalledApplications([
+      { name: "Code - OSS", command: "/usr/bin/code-oss", args: [] },
+      { name: "Code OSS", command: "/usr/bin/code", args: [] },
+    ]);
+    const before = alone[0]?.id;
+    const after = crowded.find((app) => app.command === "/usr/bin/code")?.id;
+    assert.equal(after, before);
   });
 
   it("keeps applications whose names are entirely non-latin", () => {
@@ -194,8 +208,10 @@ describe("finalizeInstalledApplications", () => {
     assert.equal(result[0]?.name, "日本語アプリ");
   });
 
-  it("drops entries whose name yields no usable slug", () => {
-    assert.deepEqual(finalizeInstalledApplications([{ name: "***", command: "x", args: [] }]), []);
+  it("still assigns an id to a name with no usable slug", () => {
+    const result = finalizeInstalledApplications([{ name: "***", command: "x", args: [] }]);
+    assert.equal(result.length, 1);
+    assert.isTrue(result[0]!.id.length > 0);
   });
 });
 
@@ -239,6 +255,19 @@ describe("isRememberableApplication", () => {
     );
   });
 
+  // `Exec=app "" %F` yields an empty argument that the CustomEditor schema
+  // rejects, which would surface as a defect when the user picks it.
+  it("rejects an application carrying an empty argument", () => {
+    assert.isFalse(
+      isRememberableApplication({
+        id: "app",
+        name: "App",
+        command: "/usr/bin/app",
+        args: ["", PROJECT_PATH_PLACEHOLDER],
+      }),
+    );
+  });
+
   it("accepts an ordinary application", () => {
     assert.isTrue(
       isRememberableApplication({ id: "zed", name: "Zed", command: "/usr/bin/zed", args: [] }),
@@ -257,5 +286,28 @@ describe("toCustomEditor", () => {
   it("derives the custom id from the discovered id", () => {
     const entry = toCustomEditor({ id: "zed", name: "Zed", command: "/usr/bin/zed", args: [] });
     assert.equal(entry.id, "custom:zed");
+  });
+});
+
+describe("applicationIdForName", () => {
+  // The id lands in `CustomEditorId`, whose schema accepts only [0-9a-z-].
+  const CUSTOM_EDITOR_ID = /^custom:[0-9a-z]([0-9a-z-]*[0-9a-z])?$/;
+
+  it("produces an id the CustomEditorId schema accepts", () => {
+    for (const name of ["Zed", "Code - OSS", "日本語アプリ", "café", "***", "1Password"]) {
+      assert.match(`custom:${applicationIdForName(name)}`, CUSTOM_EDITOR_ID, name);
+    }
+  });
+
+  it("keeps a readable prefix when the name is latin", () => {
+    assert.isTrue(applicationIdForName("Android Studio").startsWith("android-studio-"));
+  });
+
+  it("is stable for the same name", () => {
+    assert.equal(applicationIdForName("Zed"), applicationIdForName("Zed"));
+  });
+
+  it("separates names that share a slug", () => {
+    assert.notEqual(applicationIdForName("Code - OSS"), applicationIdForName("Code OSS"));
   });
 });

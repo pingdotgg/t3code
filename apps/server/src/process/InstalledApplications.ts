@@ -25,7 +25,6 @@ import {
   isRememberableApplication,
   parseDesktopEntry,
   parseMacApplicationBundleName,
-  parseWindowsShortcutName,
 } from "./installedApplicationParsing.ts";
 
 /**
@@ -115,37 +114,19 @@ const scanMac = Effect.fn("installedApplications.scanMac")(function* (
   return entries;
 });
 
-const scanWindows = Effect.fn("installedApplications.scanWindows")(function* (
-  env: NodeJS.ProcessEnv,
-): Effect.fn.Return<ReadonlyArray<DiscoveredEntry>, never, FileSystem.FileSystem | Path.Path> {
-  const path = yield* Path.Path;
-  const startMenus = [env.ProgramData, env.APPDATA]
-    .filter((base): base is string => base !== undefined && base.length > 0)
-    .map((base) => path.join(base, "Microsoft", "Windows", "Start Menu", "Programs"));
-
-  const entries: DiscoveredEntry[] = [];
-  // Shortcuts nest one level deep (a folder per vendor), which is as far as we
-  // walk: deeper levels are almost entirely help and uninstaller links.
-  const scanShortcutDirectory = Effect.fn("installedApplications.scanShortcutDirectory")(function* (
-    directory: string,
-  ) {
-    for (const fileName of yield* readDirectoryOrEmpty(directory)) {
-      const name = parseWindowsShortcutName(fileName);
-      if (name === null) continue;
-      // Shell out via the shortcut itself; `explorer` resolves a .lnk and
-      // forwards the argument without needing the target executable path.
-      entries.push({ name, command: "explorer", args: [path.join(directory, fileName)] });
-    }
-  });
-
-  for (const startMenu of startMenus) {
-    yield* scanShortcutDirectory(startMenu);
-    for (const child of yield* readDirectoryOrEmpty(startMenu)) {
-      yield* scanShortcutDirectory(path.join(startMenu, child));
-    }
-  }
-  return entries;
-});
+/**
+ * Windows discovery is deliberately not implemented.
+ *
+ * Start Menu entries are `.lnk` shortcuts, and `explorer <shortcut>` does not
+ * forward extra arguments to the shortcut's target, so an application found
+ * that way would launch without the project path. Listing them anyway would
+ * put entries in the Open menu that quietly do the wrong thing.
+ *
+ * Doing this properly means resolving each shortcut's target and arguments,
+ * which needs a shell round trip the rest of this scan does not take. Until
+ * that exists, Windows hosts offer the built-in editors only.
+ */
+const scanWindows: Effect.Effect<ReadonlyArray<DiscoveredEntry>> = Effect.succeed([]);
 
 /**
  * InstalledApplications - Service tag for host application discovery.
@@ -170,7 +151,7 @@ export const make = Effect.gen(function* () {
       platform === "darwin"
         ? yield* scanMac(home)
         : platform === "win32"
-          ? yield* scanWindows(env)
+          ? yield* scanWindows
           : yield* scanLinux(home, env);
     // Filter before capping so an application that could never be stored does
     // not consume one of the slots.

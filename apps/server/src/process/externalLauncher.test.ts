@@ -403,3 +403,41 @@ it.effect("omits a chosen application whose command no longer resolves", () =>
     assert.equal(editors.includes("custom:sublime" as CustomEditorId), false);
   }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
 );
+
+// macOS entries run `open -a <bundle>`, and `open` never leaves PATH, so the
+// bundle itself is what has to be checked or a deleted app stays in the menu.
+it.effect("drops a chosen application whose bundle path no longer exists", () =>
+  Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const editors = yield* launcher.resolveAvailableEditors([
+      {
+        id: "custom:ghost" as CustomEditorId,
+        label: "Ghost",
+        command: "sh",
+        args: ["-a", "/Applications/DefinitelyRemoved.app"],
+      },
+    ]);
+    assert.equal(editors.includes("custom:ghost" as CustomEditorId), false);
+  }).pipe(Effect.provide(testLayer({ platform: "darwin", env: { PATH: "/bin:/usr/bin" } }))),
+);
+
+it.effect("keeps a chosen application whose bundle path still exists", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const bundle = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-bundle-" });
+
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.resolveAvailableEditors([
+        {
+          id: "custom:present" as CustomEditorId,
+          label: "Present",
+          command: "sh",
+          args: ["-a", bundle],
+        },
+      ]);
+    }).pipe(Effect.provide(testLayer({ platform: "darwin", env: { PATH: "/bin:/usr/bin" } })));
+
+    assert.equal(editors.includes("custom:present" as CustomEditorId), true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

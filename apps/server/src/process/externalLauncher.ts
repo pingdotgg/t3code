@@ -309,6 +309,27 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
  * built-ins: the list is user-sized (a handful at most), and a stale cache
  * would keep offering an app the user just removed or that was uninstalled.
  */
+/**
+ * Whether the thing a chosen application actually points at still exists.
+ *
+ * Probing the command alone is not enough on every platform. A macOS entry
+ * runs `open -a /Applications/Thing.app`, and `open` stays on PATH long after
+ * the bundle is deleted, so the entry would linger in the menu and fail only
+ * at launch. Any absolute path among the arguments is the real target and is
+ * checked too.
+ */
+const customEditorTargetsExist = Effect.fn("externalLauncher.customEditorTargetsExist")(function* (
+  custom: CustomEditor,
+): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  for (const arg of custom.args) {
+    if (!arg.startsWith("/")) continue;
+    const exists = yield* fileSystem.exists(arg).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) return false;
+  }
+  return true;
+});
+
 const resolveAvailableCustomEditors = Effect.fn("externalLauncher.resolveAvailableCustomEditors")(
   function* (
     customEditors: ReadonlyArray<CustomEditor>,
@@ -316,9 +337,9 @@ const resolveAvailableCustomEditors = Effect.fn("externalLauncher.resolveAvailab
     const env = yield* readCommandLookupEnv;
     const available: EditorSelectionId[] = [];
     for (const custom of customEditors) {
-      if (yield* isCommandAvailable(custom.command, { env })) {
-        available.push(custom.id);
-      }
+      if (!(yield* isCommandAvailable(custom.command, { env }))) continue;
+      if (!(yield* customEditorTargetsExist(custom))) continue;
+      available.push(custom.id);
     }
     return available;
   },

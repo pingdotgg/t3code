@@ -1877,14 +1877,16 @@ const makeWsRpcLayer = (
                 });
               }
               const entry = toCustomEditor(application);
-              const current = yield* serverSettings.getSettings.pipe(
-                Effect.map((settings) => settings.customEditors),
-                Effect.orElseSucceed(() => [] as ReadonlyArray<CustomEditor>),
+              // Never fall back to an empty list here: persisting that would
+              // wipe every remembered application on a transient read failure.
+              const current = yield* Effect.map(
+                serverSettings.getSettings,
+                (settings) => settings.customEditors,
               );
               const customEditors = current.some((candidate) => candidate.id === entry.id)
                 ? current.map((candidate) => (candidate.id === entry.id ? entry : candidate))
                 : [...current, entry];
-              yield* serverSettings.updateCustomEditors(customEditors).pipe(Effect.orDie);
+              yield* serverSettings.updateCustomEditors(customEditors);
               return entry.id;
             }),
             { "rpc.aggregate": "workspace" },
@@ -1895,13 +1897,13 @@ const makeWsRpcLayer = (
             // Read-modify-write on the server so two quick removals cannot each
             // reinstate the other from a stale client snapshot.
             Effect.gen(function* () {
-              const current = yield* serverSettings.getSettings.pipe(
-                Effect.map((settings) => settings.customEditors),
-                Effect.orElseSucceed(() => [] as ReadonlyArray<CustomEditor>),
+              const current = yield* Effect.map(
+                serverSettings.getSettings,
+                (settings) => settings.customEditors,
               );
               const customEditors = current.filter((entry) => entry.id !== input.editorId);
               if (customEditors.length === current.length) return;
-              yield* serverSettings.updateCustomEditors(customEditors).pipe(Effect.orDie);
+              yield* serverSettings.updateCustomEditors(customEditors);
             }),
             { "rpc.aggregate": "workspace" },
           ),
@@ -2270,15 +2272,22 @@ const makeWsRpcLayer = (
                 // going stale until the next full snapshot.
                 Stream.mapEffect((settings) =>
                   Effect.map(
-                    resolveAvailableEditorsForConfig(
-                      externalLauncher.resolveAvailableEditors(settings.customEditors),
-                    ),
+                    // Omit the field on a slow probe rather than sending the
+                    // empty list `resolveAvailableEditorsForConfig` degrades to.
+                    // The client treats a present array as authoritative, so an
+                    // empty one would blank the Open menu until reconnect;
+                    // absent means "unchanged".
+                    externalLauncher
+                      .resolveAvailableEditors(settings.customEditors)
+                      .pipe(Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT)),
                     (availableEditors) => ({
                       version: 1 as const,
                       type: "settingsUpdated" as const,
                       payload: {
                         settings: ServerSettings.redactServerSettingsForClient(settings),
-                        availableEditors,
+                        ...(Option.isSome(availableEditors)
+                          ? { availableEditors: availableEditors.value }
+                          : {}),
                       },
                     }),
                   ),

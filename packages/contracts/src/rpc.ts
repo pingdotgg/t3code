@@ -682,12 +682,15 @@ export const WsShellListInstalledApplicationsRpc = Rpc.make(
 export const WsShellRememberApplicationRpc = Rpc.make(WS_METHODS.shellRememberApplication, {
   payload: Schema.Struct({ applicationId: Schema.String }),
   success: CustomEditorId,
-  error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
+  // ServerSettingsError is in the channel because these write settings: a
+  // failed read must surface, not be smoothed into an empty list the handler
+  // would then persist over the user's existing entries.
+  error: Schema.Union([ExternalLauncherError, ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
 export const WsShellForgetApplicationRpc = Rpc.make(WS_METHODS.shellForgetApplication, {
   payload: Schema.Struct({ editorId: CustomEditorId }),
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {

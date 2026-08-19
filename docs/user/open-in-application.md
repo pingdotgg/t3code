@@ -25,3 +25,7 @@ it for good, remove it from the **Open with…** list.
 
 **Open with…** does not appear when you are connected to a remote environment over SSH links. That
 mode can only use editors that know how to open a workspace remotely.
+
+On Windows hosts the list is empty for now: Start Menu entries are shortcuts, and launching one
+cannot pass the project folder through to the program behind it. The **Open** menu still offers
+every editor T3 Code detects.

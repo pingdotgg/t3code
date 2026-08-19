@@ -10,6 +10,7 @@ import {
   AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  ServerSettingsError,
   EnvironmentId,
   EventId,
   GitCommandError,
@@ -5187,6 +5188,45 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.shellRememberApplication]({ applicationId: "not-installed" }),
+        ).pipe(Effect.result),
+      );
+
+      assert.equal(result._tag, "Failure");
+      assert.equal(written, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  // A transient settings read failure must surface, not be smoothed into an
+  // empty list that then overwrites every remembered application.
+  it.effect("does not overwrite remembered applications when settings cannot be read", () =>
+    Effect.gen(function* () {
+      let written = false;
+      yield* buildAppUnderTest({
+        layers: {
+          installedApplications: {
+            list: Effect.succeed([{ id: "zed", name: "Zed", command: "/usr/bin/zed", args: [] }]),
+          },
+          serverSettings: {
+            getSettings: Effect.fail(
+              new ServerSettingsError({
+                settingsPath: "/tmp/settings.json",
+                operation: "read-file",
+                cause: new Error("boom"),
+              }),
+            ),
+            updateCustomEditors: () =>
+              Effect.sync(() => {
+                written = true;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellRememberApplication]({ applicationId: "zed" }),
         ).pipe(Effect.result),
       );
 

@@ -190,32 +190,58 @@ export function parseWindowsShortcutName(shortcutFileName: string): string | nul
 }
 
 /**
- * Slug for an application id. Unicode-aware so a name written entirely in
- * non-latin script still yields an id instead of collapsing to empty and
- * dropping the application from the list.
+ * Readable ASCII prefix for an application id.
+ *
+ * Deliberately ASCII: the id ends up in `CustomEditorId`, whose schema accepts
+ * only `[0-9a-z-]`. A name in another script simply yields an empty prefix and
+ * leans on the hash below rather than producing an id the schema rejects.
  */
 function slugify(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 32)
     .replace(/-+$/g, "");
 }
 
 /**
- * Assigns stable, unique ids and sorts by display name.
+ * FNV-1a over the exact name. Short, stable, and dependency-free; it only has
+ * to separate a few hundred application names, not resist collisions.
+ */
+function nameDigest(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.codePointAt(index)!;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * Id for a discovered application, derived from its name alone.
  *
- * Sorting happens before ids are handed out, not after, because directory read
- * order is not guaranteed: assigning first and sorting later would let a
- * collision suffix land on a different application between two scans, and a
- * remembered application's id has to stay put.
+ * The digest is not decoration. Ids are persisted when a user remembers an
+ * application, so they must not depend on what else happens to be installed:
+ * numbering collisions positionally would let a later install of a
+ * similarly-named program take an id an existing entry already owns, pointing
+ * a remembered application at a different binary. Deriving the whole id from
+ * the name keeps it fixed for the life of that application.
+ */
+export function applicationIdForName(name: string): string {
+  const slug = slugify(name);
+  const digest = nameDigest(name);
+  return slug.length === 0 ? digest : `${slug}-${digest}`;
+}
+
+/**
+ * Assigns ids and sorts by display name.
  *
  * The same application really can appear twice (in `/usr/share` and again in
- * `~/.local/share`), and those exact-name duplicates collapse to one entry.
- * Two *different* names that happen to slugify alike ("Code - OSS" and "Code
- * OSS", or any pair sharing the first 32 characters) are distinct applications
- * and both survive, the later one carrying a numeric suffix.
+ * `~/.local/share`); those exact-name duplicates collapse to one entry, scan
+ * order deciding the winner so a user's own override beats the system copy.
+ * Two *different* names stay distinct even when their readable prefixes match
+ * ("Code - OSS" and "Code OSS"), because the id carries a digest of the name.
  */
 export function finalizeInstalledApplications(
   entries: ReadonlyArray<Omit<InstalledApplication, "id">>,
@@ -228,28 +254,16 @@ export function finalizeInstalledApplications(
     if (!byName.has(entry.name)) byName.set(entry.name, entry);
   }
 
-  // Sort before handing out ids, not after: a collision suffix must not depend
-  // on directory read order, or a remembered application's id could move
-  // between scans.
   const sorted = [...byName.values()].toSorted((left, right) =>
     left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
   );
 
-  const byId = new Map<string, InstalledApplication>();
-  for (const entry of sorted) {
-    const base = slugify(entry.name);
-    if (base.length === 0) continue;
-
-    let id = base;
-    let suffix = 2;
-    while (byId.has(id)) {
-      id = `${base}-${suffix}`;
-      suffix += 1;
-    }
-    byId.set(id, { id, name: entry.name, command: entry.command, args: entry.args });
-  }
-
-  return [...byId.values()];
+  return sorted.map((entry) => ({
+    id: applicationIdForName(entry.name),
+    name: entry.name,
+    command: entry.command,
+    args: entry.args,
+  }));
 }
 
 /**
@@ -284,7 +298,11 @@ const CUSTOM_EDITOR_COMMAND_MAX_LENGTH = 1024;
 export function isRememberableApplication(application: InstalledApplication): boolean {
   return (
     application.command.length <= CUSTOM_EDITOR_COMMAND_MAX_LENGTH &&
-    application.name.slice(0, CUSTOM_EDITOR_LABEL_MAX_LENGTH).trim().length > 0
+    application.name.slice(0, CUSTOM_EDITOR_LABEL_MAX_LENGTH).trim().length > 0 &&
+    // `Exec=app "" %F` yields an empty argument, which the schema's
+    // trimmed-non-empty check rejects on write. Leave the application out
+    // rather than offering one that cannot be stored.
+    application.args.every((arg) => arg.trim().length > 0)
   );
 }
 
