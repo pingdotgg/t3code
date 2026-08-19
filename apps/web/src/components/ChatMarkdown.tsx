@@ -432,8 +432,10 @@ function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
 
-// Strong-RTL code points (Hebrew, Arabic and friends, incl. presentation forms).
-const STRONG_RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u;
+// Strong-RTL code points: Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Mandaic and
+// their extensions/presentation forms, plus the astral RTL blocks (Phoenician … Adlam).
+const STRONG_RTL_CHAR =
+  /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
 // First letter decides (UBA P2/P3): digits, punctuation and symbols are neutral.
 const FIRST_LETTER = /\p{L}/u;
 
@@ -1692,14 +1694,11 @@ function ChatMarkdown({
         // text under a colored title — which is how the host renders it.
         return (
           <div role="note" dir="auto" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
-            {/* dir="ltr" on the label excludes it from the container's dir="auto" resolution
-                (elements with their own dir are skipped), so the body text decides the side. */}
-            <p
-              dir="ltr"
-              className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
-            >
+            <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
               <alert.Icon aria-hidden className="size-3.5 shrink-0" />
-              {alert.label}
+              {/* dir="ltr" on the label text only (not the row) keeps it out of the container's
+                  dir="auto" resolution, so the body decides the side and the row follows it. */}
+              <span dir="ltr">{alert.label}</span>
             </p>
             {children}
           </div>

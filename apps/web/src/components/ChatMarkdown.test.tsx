@@ -47,6 +47,7 @@ describe("firstStrongDirection", () => {
   it("reads the first letter, skipping neutral digits and punctuation", () => {
     expect(firstStrongDirection("רכיב | סטטוס")).toBe("rtl");
     expect(firstStrongDirection("1. (שלב) ראשון")).toBe("rtl");
+    expect(firstStrongDirection("\u{1E900}\u{1E92F} adlam")).toBe("rtl"); // astral RTL block
     expect(firstStrongDirection("Component | Status")).toBe("ltr");
     expect(firstStrongDirection("42 — Next.js then עברית")).toBe("ltr");
   });
