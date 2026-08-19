@@ -444,7 +444,7 @@ describe("reconcileMountedTerminalThreadIds", () => {
         currentThreadIds: ["thread-a", "thread-b", "thread-c"],
         openThreadIds: ["thread-a", "thread-b", "thread-c"],
         activeThreadId: "thread-a",
-        activeThreadTerminalOpen: true,
+        activeThreadTerminalMounted: true,
         maxHiddenThreadCount: 2,
       }),
     ).toEqual(["thread-b", "thread-c", "thread-a"]);
@@ -460,9 +460,20 @@ describe("reconcileMountedTerminalThreadIds", () => {
         currentThreadIds: ids,
         openThreadIds: ids.slice(1),
         activeThreadId: null,
-        activeThreadTerminalOpen: false,
+        activeThreadTerminalMounted: false,
       }),
     ).toEqual(ids.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
+  });
+
+  it("keeps the active drawer mounted while it is collapsed", () => {
+    expect(
+      reconcileMountedTerminalThreadIds({
+        currentThreadIds: ["thread-active"],
+        openThreadIds: [],
+        activeThreadId: "thread-active",
+        activeThreadTerminalMounted: true,
+      }),
+    ).toEqual(["thread-active"]);
   });
 });
 

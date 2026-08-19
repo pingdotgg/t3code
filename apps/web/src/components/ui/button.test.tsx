@@ -29,6 +29,13 @@ describe("button geometry tokens", () => {
     expect(html).toContain("sm:size-6");
   });
 
+  it("disables press scaling when reduced motion is requested", () => {
+    const html = renderToStaticMarkup(<Button>Run</Button>);
+
+    expect(html).toContain("active:not-disabled:scale-[var(--control-press-scale)]");
+    expect(html).toContain("motion-reduce:[--control-press-scale:1]");
+  });
+
   it("owns shared compact and micro control geometry", () => {
     const compact = renderToStaticMarkup(<Button size="compact">Condition</Button>);
     const micro = renderToStaticMarkup(

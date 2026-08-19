@@ -126,6 +126,7 @@ import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
+  selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
   type RightPanelSurface,
   updatePullRequestTabStatus,
@@ -513,6 +514,7 @@ function formatOutgoingPrompt(params: {
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+const RIGHT_PANEL_EXIT_DURATION_MS = 200;
 
 type ChatViewProps =
   | {
@@ -973,41 +975,51 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [onAddTerminalContext, visible],
   );
 
-  if (!project || !terminalUiState.terminalOpen || !cwd) {
+  if (!project || !cwd) {
     return null;
   }
 
   return (
-    <div className={visible ? undefined : "hidden"}>
-      <ThreadTerminalDrawer
-        threadRef={threadRef}
-        threadId={threadId}
-        cwd={cwd}
-        worktreePath={effectiveWorktreePath}
-        runtimeEnv={runtimeEnv}
-        visible={visible}
-        height={terminalUiState.terminalHeight}
-        // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
-        terminalIds={terminalUiState.terminalIds}
-        activeTerminalId={terminalUiState.activeTerminalId}
-        terminalGroups={terminalUiState.terminalGroups}
-        activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
-        focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
-        onSplitTerminal={splitTerminal}
-        onSplitTerminalVertical={splitTerminalVertical}
-        onNewTerminal={createNewTerminal}
-        splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-        splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
-        newShortcutLabel={visible ? newShortcutLabel : undefined}
-        closeShortcutLabel={visible ? closeShortcutLabel : undefined}
-        keybindings={keybindings}
-        onActiveTerminalChange={activateTerminal}
-        onCloseTerminal={closeTerminal}
-        onHeightChange={setTerminalHeight}
-        onAddTerminalContext={handleAddTerminalContext}
-        terminalLabelsById={terminalLabelsById}
-        terminalLaunchLocationsById={terminalLaunchLocationsById}
-      />
+    <div
+      className={cn(
+        "terminal-drawer-motion grid shrink-0 grid-rows-[1fr] transition-[grid-template-rows,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
+        !visible && "pointer-events-none grid-rows-[0fr] translate-y-2 opacity-0",
+      )}
+      data-hidden={!visible ? "" : undefined}
+      aria-hidden={!visible ? true : undefined}
+      inert={!visible ? true : undefined}
+    >
+      <div className="min-h-0 min-w-0 overflow-hidden">
+        <ThreadTerminalDrawer
+          threadRef={threadRef}
+          threadId={threadId}
+          cwd={cwd}
+          worktreePath={effectiveWorktreePath}
+          runtimeEnv={runtimeEnv}
+          visible={visible}
+          height={terminalUiState.terminalHeight}
+          // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
+          terminalIds={terminalUiState.terminalIds}
+          activeTerminalId={terminalUiState.activeTerminalId}
+          terminalGroups={terminalUiState.terminalGroups}
+          activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
+          focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
+          onSplitTerminal={splitTerminal}
+          onSplitTerminalVertical={splitTerminalVertical}
+          onNewTerminal={createNewTerminal}
+          splitShortcutLabel={visible ? splitShortcutLabel : undefined}
+          splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
+          newShortcutLabel={visible ? newShortcutLabel : undefined}
+          closeShortcutLabel={visible ? closeShortcutLabel : undefined}
+          keybindings={keybindings}
+          onActiveTerminalChange={activateTerminal}
+          onCloseTerminal={closeTerminal}
+          onHeightChange={setTerminalHeight}
+          onAddTerminalContext={handleAddTerminalContext}
+          terminalLabelsById={terminalLabelsById}
+          terminalLaunchLocationsById={terminalLaunchLocationsById}
+        />
+      </div>
     </div>
   );
 });
@@ -1015,6 +1027,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 interface PersistentThreadTerminalPanelProps {
   threadRef: ScopedThreadRef;
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
+  visible: boolean;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   keybindings: ResolvedKeybindingsConfig;
@@ -1033,6 +1046,7 @@ interface PersistentThreadTerminalPanelProps {
 const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
   threadRef,
   surface,
+  visible,
   launchContext,
   focusRequestId,
   keybindings,
@@ -1151,6 +1165,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       cwd={cwd}
       worktreePath={worktreePath}
       runtimeEnv={runtimeEnv}
+      visible={visible}
       height={0}
       terminalIds={surface.terminalIds}
       activeTerminalId={surface.activeTerminalId}
@@ -1619,13 +1634,16 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
+  const selectedRightPanelSurface = useRightPanelStore((state) =>
+    selectSelectedRightPanelSurface(state.byThreadKey, activeThreadRef),
+  );
   const [pullRequestTabStatuses, setPullRequestTabStatuses] = useState<
     Record<string, PullRequestTabStatus>
   >({});
   // Keyed by the surface the panel is showing rather than by a key rebuilt from the status, so
   // the tab is found again whether or not that surface was opened with an environment on it.
   const activePullRequestSurfaceId =
-    activeRightPanelSurface?.kind === "pull-request" ? activeRightPanelSurface.id : undefined;
+    selectedRightPanelSurface?.kind === "pull-request" ? selectedRightPanelSurface.id : undefined;
   const handlePullRequestTabStatusChange = useCallback(
     (status: PullRequestTabStatus) => {
       const id = activePullRequestSurfaceId;
@@ -1635,7 +1653,7 @@ function ChatViewContent(props: ChatViewProps) {
     [activePullRequestSurfaceId],
   );
   const activeFileSurface =
-    activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
+    selectedRightPanelSurface?.kind === "file" ? selectedRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const resolvePreviewRuntimeTabId = useMemo(
@@ -1663,9 +1681,45 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
+  const [retainedRightPanelThreadKey, setRetainedRightPanelThreadKey] = useState<string | null>(
+    rightPanelOpen ? routeThreadKey : null,
+  );
+  useEffect(() => {
+    if (rightPanelOpen) {
+      setRetainedRightPanelThreadKey(routeThreadKey);
+      return;
+    }
+
+    if (retainedRightPanelThreadKey !== routeThreadKey) {
+      setRetainedRightPanelThreadKey(null);
+      return;
+    }
+
+    const timeout = window.setTimeout(
+      () => setRetainedRightPanelThreadKey(null),
+      RIGHT_PANEL_EXIT_DURATION_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [retainedRightPanelThreadKey, rightPanelOpen, routeThreadKey]);
+  const retainClosedRightPanelContent = retainedRightPanelThreadKey === routeThreadKey;
+  useEffect(() => {
+    if (maximizedRightPanelThreadKey === null) return;
+    if (maximizedRightPanelThreadKey !== routeThreadKey) {
+      setMaximizedRightPanelThreadKey(null);
+      return;
+    }
+    if (rightPanelOpen) return;
+    const timeout = window.setTimeout(
+      () => setMaximizedRightPanelThreadKey(null),
+      RIGHT_PANEL_EXIT_DURATION_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [maximizedRightPanelThreadKey, rightPanelOpen, routeThreadKey]);
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+    !shouldUseRightPanelSheet &&
+    maximizedRightPanelThreadKey === routeThreadKey &&
+    (rightPanelOpen || retainClosedRightPanelContent);
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -1722,7 +1776,10 @@ function ChatViewContent(props: ChatViewProps) {
         currentThreadIds,
         openThreadIds: existingOpenTerminalThreadKeys,
         activeThreadId: activeThreadKey,
-        activeThreadTerminalOpen: Boolean(activeThreadKey && terminalUiState.terminalOpen),
+        activeThreadTerminalMounted: Boolean(
+          activeThreadKey &&
+          (terminalUiState.terminalOpen || currentThreadIds.includes(activeThreadKey)),
+        ),
         maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
       });
       return currentThreadIds.length === nextThreadIds.length &&
@@ -3351,7 +3408,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activePreviewState.activeTabId, activeThreadRef, createBrowserSurface, previewPanelOpen]);
   const closePreviewPanel = useCallback(() => {
     if (activeThreadRef) {
-      setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
     }
   }, [activeThreadRef]);
@@ -6112,23 +6168,24 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
-    activeRightPanelSurface?.kind === "preview" ? (
+    selectedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
           threadRef={activeThreadRef}
-          tabId={activeRightPanelSurface.resourceId}
+          tabId={selectedRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
-          visible
+          visible={rightPanelOpen}
           onSendAnnotation={(annotation, image) => {
             void onSend(undefined, { annotation, image });
           }}
         />
       </Suspense>
-    ) : activeRightPanelSurface?.kind === "terminal" ? (
+    ) : selectedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
         threadRef={activeThreadRef}
-        surface={activeRightPanelSurface}
+        surface={selectedRightPanelSurface}
+        visible={rightPanelOpen}
         launchContext={activeTerminalLaunchContext ?? null}
         focusRequestId={terminalFocusRequestId}
         keybindings={keybindings}
@@ -6143,7 +6200,7 @@ function ChatViewContent(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
-    ) : activeRightPanelSurface?.kind === "diff" ? (
+    ) : selectedRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
           key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
@@ -6152,26 +6209,26 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
-    ) : activeRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
+    ) : selectedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
-    ) : activeRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
+    ) : selectedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
         title="Pull requests unavailable"
         error="Update this environment's T3 Code server to browse pull requests."
       />
-    ) : activeRightPanelSurface?.kind === "pull-request" ? (
+    ) : selectedRightPanelSurface?.kind === "pull-request" ? (
       // No onClose: the surface tab's own X owns closing here, and a second X in the header
       // would be the same action twice. The thread context also drops the checkout button, so it
       // is only right for the thread's own pull request, whose branch is already under the
       // reader's feet. A link the agent wrote can open any other one here, and that one has to be
       // checkable out like it is anywhere else.
       <PullRequestDetailPanel
-        key={`${activeRightPanelSurface.repository}#${activeRightPanelSurface.number}`}
+        key={`${selectedRightPanelSurface.repository}#${selectedRightPanelSurface.number}`}
         environmentId={activeThread.environmentId}
         reference={{
-          projectId: activeRightPanelSurface.projectId as ProjectId,
-          repository: activeRightPanelSurface.repository,
-          number: activeRightPanelSurface.number,
+          projectId: selectedRightPanelSurface.projectId as ProjectId,
+          repository: selectedRightPanelSurface.repository,
+          number: selectedRightPanelSurface.number,
         }}
         context={
           isThreadOwnPullRequest(
@@ -6181,9 +6238,9 @@ function ChatViewContent(props: ChatViewProps) {
               number: activeThreadPr?.number ?? null,
             },
             {
-              projectId: activeRightPanelSurface.projectId,
-              repository: activeRightPanelSurface.repository,
-              number: activeRightPanelSurface.number,
+              projectId: selectedRightPanelSurface.projectId,
+              repository: selectedRightPanelSurface.repository,
+              number: selectedRightPanelSurface.number,
             },
           )
             ? "thread"
@@ -6193,13 +6250,14 @@ function ChatViewContent(props: ChatViewProps) {
         composerDraftTarget={composerDraftTarget}
         onStateChange={handlePullRequestTabStatusChange}
       />
-    ) : activeRightPanelSurface?.kind === "agents" ? (
+    ) : selectedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
-    ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
+    ) : (selectedRightPanelSurface?.kind === "files" ||
+        selectedRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
       <Suspense fallback={null}>
@@ -6213,7 +6271,9 @@ function ChatViewContent(props: ChatViewProps) {
           keybindings={keybindings}
           availableEditors={availableEditors}
           relativePath={
-            activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.relativePath : null
+            selectedRightPanelSurface.kind === "file"
+              ? selectedRightPanelSurface.relativePath
+              : null
           }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
@@ -6231,19 +6291,21 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
+      {(rightPanelOpen || retainClosedRightPanelContent) && !shouldUseRightPanelSheet
+        ? panelLayoutControls
+        : null}
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
-          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+          "isolate flex min-h-0 min-w-0 flex-col overflow-hidden",
+          rightPanelMaximized && rightPanelOpen ? "w-0 flex-none" : "flex-1",
         )}
-        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column-maximized-away={rightPanelMaximized && rightPanelOpen ? "true" : "false"}
       >
         {/* Top bar */}
         <header
           data-chat-header
           className={cn(
-            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            "bg-background",
             isElectron
               ? cn(
                   "drag-region relative flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
@@ -6255,7 +6317,9 @@ function ChatViewContent(props: ChatViewProps) {
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {!rightPanelOpen ? panelLayoutControls : null}
+          {!rightPanelOpen && (shouldUseRightPanelSheet || !retainClosedRightPanelContent)
+            ? panelLayoutControls
+            : null}
           <ChatHeader
             {...(!supportsPullRequests || threadRepository === null
               ? {}
@@ -6372,7 +6436,7 @@ function ChatViewContent(props: ChatViewProps) {
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
               {showScrollToBottom && (
                 <div
-                  className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
+                  className="chat-floating-pill-transition pointer-events-none absolute left-1/2 z-30 flex justify-center py-1.5"
                   style={{ bottom: composerOverlayHeight + 4 }}
                 >
                   <Button
@@ -6647,12 +6711,13 @@ function ChatViewContent(props: ChatViewProps) {
         ))}
       </div>
 
-      {!shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
+      {!shouldUseRightPanelSheet && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          visible={rightPanelOpen}
           surfaces={rightPanelState.surfaces}
-          activeSurfaceId={activeRightPanelSurface?.id ?? null}
+          activeSurfaceId={selectedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
           previewSessions={activePreviewState.sessions}
           desktopByTabId={activePreviewState.desktopByTabId}
@@ -6679,7 +6744,7 @@ function ChatViewContent(props: ChatViewProps) {
           pullRequestStatuses={pullRequestTabStatuses}
           liveAgentCount={agentPanelModel.liveCount}
         >
-          {rightPanelContent}
+          {rightPanelOpen || retainClosedRightPanelContent ? rightPanelContent : null}
         </RightPanelTabs>
       ) : null}
       {shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
@@ -6692,7 +6757,7 @@ function ChatViewContent(props: ChatViewProps) {
             // the sheet opens.
             layoutControls={<div className="mr-px flex items-center">{panelToggleControls}</div>}
             surfaces={rightPanelState.surfaces}
-            activeSurfaceId={activeRightPanelSurface?.id ?? null}
+            activeSurfaceId={selectedRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}
             previewSessions={activePreviewState.sessions}
             desktopByTabId={activePreviewState.desktopByTabId}
