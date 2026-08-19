@@ -585,7 +585,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
           {...persistence}
-          focusSelectedPrimaryOption={isMenuOpen}
+          focusSelectedPrimaryOption={open !== undefined && isMenuOpen}
         />
       </MenuPopup>
     </Menu>
