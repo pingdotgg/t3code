@@ -9,6 +9,15 @@ const MAX_TITLE_UNWRAP_DEPTH = 8;
  * block or inline `` `…` `` backticks. Returns the trimmed inner content, or the
  * trimmed input when there is no such wrapper.
  */
+function isParseableJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function stripCodeMarkdown(value: string): string {
   const trimmed = value.trim();
 
@@ -24,8 +33,10 @@ function stripCodeMarkdown(value: string): string {
         : inner.trim();
     }
     // Single-line fence, e.g. ```json {"title":"x"}```: drop a leading language
-    // tag when JSON-ish content follows it on the same line.
-    return inner.replace(/^[A-Za-z0-9_-]+\s+(?=[[{"])/, "").trim();
+    // tag before an object/array, but only when doing so yields parseable JSON,
+    // so a real first word in a fenced prose title is never eaten.
+    const withoutTag = inner.replace(/^[A-Za-z0-9_-]+\s+(?=[[{])/, "");
+    return (withoutTag !== inner && isParseableJson(withoutTag) ? withoutTag : inner).trim();
   }
 
   const inline = trimmed.match(/^`+([^`]*)`+$/);

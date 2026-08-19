@@ -209,6 +209,11 @@ describe("sanitizeThreadTitle", () => {
     );
   });
 
+  it("keeps the first word of a single-line fenced prose title", () => {
+    // The leading token is only dropped when the remainder is parseable JSON.
+    expect(sanitizeThreadTitle("```Deploy {config} now```")).toBe("Deploy {config} now");
+  });
+
   it("unwraps an envelope that is both quoted and fenced", () => {
     // A JSON string whose contents are a fenced JSON block — Macroscope's case.
     expect(sanitizeThreadTitle('"```json\\n{\\"title\\": \\"Fix test\\"}\\n```"')).toBe("Fix test");
