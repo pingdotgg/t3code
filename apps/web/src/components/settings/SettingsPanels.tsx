@@ -2320,7 +2320,7 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5 sm:max-w-[26rem]">
               <ProviderModelPicker
                 activeInstanceId={textGenInstanceId}
                 model={textGenModel}
@@ -2328,7 +2328,7 @@ export function GeneralSettingsPanel() {
                 instanceEntries={textGenerationModelInstanceEntries}
                 modelOptionsByInstance={textGenerationModelOptionsByInstance}
                 triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-80 shrink text-foreground/90 hover:text-foreground"
+                triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
                 onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
