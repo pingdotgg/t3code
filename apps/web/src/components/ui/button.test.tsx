@@ -44,7 +44,8 @@ describe("button geometry tokens", () => {
 
     expect(compact).toContain("h-7");
     expect(compact).toContain("rounded-md");
-    expect(microLabel).toContain("sm:text-xs");
+    expect(microLabel).toContain("text-[11px]");
+    expect(microLabel).toContain("sm:text-[11px]");
     expect(microLabel).toContain("sm:[&amp;_svg:not([class*=&#x27;size-&#x27;])]:size-3");
     expect(micro).toContain("size-5");
     expect(micro).toContain("rounded-sm");

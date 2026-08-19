@@ -963,16 +963,31 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      needs the composer surface and outline to paint in front of its overlap.
      Split the glass into exact surfaces while a drawer or tab is present; the
      default composer keeps the cheaper continuous layer. */
-  .chat-composer-glass-shell:has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))::before,
-  .chat-composer-glass-host:has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))::after {
+  .chat-composer-glass-shell:is(
+    .chat-composer-glass-shell-attached,
+    :has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
+  )::before,
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
+    )
+    .chat-composer-glass-host::after {
     display: none;
   }
 
-  .chat-composer-glass-host:has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab)) {
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
+    )
+    .chat-composer-glass-host {
     box-shadow: none;
   }
 
-  .chat-composer-glass-host:has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
+    )
+    .chat-composer-glass-host
     [data-chat-composer-main-surface="true"] {
     background: color-mix(
       in srgb,
@@ -1006,14 +1021,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
-  .chat-composer-glass-host:has(.chat-composer-top-drawer)
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(.chat-composer-top-drawer)
+    )
+    .chat-composer-glass-host
     [data-chat-composer-mobile-collapsed="true"] {
     min-height: var(--chat-composer-attachment-overlap);
   }
 
   .chat-composer-glass-shell-with-context .chat-composer-glass-host::after,
-  .chat-composer-glass-shell-with-context:has(
-      :is(.chat-composer-top-drawer, .chat-composer-stash-tab)
+  .chat-composer-glass-shell-with-context:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
     )
     [data-chat-composer-main-surface="true"]::after {
     /* Keep the attachment seam open; the strip continues the outer outline below. */
@@ -1062,7 +1082,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     content: "";
   }
 
-  .chat-composer-glass-shell:has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-stash-tab))
+    )
     .chat-composer-context-strip {
     &::before {
       background: color-mix(

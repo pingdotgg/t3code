@@ -11,7 +11,7 @@ interface ComposerPendingApprovalActionsProps {
   ) => Promise<unknown>;
 }
 
-const APPROVAL_ACTION_CLASS_NAME = "font-normal text-[11px] sm:text-[11px]";
+const APPROVAL_ACTION_CLASS_NAME = "font-normal";
 
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,

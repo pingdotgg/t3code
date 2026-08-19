@@ -118,6 +118,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
             variant="ghost-muted"
             size="icon-micro"
             aria-label="Close stash"
+            onPointerDown={(event) => event.preventDefault()}
             onClick={onClose}
           >
             <XIcon className="size-3" />
