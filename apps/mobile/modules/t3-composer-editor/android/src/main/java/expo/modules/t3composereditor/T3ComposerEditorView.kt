@@ -21,6 +21,11 @@ import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import org.json.JSONObject
 import kotlin.math.max
+import kotlin.math.roundToInt
+
+private val cssRgbaColor = Regex(
+  """^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*([\d.]+)\s*\)$"""
+)
 
 class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   context,
@@ -333,12 +338,23 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.invalidate()
   }
 
-  private fun parseColor(value: String, fallback: Int): Int =
-    try {
+  private fun parseColor(value: String, fallback: Int): Int {
+    cssRgbaColor.matchEntire(value)?.destructured?.let { (red, green, blue, alpha) ->
+      val opacity = alpha.toFloatOrNull()?.coerceIn(0f, 1f) ?: return fallback
+      return Color.argb(
+        (opacity * 255).roundToInt(),
+        red.toInt().coerceIn(0, 255),
+        green.toInt().coerceIn(0, 255),
+        blue.toInt().coerceIn(0, 255),
+      )
+    }
+
+    return try {
       Color.parseColor(value)
     } catch (_: Exception) {
       fallback
     }
+  }
 }
 
 private data class ComposerToken(
