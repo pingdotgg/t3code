@@ -4,9 +4,73 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  terminalContextMenuItems,
+  terminalLinkChatText,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
 } from "./ThreadTerminalDrawer";
+
+describe("terminalLinkChatText", () => {
+  it("resolves relative paths against the terminal cwd", () => {
+    expect(
+      terminalLinkChatText("src/components/ThreadTerminalDrawer.tsx", "/Users/olive/project"),
+    ).toBe(
+      "[ThreadTerminalDrawer.tsx](/Users/olive/project/src/components/ThreadTerminalDrawer.tsx)",
+    );
+  });
+
+  it("removes terminal positions before serializing a file link", () => {
+    expect(terminalLinkChatText("src/index.ts:12:3", "/Users/olive/project")).toBe(
+      "[index.ts](/Users/olive/project/src/index.ts)",
+    );
+  });
+
+  it("trims trailing separators before serializing a directory link", () => {
+    expect(terminalLinkChatText("/Users/olive/project/dist/", "/Users/olive/project")).toBe(
+      "[dist](/Users/olive/project/dist)",
+    );
+  });
+
+  it("leaves URLs intact regardless of scheme casing", () => {
+    expect(terminalLinkChatText("HTTPS://t3.codes/docs", "/Users/olive/project")).toBe(
+      "HTTPS://t3.codes/docs",
+    );
+  });
+});
+
+describe("terminalContextMenuItems", () => {
+  it("offers path actions for a detected terminal path", () => {
+    const options = {
+      hasSelection: false,
+      link: "src/components/ThreadTerminalDrawer.tsx",
+    };
+
+    expect(terminalContextMenuItems(options)).toEqual([
+      { id: "open-link", label: "Open in editor" },
+      { id: "add-link-to-chat", label: "Add path to chat" },
+      { id: "copy-link", label: "Copy path", icon: "copy" },
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", disabled: true },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+
+  it("offers URL actions while preserving enabled selection actions", () => {
+    const options = {
+      hasSelection: true,
+      link: "https://t3.codes",
+    };
+
+    expect(terminalContextMenuItems(options)).toEqual([
+      { id: "open-link", label: "Open link" },
+      { id: "add-link-to-chat", label: "Add link to chat" },
+      { id: "copy-link", label: "Copy link", icon: "copy" },
+      { id: "add-to-chat", label: "Add to chat", disabled: false },
+      { id: "copy", label: "Copy", disabled: false },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {

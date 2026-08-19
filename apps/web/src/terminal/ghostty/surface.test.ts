@@ -12,6 +12,8 @@ import {
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
+  mapTerminalLinkRange,
+  runTerminalLinkContextMenu,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   terminalGridCellAt,
@@ -300,6 +302,96 @@ describe("application mouse reporting", () => {
 
   it("maps browser buttons to Ghostty's button enum", () => {
     expect([0, 1, 2, 3, 4, 5].map(ghosttyMouseButton)).toEqual([1, 3, 2, 4, 5, null]);
+  });
+
+  it("pins a right-clicked link highlight until its context menu closes", async () => {
+    const link = {
+      text: "src/terminal.ts",
+      range: {
+        start: { x: 3, y: 2 },
+        end: { x: 17, y: 2 },
+      },
+    };
+    const highlights: Array<typeof link | null> = [];
+    let closeMenu = () => {};
+    const menuClosed = new Promise<void>((resolve) => {
+      closeMenu = resolve;
+    });
+
+    const contextMenu = runTerminalLinkContextMenu({
+      link,
+      setContextMenuLink: (nextLink) => highlights.push(nextLink),
+      showContextMenu: () => menuClosed,
+    });
+
+    expect(highlights).toEqual([link]);
+    closeMenu();
+    await contextMenu;
+    expect(highlights).toEqual([link, null]);
+  });
+
+  it("reprojects a pinned link range into the current viewport", () => {
+    const link = {
+      text: "src/terminal.ts",
+      range: {
+        start: { x: 3, y: 12 },
+        end: { x: 17, y: 12 },
+      },
+    };
+
+    expect(mapTerminalLinkRange(link, ({ x, y }) => ({ x, y: y - 10 }))).toEqual({
+      text: link.text,
+      range: {
+        start: { x: 3, y: 2 },
+        end: { x: 17, y: 2 },
+      },
+    });
+  });
+
+  it("does not let an older context menu clear a newer link highlight", async () => {
+    const firstLink = {
+      text: "src/first.ts",
+      range: {
+        start: { x: 3, y: 2 },
+        end: { x: 14, y: 2 },
+      },
+    };
+    const secondLink = {
+      text: "src/second.ts",
+      range: {
+        start: { x: 5, y: 4 },
+        end: { x: 17, y: 4 },
+      },
+    };
+    const highlights: Array<typeof firstLink | null> = [];
+    let activeRequest = 0;
+    let closeFirst = () => {};
+    let closeSecond = () => {};
+    const firstClosed = new Promise<void>((resolve) => {
+      closeFirst = resolve;
+    });
+    const secondClosed = new Promise<void>((resolve) => {
+      closeSecond = resolve;
+    });
+    const openMenu = (link: typeof firstLink, menuClosed: Promise<void>) => {
+      const request = ++activeRequest;
+      return runTerminalLinkContextMenu({
+        link,
+        setContextMenuLink: (nextLink) => highlights.push(nextLink),
+        showContextMenu: () => menuClosed,
+        isCurrent: () => request === activeRequest,
+      });
+    };
+
+    const firstMenu = openMenu(firstLink, firstClosed);
+    const secondMenu = openMenu(secondLink, secondClosed);
+    closeFirst();
+    await firstMenu;
+    expect(highlights).toEqual([firstLink, secondLink]);
+
+    closeSecond();
+    await secondMenu;
+    expect(highlights).toEqual([firstLink, secondLink, null]);
   });
 });
 

@@ -19,6 +19,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -42,7 +43,12 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { isTerminalLinkActivation, isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
+import {
+  isTerminalLinkActivation,
+  isTerminalUrl,
+  resolvePathLinkTarget,
+  splitPathAndPosition,
+} from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -256,7 +262,19 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
-export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+export type TerminalContextMenuAction =
+  | "add-to-chat"
+  | "add-link-to-chat"
+  | "copy"
+  | "copy-link"
+  | "open-link"
+  | "paste";
+
+export function terminalLinkChatText(link: string, cwd: string): string {
+  if (isTerminalUrl(link)) return link;
+  const { path } = splitPathAndPosition(resolvePathLinkTarget(link, cwd));
+  return serializeComposerFileLink(path.replace(/(?!^)[/\\]+$/u, ""));
+}
 
 /** Post-selection popup: just the two selection actions, always enabled. */
 export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
@@ -267,15 +285,30 @@ export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "c
 }
 
 /**
- * Right-click menu for the terminal canvas: the selection actions (disabled
- * until a selection exists) plus Paste. Paste is always offered: the browser
- * (and Electron's default editing menu) can only paste into an editable
- * element, so a canvas terminal never gets a usable entry from them.
+ * Right-click menu for the terminal canvas: actions for the link under the
+ * pointer, selection actions (disabled until a selection exists), and Paste.
+ * Paste is always offered because a canvas terminal cannot use the browser or
+ * Electron editing menu's native Paste entry.
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  link: string | null;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
+  const linkItems: ContextMenuItem<TerminalContextMenuAction>[] = options.link
+    ? isTerminalUrl(options.link)
+      ? [
+          { id: "open-link", label: "Open link" },
+          { id: "add-link-to-chat", label: "Add link to chat" },
+          { id: "copy-link", label: "Copy link", icon: "copy" },
+        ]
+      : [
+          { id: "open-link", label: "Open in editor" },
+          { id: "add-link-to-chat", label: "Add path to chat" },
+          { id: "copy-link", label: "Copy path", icon: "copy" },
+        ]
+    : [];
   return [
+    ...linkItems,
     ...terminalSelectionMenuItems().map((item) => ({
       ...item,
       disabled: !options.hasSelection,
@@ -320,6 +353,7 @@ interface TerminalViewportProps {
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalLink: (link: string) => void;
   focusRequestId: number;
   autoFocus: boolean;
   resizeEpoch: number;
@@ -344,6 +378,7 @@ export function TerminalViewport({
   runtimeEnv,
   onSessionExited,
   onAddTerminalContext,
+  onAddTerminalLink,
   focusRequestId,
   autoFocus,
   resizeEpoch,
@@ -384,6 +419,9 @@ export function TerminalViewport({
   });
   const handleAddTerminalContext = useEffectEvent((selection: TerminalContextSelection) => {
     onAddTerminalContext(selection);
+  });
+  const handleAddTerminalLink = useEffectEvent((link: string) => {
+    onAddTerminalLink(terminalLinkChatText(link, cwd));
   });
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
   const terminalFontFamily = useClientSettings((settings) =>
@@ -493,9 +531,8 @@ export function TerminalViewport({
         // The surface listens from construction, so a right-click can land
         // while `create` is still awaiting WASM — before the handler below it
         // exists. The ref is only assigned once that setup has run.
-        onContextMenu: (event) => {
-          if (terminalRef.current) void showTerminalContextMenu(event);
-        },
+        onContextMenu: (event, linkText) =>
+          terminalRef.current ? showTerminalContextMenu(event, linkText) : undefined,
       };
       const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
       if (cancelled) {
@@ -593,14 +630,27 @@ export function TerminalViewport({
         }
       };
 
-      const copySelection = async (text: string, requestId: number) => {
+      const copyTerminalText = async (
+        text: string,
+        description: string,
+        fallbackError: string,
+        requestId: number,
+      ) => {
         try {
-          await writeTextToClipboard(text, "terminal selection");
+          await writeTextToClipboard(text, description);
         } catch (error) {
-          reportIfCurrent(requestId, error, "Unable to copy terminal selection");
+          reportIfCurrent(requestId, error, fallbackError);
         }
         focusIfCurrent(requestId);
       };
+
+      const copySelection = (text: string, requestId: number) =>
+        copyTerminalText(
+          text,
+          "terminal selection",
+          "Unable to copy terminal selection",
+          requestId,
+        );
 
       const pasteFromClipboard = async (requestId: number) => {
         const activeTerminal = terminalRef.current;
@@ -620,7 +670,7 @@ export function TerminalViewport({
         focusIfCurrent(requestId);
       };
 
-      const showTerminalContextMenu = async (event: MouseEvent) => {
+      const showTerminalContextMenu = async (event: MouseEvent, link: string | null) => {
         if (!localApi || !terminalRef.current) return;
         // Own the gesture before anything async: leaving the default alive lets
         // the browser (or Electron's editing menu) answer with a Paste entry
@@ -633,7 +683,7 @@ export function TerminalViewport({
         let clicked: TerminalContextMenuAction | null;
         try {
           clicked = await localApi.contextMenu.show(
-            terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+            terminalContextMenuItems({ hasSelection: selectionAction !== null, link }),
             { x: event.clientX, y: event.clientY },
           );
         } catch (error) {
@@ -648,8 +698,25 @@ export function TerminalViewport({
           case "add-to-chat":
             if (selectionAction) addSelectionToChat(selectionAction.selection);
             return;
+          case "add-link-to-chat":
+            if (link) handleAddTerminalLink(link);
+            return;
           case "copy":
             if (selectionAction) await copySelection(selectionAction.clipboardText, requestId);
+            return;
+          case "copy-link": {
+            if (!link) return;
+            const isUrl = isTerminalUrl(link);
+            await copyTerminalText(
+              link,
+              isUrl ? "terminal link" : "terminal path",
+              isUrl ? "Unable to copy terminal link" : "Unable to copy terminal path",
+              requestId,
+            );
+            return;
+          }
+          case "open-link":
+            if (link) openTerminalLink(link, event);
             return;
           case "paste":
             await pasteFromClipboard(requestId);
@@ -746,6 +813,10 @@ export function TerminalViewport({
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
         if (!isTerminalLinkActivation(event)) return;
+        openTerminalLink(text, event);
+      }
+
+      function openTerminalLink(text: string, event: MouseEvent): void {
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (isTerminalUrl(text)) {
@@ -1007,6 +1078,7 @@ interface ThreadTerminalDrawerProps {
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalLink: (link: string) => void;
   keybindings: ResolvedKeybindingsConfig;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
@@ -1068,6 +1140,7 @@ export default function ThreadTerminalDrawer({
   onCloseTerminal,
   onHeightChange,
   onAddTerminalContext,
+  onAddTerminalLink,
   keybindings,
   terminalLabelsById,
   terminalLaunchLocationsById,
@@ -1524,6 +1597,7 @@ export default function ThreadTerminalDrawer({
                             : {})}
                           onSessionExited={() => onCloseTerminal(terminalId)}
                           onAddTerminalContext={onAddTerminalContext}
+                          onAddTerminalLink={onAddTerminalLink}
                           focusRequestId={focusRequestId}
                           autoFocus={terminalId === resolvedActiveTerminalId}
                           resizeEpoch={resizeEpoch}
@@ -1553,6 +1627,7 @@ export default function ThreadTerminalDrawer({
                     : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}
+                  onAddTerminalLink={onAddTerminalLink}
                   focusRequestId={focusRequestId}
                   autoFocus
                   resizeEpoch={resizeEpoch}
