@@ -238,9 +238,8 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
                 render={
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="ghost-muted"
                     size="icon-xs"
-                    className="chat-markdown-chrome-action"
                     aria-label="Zoom out"
                     data-mermaid-overlay-zoom-out=""
                     disabled={zoomOutDisabled}
@@ -263,9 +262,8 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
                 render={
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="ghost-muted"
                     size="icon-xs"
-                    className="chat-markdown-chrome-action"
                     aria-label="Zoom in"
                     data-mermaid-overlay-zoom-in=""
                     disabled={zoomInDisabled}
@@ -282,9 +280,8 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
                 render={
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="ghost-muted"
                     size="icon-xs"
-                    className="chat-markdown-chrome-action"
                     aria-label="Reset view"
                     data-mermaid-overlay-reset=""
                     onClick={() => {
@@ -302,9 +299,8 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
                 render={
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="ghost-muted"
                     size="icon-xs"
-                    className="chat-markdown-chrome-action"
                     aria-label="Close"
                     onClick={() => onOpenChange(false)}
                   />

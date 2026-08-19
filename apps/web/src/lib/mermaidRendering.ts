@@ -4,7 +4,6 @@
  * Web and desktop share this path (desktop wraps the web client). Mobile has
  * no DOM mermaid runtime, so mermaid fences stay ordinary code blocks there.
  */
-import { fnv1a32 } from "./diffRendering";
 import { LRUCache } from "./lruCache";
 import { mermaidSvgContentSize } from "./mermaidViewport";
 
@@ -84,7 +83,9 @@ function nextMermaidDomId(): string {
 }
 
 function createMermaidCacheKey(code: string, theme: MermaidColorScheme): string {
-  return `${fnv1a32(code).toString(36)}:${code.length}:${theme}`;
+  // Include the source itself. A hash+length key can collide and serve the
+  // wrong cached SVG until that entry is evicted.
+  return `${theme}:${code}`;
 }
 
 export function isMermaidFenceLanguage(language: string | undefined): boolean {
@@ -149,8 +150,12 @@ export function remapMermaidSvgIds(svg: string, suffix: string): string {
       new RegExp(`xlink:href="#${escaped}"`, "g"),
       `xlink:href="#${next}"`,
     );
-    // Mermaid themes live in a <style> block keyed by the root svg id.
-    remapped = remapped.replace(new RegExp(`#${escaped}(?=[^A-Za-z0-9_-]|$)`, "g"), `#${next}`);
+    // Theme selectors live in <style> (`#id .nodeLabel`). Hex colors are
+    // `fill:#fff` / `fill: #fff` / `fill="#fff"`. Only rewrite hashes inside
+    // stylesheets, and skip anything after a CSS colon.
+    remapped = remapped.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, (styleBlock) =>
+      styleBlock.replace(new RegExp(`(?<!:\\s*)#${escaped}(?=[^A-Za-z0-9_-]|$)`, "g"), `#${next}`),
+    );
   }
   return remapped;
 }
@@ -216,7 +221,11 @@ export async function renderMermaidSvg(code: string, theme: MermaidColorScheme):
       await mermaid.parse(trimmed);
       const { svg } = await mermaid.render(nextMermaidDomId(), trimmed);
       const sanitized = sanitizeMermaidSvg(svg);
-      mermaidSvgCache.set(cacheKey, sanitized, Math.max(sanitized.length * 2, trimmed.length));
+      mermaidSvgCache.set(
+        cacheKey,
+        sanitized,
+        Math.max(sanitized.length * 2, trimmed.length) + cacheKey.length,
+      );
       return sanitized;
     } catch (cause) {
       throw new MermaidRenderError(cause);

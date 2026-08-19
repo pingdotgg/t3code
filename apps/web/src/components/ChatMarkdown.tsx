@@ -1538,6 +1538,19 @@ function ChatMarkdown({
     ];
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
+  // ReactMarkdown remounts every custom tag whose component identity changes.
+  // Streaming updates `text` (and the file-link maps derived from it) on every
+  // token; keep those on refs so mermaid state survives until the fence settles.
+  const textRef = useRef(text);
+  textRef.current = text;
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
+  const markdownFileLinkMetaByHrefRef = useRef(markdownFileLinkMetaByHref);
+  markdownFileLinkMetaByHrefRef.current = markdownFileLinkMetaByHref;
+  const inlineCodeFileLinkMetaByTextRef = useRef(inlineCodeFileLinkMetaByText);
+  inlineCodeFileLinkMetaByTextRef.current = inlineCodeFileLinkMetaByText;
+  const fileLinkParentSuffixByPathRef = useRef(fileLinkParentSuffixByPath);
+  fileLinkParentSuffixByPathRef.current = fileLinkParentSuffixByPath;
   const markdownUrlTransform = useCallback((href: string) => {
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
@@ -1632,14 +1645,14 @@ function ChatMarkdown({
   );
   /* eslint-disable react/no-unstable-nested-components -- ReactMarkdown requires component
    * renderers that close over this message's metadata. useMemo keeps them stable until that
-   * metadata changes. */
+   * metadata changes. Streaming text is read from refs so mermaid diagrams do not remount. */
   const markdownComponents = useMemo<Components>(() => {
     const fileLinkChip = (
       fileLinkMeta: MarkdownFileLinkMeta,
       copyMarkdown: string,
       className?: string,
     ) => {
-      const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+      const parentSuffix = fileLinkParentSuffixByPathRef.current.get(fileLinkMeta.filePath);
       const labelParts = [fileLinkMeta.basename];
       if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
         labelParts.push(parentSuffix);
@@ -1712,7 +1725,9 @@ function ChatMarkdown({
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
         const markerOffset =
-          typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+          typeof listItemStart === "number"
+            ? findTaskListMarkerOffset(textRef.current, listItemStart)
+            : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
             {renderSkillInlineMarkdownChildren(children, skills)}
@@ -1750,7 +1765,9 @@ function ChatMarkdown({
       },
       a({ node, href, children, title: _title, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? markdownFileLinkMetaByHrefRef.current.get(normalizedHref)
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1840,7 +1857,7 @@ function ChatMarkdown({
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
           const fileLinkMeta =
-            inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+            inlineCodeFileLinkMetaByTextRef.current.get(codeText.trim()) ??
             resolveInlineCodeFileLinkMeta(codeText, cwd);
           if (fileLinkMeta) {
             return fileLinkChip(fileLinkMeta, `\`${codeText}\``);
@@ -1873,7 +1890,7 @@ function ChatMarkdown({
                 className={codeBlock.className}
                 code={codeBlock.code}
                 themeName={diffThemeName}
-                isStreaming={isStreaming}
+                isStreaming={isStreamingRef.current}
               />
             </Suspense>
           </RenderErrorBoundary>
@@ -1885,7 +1902,7 @@ function ChatMarkdown({
               language={language}
               fenceTitle={fenceTitle}
               theme={resolvedTheme}
-              isStreaming={isStreaming}
+              isStreaming={isStreamingRef.current}
             >
               {highlighted}
             </MermaidMarkdownCodeBlock>
@@ -1906,10 +1923,6 @@ function ChatMarkdown({
   }, [
     cwd,
     diffThemeName,
-    fileLinkParentSuffixByPath,
-    inlineCodeFileLinkMetaByText,
-    isStreaming,
-    markdownFileLinkMetaByHref,
     onTaskListChange,
     openFileInPanel,
     openInPreferredEditor,
@@ -1917,7 +1930,6 @@ function ChatMarkdown({
     openMarkdownFileInPreview,
     resolvedTheme,
     skills,
-    text,
     threadRef,
   ]);
   /* eslint-enable react/no-unstable-nested-components */

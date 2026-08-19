@@ -2264,10 +2264,10 @@ code {
   user-select: none;
   /* Same surface as the inline mermaid code block, so theme fills stay readable. */
   background: var(--secondary);
-}
 
-.dark .chat-markdown-mermaid-overlay-scene {
-  background: color-mix(in srgb, var(--input) 32%, transparent);
+  @variant dark {
+    background: color-mix(in srgb, var(--input) 32%, transparent);
+  }
 }
 
 .chat-markdown-mermaid-overlay-scene[data-panning="true"] {

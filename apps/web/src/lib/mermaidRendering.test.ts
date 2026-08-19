@@ -82,6 +82,13 @@ describe("remapMermaidSvgIds", () => {
       `<svg id="t3-mermaid-1-ov"><style>#t3-mermaid-1-ov{fill:#1a1a1a;}#t3-mermaid-1-ov .nodeLabel{color:#ccc;}</style></svg>`,
     );
   });
+
+  it("does not rewrite hex colors that share an id token", () => {
+    const svg = `<svg id="fff"><style>#fff{fill:#fff;stroke: #fff;}#fff .nodeLabel{color:#ccc;}</style><path fill="#fff,#000"/></svg>`;
+    expect(remapMermaidSvgIds(svg, "-ov")).toBe(
+      `<svg id="fff-ov"><style>#fff-ov{fill:#fff;stroke: #fff;}#fff-ov .nodeLabel{color:#ccc;}</style><path fill="#fff,#000"/></svg>`,
+    );
+  });
 });
 
 describe("prepareMermaidOverlaySvg", () => {
@@ -125,6 +132,20 @@ describe("renderMermaidSvg", () => {
       secure: string[];
     };
     expect(config.secure).toContain("securityLevel");
+  });
+
+  it("does not reuse a cached svg for a different source of the same length", async () => {
+    const runtime = fakeRuntime({
+      render: vi.fn(async (_id: string, text: string) => ({ svg: `<svg>${text}</svg>` })),
+    });
+    __setMermaidLoaderForTests(async () => runtime);
+
+    const first = await renderMermaidSvg("AAAA", "light");
+    const second = await renderMermaidSvg("BBBB", "light");
+
+    expect(first).toBe("<svg>AAAA</svg>");
+    expect(second).toBe("<svg>BBBB</svg>");
+    expect(runtime.render).toHaveBeenCalledTimes(2);
   });
 
   it("serializes concurrent renders so mermaid's global config cannot race", async () => {
