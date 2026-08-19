@@ -71,7 +71,7 @@ describe("mobile model options", () => {
           auth: { status: "authenticated" },
           models: sources.map((source) => ({
             slug: `${source.id}/claude-fable-5`,
-            name: "Claude Fable 5",
+            name: `${source.label}: Claude Fable 5`,
             subProvider: source.label,
             isCustom: false,
             capabilities: null,
