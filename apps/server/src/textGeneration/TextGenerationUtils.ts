@@ -11,14 +11,28 @@ const MAX_TITLE_UNWRAP_DEPTH = 8;
  */
 function stripCodeMarkdown(value: string): string {
   const trimmed = value.trim();
-  const fenced = trimmed.match(/^```[^\n]*\n([\s\S]*?)\n?```$/);
-  if (fenced?.[1] !== undefined) {
-    return fenced[1].trim();
+
+  if (trimmed.startsWith("```") && trimmed.endsWith("```") && trimmed.length >= 6) {
+    const inner = trimmed.slice(3, -3);
+    const newlineIndex = inner.indexOf("\n");
+    if (newlineIndex >= 0) {
+      // Standard fence: the opener line holds an optional language tag and the
+      // content follows on the next line. Drop the tag only when it is one.
+      const infoString = inner.slice(0, newlineIndex).trim();
+      return /^[A-Za-z0-9_-]*$/.test(infoString)
+        ? inner.slice(newlineIndex + 1).trim()
+        : inner.trim();
+    }
+    // Single-line fence, e.g. ```json {"title":"x"}```: drop a leading language
+    // tag when JSON-ish content follows it on the same line.
+    return inner.replace(/^[A-Za-z0-9_-]+\s+(?=[[{"])/, "").trim();
   }
+
   const inline = trimmed.match(/^`+([^`]*)`+$/);
   if (inline?.[1] !== undefined) {
     return inline[1].trim();
   }
+
   return trimmed;
 }
 

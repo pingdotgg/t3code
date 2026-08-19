@@ -200,6 +200,15 @@ describe("sanitizeThreadTitle", () => {
     expect(sanitizeThreadTitle('`{"title": "Add dark mode toggle"}`')).toBe("Add dark mode toggle");
   });
 
+  it("unwraps an envelope on the same line as the fence opener", () => {
+    expect(sanitizeThreadTitle('```json {"title": "Add dark mode toggle"}```')).toBe(
+      "Add dark mode toggle",
+    );
+    expect(sanitizeThreadTitle('```{"name": "Add dark mode toggle"}```')).toBe(
+      "Add dark mode toggle",
+    );
+  });
+
   it("unwraps an envelope that is both quoted and fenced", () => {
     // A JSON string whose contents are a fenced JSON block — Macroscope's case.
     expect(sanitizeThreadTitle('"```json\\n{\\"title\\": \\"Fix test\\"}\\n```"')).toBe("Fix test");
