@@ -54,7 +54,7 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("text-right");
   });
 
-  it("renders a skill source icon without a source label", () => {
+  it("renders a skill source icon with an accessible source label", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         items={[
@@ -82,7 +82,7 @@ describe("ComposerCommandMenu", () => {
     );
 
     expect(markup).toContain("Browser");
-    expect(markup).not.toContain("App");
+    expect(markup).toContain('<span class="sr-only">App skill</span>');
     expect(markup).toContain("<svg");
     expect(markup).toContain("text-icon-muted");
   });

@@ -19,6 +19,7 @@ describe("ComposerTasksBadge", () => {
     const markup = renderToStaticMarkup(
       <ComposerTasksBadge
         expanded={false}
+        onDismiss={() => undefined}
         onToggle={() => undefined}
         progress={progress}
         steps={steps}
@@ -41,6 +42,10 @@ describe("ComposerTasksBadge", () => {
     expect(markup).not.toContain("·");
     expect(markup).toContain("1/3");
     expect(markup).toContain("Current task: Attach task progress");
+    expect(markup).toContain("lucide-list-todo");
+    expect(markup).toContain('aria-label="Dismiss tasks for this turn"');
+    expect(markup).toContain("lucide-x");
+    expect(markup).not.toContain("lucide-chevron");
     expect(markup).toContain("bg-success");
     expect(markup).toContain("bg-primary");
     expect(markup).toContain("bg-muted-foreground/25");
@@ -51,6 +56,7 @@ describe("ComposerTasksBadge", () => {
       <ComposerTasksBadge
         expanded={false}
         hasTrailingShoulder
+        onDismiss={() => undefined}
         onToggle={() => undefined}
         progress={progress}
         steps={steps}
@@ -65,6 +71,7 @@ describe("ComposerTasksBadge", () => {
     const markup = renderToStaticMarkup(
       <ComposerTasksBadge
         expanded={false}
+        onDismiss={() => undefined}
         onToggle={() => undefined}
         placement="inline"
         progress={progress}
@@ -80,7 +87,12 @@ describe("ComposerTasksBadge", () => {
 
   it("expands into a read-only attached task list", () => {
     const markup = renderToStaticMarkup(
-      <ComposerTasksDrawer onCollapse={() => undefined} progress={progress} steps={steps} />,
+      <ComposerTasksDrawer
+        onCollapse={() => undefined}
+        onDismiss={() => undefined}
+        progress={progress}
+        steps={steps}
+      />,
     );
 
     expect(markup).toContain('data-chat-composer-tasks-drawer="true"');
@@ -94,6 +106,9 @@ describe("ComposerTasksBadge", () => {
     expect(markup).toContain("now");
     expect(markup).toContain("Attach task progress");
     expect(markup).toContain("Verify the result");
+    expect(markup).toContain("lucide-list-todo");
+    expect(markup).toContain('aria-label="Dismiss tasks for this turn"');
+    expect(markup).not.toContain("lucide-chevron");
     expect(markup).not.toContain("bg-success");
     expect(markup).not.toContain("bg-primary");
     expect(markup).not.toContain("bg-muted-foreground/25");
@@ -103,6 +118,7 @@ describe("ComposerTasksBadge", () => {
     const markup = renderToStaticMarkup(
       <ComposerTasksBadge
         expanded={false}
+        onDismiss={() => undefined}
         onToggle={() => undefined}
         progress={{ ...progress, totalSteps: 0 }}
         steps={steps}

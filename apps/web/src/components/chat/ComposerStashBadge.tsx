@@ -47,7 +47,8 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         aria-expanded={props.menuOpen}
         className={cn(
           "shrink-0 gap-1 px-1.5",
-          (props.menuOpen || props.pulsing) && "text-foreground",
+          (props.menuOpen || props.pulsing) &&
+            "[--control-icon-color:currentColor] text-foreground",
         )}
         onPointerDown={(event) => event.preventDefault()}
         onClick={props.onToggleMenu}

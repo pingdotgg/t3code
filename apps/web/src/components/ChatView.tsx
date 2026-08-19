@@ -4183,6 +4183,14 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const activeComposerTasksProgress =
+    activeLatestTurn !== null && !latestTurnSettled
+      ? (activeThreadShell?.planProgress ?? null)
+      : null;
+  const activeComposerTaskSteps =
+    activeComposerTasksProgress && activePlan && activePlan.turnId === activeLatestTurn?.turnId
+      ? activePlan.steps
+      : null;
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
   const activeThreadPr = resolveDisplayedThreadPr({
@@ -4524,8 +4532,8 @@ function ChatViewContent(props: ChatViewProps) {
         : "Monitoring",
       actions: (
         <Button
-          size="micro"
-          variant="ghost-muted"
+          size="xs"
+          variant="ghost"
           disabled={isStoppingBackgroundWork}
           onClick={() => void handleStopBackgroundWork()}
         >
@@ -6476,7 +6484,7 @@ function ChatViewContent(props: ChatViewProps) {
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
                   <div
-                    className="chat-composer-shell-slot relative"
+                    className="relative"
                     style={
                       forceExpandedMobileComposer
                         ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }
@@ -6524,13 +6532,8 @@ function ChatViewContent(props: ChatViewProps) {
                             respondingRequestIds={respondingRequestIds}
                             showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                             activeProposedPlan={activeProposedPlan}
-                            activeTasksProgress={activeThreadShell?.planProgress ?? null}
-                            activeTaskSteps={
-                              activeThreadShell?.planProgress &&
-                              activePlan?.turnId === (activeLatestTurn?.turnId ?? null)
-                                ? activePlan.steps
-                                : null
-                            }
+                            activeTasksProgress={activeComposerTasksProgress}
+                            activeTaskSteps={activeComposerTaskSteps}
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={lockedProvider}

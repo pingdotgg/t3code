@@ -1,8 +1,9 @@
-import { ChevronDownIcon, ChevronUpIcon, ListTodoIcon } from "lucide-react";
+import { ListTodoIcon, XIcon } from "lucide-react";
 import { memo } from "react";
 
 import { formatDuration } from "../../session-logic";
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 
 export interface ComposerTasksProgress {
   readonly step: string;
@@ -56,6 +57,7 @@ function TaskSegments({
 export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   expanded,
   hasTrailingShoulder = false,
+  onDismiss,
   onToggle,
   placement = "tab",
   progress,
@@ -63,6 +65,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
 }: {
   readonly expanded: boolean;
   readonly hasTrailingShoulder?: boolean;
+  readonly onDismiss: () => void;
   readonly onToggle: () => void;
   readonly placement?: "inline" | "tab";
   readonly progress: ComposerTasksProgress;
@@ -74,98 +77,127 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   const label = `Tasks: ${progress.completedSteps} of ${progress.totalSteps} complete. Current task: ${progress.step}`;
   if (placement === "inline") {
     return (
+      <span className="inline-flex shrink-0 items-center gap-0.5" data-composer-tasks-badge="true">
+        <Button
+          size="micro"
+          variant="ghost-muted"
+          aria-expanded={expanded}
+          aria-label={label}
+          className="shrink-0 gap-1 px-1.5"
+          onClick={onToggle}
+          onPointerDown={(event) => event.preventDefault()}
+        >
+          <ListTodoIcon aria-hidden className="size-3 shrink-0" />
+          <span>Tasks</span>
+          <TaskSegments steps={steps} />
+          <span
+            className={cn(
+              "font-medium tabular-nums",
+              allDone ? "text-success" : "text-muted-foreground",
+            )}
+          >
+            {progress.completedSteps}/{progress.totalSteps}
+          </span>
+        </Button>
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-label="Dismiss tasks for this turn"
+          className="shrink-0"
+          onClick={onDismiss}
+          onPointerDown={(event) => event.preventDefault()}
+        >
+          <XIcon aria-hidden className="size-2.5" />
+        </Button>
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-4 z-0 flex h-8 items-center gap-1 rounded-t-xl border border-b-0 px-2 pb-1 text-xs leading-none text-muted-foreground",
+        hasTrailingShoulder ? "right-28" : "right-4",
+        allDone && "text-foreground",
+      )}
+      data-composer-tasks-badge="true"
+    >
       <button
         type="button"
         aria-expanded={expanded}
         aria-label={label}
-        className="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-sm bg-muted/40 px-1.5 text-[10px] text-muted-foreground hover:bg-muted/70"
-        data-composer-tasks-badge="true"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 self-stretch text-muted-foreground hover:text-foreground"
         onClick={onToggle}
         onPointerDown={(event) => event.preventDefault()}
       >
-        <ListTodoIcon
-          aria-hidden
-          className={cn("size-3 shrink-0", allDone ? "text-success" : "text-current")}
-        />
-        <span>Tasks</span>
-        <TaskSegments steps={steps} />
+        <ListTodoIcon aria-hidden className="size-3.5 shrink-0" />
+        <span className="shrink-0">Tasks</span>
+        <span
+          className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80"
+          data-composer-task-current="true"
+        >
+          {progress.step}
+        </span>
         <span
           className={cn(
-            "font-medium tabular-nums",
+            "shrink-0 font-medium tabular-nums",
             allDone ? "text-success" : "text-muted-foreground",
           )}
         >
           {progress.completedSteps}/{progress.totalSteps}
         </span>
-        <ChevronDownIcon aria-hidden className="size-3 shrink-0 opacity-60" />
+        <TaskSegments className="w-20" steps={steps} />
       </button>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      aria-expanded={expanded}
-      aria-label={label}
-      className={cn(
-        "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-4 z-0 flex h-8 cursor-pointer items-center gap-2 rounded-t-xl border border-b-0 px-3 pb-1 text-xs leading-none text-muted-foreground hover:text-foreground",
-        hasTrailingShoulder ? "right-28" : "right-4",
-        allDone && "text-foreground",
-      )}
-      data-composer-tasks-badge="true"
-      onClick={onToggle}
-      onPointerDown={(event) => event.preventDefault()}
-    >
-      <ListTodoIcon
-        aria-hidden
-        className={cn("size-3 shrink-0", allDone ? "text-success" : "text-current")}
-      />
-      <span className="shrink-0">Tasks</span>
-      <span
-        className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80"
-        data-composer-task-current="true"
+      <button
+        type="button"
+        aria-label="Dismiss tasks for this turn"
+        className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 hover:bg-muted/60 hover:text-foreground"
+        onClick={onDismiss}
+        onPointerDown={(event) => event.preventDefault()}
       >
-        {progress.step}
-      </span>
-      <span
-        className={cn(
-          "shrink-0 font-medium tabular-nums",
-          allDone ? "text-success" : "text-muted-foreground",
-        )}
-      >
-        {progress.completedSteps}/{progress.totalSteps}
-      </span>
-      <TaskSegments className="w-20" steps={steps} />
-      <ChevronDownIcon aria-hidden className="size-3 shrink-0 opacity-60" />
-    </button>
+        <XIcon aria-hidden className="size-3" />
+      </button>
+    </div>
   );
 });
 
 export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
+  onDismiss,
   onCollapse,
   progress,
   steps,
 }: {
+  readonly onDismiss: () => void;
   readonly onCollapse: () => void;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
 }) {
   return (
     <div className="chat-composer-top-drawer" data-chat-composer-tasks-drawer="true">
-      <button
-        type="button"
-        aria-expanded="true"
-        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground hover:text-foreground sm:px-4"
-        onClick={onCollapse}
-        onPointerDown={(event) => event.preventDefault()}
-      >
-        <ListTodoIcon aria-hidden className="size-3.5 shrink-0" />
-        <span className="font-medium text-foreground">Tasks</span>
-        <span className="tabular-nums">
-          {progress.completedSteps}/{progress.totalSteps}
-        </span>
-        <ChevronUpIcon aria-hidden className="ml-auto size-3.5 shrink-0" />
-      </button>
+      <div className="flex items-center gap-1 px-3 py-1.5 sm:px-4">
+        <button
+          type="button"
+          aria-expanded="true"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 self-stretch text-left text-xs text-muted-foreground hover:text-foreground"
+          onClick={onCollapse}
+          onPointerDown={(event) => event.preventDefault()}
+        >
+          <ListTodoIcon aria-hidden className="size-3.5 shrink-0" />
+          <span className="font-medium text-foreground">Tasks</span>
+          <span className="tabular-nums">
+            {progress.completedSteps}/{progress.totalSteps}
+          </span>
+        </button>
+        <button
+          type="button"
+          aria-label="Dismiss tasks for this turn"
+          className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 hover:bg-muted/60 hover:text-foreground"
+          onClick={onDismiss}
+          onPointerDown={(event) => event.preventDefault()}
+        >
+          <XIcon aria-hidden className="size-3" />
+        </button>
+      </div>
       <div className="space-y-px px-3 pb-4 sm:px-4" role="list">
         {keyedTaskSteps(steps).map(({ key, step }) => (
           <div key={key} className="flex items-baseline gap-2 text-xs leading-5" role="listitem">

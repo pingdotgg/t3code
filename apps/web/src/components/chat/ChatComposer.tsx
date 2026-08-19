@@ -10,6 +10,7 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import {
   isProviderSendTurnSupportedImageMimeType,
@@ -989,6 +990,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const [isTasksDrawerOpen, setIsTasksDrawerOpen] = useState(false);
+  const [dismissedTasksTurnId, setDismissedTasksTurnId] = useState<TurnId | null>(null);
   const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
     key: 0,
     active: false,
@@ -2314,6 +2316,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const toggleTasksDrawer = useCallback(() => {
     setIsTasksDrawerOpen((open) => !open);
   }, []);
+  const activeTasksTurnId = activeThread?.latestTurn?.turnId ?? null;
+  const tasksDismissedForActiveTurn =
+    activeTasksTurnId !== null && dismissedTasksTurnId === activeTasksTurnId;
+  const visibleTasksProgress = tasksDismissedForActiveTurn ? null : activeTasksProgress;
+  const visibleTaskSteps = tasksDismissedForActiveTurn ? null : activeTaskSteps;
+  const dismissTasks = useCallback(() => {
+    if (activeTasksTurnId !== null) {
+      setDismissedTasksTurnId(activeTasksTurnId);
+    }
+    setIsTasksDrawerOpen(false);
+  }, [activeTasksTurnId]);
   const showInlineStashBadge =
     stashQueue.length > 0 &&
     !isComposerApprovalState &&
@@ -2332,26 +2345,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     />
   ) : null;
   const showInlineTasksBadge =
-    activeTasksProgress !== null &&
-    activeTaskSteps !== null &&
+    visibleTasksProgress !== null &&
+    visibleTaskSteps !== null &&
     !isTasksDrawerOpen &&
     !isComposerApprovalState &&
     (props.externalDrawerAttached || showComposerTopDrawer || isComposerCollapsedMobile);
   const inlineTasksBadge = showInlineTasksBadge ? (
     <ComposerTasksBadge
       expanded={false}
+      onDismiss={dismissTasks}
       onToggle={toggleTasksDrawer}
       placement="inline"
-      progress={activeTasksProgress}
-      steps={activeTaskSteps}
+      progress={visibleTasksProgress}
+      steps={visibleTaskSteps}
     />
   ) : null;
 
   useEffect(() => {
-    if (activeTasksProgress === null || activeTaskSteps === null) {
+    if (visibleTasksProgress === null || visibleTaskSteps === null) {
       setIsTasksDrawerOpen(false);
     }
-  }, [activeTaskSteps, activeTasksProgress]);
+  }, [visibleTaskSteps, visibleTasksProgress]);
 
   useEffect(() => {
     setIsTasksDrawerOpen(false);
@@ -2795,7 +2809,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="mx-auto w-full min-w-0 max-w-3xl"
       data-chat-composer-form="true"
     >
-      {showComposerTopDrawer ? (
+      {showComposerTopDrawer && !isTasksDrawerOpen ? (
         <div
           className="chat-composer-top-drawer"
           data-chat-composer-top-drawer="true"
@@ -2906,16 +2920,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ) : null}
         </div>
       ) : null}
-      {isTasksDrawerOpen && activeTasksProgress && activeTaskSteps ? (
+      {isTasksDrawerOpen && visibleTasksProgress && visibleTaskSteps ? (
         <ComposerTasksDrawer
+          onDismiss={dismissTasks}
           onCollapse={toggleTasksDrawer}
-          progress={activeTasksProgress}
-          steps={activeTaskSteps}
+          progress={visibleTasksProgress}
+          steps={visibleTaskSteps}
         />
       ) : null}
       <div className="relative">
-        {activeTasksProgress &&
-        activeTaskSteps &&
+        {visibleTasksProgress &&
+        visibleTaskSteps &&
         !isTasksDrawerOpen &&
         !props.externalDrawerAttached &&
         !showComposerTopDrawer &&
@@ -2923,12 +2938,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <ComposerTasksBadge
             expanded={false}
             hasTrailingShoulder={stashQueue.length > 0}
+            onDismiss={dismissTasks}
             onToggle={toggleTasksDrawer}
-            progress={activeTasksProgress}
-            steps={activeTaskSteps}
+            progress={visibleTasksProgress}
+            steps={visibleTaskSteps}
           />
         ) : null}
-        {!props.externalDrawerAttached && !showComposerTopDrawer && !isComposerCollapsedMobile ? (
+        {!props.externalDrawerAttached &&
+        !showComposerTopDrawer &&
+        !isTasksDrawerOpen &&
+        !isComposerCollapsedMobile ? (
           <ComposerStashBadge
             count={stashQueue.length}
             menuOpen={isStashMenuOpen}

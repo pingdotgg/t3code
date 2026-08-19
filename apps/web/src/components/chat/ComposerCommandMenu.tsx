@@ -184,7 +184,21 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   other: PackageIcon,
 };
 
+const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
+  app: "App",
+  repo: "Repo",
+  project: "Project",
+  personal: "Personal",
+  system: "System",
+  other: "Other",
+};
+
 function SkillSourceIcon(props: { kind: ProviderSkillSourceKind }) {
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
-  return <Icon aria-hidden="true" className="size-4 shrink-0 text-icon-muted" />;
+  return (
+    <>
+      <Icon aria-hidden="true" className="size-4 shrink-0 text-icon-muted" />
+      <span className="sr-only">{SKILL_SOURCE_LABEL_BY_KIND[props.kind]} skill</span>
+    </>
+  );
 }
