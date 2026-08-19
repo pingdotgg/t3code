@@ -32,9 +32,13 @@ export function resolveDevProxyTarget(
       normalizedHost === "::" ||
       normalizedHost === "[::]"
         ? "[::1]"
-        : normalizedHost === DEV_BROWSER_LOOPBACK_HOST
-          ? DEV_BROWSER_LOOPBACK_HOST
-          : DEV_LOOPBACK_HOST;
+        : normalizedHost === "0.0.0.0" || !normalizedHost
+          ? DEV_LOOPBACK_HOST
+          : normalizedHost === DEV_BROWSER_LOOPBACK_HOST
+            ? DEV_BROWSER_LOOPBACK_HOST
+            : normalizedHost.includes(":") && !normalizedHost.startsWith("[")
+              ? `[${normalizedHost}]`
+              : normalizedHost;
     return `http://${proxyHost}:${port}/`;
   }
 

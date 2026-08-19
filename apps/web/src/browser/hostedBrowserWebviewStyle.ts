@@ -40,7 +40,7 @@ export function resolveHostedBrowserWebviewPresentation(input: {
   readonly rect: BrowserSurfaceRect | null;
 } {
   const active = input.selected && input.surfaceVisible && input.rect !== null;
-  const backgroundCapture = !active && input.backgroundCaptureRequested && input.rect !== null;
+  const backgroundCapture = !active && input.backgroundCaptureRequested;
   return {
     active,
     backgroundCapture,

@@ -667,9 +667,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "evaluate": {
             const ready = await requireReadyTab();
+            const input = request.input as Parameters<typeof ready.bridge.automation.evaluate>[1];
             return await ready.bridge.automation.evaluate(
               ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.evaluate>[1],
+              previewAutomationInputWithRemainingTimeout(
+                input,
+                request.timeoutMs,
+                remainingOperationBudget,
+              ),
             );
           }
           case "waitFor": {

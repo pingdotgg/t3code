@@ -713,10 +713,13 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
 
         const evaluation = yield* manager
-          .automationEvaluate("tab_timeout", { expression: "document.title" })
+          .automationEvaluate("tab_timeout", {
+            expression: "document.title",
+            timeoutMs: 1_000,
+          })
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
-        yield* TestClock.adjust(15_000);
+        yield* TestClock.adjust(750);
         const timedOut = yield* Effect.exit(Fiber.join(evaluation));
 
         expect(Exit.isFailure(timedOut)).toBe(true);
@@ -724,6 +727,7 @@ describe("PreviewManager", () => {
           expect(Option.getOrThrow(Cause.findErrorOption(timedOut.cause))).toMatchObject({
             _tag: "PreviewAutomationTimeoutError",
             tabId: "tab_timeout",
+            timeoutMs: 1_000,
           });
         }
         expect(detach).toHaveBeenCalledOnce();
@@ -2536,6 +2540,51 @@ describe("PreviewManager", () => {
           expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
             _tag: "PreviewAutomationTimeoutError",
             tabId: "tab_recording_start_cleanup_timeout",
+            timeoutMs: 1_000,
+          });
+        }
+
+        yield* Deferred.succeed(releaseCaptureFinalizer, undefined);
+        yield* Effect.yieldNow;
+      }),
+    ),
+  );
+
+  effectIt.effect("bounds recording-stop cleanup when a capture finalizer stalls", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const releaseCaptureFinalizer = yield* Deferred.make<void>();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
+        let deliveryCount = 0;
+
+        yield* manager.subscribeRecordingFrames(() => {
+          deliveryCount += 1;
+          return deliveryCount === 1
+            ? Effect.void
+            : Deferred.await(releaseCaptureFinalizer).pipe(Effect.uninterruptible);
+        });
+        yield* manager.createTab("tab_recording_stop_cleanup_timeout");
+        yield* manager.registerWebview("tab_recording_stop_cleanup_timeout", 42);
+        yield* manager.startRecording("tab_recording_stop_cleanup_timeout");
+
+        yield* TestClock.adjust(100);
+        expect(deliveryCount).toBe(2);
+
+        const stop = yield* manager
+          .stopRecording("tab_recording_stop_cleanup_timeout", 1_000)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(750);
+        const exit = yield* Fiber.await(stop);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationTimeoutError",
+            tabId: "tab_recording_stop_cleanup_timeout",
             timeoutMs: 1_000,
           });
         }

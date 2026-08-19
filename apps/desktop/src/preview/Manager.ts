@@ -3219,8 +3219,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* stop;
       return;
     }
-    const result = yield* stop.pipe(Effect.timeoutOption(automationExecutionBudget(timeoutMs)));
-    if (Option.isSome(result)) return;
+    const cleanupFiber = yield* Effect.forkIn(stop, parentScope);
+    const result = yield* Fiber.await(cleanupFiber).pipe(
+      Effect.timeoutOption(automationExecutionBudget(timeoutMs)),
+    );
+    if (Option.isSome(result)) {
+      if (Exit.isFailure(result.value)) return yield* Effect.failCause(result.value.cause);
+      return;
+    }
     return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
   });
 
@@ -4152,8 +4158,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationEvaluateInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    return yield* withControlSession(tabId, wc, "evaluate", (send) =>
-      performAutomationEvaluate(tabId, input, send),
+    return yield* withControlSession(
+      tabId,
+      wc,
+      "evaluate",
+      (send) => performAutomationEvaluate(tabId, input, send),
+      input.timeoutMs,
     );
   });
 

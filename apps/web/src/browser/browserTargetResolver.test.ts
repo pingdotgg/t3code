@@ -211,6 +211,17 @@ describe("browser target resolver", () => {
     ).toBe("http://localhost:5733/pair#token=example");
   });
 
+  it("preserves concrete backend hosts while translating wildcard listeners", () => {
+    expect(resolveDevProxyTarget("13773", undefined, "192.168.1.20")).toBe(
+      "http://192.168.1.20:13773/",
+    );
+    expect(resolveDevProxyTarget("13773", undefined, "2001:db8::20")).toBe(
+      "http://[2001:db8::20]:13773/",
+    );
+    expect(resolveDevProxyTarget("13773", undefined, "0.0.0.0")).toBe("http://127.0.0.1:13773/");
+    expect(resolveDevProxyTarget("13773", undefined, "::")).toBe("http://[::1]:13773/");
+  });
+
   it("leaves malformed input for the normal navigation error path", async () => {
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "   ")).toBe("   ");

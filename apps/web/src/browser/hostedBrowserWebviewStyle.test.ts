@@ -48,6 +48,22 @@ describe("resolveHostedBrowserWebviewPresentation", () => {
       rect: { x: -20, y: -10, width: 800, height: 600 },
     });
   });
+
+  it("supplies a deterministic staging rectangle before a surface has presented", () => {
+    expect(
+      resolveHostedBrowserWebviewPresentation({
+        backgroundCaptureRequested: true,
+        rect: null,
+        rendererViewport: { width: 640, height: 480 },
+        selected: false,
+        surfaceVisible: false,
+      }),
+    ).toEqual({
+      active: false,
+      backgroundCapture: true,
+      rect: { x: 0, y: 0, width: 640, height: 480 },
+    });
+  });
 });
 
 describe("resolveHostedBrowserWebviewWrapperStyle", () => {

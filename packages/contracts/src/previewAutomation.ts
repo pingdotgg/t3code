@@ -447,6 +447,7 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
         "Serialize and return the value instead of a remote object reference. Defaults to true.",
     }),
   ),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({
   description:
     "Evaluates JavaScript in the page. Prefer snapshot and semantic actions; use evaluate for inspection or unsupported interactions.",

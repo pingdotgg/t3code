@@ -14,6 +14,7 @@ import {
 import {
   PreviewAutomationHost,
   PreviewAutomationError,
+  PreviewAutomationEvaluateInput,
   PreviewAutomationOpenInput,
   PreviewAutomationPressInput,
   PreviewAutomationRecordingStartInput,
@@ -35,6 +36,7 @@ const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
 const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
+const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
 const decodePressInput = Schema.decodeUnknownSync(PreviewAutomationPressInput);
 const decodeScrollInput = Schema.decodeUnknownSync(PreviewAutomationScrollInput);
@@ -49,6 +51,9 @@ describe("Preview automation mutation deadlines", () => {
       1_250,
     );
     expect(decodeRecordingStartInput({ timeoutMs: 1_250 }).timeoutMs).toBe(1_250);
+    expect(decodeEvaluateInput({ expression: "document.title", timeoutMs: 1_250 }).timeoutMs).toBe(
+      1_250,
+    );
   });
 });
 
