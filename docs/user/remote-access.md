@@ -46,6 +46,10 @@ If you are already running the desktop app and want to make it reachable from ot
 3. The settings panel will show the default reachable endpoint, with a `+N` control when more endpoints are available. Expand it to inspect alternatives such as loopback, LAN, private-network, or HTTPS endpoints.
 4. Use **Create Link** to generate a pairing link you can share with another device.
 
+On Windows, closing the desktop window keeps T3 Code and its backend running in the system tray so
+paired devices can remain connected. Select the tray icon to reopen the window, or use **Quit T3
+Code** from its menu to stop the app and backend completely.
+
 The default endpoint controls the QR code and primary copy action for pairing links. You can change it from the expanded endpoint list. The preference is stored by endpoint type, so choosing the local LAN endpoint survives normal IP address changes when you move between networks.
 
 When no user default is saved, the app uses the built-in LAN endpoint for pairing links when

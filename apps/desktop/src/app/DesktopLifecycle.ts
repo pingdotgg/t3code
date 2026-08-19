@@ -91,7 +91,9 @@ function handleBeforeQuit(
   runEffect: <A, E>(effect: Effect.Effect<A, E, DesktopLifecycleRuntimeServices>) => Promise<A>,
   allowQuit: () => boolean,
   markQuitAllowed: () => void,
+  prepareForQuit: () => void,
 ): void {
+  prepareForQuit();
   if (allowQuit()) {
     void runEffect(
       Effect.gen(function* () {
@@ -201,6 +203,7 @@ export const make = DesktopLifecycle.of({
         () => {
           quitAllowed = true;
         },
+        desktopWindow.prepareForQuit,
       );
     });
     yield* electronApp.on("activate", () => {

@@ -103,6 +103,7 @@ function makeFakeBrowserWindow() {
       windowListeners.set(eventName, listener);
     }),
     restore: vi.fn(),
+    hide: vi.fn(),
     setBackgroundColor: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setTitle: vi.fn(),
@@ -115,6 +116,7 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
+    hide: window.hide,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
@@ -205,6 +207,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly platform?: NodeJS.Platform;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -259,11 +262,26 @@ function makeTestLayer(input: {
     syncAllAppearance: (sync) => sync(input.window),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
+  const environmentLayer =
+    input.platform === undefined
+      ? desktopEnvironmentLayer
+      : DesktopEnvironment.layer({ ...environmentInput, platform: input.platform }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              DesktopConfig.layerTest({
+                T3CODE_PORT: "3773",
+                VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+              }),
+            ),
+          ),
+        );
+
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        environmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -506,6 +524,42 @@ describe("DesktopWindow", () => {
         prevented = false;
         beforeInput(event, { ...input, meta: false });
         assert.isFalse(prevented);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("hides a Windows window while background mode is active and closes it for Quit", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        platform: "win32",
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        desktopWindow.setBackgroundModeEnabled(true);
+
+        const close = fakeWindow.windowListeners.get("close");
+        if (!close) {
+          return yield* Effect.die("window close listener was not registered");
+        }
+
+        const backgroundClose = { preventDefault: vi.fn() };
+        close(backgroundClose);
+        assert.equal(backgroundClose.preventDefault.mock.calls.length, 1);
+        assert.equal(fakeWindow.hide.mock.calls.length, 1);
+
+        desktopWindow.prepareForQuit();
+        const quitClose = { preventDefault: vi.fn() };
+        close(quitClose);
+        assert.equal(quitClose.preventDefault.mock.calls.length, 0);
+        assert.equal(fakeWindow.hide.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );

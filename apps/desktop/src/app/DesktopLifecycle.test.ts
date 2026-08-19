@@ -17,6 +17,7 @@ describe("DesktopLifecycle", () => {
   for (const platform of ["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>) {
     it.effect(`lets the updater's quit event proceed on ${platform}`, () => {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let quitPrepared = false;
 
       const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
         metadata: Effect.die("unexpected metadata read"),
@@ -78,6 +79,10 @@ describe("DesktopLifecycle", () => {
         handleBackendReady: () => Effect.void,
         handleBackendNotReady: Effect.void,
         flushMainWindowBounds: Effect.void,
+        setBackgroundModeEnabled: () => undefined,
+        prepareForQuit: () => {
+          quitPrepared = true;
+        },
         dispatchMenuAction: () => Effect.void,
         zoomMain: () => Effect.void,
         syncAppearance: Effect.void,
@@ -116,6 +121,7 @@ describe("DesktopLifecycle", () => {
             prevented,
             "cancelling this event prevents the updater from completing its relaunch",
           );
+          assert.isTrue(quitPrepared);
 
           const state = yield* DesktopState.DesktopState;
           assert.isTrue(yield* Ref.get(state.quitting));
