@@ -508,16 +508,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     serverProviders,
   );
 
-  const liveStateRef = useRef({
-    targetEnvironmentId,
-    updateTextGenSettings,
-    defaultTextGenerationModelSelection,
-  });
-  liveStateRef.current = {
-    targetEnvironmentId,
-    updateTextGenSettings,
-    defaultTextGenerationModelSelection,
-  };
+  const targetEnvironmentIdRef = useRef(targetEnvironmentId);
+  targetEnvironmentIdRef.current = targetEnvironmentId;
 
   const isTextGenerationModelDirty =
     textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
@@ -635,6 +627,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
+    const initialTargetEnvironmentId = targetEnvironmentId;
     const api = readLocalApi();
     const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
@@ -643,6 +636,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       { variant: "destructive" },
     );
     if (!confirmed) return;
+
+    if (targetEnvironmentIdRef.current !== initialTargetEnvironmentId) {
+      return;
+    }
 
     // Only touch the theme keys that are actually dirty, so a theme-storage
     // failure cannot block restoring unrelated settings. Preferences are
@@ -734,20 +731,26 @@ export function useSettingsRestore(onRestored?: () => void) {
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
-    liveStateRef.current.updateTextGenSettings({
-      textGenerationModelSelection: liveStateRef.current.defaultTextGenerationModelSelection,
-    });
+    if (isTextGenerationModelDirty) {
+      updateTextGenSettings({
+        textGenerationModelSelection: defaultTextGenerationModelSelection,
+      });
+    }
     onRestored?.();
   }, [
     changedSettingLabels,
     clearThemeHalves,
+    defaultTextGenerationModelSelection,
+    isTextGenerationModelDirty,
     onRestored,
     setFollowSystem,
     setTheme,
     setThemeHalf,
+    targetEnvironmentId,
     theme,
     themeHalves,
     updateSettings,
+    updateTextGenSettings,
   ]);
 
   return {
