@@ -49,6 +49,7 @@ export interface ThreadRuntimeSummary {
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerName: string | null;
   readonly lastError: string | null;
+  readonly lastErrorAt?: string | null;
   readonly updatedAt: string;
 }
 
@@ -95,6 +96,7 @@ export interface EnvironmentThreadShell {
   readonly updatedAt: string;
   readonly archivedAt: string | null;
   readonly settledOverride: "settled" | "active" | null;
+  readonly settledOverrideAt: string | null;
   readonly settledAt: string | null;
   readonly snoozedUntil: string | null;
   readonly snoozedAt: string | null;
@@ -146,6 +148,7 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
     providerInstanceId: thread.providerInstanceId,
     providerName: null,
     lastError: thread.lastError ?? null,
+    lastErrorAt: null,
     updatedAt: iso(thread.updatedAt),
   };
 }
@@ -208,6 +211,7 @@ export function presentThreadShell(
     updatedAt,
     archivedAt: nullableIso(thread.archivedAt),
     settledOverride: thread.settledOverride,
+    settledOverrideAt: nullableIso(thread.settledOverrideAt),
     settledAt: nullableIso(thread.settledAt),
     snoozedUntil: nullableIso(thread.snoozedUntil ?? null),
     snoozedAt: nullableIso(thread.snoozedAt ?? null),

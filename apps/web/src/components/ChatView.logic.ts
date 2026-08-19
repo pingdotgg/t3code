@@ -116,6 +116,7 @@ export function buildLocalDraftThread(
     updatedAt: timestamp,
     archivedAt: null,
     settledOverride: null,
+    settledOverrideAt: null,
     settledAt: null,
     deletedAt: null,
   });
@@ -138,6 +139,41 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
     input.serverThread.environmentId === input.routeThreadRef.environmentId &&
     input.serverThread.id === input.targetThreadId,
   );
+}
+
+export function resolveThreadErrorBannerMessage(input: {
+  readonly localError: string | null;
+  readonly runtimeError: string | null;
+  readonly runtimeErrorKey: string | null;
+  readonly dismissedRuntimeErrorKey: string | null;
+}): string | null {
+  if (input.localError !== null) return input.localError;
+  return input.runtimeErrorKey !== null && input.runtimeErrorKey === input.dismissedRuntimeErrorKey
+    ? null
+    : input.runtimeError;
+}
+
+export function threadRuntimeErrorDismissalKey(input: {
+  readonly localError: string | null;
+  readonly runtimeError: string | null;
+  readonly runtimeErrorAt: string | null;
+}): string | null {
+  if (input.runtimeError === null || input.runtimeErrorAt === null) {
+    return null;
+  }
+  return JSON.stringify([input.runtimeErrorAt, input.runtimeError]);
+}
+
+export function resolveThreadErrorBannerSessionError(input: {
+  readonly runtimeErrorKey: string | null;
+  readonly threadError: string | null;
+  readonly localError?: string | null;
+  readonly localErrorAt?: number | null;
+}): string | null {
+  if (input.localError != null && input.threadError === input.localError) {
+    return JSON.stringify([input.localErrorAt ?? null, input.localError]);
+  }
+  return input.runtimeErrorKey ?? input.threadError;
 }
 
 export function reconcileMountedTerminalThreadIds(input: {

@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -87,6 +88,7 @@ function restartEffect(
 function makeExecutorLayer(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
+  readonly failDeadLetterCompensation?: Ref.Ref<boolean>;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
@@ -127,6 +129,19 @@ function makeExecutorLayer(input: {
               return yield* new ProviderTurnStartError({
                 runId,
                 cause: "simulated first start failure",
+              });
+            }
+          }),
+        failFromDeadLetter: (request) =>
+          Effect.gen(function* () {
+            yield* record(`failFromDeadLetter:${request.runId}`);
+            if (
+              input.failDeadLetterCompensation !== undefined &&
+              (yield* Ref.get(input.failDeadLetterCompensation))
+            ) {
+              return yield* new ProviderTurnStartError({
+                runId: request.runId,
+                cause: "simulated dead-letter compensation failure",
               });
             }
           }),
@@ -233,6 +248,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     const executorLayer = Layer.succeed(
       OrchestrationEffectExecutorV2,
       OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () => Effect.void,
         execute: () => Ref.update(executionCount, (count) => count + 1),
       }),
     );
@@ -306,6 +322,7 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
     const executorLayer = Layer.succeed(
       OrchestrationEffectExecutorV2,
       OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () => Effect.void,
         execute: () =>
           Effect.yieldNow.pipe(Effect.andThen(Ref.update(executionCount, (count) => count + 1))),
       }),
@@ -374,6 +391,7 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     const executorLayer = Layer.succeed(
       OrchestrationEffectExecutorV2,
       OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () => Effect.void,
         execute: () => Ref.update(executionCount, (count) => count + 1),
       }),
     );
@@ -437,7 +455,10 @@ it.effect("requeues a replay-safe claim when success settlement fails", () =>
     });
     const executorLayer = Layer.succeed(
       OrchestrationEffectExecutorV2,
-      OrchestrationEffectExecutorV2.of({ execute: () => Effect.void }),
+      OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () => Effect.void,
+        execute: () => Effect.void,
+      }),
     );
     const workerLayer = effectWorkerLayerWithOptions({ workerId }).pipe(
       Layer.provide(Layer.merge(outboxLayer, executorLayer)),
@@ -504,6 +525,7 @@ it.effect("keeps a process-bound executor failure retryable when retry settlemen
     const executorLayer = Layer.succeed(
       OrchestrationEffectExecutorV2,
       OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () => Effect.void,
         execute: () =>
           Effect.fail(
             new OrchestrationEffectExecutionError({
@@ -576,6 +598,7 @@ it.effect("keeps a max-attempt replay-safe failure terminal when fail settlement
     const executorLayer = Layer.succeed(
       OrchestrationEffectExecutorV2,
       OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () => Effect.void,
         execute: () =>
           Effect.fail(
             new OrchestrationEffectExecutionError({
@@ -785,5 +808,247 @@ it.effect("safely retries after replacement cleanup succeeds and start fails", (
       "detach",
       "start",
     ]);
+  }),
+);
+
+function startEffect(now: DateTime.Utc): OrchestrationEffectV2 {
+  const timestamp = DateTime.formatIso(now);
+  return {
+    id: "effect:dead-letter:start",
+    commandId: CommandId.make("command:dead-letter:start"),
+    threadId,
+    request: { type: "provider-turn.start", runId },
+    status: "running",
+    attemptCount: 5,
+    availableAt: timestamp,
+    leaseOwner: "test-worker",
+    leaseExpiresAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: null,
+    lastError: null,
+  };
+}
+
+it.effect("compensates a dead-lettered turn start before the terminal fail settles", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const workerId = "worker-dead-letter-compensation";
+    const claimedEffect = { ...startEffect(now), leaseOwner: workerId };
+    const order = yield* Ref.make<ReadonlyArray<string>>([]);
+    const compensations = yield* Ref.make<
+      ReadonlyArray<{ readonly effectId: string; readonly error: string }>
+    >([]);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      fail: () => Ref.update(order, (existing) => [...existing, "fail"]).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: (effect, error) =>
+          Ref.update(order, (existing) => [...existing, "compensate"]).pipe(
+            Effect.andThen(
+              Ref.update(compensations, (existing) => [
+                ...existing,
+                { effectId: effect.id, error },
+              ]),
+            ),
+          ),
+        execute: (effect) =>
+          Effect.fail(
+            new OrchestrationEffectExecutionError({
+              effectId: effect.id,
+              effectType: effect.request.type,
+              cause: "simulated terminal start failure",
+            }),
+          ),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId, maxAttempts: 5 }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    assert.isTrue(
+      yield* OrchestrationEffectWorkerV2.pipe(
+        Effect.flatMap((worker) => worker.runOnce),
+        Effect.provide(workerLayer),
+      ),
+    );
+
+    // Compensation must be durable before the outbox row turns terminal: a
+    // crash between the two leaves the effect unsettled for startup reconcile
+    // rather than a terminal effect with a hung run.
+    assert.deepEqual(yield* Ref.get(order), ["compensate", "fail"]);
+    const compensation = (yield* Ref.get(compensations))[0];
+    assert.isDefined(compensation);
+    assert.equal(compensation.effectId, claimedEffect.id);
+    assert.include(compensation.error, "simulated terminal start failure");
+    assert.lengthOf(yield* Ref.get(compensations), 1);
+  }),
+);
+
+it.effect("settles a dead letter when interrupted during compensation", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const workerId = "worker-dead-letter-compensation-interrupt";
+    const claimedEffect = { ...startEffect(now), leaseOwner: workerId };
+    const compensationStarted = yield* Deferred.make<void>();
+    const releaseCompensation = yield* Deferred.make<void>();
+    const order = yield* Ref.make<ReadonlyArray<string>>([]);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      fail: () => Ref.update(order, (existing) => [...existing, "fail"]).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () =>
+          Deferred.succeed(compensationStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseCompensation)),
+            Effect.andThen(Ref.update(order, (existing) => [...existing, "compensate"])),
+            Effect.catchCause(() => Effect.void),
+          ),
+        execute: (effect) =>
+          Effect.fail(
+            new OrchestrationEffectExecutionError({
+              effectId: effect.id,
+              effectType: effect.request.type,
+              cause: "simulated terminal start failure",
+            }),
+          ),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId, maxAttempts: 5 }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    yield* Effect.gen(function* () {
+      const worker = yield* OrchestrationEffectWorkerV2;
+      const workerFiber = yield* worker.runOnce.pipe(Effect.forkChild);
+      yield* Deferred.await(compensationStarted);
+      const interruption = yield* Fiber.interrupt(workerFiber).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.isUndefined(interruption.pollUnsafe());
+      assert.deepEqual(yield* Ref.get(order), []);
+      yield* Deferred.succeed(releaseCompensation, undefined);
+      yield* Fiber.await(workerFiber);
+      yield* Fiber.join(interruption);
+    }).pipe(Effect.provide(workerLayer));
+
+    assert.deepEqual(yield* Ref.get(order), ["compensate", "fail"]);
+  }),
+);
+
+it.effect("still settles a dead letter cleanly when the worker lost its lease", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const workerId = "worker-dead-letter-lost-lease";
+    const claimedEffect = { ...startEffect(now), leaseOwner: workerId };
+    const compensationCount = yield* Ref.make(0);
+    // The row is still owned at claim time; the cancellation lands while the
+    // execution fails, so the terminal fail loses the lease and the post-fail
+    // re-read sees the cancelled row.
+    const failAttempted = yield* Ref.make(false);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () =>
+        Ref.get(failAttempted).pipe(
+          Effect.map((cancelled) =>
+            Option.some(
+              cancelled
+                ? {
+                    ...claimedEffect,
+                    status: "cancelled" as const,
+                    leaseOwner: null,
+                    leaseExpiresAt: null,
+                    completedAt: DateTime.formatIso(now),
+                  }
+                : claimedEffect,
+            ),
+          ),
+        ),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      fail: () => Ref.set(failAttempted, true).pipe(Effect.as(false)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        compensateDeadLetter: () => Ref.update(compensationCount, (count) => count + 1),
+        execute: (effect) =>
+          Effect.fail(
+            new OrchestrationEffectExecutionError({
+              effectId: effect.id,
+              effectType: effect.request.type,
+              cause: "simulated terminal start failure",
+            }),
+          ),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId, maxAttempts: 5 }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    assert.isTrue(
+      yield* OrchestrationEffectWorkerV2.pipe(
+        Effect.flatMap((worker) => worker.runOnce),
+        Effect.provide(workerLayer),
+      ),
+    );
+
+    // Compensation runs before the fail can detect the lost lease; the
+    // projection-side writeIfRunCurrent guard is what keeps it a no-op when a
+    // concurrent transition (here a cancellation) already owns the run.
+    assert.equal(yield* Ref.get(compensationCount), 1);
+  }),
+);
+
+it.effect("routes dead-letter compensation for start and restart to the run failure path", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+
+    yield* Effect.gen(function* () {
+      const executor = yield* OrchestrationEffectExecutorV2;
+      yield* executor.compensateDeadLetter(startEffect(now), "dead-letter error");
+      yield* executor.compensateDeadLetter(
+        restartEffect(now, { type: "detach" }),
+        "dead-letter error",
+      );
+      yield* executor.compensateDeadLetter(
+        {
+          ...startEffect(now),
+          request: { type: "terminal.cleanup" },
+        },
+        "dead-letter error",
+      );
+    }).pipe(Effect.provide(makeExecutorLayer({ events })));
+
+    assert.deepEqual(yield* Ref.get(events), [
+      `failFromDeadLetter:${runId}`,
+      `failFromDeadLetter:${runId}`,
+    ]);
+  }),
+);
+
+it.effect("swallows a failing dead-letter compensation instead of failing settlement", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const failDeadLetterCompensation = yield* Ref.make(true);
+
+    yield* Effect.gen(function* () {
+      const executor = yield* OrchestrationEffectExecutorV2;
+      yield* executor.compensateDeadLetter(startEffect(now), "dead-letter error");
+    }).pipe(Effect.provide(makeExecutorLayer({ events, failDeadLetterCompensation })));
+
+    assert.deepEqual(yield* Ref.get(events), [`failFromDeadLetter:${runId}`]);
   }),
 );

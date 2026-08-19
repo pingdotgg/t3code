@@ -28,11 +28,16 @@ interface QueuedThreadShell {
   readonly runtime?: SettlementRuntimeLike | null;
 }
 
-interface SettlementThreadShell extends QueuedThreadShell {
+export interface SettledThreadView extends QueuedThreadShell {
   readonly settledOverride: "settled" | "active" | null;
   readonly settledAt: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  /**
+   * Provider background work that outlived the latest terminal run (V2 shell
+   * roster). Waiting threads are in motion and must not settle.
+   */
+  readonly pendingBackgroundTasks?: ReadonlyArray<{ readonly taskId: string }> | null;
 }
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
@@ -47,7 +52,7 @@ export function changeRequestAutoSettles(
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-export function threadLastActivityAt(shell: SettlementThreadShell): string | null {
+export function threadLastActivityAt(shell: SettledThreadView): string | null {
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
   const candidates = [
     shell.latestUserMessageAt,
@@ -100,11 +105,12 @@ export function hasQueuedTurnStart(
     return true;
   }
   if (shell.latestUserMessageAt == null) return false;
-  // A failed session start clears the queued state: the failure is already
-  // visible (status edge / error).
-  if (shell.session?.status === "error") return false;
   const messageAt = Date.parse(shell.latestUserMessageAt);
   if (Number.isNaN(messageAt)) return false;
+  if (shell.session?.status === "error" || shell.runtime?.status === "failed") {
+    const failedAt = Date.parse(shell.runtime?.updatedAt ?? shell.session?.updatedAt ?? "");
+    if (Number.isNaN(failedAt) || failedAt >= messageAt) return false;
+  }
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(nowMs)) return false;
   // Bounded on both sides: message timestamps originate on whichever device
@@ -120,16 +126,24 @@ export function hasQueuedTurnStart(
 }
 
 /**
+ * A shell waiting on provider background tasks (e.g. a Claude background
+ * shell that outlived its turn) is ready/completed on the wire but not done:
+ * the provider wakes it with a follow-up turn when the task finishes.
+ */
+export function hasPendingBackgroundTasks(
+  shell: Pick<SettledThreadView, "pendingBackgroundTasks">,
+): boolean {
+  return (shell.pendingBackgroundTasks?.length ?? 0) > 0;
+}
+
+/**
  * A thread may be settled only when none of effectiveSettled's activity
  * blockers hold. This is deliberately the same list: anything the partition
  * refuses to CLASSIFY as settled must also be refused as a settle TARGET.
  * The server enforces its own invariants; this client-side twin exists so
  * the UI can disable/reject before a round trip.
  */
-export function canSettle(
-  shell: SettlementThreadShell,
-  options: { readonly now: string },
-): boolean {
+export function canSettle(shell: SettledThreadView, options: { readonly now: string }): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
   if (
@@ -139,6 +153,9 @@ export function canSettle(
   ) {
     return false;
   }
+  // Waiting on provider background tasks is live work even when the shell
+  // status has not yet been parked at idle by the presentation bridge.
+  if (hasPendingBackgroundTasks(shell)) return false;
   // Queued work is as blocked-on-progress as a live session: settling it
   // (or auto-settling it on a closed PR) would hide a just-requested turn.
   if (hasQueuedTurnStart(shell, options)) return false;
@@ -290,7 +307,7 @@ export function threadWokeAt(
  * user-input request), so an override never goes stale silently.
  */
 export function effectiveSettled(
-  shell: SettlementThreadShell,
+  shell: SettledThreadView,
   options: {
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
@@ -308,6 +325,7 @@ export function effectiveSettled(
   ) {
     return false;
   }
+  if (hasPendingBackgroundTasks(shell)) return false;
   if (hasQueuedTurnStart(shell, { now: options.now })) {
     // The queued-turn blocker alone is forgivable: it is clock-derived, and
     // list callers pass a coarser `now` than the settle action used. When

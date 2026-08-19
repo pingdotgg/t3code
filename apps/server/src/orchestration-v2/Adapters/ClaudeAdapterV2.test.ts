@@ -34,6 +34,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import { TestClock } from "effect/testing";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/unstable/ai";
 
@@ -110,6 +111,7 @@ function makeClaudeTestAppThread(input: {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    settledOverrideAt: null,
     lastVisitedAt: null,
     deletedAt: null,
   };
@@ -1015,6 +1017,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            settledOverrideAt: null,
             lastVisitedAt: null,
             deletedAt: null,
           },
@@ -1192,10 +1195,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly isError?: boolean;
     readonly errors?: ReadonlyArray<string>;
     readonly apiErrorStatus?: number;
+    readonly terminalReason?: string;
   }) =>
     claudeSdkFrame({
       type: "result",
       subtype: input.subtype ?? "success",
+      ...(input.terminalReason === undefined ? {} : { terminal_reason: input.terminalReason }),
       duration_ms: 10,
       duration_api_ms: 10,
       is_error: input.isError ?? false,
@@ -2649,6 +2654,572 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps a steered turn alive across the CLI's handoff result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-steer-handoff");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the long command, then report.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make("run-claude-steer-handoff"),
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-steer-handoff"),
+            text: "Actually, just report now.",
+            attachments: [],
+          },
+        });
+        yield* awaitUntil(() => harness.offeredMessages.length === 2, "steer offered");
+
+        // The CLI takes the steer by ending the native turn: mid-tool that is
+        // terminal_reason "aborted_tools", not "aborted_streaming". The steered
+        // work has not been answered yet, so the T3 turn must stay alive.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000201",
+            result: "",
+            terminalReason: "aborted_tools",
+          }),
+        );
+        let handoffYields = 0;
+        yield* awaitUntil(() => handoffYields++ >= 50, "handoff result to be consumed");
+        assert.lengthOf(harness.terminalEvents(), 0);
+        assert.lengthOf(harness.continuationRequests, 0);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000202",
+            text: "Reporting now, as asked.",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000203",
+            result: "Reporting now, as asked.",
+            terminalReason: "completed",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "steered turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        // The answer attaches to the run that carries the steer; no
+        // continuation run is needed to rescue it.
+        assert.lengthOf(harness.continuationRequests, 0);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "Reporting now, as asked.",
+          ),
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("terminalizes a steered turn on a completed result that answers it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-steer-absorbed-completed");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the long command, then report.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make("run-claude-steer-absorbed-completed"),
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-steer-absorbed-completed"),
+            text: "Actually, just report now.",
+            attachments: [],
+          },
+        });
+        yield* awaitUntil(() => harness.offeredMessages.length === 2, "steer offered");
+
+        // A clean success carrying text has answered something, so it ends the
+        // turn even with a steer outstanding. Swallowing it would hold the run
+        // open until the handoff bound expired on every turn that the CLI
+        // absorbs a steer into.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000232",
+            result: "Reported, including the change you asked for.",
+            terminalReason: "completed",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "steered turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("terminalizes a steered turn on an aborted success that answers it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-steer-absorbed");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the long command, then report.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make("run-claude-steer-absorbed"),
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-steer-absorbed"),
+            text: "Actually, just report now.",
+            attachments: [],
+          },
+        });
+        yield* awaitUntil(() => harness.offeredMessages.length === 2, "steer offered");
+
+        // A clean aborted_tools success carrying text has answered something,
+        // so it ends the turn even with a steer outstanding. Swallowing it
+        // would hold the run open until the handoff bound expires.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000231",
+            result: "Reported, including the change you asked for.",
+            terminalReason: "aborted_tools",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "steered turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("terminalizes a steered turn on a non-handoff terminal reason", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-steer-max-turns");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Keep going until it is done.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make("run-claude-steer-max-turns"),
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-steer-max-turns"),
+            text: "Actually, stop after this step.",
+            attachments: [],
+          },
+        });
+        yield* awaitUntil(() => harness.offeredMessages.length === 2, "steer offered");
+
+        // max_turns ends the turn for real even though it arrives as an empty
+        // success. Only "completed" (or an older CLI that omits the field)
+        // means the CLI is about to open another native turn.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000241",
+            result: "",
+            terminalReason: "max_turns",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "steered turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("settles a steered turn when the CLI never opens the handoff turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-steer-silent");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the long command, then report.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make("run-claude-steer-silent"),
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-steer-silent"),
+            text: "Actually, just report now.",
+            attachments: [],
+          },
+        });
+        yield* awaitUntil(() => harness.offeredMessages.length === 2, "steer offered");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000211",
+            result: "",
+            terminalReason: "aborted_tools",
+          }),
+        );
+        let handoffYields = 0;
+        yield* awaitUntil(() => handoffYields++ >= 50, "handoff result to be consumed");
+        assert.lengthOf(harness.terminalEvents(), 0);
+
+        // Nothing follows the handoff, so the bound settles the turn rather
+        // than leaving the run running for the rest of the session. It settles
+        // as a failure: the steer was accepted and never answered.
+        yield* TestClock.adjust("60 seconds");
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "bounded handoff terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "failed");
+
+        // A frame that arrives after the bound has claimed the turn must not
+        // produce a second terminal for it. The bound and the message handler
+        // run on separate fibers, so the claim inside finalizeActiveTurn is
+        // what keeps this to one.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000212",
+            result: "Late answer that lost the race.",
+            terminalReason: "completed",
+          }),
+        );
+        let lateYields = 0;
+        yield* awaitUntil(() => lateYields++ >= 50, "late result to be handled");
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect(
+    "requests a continuation immediately for stranded output with no relevant background work",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          const strandedText = "Output produced after the run had already settled.";
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-stranded-1"),
+              text: "Do the thing.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+          assert.lengthOf(harness.continuationRequests, 0);
+
+          // No background task and no notification: just the model still talking
+          // after an early terminal left it with no turn to talk into. Without a
+          // continuation these frames sit in the buffer until the session
+          // recycles, which is how the output disappears.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000221",
+              text: strandedText,
+            }),
+          );
+          yield* awaitUntil(
+            () => harness.continuationRequests.length === 1,
+            "continuation request",
+          );
+          assert.equal(harness.continuationRequests[0]?.threadId, harness.threadId);
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-stranded-2"),
+              text: "Continuing.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* awaitUntil(
+            () =>
+              harness.events.some(
+                (event) => event.type === "message.updated" && event.message.text === strandedText,
+              ),
+            "stranded output projected",
+          );
+          assert.lengthOf(harness.offeredMessages, 1);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+  );
+
+  it.effect("lets a later task notification own the buffered output continuation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const strandedText = "The background build finished before its notification arrived.";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-stranded-notify-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000222",
+            text: strandedText,
+          }),
+        );
+        let bufferedYields = 0;
+        yield* awaitUntil(() => bufferedYields++ >= 50, "stranded output to buffer");
+        assert.lengthOf(harness.continuationRequests, 0);
+
+        yield* TestClock.adjust("1 second");
+        assert.lengthOf(harness.continuationRequests, 0);
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+        assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
+
+        yield* TestClock.adjust("2 seconds");
+        assert.lengthOf(harness.continuationRequests, 1);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-stranded-notify-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) => event.type === "message.updated" && event.message.text === strandedText,
+            ),
+          "stranded output projected",
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("offers buffered output after the notification fallback bound", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-stranded-fallback"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000223",
+            text: "The notification never arrived, but this output must not remain stranded.",
+          }),
+        );
+        let bufferedYields = 0;
+        yield* awaitUntil(() => bufferedYields++ >= 50, "stranded output to buffer");
+        assert.lengthOf(harness.continuationRequests, 0);
+
+        yield* TestClock.adjust("1 second");
+        assert.lengthOf(harness.continuationRequests, 0);
+        yield* TestClock.adjust("1 second");
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "fallback request");
+        assert.isNull(harness.continuationRequests[0]?.detail);
+
+        yield* TestClock.adjust("2 seconds");
+        assert.lengthOf(harness.continuationRequests, 1);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("does not continue for post-settle frames that carry no output", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-stranded-quiet"),
+            text: "Do the thing.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        // Tool chatter after settle is the model working, not speaking. The
+        // notification or result that follows it owns the continuation and its
+        // detail, so these frames must buffer without offering.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "tool_use", id: "toolu_quiet", name: "Bash", input: { command: "ls" } },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000251",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: "toolu_quiet", content: [] }],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000252",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        let quietYields = 0;
+        yield* awaitUntil(() => quietYields++ >= 50, "tool frames to buffer");
+        assert.lengthOf(harness.continuationRequests, 0);
+
+        // Two text frames in the same stranded burst still share one request.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000253",
+            text: "First stranded line.",
+          }),
+        );
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000254",
+            text: "Second stranded line.",
+          }),
+        );
+        let duplicateYields = 0;
+        yield* awaitUntil(() => duplicateYields++ >= 50, "second text frame to buffer");
+        assert.lengthOf(harness.continuationRequests, 1);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("terminalizes a continuation turn from a task-notification origin wake result", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2871,6 +3442,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // subagent pins idle release like a background task.
         assert.equal(subagentEvents().at(-1)?.subagent.status, "running");
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.lengthOf(harness.continuationRequests, 0);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000206",
+            text: "The background subagent has finished.",
+          }),
+        );
+        let bufferedYields = 0;
+        yield* awaitUntil(() => bufferedYields++ >= 50, "subagent output to buffer");
         assert.lengthOf(harness.continuationRequests, 0);
 
         yield* Queue.offer(harness.sdkMessages, subagentNotification);
@@ -3846,6 +4428,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "first turn terminal",
         );
         assert.isTrue(yield* hasPendingBackgroundWork);
+        yield* Queue.offer(
+          firstProcess,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000601",
+            text: "Output buffered before the query process is replaced.",
+          }),
+        );
+        let bufferedYields = 0;
+        yield* awaitUntil(() => bufferedYields++ >= 50, "pre-replacement output to buffer");
+        assert.lengthOf(continuationRequests, 0);
 
         const alternateModel = {
           ...CLAUDE_TEST_MODEL_SELECTION,
@@ -3884,9 +4476,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           "roster cleared on process replace while remaining active",
         );
-        // After replace, the in-memory Waiting probe must be false even if a
-        // late empty-level event was already present before background work.
-        assert.isFalse(yield* hasPendingBackgroundWork);
+        // The process-scoped roster is gone, but the already-buffered output
+        // still pins the session until its continuation can drain it.
+        assert.isTrue(yield* hasPendingBackgroundWork);
         const emptyActiveRosterEvents = providerThreadRosterEvents(events).filter(
           (event) =>
             event.providerThread.status === "active" &&
@@ -3898,6 +4490,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           [],
         );
         assert.equal(emptyActiveRosterEvents.at(-1)?.providerThread.status, "active");
+        yield* TestClock.adjust("2 seconds");
+        yield* awaitUntil(() => continuationRequests.length === 1, "preserved output fallback");
+        assert.isNull(continuationRequests[0]?.detail);
 
         // A late notification from the previous process must not wake after
         // eligibility was reset with the process. Offer on the new process
@@ -3906,7 +4501,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(secondProcess, wakeNotification);
         let settleYields = 0;
         yield* awaitUntil(() => settleYields++ >= 50, "stale notification settle");
-        assert.lengthOf(continuationRequests, 0);
+        assert.lengthOf(continuationRequests, 1);
 
         yield* Queue.offer(
           secondProcess,
@@ -4577,7 +5172,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "clears buffered wake and continuation state when same-native-thread replacement open fails",
+    "preserves buffered wake and continuation state when same-native-thread replacement open fails",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -4701,7 +5296,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             )
             .pipe(Effect.exit);
           assert.isTrue(Exit.isFailure(failedStart));
-          assert.isFalse(yield* hasPendingBackgroundWork);
+          assert.isTrue(yield* hasPendingBackgroundWork);
+          assert.lengthOf(continuationRequests, 1);
 
           yield* runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -4740,6 +5336,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             () => events.filter((event) => event.type === "turn.terminal").length === 2,
             "retry turn terminal",
           );
+
+          // The already-requested continuation survives the failed process
+          // replacement and drains the wake output after the user retry.
+          yield* Queue.offer(retryProcess, wakeResult);
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: { ...providerThread, status: "active" },
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-replace-open-fail-wake-d"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 3,
+              modelSelection: alternateModel,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* awaitUntil(
+            () => events.filter((event) => event.type === "turn.terminal").length === 3,
+            "preserved continuation terminal",
+          );
+          assert.lengthOf(continuationRequests, 1);
+
           yield* Queue.offer(
             retryProcess,
             claudeSdkFrame({

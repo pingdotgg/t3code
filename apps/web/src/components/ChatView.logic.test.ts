@@ -27,12 +27,15 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveThreadErrorBannerMessage,
+  resolveThreadErrorBannerSessionError,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldShowComposerContextStrip,
   shouldWriteThreadErrorToCurrentServerThread,
+  threadRuntimeErrorDismissalKey,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -109,6 +112,101 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
         nextModelSelection: modelSelection,
         currentBranch: "feature/current",
         nextBranch: "feature/current",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveThreadErrorBannerMessage", () => {
+  it("keeps the exact dismissed runtime failure occurrence hidden", () => {
+    expect(
+      resolveThreadErrorBannerMessage({
+        localError: null,
+        runtimeError: "event stream stalled",
+        runtimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+        dismissedRuntimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+      }),
+    ).toBeNull();
+  });
+
+  it("shows local errors and a later occurrence with the same message", () => {
+    expect(
+      resolveThreadErrorBannerMessage({
+        localError: "send failed",
+        runtimeError: "event stream stalled",
+        runtimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+        dismissedRuntimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+      }),
+    ).toBe("send failed");
+    expect(
+      resolveThreadErrorBannerMessage({
+        localError: null,
+        runtimeError: "event stream stalled",
+        runtimeErrorKey: '["2026-08-11T12:05:00Z","event stream stalled"]',
+        dismissedRuntimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+      }),
+    ).toBe("event stream stalled");
+  });
+});
+
+describe("resolveThreadErrorBannerSessionError", () => {
+  it("keys the remount-safe session dismiss by occurrence when present", () => {
+    expect(
+      resolveThreadErrorBannerSessionError({
+        runtimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+        threadError: "event stream stalled",
+      }),
+    ).toBe('["2026-08-11T12:00:00Z","event stream stalled"]');
+  });
+
+  it("falls back to the visible message for local errors", () => {
+    expect(
+      resolveThreadErrorBannerSessionError({
+        runtimeErrorKey: null,
+        threadError: "send failed",
+      }),
+    ).toBe("send failed");
+  });
+
+  it("keys the session mask by the local error occurrence while that is what is showing", () => {
+    expect(
+      resolveThreadErrorBannerSessionError({
+        runtimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+        threadError: "send failed",
+        localError: "send failed",
+        localErrorAt: 1_723_382_400_000,
+      }),
+    ).toBe(JSON.stringify([1_723_382_400_000, "send failed"]));
+  });
+});
+
+describe("threadRuntimeErrorDismissalKey", () => {
+  it("identifies the visible runtime failure by its revision", () => {
+    expect(
+      threadRuntimeErrorDismissalKey({
+        localError: null,
+        runtimeError: "event stream stalled",
+        runtimeErrorAt: "2026-08-11T12:00:00Z",
+      }),
+    ).toBe('["2026-08-11T12:00:00Z","event stream stalled"]');
+  });
+
+  it("still identifies the runtime occurrence when a local error is also showing", () => {
+    expect(
+      threadRuntimeErrorDismissalKey({
+        localError: "send failed",
+        runtimeError: "event stream stalled",
+        runtimeErrorAt: "2026-08-11T12:00:00Z",
+      }),
+    ).toBe('["2026-08-11T12:00:00Z","event stream stalled"]');
+  });
+
+  it("does not invent an occurrence when the runtime has no error timestamp", () => {
+    expect(
+      threadRuntimeErrorDismissalKey({
+        localError: null,
+        runtimeError: "event stream stalled",
+        runtimeErrorAt: null,
       }),
     ).toBeNull();
   });

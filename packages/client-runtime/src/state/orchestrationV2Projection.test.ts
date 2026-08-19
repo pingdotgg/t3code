@@ -79,6 +79,7 @@ const emptyProjection = {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    settledOverrideAt: null,
     lastVisitedAt: null,
     deletedAt: null,
   },
@@ -268,5 +269,117 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     const next = applyOrchestrationV2ProjectionEvent(projection, event);
     expect(next?.visibleTurnItems).toEqual([inheritedRow]);
     expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
+  });
+
+  it("merges only settlement fields so concurrent metadata survives unsettle payloads", () => {
+    const settledAt = DateTime.makeUnsafe("2026-06-20T00:30:00.000Z");
+    const live = {
+      ...emptyProjection,
+      thread: {
+        ...emptyProjection.thread,
+        title: "Live renamed title",
+        archivedAt: DateTime.makeUnsafe("2026-06-20T00:45:00.000Z"),
+        settledOverride: "settled" as const,
+        settledAt,
+        updatedAt: settledAt,
+      },
+    };
+    const stalePayload = {
+      ...emptyProjection.thread,
+      title: "Stale pre-rename title",
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-06-20T00:40:00.000Z"),
+    };
+    const event = {
+      id: "event-activity-unsettle",
+      type: "thread.unsettled",
+      threadId,
+      occurredAt: DateTime.makeUnsafe("2026-06-20T00:40:00.000Z"),
+      payload: stalePayload,
+    } as OrchestrationV2DomainEvent;
+
+    // Activity at 00:40 is after settledAt 00:30, so pin clears, but live
+    // non-settlement fields must not be restored from the stale payload.
+    const next = applyOrchestrationV2ProjectionEvent(live, event);
+    expect(next?.thread.settledOverride).toBeNull();
+    expect(next?.thread.settledAt).toBeNull();
+    expect(next?.thread.title).toBe("Live renamed title");
+    expect(next?.thread.archivedAt).toEqual(live.thread.archivedAt);
+  });
+
+  it("does not clear a newer settled or active pin from delayed provider activity", () => {
+    const pinAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
+    const delayedActivityAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+
+    for (const override of ["settled", "active"] as const) {
+      const projection = {
+        ...emptyProjection,
+        thread: {
+          ...emptyProjection.thread,
+          title: "Pinned",
+          settledOverride: override,
+          settledAt: override === "settled" ? pinAt : null,
+          settledOverrideAt: pinAt,
+          updatedAt: pinAt,
+        },
+      };
+      const event = {
+        id: `event-delayed-${override}`,
+        type: "thread.unsettled",
+        threadId,
+        occurredAt: delayedActivityAt,
+        payload: {
+          ...projection.thread,
+          title: "Stale",
+          settledOverride: null,
+          settledAt: null,
+          settledOverrideAt: null,
+          updatedAt: delayedActivityAt,
+        },
+      } as OrchestrationV2DomainEvent;
+
+      const next = applyOrchestrationV2ProjectionEvent(projection, event);
+      expect(next).toBe(projection);
+      expect(next?.thread.settledOverride).toBe(override);
+      expect(next?.thread.title).toBe("Pinned");
+    }
+  });
+
+  it("clears keep-active after rename when settledOverrideAt is stable", () => {
+    const pinAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const renameAt = DateTime.makeUnsafe("2026-06-20T03:00:00.000Z");
+    const activityAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
+    const projection = {
+      ...emptyProjection,
+      thread: {
+        ...emptyProjection.thread,
+        title: "Renamed keep-active",
+        settledOverride: "active" as const,
+        settledAt: null,
+        settledOverrideAt: pinAt,
+        updatedAt: renameAt,
+      },
+    };
+    const event = {
+      id: "event-keep-active-rename-activity",
+      type: "thread.unsettled",
+      threadId,
+      occurredAt: activityAt,
+      payload: {
+        ...projection.thread,
+        settledOverride: null,
+        settledAt: null,
+        settledOverrideAt: null,
+        updatedAt: activityAt,
+      },
+    } as OrchestrationV2DomainEvent;
+
+    const next = applyOrchestrationV2ProjectionEvent(projection, event);
+    expect(next?.thread.settledOverride).toBeNull();
+    expect(next?.thread.settledOverrideAt).toBeNull();
+    expect(next?.thread.title).toBe("Renamed keep-active");
+    expect(next?.thread.updatedAt).toEqual(renameAt);
   });
 });
