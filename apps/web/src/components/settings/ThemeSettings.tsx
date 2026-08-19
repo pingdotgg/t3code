@@ -875,7 +875,7 @@ export function ThemeLibrary({
           </Button>
           <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
             <DownloadIcon />
-            Import theme
+            Add theme
           </Button>
         </div>
       </div>
