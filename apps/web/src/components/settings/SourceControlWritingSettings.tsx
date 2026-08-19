@@ -291,7 +291,7 @@ export function SourceControlWritingSettingsSection() {
               Connect an environment to choose its source control writer model.
             </span>
           ) : (
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-2 sm:max-w-[26rem]">
               {usesDedicatedModel && !canEnableDedicatedModel ? (
                 <span className="text-sm text-muted-foreground">
                   No text generation providers available.

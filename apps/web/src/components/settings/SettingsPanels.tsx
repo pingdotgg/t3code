@@ -3106,7 +3106,7 @@ export function GeneralSettingsPanel() {
                 No text generation providers available.
               </span>
             ) : (
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
+              <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5 sm:max-w-[26rem]">
                 <ProviderModelPicker
                   activeInstanceId={textGenInstanceId}
                   model={textGenModel}
