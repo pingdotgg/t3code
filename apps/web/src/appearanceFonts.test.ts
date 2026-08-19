@@ -8,6 +8,7 @@ import {
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
   appearanceFontStack,
+  createCachedFamilyProbe,
   cssFontFamilies,
   resolveDefaultFamilyLabel,
   resolveTerminalFontPreference,
@@ -24,6 +25,40 @@ describe("areFontAdvancesMonospace", () => {
   it("fails open when canvas metrics are unavailable", () => {
     expect(areFontAdvancesMonospace([])).toBe(true);
     expect(areFontAdvancesMonospace([Number.NaN, Number.NaN])).toBe(true);
+  });
+});
+
+describe("createCachedFamilyProbe", () => {
+  it("probes a family once and caches both verdicts", () => {
+    const probed: string[] = [];
+    const probe = createCachedFamilyProbe((families) => {
+      probed.push(families);
+      return families.includes("Mono");
+    });
+    expect(probe("Comic Mono")).toBe(true);
+    expect(probe("Comic Mono")).toBe(true);
+    expect(probe("Comic Sans MS")).toBe(false);
+    expect(probe("Comic Sans MS")).toBe(false);
+    expect(probed).toEqual(['"Comic Mono"', '"Comic Sans MS"']);
+  });
+
+  it("shares the verdict across spellings of the same family list", () => {
+    const probed: string[] = [];
+    const probe = createCachedFamilyProbe((families) => {
+      probed.push(families);
+      return true;
+    });
+    expect(probe("Fira Code")).toBe(true);
+    expect(probe(' "Fira Code" ')).toBe(true);
+    expect(probed).toEqual(['"Fira Code"']);
+  });
+
+  it("accepts empty input without probing", () => {
+    const probe = createCachedFamilyProbe(() => {
+      throw new Error("should not probe");
+    });
+    expect(probe("")).toBe(true);
+    expect(probe("  ")).toBe(true);
   });
 });
 
