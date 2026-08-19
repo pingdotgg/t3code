@@ -10,17 +10,12 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { OrchestrationV2ProviderFailure, OrchestrationV2RunStatus } from "./orchestrationV2.ts";
+import {
+  OrchestrationV2ProviderFailure,
+  OrchestrationV2RunStatus,
+  PreparedWorktreeCheckout,
+} from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
-
-export const ProgramAttemptCheckout = Schema.Struct({
-  repositoryRoot: TrimmedNonEmptyString,
-  gitCommonDir: TrimmedNonEmptyString,
-  worktreePath: TrimmedNonEmptyString,
-  branch: TrimmedNonEmptyString,
-  startingCommit: TrimmedNonEmptyString,
-});
-export type ProgramAttemptCheckout = typeof ProgramAttemptCheckout.Type;
 
 export const ProgramAttemptProviderPolicy = Schema.Struct({
   modelSelection: ModelSelection,
@@ -35,7 +30,7 @@ export const ProgramAttemptLaunchInput = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   prompt: TrimmedNonEmptyString,
-  checkout: ProgramAttemptCheckout,
+  checkout: PreparedWorktreeCheckout,
   providerPolicy: ProgramAttemptProviderPolicy,
 });
 export type ProgramAttemptLaunchInput = typeof ProgramAttemptLaunchInput.Type;

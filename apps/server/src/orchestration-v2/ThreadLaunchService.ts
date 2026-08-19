@@ -7,7 +7,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2ThreadProjection,
   type ProviderInteractionMode,
-  type ProgramAttemptCheckout,
+  type PreparedWorktreeCheckout,
   ProjectId,
   type RunId,
   type RuntimeMode,
@@ -44,7 +44,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly worktreePath: string;
       readonly branch?: string | undefined;
     }
-  | ({ readonly type: "prepared_worktree" } & ProgramAttemptCheckout)
+  | ({ readonly type: "prepared_worktree" } & PreparedWorktreeCheckout)
   | {
       readonly type: "worktree";
       readonly baseRef: string;

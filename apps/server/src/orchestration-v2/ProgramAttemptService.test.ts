@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
@@ -218,6 +219,95 @@ it.effect("makes repeated cancellation harmless", () =>
         harness.interruptThread.mock.calls[0]?.[0].commandId,
         `program-attempt:${attemptId}:cancel`,
       );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rejects cancellation request or payload mismatches", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("running"));
+      const cancel = {
+        attemptId,
+        requestId: ProgramAttemptRequestId.make("request:s1:cancel:bound"),
+        reason: "operator stop",
+      };
+      yield* attempts.cancel(cancel);
+
+      const requestConflict = yield* Effect.flip(
+        attempts.cancel({
+          ...cancel,
+          requestId: ProgramAttemptRequestId.make("request:s1:cancel:other"),
+        }),
+      );
+      const payloadConflict = yield* Effect.flip(
+        attempts.cancel({ ...cancel, reason: "different reason" }),
+      );
+
+      assert.equal(requestConflict.reason, "request_conflict");
+      assert.equal(payloadConflict.reason, "request_conflict");
+      assert.equal(harness.interruptThread.mock.calls.length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("allows only one of two concurrent cancellation requests to take effect", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("running"));
+
+      const results = yield* Effect.all(
+        [
+          Effect.exit(
+            attempts.cancel({
+              attemptId,
+              requestId: ProgramAttemptRequestId.make("request:s1:cancel:concurrent:a"),
+              reason: "first request",
+            }),
+          ),
+          Effect.exit(
+            attempts.cancel({
+              attemptId,
+              requestId: ProgramAttemptRequestId.make("request:s1:cancel:concurrent:b"),
+              reason: "second request",
+            }),
+          ),
+        ],
+        { concurrency: 2 },
+      );
+
+      assert.equal(results.filter(Exit.isSuccess).length, 1);
+      assert.equal(harness.interruptThread.mock.calls.length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rejects a different acknowledgement request after binding the first", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("completed"));
+      yield* attempts.acknowledge({
+        attemptId,
+        requestId: ProgramAttemptRequestId.make("request:s1:ack:bound"),
+      });
+
+      const conflict = yield* Effect.flip(
+        attempts.acknowledge({
+          attemptId,
+          requestId: ProgramAttemptRequestId.make("request:s1:ack:other"),
+        }),
+      );
+
+      assert.equal(conflict.reason, "request_conflict");
     }).pipe(Effect.provide(harness.layer));
   }),
 );

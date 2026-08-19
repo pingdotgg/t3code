@@ -1,4 +1,4 @@
-import type { ProgramAttemptCheckout } from "@t3tools/contracts";
+import type { PreparedWorktreeCheckout } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -40,7 +40,7 @@ export class PreparedWorktreeVerifier extends Context.Service<
   PreparedWorktreeVerifier,
   {
     readonly verify: (
-      checkout: ProgramAttemptCheckout,
+      checkout: PreparedWorktreeCheckout,
       projectWorkspaceRoot: string,
     ) => Effect.Effect<PreparedWorktreeVerification, PreparedWorktreeVerificationError>;
   }

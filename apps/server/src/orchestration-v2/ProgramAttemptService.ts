@@ -3,11 +3,12 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ProviderFailure,
   ProgramAttemptId,
+  ProgramAttemptCancelInput as ProgramAttemptCancelInputSchema,
   type ProgramAttemptCancelInput,
+  ProgramAttemptEffectInput as ProgramAttemptEffectInputSchema,
   type ProgramAttemptEffectInput,
   ProgramAttemptLaunchInput as ProgramAttemptLaunchInputSchema,
   type ProgramAttemptLaunchInput,
-  type ProgramAttemptRequestId,
   type ProgramAttemptSnapshot,
   ProgramAttemptTerminalResult as ProgramAttemptTerminalResultSchema,
   type ProgramAttemptTerminalResult,
@@ -16,10 +17,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -31,12 +30,11 @@ interface ProgramAttemptRow {
   readonly attempt_id: string;
   readonly launch_request_id: string;
   readonly launch_input_json: string;
-  readonly launch_input_hash: string;
   readonly project_id: string;
   readonly thread_id: string | null;
   readonly run_id: string | null;
-  readonly cancel_request_id: string | null;
-  readonly acknowledge_request_id: string | null;
+  readonly cancel_input_json: string | null;
+  readonly acknowledge_input_json: string | null;
   readonly terminal_result_json: string | null;
   readonly terminal_acknowledged_at: string | null;
   readonly created_at: string;
@@ -91,6 +89,12 @@ const encodeTerminalResult = Schema.encodeEffect(
 const encodeLaunchInput = Schema.encodeEffect(
   Schema.fromJsonString(ProgramAttemptLaunchInputSchema),
 );
+const encodeCancelInput = Schema.encodeEffect(
+  Schema.fromJsonString(ProgramAttemptCancelInputSchema),
+);
+const encodeAcknowledgeInput = Schema.encodeEffect(
+  Schema.fromJsonString(ProgramAttemptEffectInputSchema),
+);
 
 function error(
   attemptId: ProgramAttemptId,
@@ -134,7 +138,6 @@ export const layer = Layer.effect(
   ProgramAttemptService,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const crypto = yield* Crypto.Crypto;
     const launches = yield* ThreadLaunchService.ThreadLaunchService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
 
@@ -261,19 +264,13 @@ export const layer = Layer.effect(
           error(input.attemptId, "invalid_record", "Could not encode the launch request.", cause),
         ),
       );
-      const inputHash = yield* crypto.digest("SHA-256", new TextEncoder().encode(inputJson)).pipe(
-        Effect.map(Encoding.encodeHex),
-        Effect.mapError((cause) =>
-          error(input.attemptId, "launch_failed", "Could not hash the launch request.", cause),
-        ),
-      );
       const timestamp = yield* now;
       yield* sql`
         INSERT INTO program_attempts (
-          attempt_id, launch_request_id, launch_input_json, launch_input_hash,
+          attempt_id, launch_request_id, launch_input_json,
           project_id, created_at, updated_at
         ) VALUES (
-          ${input.attemptId}, ${input.requestId}, ${inputJson}, ${inputHash},
+          ${input.attemptId}, ${input.requestId}, ${inputJson},
           ${input.projectId}, ${timestamp}, ${timestamp}
         ) ON CONFLICT(attempt_id) DO NOTHING
       `.pipe(
@@ -287,7 +284,7 @@ export const layer = Layer.effect(
         ),
       );
       const row = yield* load(input.attemptId);
-      if (row.launch_input_hash !== inputHash || row.launch_input_json !== inputJson) {
+      if (row.launch_input_json !== inputJson) {
         return yield* error(
           input.attemptId,
           "request_conflict",
@@ -356,22 +353,22 @@ export const layer = Layer.effect(
       return yield* snapshot(persisted);
     });
 
-    const recordEffectRequest = Effect.fn("ProgramAttemptService.recordEffectRequest")(function* (
+    const bindEffectInput = Effect.fn("ProgramAttemptService.bindEffectInput")(function* (
       attemptId: ProgramAttemptId,
-      column: "cancel_request_id" | "acknowledge_request_id",
-      requestId: ProgramAttemptRequestId,
+      column: "cancel_input_json" | "acknowledge_input_json",
+      inputJson: string,
     ) {
       const updatedAt = yield* now;
       const query =
-        column === "cancel_request_id"
+        column === "cancel_input_json"
           ? sql`
               UPDATE program_attempts
-              SET cancel_request_id = COALESCE(cancel_request_id, ${requestId}), updated_at = ${updatedAt}
+              SET cancel_input_json = COALESCE(cancel_input_json, ${inputJson}), updated_at = ${updatedAt}
               WHERE attempt_id = ${attemptId}
             `
           : sql`
               UPDATE program_attempts
-              SET acknowledge_request_id = COALESCE(acknowledge_request_id, ${requestId}), updated_at = ${updatedAt}
+              SET acknowledge_input_json = COALESCE(acknowledge_input_json, ${inputJson}), updated_at = ${updatedAt}
               WHERE attempt_id = ${attemptId}
             `;
       yield* query.pipe(
@@ -379,7 +376,17 @@ export const layer = Layer.effect(
           error(attemptId, "persistence_failed", "Could not persist the effect intent.", cause),
         ),
       );
-      return yield* load(attemptId);
+      const row = yield* load(attemptId);
+      const bound =
+        column === "cancel_input_json" ? row.cancel_input_json : row.acknowledge_input_json;
+      if (bound !== inputJson) {
+        return yield* error(
+          attemptId,
+          "request_conflict",
+          "This Attempt effect is already bound to a different request.",
+        );
+      }
+      return row;
     });
 
     const cancel: ProgramAttemptService["Service"]["cancel"] = Effect.fn(
@@ -393,7 +400,12 @@ export const layer = Layer.effect(
           "The Attempt has no run to cancel.",
         );
       }
-      row = yield* recordEffectRequest(input.attemptId, "cancel_request_id", input.requestId);
+      const inputJson = yield* encodeCancelInput(input).pipe(
+        Effect.mapError((cause) =>
+          error(input.attemptId, "invalid_record", "Could not encode the cancel request.", cause),
+        ),
+      );
+      row = yield* bindEffectInput(input.attemptId, "cancel_input_json", inputJson);
       if (row.thread_id === null || row.run_id === null) {
         return yield* error(
           input.attemptId,
@@ -434,7 +446,17 @@ export const layer = Layer.effect(
           "A Program Attempt can be acknowledged only after it reaches a terminal state.",
         );
       }
-      row = yield* recordEffectRequest(input.attemptId, "acknowledge_request_id", input.requestId);
+      const inputJson = yield* encodeAcknowledgeInput(input).pipe(
+        Effect.mapError((cause) =>
+          error(
+            input.attemptId,
+            "invalid_record",
+            "Could not encode the acknowledgement request.",
+            cause,
+          ),
+        ),
+      );
+      row = yield* bindEffectInput(input.attemptId, "acknowledge_input_json", inputJson);
       const acknowledgedAt = yield* now;
       yield* sql`
         UPDATE program_attempts

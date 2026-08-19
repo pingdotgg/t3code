@@ -1953,6 +1953,15 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 });
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
+export const PreparedWorktreeCheckout = Schema.Struct({
+  repositoryRoot: TrimmedNonEmptyString,
+  gitCommonDir: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  startingCommit: TrimmedNonEmptyString,
+});
+export type PreparedWorktreeCheckout = typeof PreparedWorktreeCheckout.Type;
+
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.create"),
